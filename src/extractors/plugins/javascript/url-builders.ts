@@ -29,6 +29,7 @@ import type { ClassRef, ProjectContext } from "../../../types/project.js";
 // The quote/bracket-aware splitter and unquoter are shared with the symbolic
 // value resolver (one copy instead of the three that used to exist).
 import { splitTopLevel, unquote } from "../../shared/value-resolver.js";
+import { patternBindings } from "./destructured-params.js";
 import { escapeRegex } from "../shared/path-utils.js";
 import { buildWrapperIndex } from "../../../core/wrapper-index.js";
 
@@ -124,7 +125,9 @@ function objectArgument(arg: string): Map<string, string> | null {
  * expression as a hole the next pass resolves (`${this.url}`).
  */
 function substituteNamed(template: string, values: ReadonlyMap<string, string>): string {
-  return template.replace(/\$\{\s*([A-Za-z_$][\w$]*)\s*\}/g, (hole, key: string) => {
+  // `${key}` (a hole the body wrote) and `{key}` (the placeholder of a destructured parameter).
+  return template.replace(/\$\{\s*([A-Za-z_$][\w$]*)\s*\}|(?<!\$)\{([A-Za-z_$][\w$]*)\}/g, (hole, held: string | undefined, placeholder: string | undefined) => {
+    const key = (held ?? placeholder)!;
     const v = values.get(key);
     if (v === undefined) return hole;
     const lit = argLiteral(v);
@@ -516,6 +519,12 @@ function rewriteWith(builder: UrlBuilder, args: string[]): string[] | null {
   // A builder taking one object it destructures (`({ host, clubSlug }) => …`) is handed its values by name.
   const destructures = builder.params.length === 0 || (builder.params.length === 1 && builder.params[0]!.name.trimStart().startsWith("{"));
   const named = destructures && args.length === 1 ? objectArgument(args[0]!) : null;
+  // `({ id: clubId }) => …`: the body's name is the binding, the call states the key.
+  if (named && builder.params.length === 1) {
+    for (const { binding, key } of patternBindings(builder.params[0]!.name)) {
+      if (binding !== key && named.has(key) && !named.has(binding)) named.set(binding, named.get(key)!);
+    }
+  }
   const rewrites = named
     ? builder.templates.map((tpl) => substituteNamed(tpl, named))
     : chooseTemplates(builder, args).map((tpl) => substitute(tpl, builder.params, args));

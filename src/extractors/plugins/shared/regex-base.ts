@@ -540,9 +540,62 @@ export function extractFunctionsWithSpec(lines: string[], spec: RegexLangSpec): 
         break;
       }
     }
+    if (spec.splitHeaderLineMembers) fns.push(...functionsAfterHeaderLineClass(lines, i, spec));
   }
   return fns;
 }
+
+/**
+ * The function written after a one-line class's closing `}` on its line (`struct A { void f() {} }; void g() {}`):
+ * the one match per line above reads the class's member, so what follows the class is read from the tail alone (the
+ * text before it blanked, columns kept, so the line-anchored patterns still match).
+ */
+function functionsAfterHeaderLineClass(lines: string[], i: number, spec: RegexLangSpec): FunctionInfo[] {
+  const line = lines[i]!;
+  if (isCommentLine(line, spec.lineCommentPrefixes) || !line.includes("{")) return [];
+  // The `{` that opens the class body: the first one after the class's own head.
+  let head: RegExpMatchArray | null = null;
+  for (const c of spec.classPatterns) {
+    head = line.match(c.pattern);
+    if (head) break;
+  }
+  const brace = head ? line.indexOf("{", head.index ?? 0) : -1;
+  if (brace < 0) return [];
+  const close = headerLineClose(line, brace + 1);
+  if (close < 0) return [];
+  const tail = " ".repeat(close) + line.slice(close).replace(/^\s*;/, " ");
+  if (!tail.trim()) return [];
+  for (const { pattern, isExported, isAsync: asyncCheck, keywordNames, rename } of spec.functionPatterns) {
+    const m = tail.match(pattern);
+    if (!m || !m[1] || (!keywordNames && isControlFlowKeyword(m[1]))) continue;
+    // The body usually ends on this line; one that runs on is measured from the tail.
+    const opens = (tail.match(/\{/g) ?? []).length;
+    const view = opens === (tail.match(/\}/g) ?? []).length ? [tail] : [tail, ...lines.slice(i + 1)];
+    const endLine = i + blockEndLine(view, 0, spec);
+    const at = tail.indexOf(m[1], m.index ?? 0);
+    const inline = (spec.inlineBodyColumn ?? inlineBodyColumn)(tail, at + m[1].length);
+    const calls = extractCallsFromBody(view, 1, endLine - i, spec.lineCommentPrefixes, spec.callPatterns, inline >= 0 ? { line: 0, column: inline } : undefined)
+      .map((c) => ({ ...c, line: c.line + i }));
+    const fn: FunctionInfo = {
+      name: rename ? rename(m[1], tail) : m[1],
+      params: extractParamsFromDeclaration(view, 0, m[1], spec.parseParam),
+      returnType: spec.parseReturnType?.(tail, at) ?? null,
+      isAsync: asyncCheck?.(tail, view, 0) ?? false,
+      isExported: isExported?.(tail, m[1]) ?? true,
+      decorators: [],
+      calls,
+      line: i + 1,
+      endLine,
+    };
+    attachLocalTypes(fn, view, 0, inline, endLine - i, spec);
+    AFTER_CLASS_FUNCTIONS.add(fn);
+    return [fn];
+  }
+  return [];
+}
+
+/** The functions read after a one-line class's closing `}`: free functions, never the class's members, whatever their line. */
+export const AFTER_CLASS_FUNCTIONS = new WeakSet<FunctionInfo>();
 
 /**
  * The functions a parser read (`ParsedStructure`), built as `extractFunctionsWithSpec` builds the ones its
@@ -1312,24 +1365,34 @@ export function headerLineMethods(line: string, row: number, spec: RegexLangSpec
  * closing `}`. Offsets are into `line`.
  */
 export function headerLineSegments(rawLine: string, from: number): Array<{ from: number; to: number }> {
+  return scanHeaderLine(rawLine, from).segments;
+}
+
+/** Where a one-line class body's own closing `}` ends (the offset just past it), or -1 when the line does not close it. */
+export function headerLineClose(rawLine: string, from: number): number {
+  return scanHeaderLine(rawLine, from).close;
+}
+
+function scanHeaderLine(rawLine: string, from: number): { segments: Array<{ from: number; to: number }>; close: number } {
   const out: Array<{ from: number; to: number }> = [];
   // A `;` or `}` inside a string literal or a trailing comment cuts nothing (same length, so offsets hold).
   const line = blankStringLiterals(rawLine, ["//"]);
   let depth = 0;
   let parens = 0;
   let start = from;
+  let close = -1;
   for (let k = from; k < line.length; k++) {
     const ch = line[k];
     if (ch === "(" || ch === "[") parens++;
     else if (ch === ")" || ch === "]") parens = Math.max(0, parens - 1);
     else if (ch === "{") depth++;
     else if (ch === "}") {
-      if (depth === 0) break;
+      if (depth === 0) { close = k + 1; break; }
       depth--;
       if (depth === 0 && parens === 0) { out.push({ from: start, to: k + 1 }); start = k + 1; }
     } else if (ch === ";" && depth === 0 && parens === 0) { out.push({ from: start, to: k + 1 }); start = k + 1; }
   }
-  return out;
+  return { segments: out, close };
 }
 
 /** A compile-time conditional: its directive lines `start`…`end` and the live arms between them (0-based, inclusive). */

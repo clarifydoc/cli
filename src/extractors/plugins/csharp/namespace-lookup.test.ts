@@ -131,14 +131,14 @@ describe("MSBuild <Using> items", () => {
     readAncestors: async () => [],
   });
 
-  it("reads the project's usings and those of Directory.Build.props, never an alias or a static one", async () => {
+  it("reads the project's usings and those of Directory.Build.props, a static one is a using static of that type, never an alias", async () => {
     const proj = `<Project><ItemGroup>
   <Using Include="League.Clubs" />
   <Using Include="League.Clubs.Models" Alias="Models" />
   <Using Include="League.Scoring" Static="true" />
   <Using Remove="System.Net.Http" />
 </ItemGroup></Project>`;
-    expect(await projectFileUsings(proj, ctx(`<Project><ItemGroup><Using Include="League.Shared"/></ItemGroup></Project>`))).toEqual(["League.Clubs", "League.Shared"]);
+    expect(await projectFileUsings(proj, ctx(`<Project><ItemGroup><Using Include="League.Shared"/></ItemGroup></Project>`))).toEqual(["League.Shared", "League.Clubs", "League.Scoring"]);
   });
 });
 
@@ -187,5 +187,17 @@ describe("MSBuild implicit usings", () => {
     expect(out).toContain("League.Clubs");
     expect(out).not.toContain("System.Net.Http");
     expect(out).toContain("System.IO");
+  });
+});
+
+describe("Blazor WebAssembly implicit usings", () => {
+  it("adds only what the SDK's props add: configuration, injection and logging beside the base list", async () => {
+    const ctx = { fileName: "League.Wasm.csproj", dirName: "League.Wasm", readSibling: async () => null, readAncestors: async () => [] };
+    const usings = await projectFileUsings(`<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly"><PropertyGroup><ImplicitUsings>enable</ImplicitUsings></PropertyGroup></Project>`, ctx);
+    expect(usings).toContain("Microsoft.Extensions.Logging");
+    expect(usings).toContain("System.Linq");
+    expect(usings).not.toContain("Microsoft.AspNetCore.Components.Web");
+    expect(usings).not.toContain("System.Net.Http.Json");
+    expect(usings).not.toContain("Microsoft.JSInterop");
   });
 });

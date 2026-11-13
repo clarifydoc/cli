@@ -48,14 +48,27 @@ export function projectFileSelfName(text: string, file: SelfNameContext): string
   return name.includes("$(") ? null : name;
 }
 
-/** `<Using Include="League.Clubs" />` — not an alias (`Alias=`) or a static (`Static="true"`) using, nor a `Remove`. */
-const MSBUILD_USING_RE = /<Using\s+Include\s*=\s*"([A-Za-z_][\w.]*)"([^>]*)\/?>/gi;
+/** One `<Using …>` item in file order: `Include` adds (an alias is not a namespace import), `Remove` takes the name away. */
+const MSBUILD_USING_RE = /<Using\s+((?:[^>"']|"[^"]*"|'[^']*')*?)\/?>/gi;
 
-function msbuildUsings(text: string): string[] {
-  const out: string[] = [];
+type UsingOp = { op: "add" | "remove"; name: string };
+
+function usingOps(text: string): UsingOp[] {
+  const out: UsingOp[] = [];
   for (const m of text.matchAll(MSBUILD_USING_RE)) {
-    if (/\b(?:Alias|Static)\s*=/i.test(m[2]!) && !/\bStatic\s*=\s*"false"/i.test(m[2]!)) continue;
-    out.push(m[1]!);
+    const attrs = m[1]!;
+    const conditional = /\bCondition\s*=/i.test(attrs);
+    const attr = (n: string) => new RegExp(`\\b${n}\\s*=\\s*"([^"]*)"`, "i").exec(attrs)?.[1];
+    const remove = attr("Remove");
+    if (remove !== undefined) {
+      // A conditional Remove may hold: counted, since a namespace wrongly kept in scope makes a false link.
+      for (const name of remove.split(";")) if (name.trim()) out.push({ op: "remove", name: name.trim() });
+      continue;
+    }
+    const include = attr("Include");
+    if (conditional || include === undefined || !/^[A-Za-z_][\w.]*$/.test(include) || attr("Alias") !== undefined) continue;
+    // `Static="true"` is a `using static` of that type, project-wide: recorded like a `global using static`.
+    out.push({ op: "add", name: include });
   }
   return out;
 }
@@ -65,13 +78,13 @@ const SDK_HOSTING = ["Microsoft.Extensions.Configuration", "Microsoft.Extensions
 
 /**
  * The namespaces the .NET SDK imports as global usings under `<ImplicitUsings>`, by SDK (the SDK's own
- * `Microsoft.NET.Sdk.*.props`). Razor adds none of its own; the WebAssembly Blazor SDK adds its component
- * namespaces. An SDK not listed (a custom one that does not wrap `Microsoft.NET.Sdk`) names nothing.
+ * `Microsoft.NET.Sdk.*.props`). Razor adds none of its own; the WebAssembly Blazor SDK adds only Configuration, DependencyInjection and
+ * Logging (per the SDK's props — its component namespaces come from `_Imports.razor`, not a global using). An SDK not listed (a custom one that does not wrap `Microsoft.NET.Sdk`) names nothing.
  */
 const SDK_IMPLICIT_USINGS: Array<[sdk: RegExp, namespaces: string[]]> = [
   [/^Microsoft\.NET\.Sdk\.Web$/i, [...SDK_BASE, "System.Net.Http.Json", "Microsoft.AspNetCore.Builder", "Microsoft.AspNetCore.Hosting", "Microsoft.AspNetCore.Http", "Microsoft.AspNetCore.Routing", ...SDK_HOSTING]],
   [/^Microsoft\.NET\.Sdk\.Worker$/i, [...SDK_BASE, ...SDK_HOSTING]],
-  [/^Microsoft\.NET\.Sdk\.BlazorWebAssembly$/i, [...SDK_BASE, "System.Net.Http.Json", "Microsoft.AspNetCore.Components.Forms", "Microsoft.AspNetCore.Components.Routing", "Microsoft.AspNetCore.Components.Web", "Microsoft.AspNetCore.Components.Web.Virtualization", "Microsoft.AspNetCore.Components.WebAssembly.Http", "Microsoft.JSInterop"]],
+  [/^Microsoft\.NET\.Sdk\.BlazorWebAssembly$/i, [...SDK_BASE, "Microsoft.Extensions.Configuration", "Microsoft.Extensions.DependencyInjection", "Microsoft.Extensions.Logging"]],
   [/^Microsoft\.NET\.Sdk(?:\.Razor)?$/i, SDK_BASE],
 ];
 
@@ -98,24 +111,42 @@ function implicitUsingsSetting(text: string): boolean | null {
   return value === undefined ? null : /^(?:enable|true)$/i.test(value);
 }
 
-function removedUsings(text: string): string[] {
-  return [...text.matchAll(/<Using\s+Remove\s*=\s*"([^"]+)"/gi)].map((m) => m[1]!);
+/** True when a props file imports the one above it (`GetPathOfFileAbove('Directory.Build.props', …)`). */
+function importsParentProps(text: string): boolean {
+  return /<Import\b[^>]*GetPathOfFileAbove\s*\(\s*['"]Directory\.Build\.props['"]/i.test(text);
 }
 
 /**
- * The namespaces MSBuild imports into every file of a project: the SDK's implicit global usings when
- * `<ImplicitUsings>` is enabled (the project's own value, else the nearest `Directory.Build.props`'s), its own
- * `<Using Include>` items and those of the nearest `Directory.Build.props` (beside the project file or above it),
- * which every project below inherits — minus every `<Using Remove>`.
+ * The namespaces MSBuild imports into every file of a project, applied in MSBuild's evaluation order: the SDK's
+ * implicit global usings when `<ImplicitUsings>` is enabled (the project's own value, else the nearest props
+ * file's that sets one), then the `<Using>` items of `Directory.Build.props` — beside the project file or above
+ * it, and each parent it imports, outermost first — then the project's own, each `<Using Remove>` taking away
+ * what came before it (so a Remove in the props and an Include in the project keeps the namespace).
  */
 export async function projectFileUsings(text: string, file: SelfNameContext): Promise<string[]> {
   if (!/\.(?:cs|vb)proj$/i.test(file.fileName)) return [];
-  const props = (await file.readSibling("Directory.Build.props")) ?? (await file.readAncestors("Directory.Build.props"))[0] ?? "";
+  const sibling = await file.readSibling("Directory.Build.props");
+  const above = await file.readAncestors("Directory.Build.props");
+  // Nearest first; a props file contributes its parent only when it imports it.
+  const candidates = sibling !== null ? [sibling, ...above] : above;
+  const chain: string[] = [];
+  for (const props of candidates) {
+    chain.push(props);
+    if (!importsParentProps(props)) break;
+  }
   const names = new Set(sdkNames(text));
   const sdk = SDK_IMPLICIT_USINGS.find(([re]) => [...names].some((n) => re.test(n)));
-  const implicit = sdk && /\.csproj$/i.test(file.fileName) && (implicitUsingsSetting(text) ?? implicitUsingsSetting(props)) ? sdk[1] : [];
-  const removed = new Set([...removedUsings(text), ...removedUsings(props)]);
-  return [...new Set([...implicit, ...msbuildUsings(text), ...msbuildUsings(props)])].filter((n) => !removed.has(n));
+  const setting = implicitUsingsSetting(text) ?? chain.map(implicitUsingsSetting).find((v) => v !== null) ?? null;
+  const ops: UsingOp[] = [];
+  if (sdk && /\.csproj$/i.test(file.fileName) && setting) for (const name of sdk[1]) ops.push({ op: "add", name });
+  for (const props of [...chain].reverse()) ops.push(...usingOps(props));
+  ops.push(...usingOps(text));
+  const out = new Set<string>();
+  for (const { op, name } of ops) {
+    if (op === "add") out.add(name);
+    else out.delete(name);
+  }
+  return [...out];
 }
 
 /**

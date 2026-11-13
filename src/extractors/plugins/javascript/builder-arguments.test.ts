@@ -98,4 +98,54 @@ describe("arguments a URL builder is handed", () => {
     expect(calls.map((c) => c.target).sort()).toContain("${API_BASE}/v9/cars/sync/${id}");
     expect(calls.map((c) => c.target).join("\n")).toContain("/decoy-garage/cars/");
   });
+
+  it("writes a local template with a multi-line hole or an escaped character in the call", async () => {
+    const calls = await apiCallsOf(`import { apiPath } from "@lib/garage";
+export async function loadMulti(id: number) {
+  const path = \`/cars/\${
+    id
+  }/seats\`;
+  return fetch(apiPath(path));
+}
+export async function loadEscaped(id: number) {
+  const path = \`/cars/\\u0041/\${id}\`;
+  return fetch(apiPath(path));
+}
+export async function loadLiteralBrace(id: number) {
+  const path = \`/cars/\\\${id}\`;
+  return fetch(apiPath(path));
+}
+export async function loadBroken(id: number) {
+  const path = \`/cars/line
+break/\${id}\`;
+  return fetch(apiPath(path));
+}
+`);
+    const targets = calls.map((c) => c.target).sort();
+    expect(targets).toContain("apiPath(`/cars/${id}/seats`)");
+    expect(targets).toContain("apiPath(`/cars/A/${id}`)");
+    expect(targets.filter((t) => t === "apiPath(path)")).toHaveLength(2);
+    // an escaped `$` beside `{id}` is text, never a hole
+    expect(targets).not.toContain("apiPath(`/cars/${id}`)");
+    expect(targets).toHaveLength(4);
+  });
+
+  it("keeps a lowercase module constant as the base of a path-handing helper", async () => {
+    const fns = await functionsOf(`const apiBase = "/api";
+export const carPath = (path: string) => \`\${apiBase}\${path}\`;
+export function carPathMut(path: string) {
+  let base = "/api";
+  return \`\${base}\${path}\`;
+}
+const stadiumOrigin = process.env.STADIUM_ORIGIN ?? "/api";
+export const envPath = (path: string) => \`\${stadiumOrigin}\${path}\`;
+export const carPathParam =(base: string, path: string) => \`\${base}\${path}\`;
+`, "garage.ts");
+    expect(fns.find((f) => f.name === "carPath")?.urlTemplate).toBe("${apiBase}{path}");
+    // a local folds to its own value, never a `${base}` hole
+    expect(fns.find((f) => f.name === "carPathMut")?.urlTemplate).toBe("/api{path}");
+    expect(fns.find((f) => f.name === "carPathParam")?.urlTemplate).toBeUndefined();
+    // a base read from the environment is a runtime value, not one every namesake helper shares
+    expect(fns.find((f) => f.name === "envPath")?.urlTemplate).toBeUndefined();
+  });
 });

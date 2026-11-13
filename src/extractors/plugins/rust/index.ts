@@ -131,7 +131,9 @@ export const rustSpec: RegexLangSpec = {
     {
       // `\s*` around `::`: a blanked turbofish leaves spaces there (`Vec::<u8>::new(`).
       // A module path written before the type (`crate::garage::Garage::park(`) is captured too: it binds the type.
-      pattern: /(?:(?<![\w:.])((?:[a-z_]\w*\s*::\s*)+))?\b([A-Z]\w*)\s*::\s*([a-zA-Z_]\w*)\s*\(/g,
+      // An earlier capitalized segment (`Shape::Kind::f(`) stays on the path, as the ANTLR reading writes it: an
+      // associated-type path, which no scope binds.
+      pattern: /(?:(?<![\w:.])((?:[A-Za-z_]\w*\s*::\s*)+))?\b([A-Z]\w*)\s*::\s*([a-zA-Z_]\w*)\s*\(/g,
       // The path names the type, so a noise-named associated function (`Invoice::open`, `Club::new`) is still kept.
       buildName: (m) => ({ name: `${m[2]}.${m[3]}`, leafName: m[3]!, receiverType: `${(m[1] ?? "").replace(/\s+/g, "")}${m[2]}` }),
     },

@@ -53,6 +53,8 @@ export function extractCFamilyLocalTypes(
   params: readonly ParamInfo[],
   /** C++: the element a declared container type states (`vector<Club>` → `Club`); unset where there is no range-for. */
   elementOf?: (type: string, as?: "iterated" | "dereferenced") => string | null,
+  /** C++: the key and value classes a declared map type states, each null when it is no class; null for a type that is no map. */
+  pairOf?: (type: string) => readonly [string | null, string | null] | null,
 ): LocalTypes {
   const seen = new Map<string, Set<string>>();
   const unknown = new Set<string>();
@@ -62,7 +64,7 @@ export function extractCFamilyLocalTypes(
   const aliasBinds = new Map<string, number>();
   const code: string[] = [];
   // `for (auto& p : <source>)`: what the loop variable is the element of, settled once every declaration is read.
-  const ranges: Array<{ name: string; source: string; iterator?: { call: string | undefined } }> = [];
+  const ranges: Array<{ name: string; source: string; iterator?: { call: string | undefined }; pairIndex?: number }> = [];
   // Every name's bindings in text order: an alias of a name bound more than once takes the one before it.
   const flow = new AliasFlow();
   // `using Al = Second;` / `typedef Second Al;` inside the body: the name stands for its type until the block closes,
@@ -73,11 +75,13 @@ export function extractCFamilyLocalTypes(
   const record = (d: Declared, outside = false): void => {
     if (d.type !== null && localAliases.length > 0) {
       const alias = [...localAliases].reverse().find((a) => a.name === d.type);
-      if (alias) d = { ...d, type: alias.type };
+      // An alias inside a template argument (`unique_ptr<Ride>`) stands for its type as well.
+      const inner = alias ? alias.type : substituteAliases(d.type, localAliases);
+      if (inner !== d.type) d = { ...d, type: inner };
     }
     flow.bind(d.name, d.rangeOver === undefined && d.alias === undefined && d.from === undefined ? d.type : null, outside);
     if (d.alias !== undefined) flow.alias(d.name, d.alias);
-    if (d.rangeOver !== undefined && elementOf) { ranges.push({ name: d.name, source: d.rangeOver, ...(d.iterator ? { iterator: { call: d.from } } : {}) }); return; }
+    if (d.rangeOver !== undefined && elementOf) { ranges.push({ name: d.name, source: d.rangeOver, ...(d.iterator ? { iterator: { call: d.from } } : {}), ...(d.pairIndex !== undefined ? { pairIndex: d.pairIndex } : {}) }); return; }
     if (d.alias !== undefined) {
       (aliasFroms.get(d.name) ?? aliasFroms.set(d.name, new Set()).get(d.name)!).add(d.alias);
       aliasBinds.set(d.name, (aliasBinds.get(d.name) ?? 0) + 1);
@@ -105,7 +109,7 @@ export function extractCFamilyLocalTypes(
         // An alias of an earlier one in scope is its target; one of a type no class names (`int`) still shadows the outer name.
         const target = cFamilyTypeName(written) ?? written.trim();
         const chained = [...localAliases].reverse().find((a) => a.name === target);
-        if (target && target !== name) localAliases.push({ name, type: chained?.type ?? target, depth });
+        if (target && target !== name) localAliases.push({ name, type: chained?.type ?? substituteAliases(target, localAliases), depth });
       }
       if (line[at] === "{") depth++;
       else if (line[at] === "}") {
@@ -153,8 +157,24 @@ export function extractCFamilyLocalTypes(
   const bodyText = (): string => (joined ??= bodyLines.join("\n"));
   // The call an iterator local is initialized from, per container name: `from` of its `iterator` entry.
   const iteratorCalls = new Map<string, string>();
-  for (const { name, source, iterator } of ranges) {
+  // `it->second` (an iterator) or `p.second` (a range-for local) is read in the body.
+  const pairUsed = (name: string, arrow: boolean): boolean => new RegExp(`(?<![\\w.>$])${name}\\s*${arrow ? "(?:->|\\.)" : "\\."}\\s*(?:first|second)\\b`).test(bodyText());
+  // `for (auto& [id, club] : clubs)`: the name bound at a position of a map's pair, typed by the key or value the declaration states.
+  const pairFroms = new Map<string, Set<string>>();
+  for (const { name, source, iterator, pairIndex } of ranges) {
     if (iterator) iterators.add(name);
+    if (pairIndex !== undefined) {
+      const over = /^(?:this\s*->\s*)?([A-Za-z_]\w*)$/.exec(source.replace(/;?\s*$/, "").trim())?.[1];
+      const param = over ? params.find((p) => p.name === over) : undefined;
+      const types = over ? seen.get(over) : undefined;
+      const held = param ? cFamilyTypeName(param.type ?? "") : types?.size === 1 && over && !unknown.has(over) && !fromCalls.has(over) ? [...types][0]! : null;
+      const side = held && pairOf ? pairOf(held)?.[pairIndex] : null;
+      if (side && !PRIMITIVES.has(side)) (seen.get(name) ?? seen.set(name, new Set()).get(name)!).add(side);
+      // A name the body does not declare is a field of the class (or a global): read off its declaration.
+      else if (over && !held && !param && !seen.has(over) && !unknown.has(over) && !fromCalls.has(over)) (pairFroms.get(name) ?? pairFroms.set(name, new Set()).get(name)!).add(`${pairIndex}\u0000${over}`);
+      else rangeUnknown.add(name);
+      continue;
+    }
     const text = source.replace(/;?\s*$/, "").replace(/\s*->\s*/g, ".").replace(/^\*+/, "").trim();
     let element: string | null = null;
     let from: string | null = null;
@@ -194,9 +214,19 @@ export function extractCFamilyLocalTypes(
         out.push({ name: `${name}$deref`, type: "", from: call, element: true, iterator: "dereferenced" });
       }
       // A map's iterator: `it->first` / `it->second` are named `it$first` / `it$second` by the reading, typed by the key and value the field declares.
-      if (iterators.has(name) && new RegExp(`(?<![\\w.>$])${name}\\s*(?:->|\\.)\\s*(?:first|second)\\b`).test(bodyText())) {
+      if (iterators.has(name) ? pairUsed(name, true) : !call && pairUsed(name, false)) {
         out.push({ name: `${name}$first`, type: "", from, fromIndex: 0 }, { name: `${name}$second`, type: "", from, fromIndex: 1 });
       }
+    }
+  }
+  for (const [name, keys] of pairFroms) {
+    if (seen.has(name) || unknown.has(name) || fromCalls.has(name) || params.some((p) => p.name === name)) {
+      untold.add(name);
+      continue;
+    }
+    for (const key of keys) {
+      const [index, from] = key.split("\u0000") as [string, string];
+      out.push({ name, type: "", from, fromIndex: Number(index) });
     }
   }
   for (const [name, calls] of fromCalls) {
@@ -256,12 +286,14 @@ interface Declared {
   fromIndex?: number;
   /** A range-for's source expression, when the variable's type is `auto` (the element of what it iterates). */
   rangeOver?: string;
+  /** A structured binding of a range-for: the position of this name in the element's pair. */
+  pairIndex?: number;
   /** `auto it = squad.begin();` / `.find(x)`: an iterator over what `rangeOver` names, so it holds that collection's element (and a map's `it->first`/`it->second`). */
   iterator?: true;
 }
 
 /** `squad.begin()`, `this->squad.cbegin()`, `clubs.find(id)`: the member functions that return an iterator at an element of the receiver. */
-const ITERATOR_INIT = /^(?:this\s*->\s*)?(?!this\b)([A-Za-z_]\w*)\s*(?:\.|->)\s*(?:c?r?begin|find|lower_bound|upper_bound)\s*\([^()]*\)$/;
+export const ITERATOR_INIT = /^(?:this\s*->\s*)?(?!this\b)([A-Za-z_]\w*)\s*(?:\.|->)\s*(?:c?r?begin|find|lower_bound|upper_bound)\s*\([^()]*\)$/;
 
 /** The declarations one statement makes: `Crate a, *b = make(), c(3)` declares three; `needsInit` in a condition. */
 function declarations(statement: string, needsInit: boolean): Declared[] {
@@ -320,6 +352,8 @@ function declarator(part: string, typeText: string, needsInit: boolean): Declare
     const names = [...name.slice(1, -1).matchAll(/[A-Za-z_]\w*/g)].map((n) => n[0]);
     // `auto [club, player] = pairOf();`: each name is the element at its position of what the call is declared to
     // return (a pair or tuple the manifest's `tupleElementsOf` reads); typed only when the declaration states it.
+    // `for (auto& [id, club] : clubs)`: each name is a position of the map's pair.
+    if (typeText === "auto" && init.startsWith(":") && !init.startsWith("::")) return names.map((n, i) => ({ name: n, type: null, rangeOver: init.slice(1).trim(), pairIndex: i }));
     const from = typeText === "auto" && init.startsWith("=") ? initializerCall(init.slice(1).trim()) : null;
     return names.map((n, i) => (from ? { name: n, type: null, from, fromIndex: i } : { name: n, type: null }));
   }
@@ -370,6 +404,12 @@ export function cFamilyTypeName(raw: string): string | null {
     .replace(/\s+/g, " ")
     .trim();
   return /^[A-Za-z_]\w*/.test(text) ? text.replace(/\s*([<>,])\s*/g, "$1") : null;
+}
+
+/** A local alias standing inside a type's template arguments (`unique_ptr<Ride>`) replaced by what it names. */
+function substituteAliases(type: string, aliases: ReadonlyArray<{ name: string; type: string }>): string {
+  if (aliases.length === 0 || !type.includes("<")) return type;
+  return type.replace(/(?<![\w:.])[A-Za-z_]\w*(?![\w:(])/g, (word) => [...aliases].reverse().find((a) => a.name === word)?.type ?? word);
 }
 
 /** The type an initializer plainly constructs: `new Club(…)`, `Club()`, `Club{…}`, `std::make_unique<Club>(…)`, a cast. */

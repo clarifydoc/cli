@@ -7,10 +7,11 @@ import {
   extractImportsWithSpec,
   extractCallsFromBody,
   deriveExportsFromFnClasses,
+  AFTER_CLASS_FUNCTIONS,
   type RegexLangSpec,
 } from "../extractors/plugins/shared/regex-base.js";
 import { regexSpecFor } from "../extractors/registry.js";
-import type { ParsedStructure } from "../types/language-plugin.js";
+import type { ParsedFunctionSpan, ParsedStructure } from "../types/language-plugin.js";
 import { extractEntities, mergeEntities } from "../extractors/entities/index.js";
 import { isTestFile } from "./test-file-detector.js";
 
@@ -45,7 +46,7 @@ export function extractWithRegex(
   // When classes have methods (e.g. Perl file-scoped packages), remove those methods
   // from the top-level functions list to avoid double-counting.
   if (spec.extractClasses) {
-    if (parsed) adoptParsedMembers(analysis.classes, analysis.functions);
+    if (parsed) adoptParsedMembers(analysis.classes, analysis.functions, parsed.functions);
     const methodLines = new Map<number, Set<string>>();
     for (const cls of analysis.classes) {
       for (const m of cls.methods) (methodLines.get(m.line) ?? methodLines.set(m.line, new Set()).get(m.line)!).add(m.name);
@@ -57,6 +58,8 @@ export function extractWithRegex(
       const names = methodLines.get(fn.line);
       if (!names) return true;
       // Kept only beside a member of the same line it is plainly not (`struct A { void f() {} }; void g() {}`).
+      // A function the patterns read after a one-line class's closing brace is no member.
+      if (AFTER_CLASS_FUNCTIONS.has(fn) && !names.has(fn.name)) return true;
       return perLine.get(fn.line)! > 1 && !names.has(fn.name) && analysis.functions.some((g) => g !== fn && g.line === fn.line && names.has(g.name));
     });
   }
@@ -170,7 +173,11 @@ function addDeclarationCalls(lines: readonly string[], spec: RegexLangSpec, func
  * is nested in another function. Where the class pass attached the parsed functions themselves (Go, Rust) this
  * changes nothing.
  */
-function adoptParsedMembers(classes: ClassInfo[], functions: FunctionInfo[]): void {
+function adoptParsedMembers(classes: ClassInfo[], functions: FunctionInfo[], spans: readonly ParsedFunctionSpan[] = []): void {
+  // The class a parser states a function is declared in, by the function's line and name.
+  const stated = new Map<string, string>();
+  for (const span of spans) if (span.owner) stated.set(`${span.line}\0${span.name}`, span.owner);
+  const ownerOf = (fn: FunctionInfo): string | undefined => stated.get(`${fn.line}\0${fn.name}`);
   // Keyed by line AND name: a one-line class declares several members on one line.
   const parsedAt = new Map<string, FunctionInfo>();
   for (const fn of functions) parsedAt.set(`${fn.line}\0${fn.name}`, fn);
@@ -195,8 +202,17 @@ function adoptParsedMembers(classes: ClassInfo[], functions: FunctionInfo[]): vo
   for (const fn of functions) {
     if (claimed.has(fn) || nested(fn)) continue;
     let owner: ClassInfo | null = null;
-    for (const cls of classes) {
-      if (cls.line < fn.line && fn.endLine <= cls.endLine && (!owner || cls.line > owner.line)) owner = cls;
+    // A parser that states the class a member is declared in decides it, even on the class's own line.
+    const named = ownerOf(fn);
+    if (named) {
+      for (const cls of classes) {
+        if ((cls.name === named || cls.name.endsWith(`::${named}`)) && cls.line <= fn.line && fn.endLine <= cls.endLine && (!owner || cls.line > owner.line)) owner = cls;
+      }
+    }
+    if (!owner) {
+      for (const cls of classes) {
+        if (cls.line < fn.line && fn.endLine <= cls.endLine && (!owner || cls.line > owner.line)) owner = cls;
+      }
     }
     if (!owner) continue;
     owner.methods.push(fn);

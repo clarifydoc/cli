@@ -47,6 +47,21 @@ const FILES: Record<string, string> = {
   "Removed/Removed.csproj": `<Project Sdk="Microsoft.NET.Sdk.Worker"><ItemGroup><Using Remove="Microsoft.Extensions.Hosting" /></ItemGroup></Project>\n`,
   "Removed/Startup.cs": caller("League.Removed"),
   // A base SDK project that adds it.
+  // A props file that imports its parent: the outer ImplicitUsings applies.
+  "Chain/Directory.Build.props": `<Project><Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" /></Project>\n`,
+  "Chain/Chained/Chained.csproj": `<Project Sdk="Microsoft.NET.Sdk.Web"></Project>\n`,
+  "Chain/Chained/Startup.cs": caller("League.Chained"),
+  // Without the import the nearest props file stands alone.
+  "Alone/Directory.Build.props": `<Project></Project>\n`,
+  "Alone/Lonely/Lonely.csproj": `<Project Sdk="Microsoft.NET.Sdk.Web"></Project>\n`,
+  "Alone/Lonely/Startup.cs": caller("League.Lonely"),
+  // A Remove in the props, an Include in the project body: evaluated in that order, the namespace stays.
+  "Order/Directory.Build.props": `<Project><ItemGroup><Using Remove="Microsoft.Extensions.Hosting" /></ItemGroup></Project>\n`,
+  "Order/Order.csproj": `<Project Sdk="Microsoft.NET.Sdk.Worker"><ItemGroup><Using Include="Microsoft.Extensions.Hosting" /></ItemGroup></Project>\n`,
+  "Order/Startup.cs": caller("League.Order"),
+  // The project removes it first, then adds it back.
+  "Back/Back.csproj": `<Project Sdk="Microsoft.NET.Sdk.Worker"><ItemGroup><Using Remove="Microsoft.Extensions.Hosting" /><Using Include="Microsoft.Extensions.Hosting" /></ItemGroup></Project>\n`,
+  "Back/Startup.cs": caller("League.Back"),
   "Added/Added.csproj": `<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><Using Include="Microsoft.Extensions.Hosting" /></ItemGroup></Project>\n`,
   "Added/Startup.cs": caller("League.Added"),
 };
@@ -85,6 +100,11 @@ describe("C# implicit usings", () => {
   it("does not link a namespace a <Using Remove> takes away", () => {
     expect(linked("Removed")).toBe(false);
   });
+
+  it("follows a props file to the parent it imports", () => expect(linked("Chain/Chained")).toBe(true));
+  it("reads only the nearest props file when it imports no parent", () => expect(linked("Alone/Lonely")).toBe(false));
+  it("keeps a namespace a project <Using Include> adds after the props' Remove", () => expect(linked("Order")).toBe(true));
+  it("keeps a namespace the project removes and then adds again", () => expect(linked("Back")).toBe(true));
 
   it("links a namespace a <Using Include> adds", () => {
     expect(linked("Added")).toBe(true);

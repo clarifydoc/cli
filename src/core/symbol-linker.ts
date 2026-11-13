@@ -2866,22 +2866,27 @@ function compiledNameMember(ctx: LinkContext, analysis: FileAnalysis, sourceFile
  * import binds its first segment to (`use App\Other\Garage;`, an alias, `use App\Other;` + `Other\Garage`),
  * else the file's own namespace's. A class the calling file declares itself is always its own.
  */
-function filesNamedByEvidence(ctx: LinkContext, analysis: FileAnalysis, sep: string, written: string, candidates: readonly string[]): string[] {
+function filesNamedByEvidence(ctx: LinkContext, analysis: FileAnalysis, sep: string, written: string, candidates: readonly string[], line = 0): string[] {
   const simple = written.slice(written.lastIndexOf(sep) + 1).toLowerCase();
   let full: string;
   if (written.startsWith(sep)) full = written.slice(sep.length);
   else {
     const segments = written.split(sep);
     const bound = analysis.imports.find((i) => i.isType && i.specifiers.includes(segments[0]!));
-    const ns = analysis.declaredNamespace;
+    // A file opening several namespaces records each class's own: the caller's is the class around the call.
+    const around = analysis.classes.some((c) => c.namespace) ? analysis.classes.find((c) => c.line <= line && line <= c.endLine) : undefined;
+    const ns = around ? around.namespace : analysis.declaredNamespace;
     full = bound ? [bound.source, ...segments.slice(1)].join(sep) : ns ? `${ns}${sep}${written}` : written;
   }
   full = full.toLowerCase();
   ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
   return candidates.filter((f) => {
     if (f === analysis.filePath && !written.includes(sep)) return true;
-    const ns = ctx.analysisByFile!.get(f)?.declaredNamespace;
-    return (ns ? `${ns}${sep}${simple}` : simple).toLowerCase() === full;
+    const other = ctx.analysisByFile!.get(f);
+    // The class's own namespace where the file states one per class; else the file's.
+    const named = other?.classes.some((c) => c.namespace) ? other.classes.filter((c) => c.name.toLowerCase() === simple) : [];
+    const spaces = named.length > 0 ? named.map((c) => c.namespace) : [other?.declaredNamespace];
+    return spaces.some((ns) => (ns ? `${ns}${sep}${simple}` : simple).toLowerCase() === full);
   });
 }
 
@@ -2998,7 +3003,7 @@ function classNameMember(
   // A class a namespace-looked-up language finds only where the file says so: its own file, an import naming it,
   // its own namespace or the full name — never a namesake elsewhere, nor a class the namespace does not hold.
   if (evidenceSeparator && candidateFiles?.length && !path && !imported) {
-    candidateFiles = filesNamedByEvidence(ctx, analysis, evidenceSeparator, writtenName, candidateFiles);
+    candidateFiles = filesNamedByEvidence(ctx, analysis, evidenceSeparator, writtenName, candidateFiles, line);
     if (candidateFiles.length === 0) return null;
   }
   // A class called by name is one of the caller's own language family: a Swift
@@ -3681,10 +3686,10 @@ function buildMemberTypes(
     declOf: (f, n) => declAt.get(memberKey(f, n)),
   });
   // A class inside an anonymous namespace (`fileLocal`) is its own file's: the consumer's own one stands, another file's never.
-  const fileOf = (typeName: string, consumerFile: string): string | null =>
-    (declAt.get(memberKey(consumerFile, typeName))?.fileLocal ? consumerFile : null) ??
+  const fileOf = (typeName: string, consumerFile: string, skipOwnLocal = false): string | null =>
+    (!skipOwnLocal && declAt.get(memberKey(consumerFile, typeName))?.fileLocal ? consumerFile : null) ??
     importedDecl(typeName, consumerFile) ??
-    pickDefinition(typeName, declaredFirst(typeName, inSpace((classToFiles.get(typeName) ?? []).filter((f) => f === consumerFile || !declAt.get(memberKey(f, typeName))?.fileLocal || closureOf(consumerFile).has(f)), consumerFile)), consumerFile, (f, n) => declAt.get(memberKey(f, n)), (f) => languageOfFile.get(f), (f) => closureOf(consumerFile).has(f));
+    pickDefinition(typeName, declaredFirst(typeName, inSpace((classToFiles.get(typeName) ?? []).filter((f) => (f === consumerFile && !(skipOwnLocal && declAt.get(memberKey(f, typeName))?.fileLocal)) || !declAt.get(memberKey(f, typeName))?.fileLocal || closureOf(consumerFile).has(f)), consumerFile)), consumerFile, (f, n) => declAt.get(memberKey(f, n)), (f) => languageOfFile.get(f), (f) => closureOf(consumerFile).has(f));
 
   // One type declared across several files of a directory — a Go struct
   // whose methods sit in sibling files (each file carries a stub class with
@@ -3738,6 +3743,11 @@ function buildMemberTypes(
           member: rawName,
           consumer: cls.name,
         };
+        // `other::Valve` beside the file's own anonymous-namespace `Valve`: not that class.
+        if (point.typeFile && type && declaredInOtherNamespace({ typeName: point.typeName, typeFile: point.typeFile }, type, point.typeName, (n) => classToFiles.has(n), (f, n) => declAt.get(memberKey(f, n)))) {
+          const other = fileOf(point.typeName, a.filePath, true);
+          point.typeFile = other && other !== a.filePath ? other : null;
+        }
         if (qualifier) point.qualifier = qualifier;
         if (type && type.includes("<")) point.written = type;
         members.set(name, point);
@@ -4954,6 +4964,8 @@ function resolveCallToDefinitionBody(
   // Split once: "userStore.fetchUsers" → head "userStore", leaf "fetchUsers"
   const parts = call.name.split(".");
   const isQualified = parts.length > 1;
+  // `Shape::Kind::make()` names an associated item of a type, which no import or module path binds.
+  if (isQualified && !reference && isAssociatedTypePath(analysis, call)) return null;
   const leafName = parts[parts.length - 1]!;
   // Where members need `this.`/`self.`/`$this->` (JS/TS, Python, PHP), a bare
   // call in a body is a function — `redirect()` in a PHP controller is the
@@ -7962,6 +7974,37 @@ function typeRefFor(
   typeName: string,
   sourceFile: string,
   projectId: string,
+  scope?: () => NamespaceScope,
+  written?: string | null,
+): { typeName: string; typeFile: string } | null {
+  const ref = typeRefForInner(ctx, typeName, sourceFile, projectId, scope, written);
+  // A type written through a namespace (`other::Valve`) is never a class of an anonymous namespace that is not
+  // that namespace's: the file's own `Valve` stays out of it, whatever the bare name resolves to.
+  return ref && written && declaredInOtherNamespace(ref, written, typeName, (n) => ctx.classFiles.has(n), (f, n) => ctx.classAt.get(memberKey(f, n))) ? null : ref;
+}
+
+function declaredInOtherNamespace(
+  ref: { typeName: string; typeFile: string },
+  written: string,
+  typeName: string,
+  hasClass: (name: string) => boolean,
+  classOf: (file: string, name: string) => FileAnalysis["classes"][number] | undefined,
+): boolean {
+  const path = writtenTypePath(written, typeName);
+  if (!path) return false;
+  const segments = path.split("::");
+  if (segments.length < 2 || hasClass(path) || !segments.slice(0, -1).every((s) => /^[a-z_]/.test(s))) return false;
+  const cls = classOf(ref.typeFile, ref.typeName);
+  if (!cls?.fileLocal) return false;
+  const qualifier = segments.slice(0, -1).join("::");
+  return !(cls.namespace === qualifier || cls.namespace?.endsWith(`::${qualifier}`));
+}
+
+function typeRefForInner(
+  ctx: LinkContext,
+  typeName: string,
+  sourceFile: string,
+  projectId: string,
   /** The namespaces the naming code sits in and imports (`namespaceScope`), where classes have namespaces. */
   scope?: () => NamespaceScope,
   /** The type as declared, which may spell the namespace `typeName` leaves off (`league::Club&`). */
@@ -8296,6 +8339,14 @@ function forwardedClass(ctx: LinkContext, file: string, name: string, depth: num
     found = hit;
   }
   return found;
+}
+
+/** A path call through a type (`Shape::Kind::make()`, `typeSegment`): an associated item no import or module path binds. */
+function isAssociatedTypePath(analysis: FileAnalysis, call: CallInfo): boolean {
+  const rule = manifestFor(analysis.language as Language)?.pathCallTypesNeedScope;
+  if (!call.receiverType || !rule?.typeSegment) return false;
+  const segs = call.receiverType.trim().split(rule.separator);
+  return segs.length > 1 && call.name.startsWith(`${segs[segs.length - 1]}.`) && segs.slice(0, -1).some((s) => rule.typeSegment!.test(s));
 }
 
 /**
@@ -8931,8 +8982,20 @@ function extensionInScope(analysis: FileAnalysis, def: ExtensionDef, ctx: LinkCo
   if (!declaring.packageName) return true;
   const holder = declaring.classes.find((c) => def.symbol.startsWith(`${c.name}.`));
   if (!holder) return false;
-  const qualified = declaring.packageName ? `${declaring.packageName}.${holder.name}` : holder.name;
-  return analysis.imports.some((i) => i.inScope?.module === qualified);
+  // A nested static class is named through the classes whose lines enclose it (`League.Outer.Inner`).
+  const outers = declaring.classes
+    .filter((c) => c !== holder && c.line < holder.line && (c.endLine ?? 0) >= (holder.endLine ?? holder.line))
+    .sort((a, b) => a.line - b.line);
+  const qualified = normalizeQualifiedName([declaring.packageName, ...outers.map((c) => c.name), holder.name].join("."));
+  return (
+    analysis.imports.some((i) => i.inScope?.module !== undefined && normalizeQualifiedName(i.inScope.module) === qualified) ||
+    projectImportsOf(ctx, analysis).some((n) => normalizeQualifiedName(n) === qualified)
+  );
+}
+
+/** A dotted name as the compiler reads it: no spacing, no `global::` prefix. */
+function normalizeQualifiedName(name: string): string {
+  return name.replace(/\s+/g, "").replace(/^global::/, "");
 }
 
 /** An extension method whose receiver is a collection of `element` (a builtin collection names no project class). */

@@ -9,7 +9,7 @@ import { dispatchMapCallee, dispatchMapEntries, dispatchMapMember, importedMapMe
 import { enclosingFunctionNode, FUNCTION_NODE, paramNames } from "../../shared/node-helpers.js";
 import { genericResolveCallName } from "../../shared/call-graph.js";
 import { TEST_REGISTRATION } from "./test-cases.js";
-import { dispatchKeyOfArgs } from "./vuex.js";
+import { dispatchKeyOfArgs, MUTATION_KEY_PREFIX, STORE_COMMIT } from "./vuex.js";
 import { recordIndexOrigin } from "./dispatch-maps.js";
 import { loadedMemberCall } from "./loaded-members.js";
 import { requiredSource } from "./imports-exports.js";
@@ -276,7 +276,7 @@ function handedArgs(node: Node): string[] | null {
   }
   // `store.dispatch(ACTIONS.FETCH_CLUBS)`, `dispatch(LOAD_CLUBS)` naming the action by a constant the file does not
   // declare: the name as written, for the Vuex pass to read in the module that does.
-  if (leaf === "dispatch" && args[0]!.type !== "string" && /^(?:[A-Za-z_$][\w$]*(?:\.[\w$]+)+|[A-Z][A-Z0-9_]*)$/.test(args[0]!.text) && !/^(?:this|props)\b/.test(args[0]!.text) && dispatchKeyOf(node) === null) {
+  if ((leaf === "dispatch" || (leaf === "commit" && STORE_COMMIT.test(fn?.text ?? ""))) && args[0]!.type !== "string" && /^(?:[A-Za-z_$][\w$]*(?:\.[\w$]+)+|[A-Z][A-Z0-9_]*)$/.test(args[0]!.text) && !/^(?:this|props)\b/.test(args[0]!.text) && dispatchKeyOf(node) === null) {
     const head = args[0]!.text.split(".")[0]!;
     if (!enclosingParams(node).has(head)) return args.map((a, i) => (i === 0 ? a.text : ""));
   }
@@ -331,16 +331,21 @@ function dispatchKeyOf(node: Node): string | null {
   // `this.sendMessage(…)` where the component spread `...mapActions('chat', ['sendMessage'])`.
   if (fn?.type === "member_expression" && fn.childForFieldName("object")?.type === "this") {
     const prop = fn.childForFieldName("property")?.text;
-    return prop ? (mappedActions(node).get(prop) ?? null) : null;
+    if (!prop) return null;
+    const mutation = mappedMutations(node).get(prop);
+    return mappedActions(node).get(prop) ?? (mutation ? MUTATION_KEY_PREFIX + mutation : null);
   }
   // `this['clubs/update'](…)` where it spread `...mapActions(['clubs/update'])`.
   if (fn?.type === "subscript_expression") {
     const name = mappedActionCallee(fn);
-    return name ? mappedActions(node).get(name.slice("this.".length)) ?? null : null;
+    if (!name) return null;
+    const mutation = mappedMutations(node).get(name.slice("this.".length));
+    return mappedActions(node).get(name.slice("this.".length)) ?? (mutation ? MUTATION_KEY_PREFIX + mutation : null);
   }
   const leaf = fn?.type === "member_expression" ? fn.childForFieldName("property")?.text : fn?.type === "identifier" ? fn.text : null;
   if (leaf === "queue" || leaf === "queueAll" || leaf === "emit") return jobOrEventKey(node, leaf);
-  if (leaf !== "dispatch") return null;
+  // `commit('SET_PAGE', page)`: the mutation by its name, as a dispatch names its action.
+  if (leaf !== "dispatch" && !(leaf === "commit" && STORE_COMMIT.test(fn?.text ?? ""))) return null;
   return dispatchKeyOfArgs((node.childForFieldName("arguments")?.namedChildren ?? []).filter((a): a is Node => !!a && a.type !== "comment"));
 }
 
@@ -435,16 +440,31 @@ function jobNamesIn(expr: Node | null | undefined, at: Node, depth: number): str
  */
 let actionsTree: Node["tree"] | null = null;
 let actions = new Map<string, string>();
+let mutationsTree: Node["tree"] | null = null;
+let mutations = new Map<string, string>();
 
 function mappedActions(node: Node): Map<string, string> {
   if (node.tree === actionsTree) return actions;
   actionsTree = node.tree;
-  actions = new Map();
-  if (!node.tree.rootNode.text.includes("mapActions")) return actions;
+  actions = mappedNames(node, "mapActions");
+  return actions;
+}
+
+/** `...mapMutations('clubs', ['SET_PAGE'])`, `mapMutations({ setPage: 'SET_PAGE' })`: local name → mutation key, as `mappedActions`. */
+function mappedMutations(node: Node): Map<string, string> {
+  if (node.tree === mutationsTree) return mutations;
+  mutationsTree = node.tree;
+  mutations = mappedNames(node, "mapMutations");
+  return mutations;
+}
+
+function mappedNames(node: Node, helper: "mapActions" | "mapMutations"): Map<string, string> {
+  const actions = new Map<string, string>();
+  if (!node.tree.rootNode.text.includes(helper)) return actions;
   const literal = (n: Node | undefined): string | null =>
     n?.type === "string" ? n.text.slice(1, -1) : n?.type === "template_string" && n.namedChildren.length === 0 ? n.text.slice(1, -1) : null;
   for (const call of node.tree.rootNode.descendantsOfType("call_expression")) {
-    if (call.childForFieldName("function")?.text !== "mapActions") continue;
+    if (call.childForFieldName("function")?.text !== helper) continue;
     const args = (call.childForFieldName("arguments")?.namedChildren ?? []).filter((a) => a.type !== "comment");
     const ns = args.length > 1 ? literal(args[0]) : null;
     if (args.length > 1 && ns === null) continue;

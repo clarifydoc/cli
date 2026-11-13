@@ -3370,7 +3370,9 @@ export interface PropBinding {
  * re-runs when the state it reads changes — each read names the store factory as written (`useClubStore`) and the
  * path below the store (`filters.league`; `picked*` read through, as `ReactiveCells` spells it). `writes`, in the
  * file declaring a store: a function writing a state member (`path` below the store, `""` for all of it) of the store
- * class its binding returns (`store`, `ClubStore`).
+ * class its binding returns (`store`, `ClubStore`) — or, in a component (`viaFactory`), a function writing state of
+ * a store it holds (`page.value = 2` on a `storeToRefs` ref, `store.page = 2`, `store.$patch({ page })`), `store`
+ * then the factory as written (`useClubStore`), which the project pass resolves to that class.
  */
 export interface StoreWatch {
   watchers?: Array<{
@@ -3388,6 +3390,7 @@ export interface StoreWatch {
     line: number;
     spelling: string;
     falsy?: boolean;
+    viaFactory?: true;
   }>;
 }
 
@@ -3470,8 +3473,8 @@ export interface BusEventSite {
  * `this.leagueSvc.changes$.next(c)`); absent, the subject is the class's own (`this.changes$.next(c)`).
  */
 export interface SubjectFlows {
-  /** A subject member a class declares (`changes$ = new Subject<Club>()`); `observes` names the subject an `asObservable()` member exposes. */
-  subjects?: Array<{ class: string; field: string; observes?: string }>;
+  /** A subject member a class declares (`changes$ = new Subject<Club>()`); `observes` names the member an `asObservable()`/`pipe` member or getter exposes (another alias, followed to the subject), of the service the class holds as `via` when set. */
+  subjects?: Array<{ class: string; field: string; observes?: string; via?: string }>;
   /** A `.next` on a subject, in the named function the call sits in. */
   nexts?: Array<{ function: string; class: string; field: string; via?: string; line: number }>;
   /** A subscription written in place on a service's member, whose callback is the named (held) function. */

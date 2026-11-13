@@ -35,7 +35,52 @@ interface ResolvedUrl {
   confidence: Confidence;
 }
 
-/** A hole that reads a member (`${ExportKind.Club}`, `${item.kind}`), never a bare name. */
+const SIMPLE_ESCAPES: Record<string, string> = { n: "\n", r: "\r", t: "\t", b: "\b", f: "\f", v: "\v", "0": "\0" };
+
+/** What an escape sequence of a template's literal piece stands for; null when it is no plain one. */
+function decodeEscape(raw: string): string | null {
+  const body = raw.slice(1);
+  if (body === "\n" || body === "\r\n") return ""; // a line continuation
+  if (body in SIMPLE_ESCAPES) return SIMPLE_ESCAPES[body]!;
+  const hex = /^(?:u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2})|u\{([0-9a-fA-F]{1,6})\})$/.exec(body);
+  if (hex) {
+    const code = parseInt((hex[1] ?? hex[2] ?? hex[3])!, 16);
+    return code <= 0x10ffff ? String.fromCodePoint(code) : null;
+  }
+  return /^[^0-9a-zA-Z\r\n]$/.test(body) ? body : null; // `\\`, `\``, `\$`, `\/`
+}
+
+/**
+ * A template literal rebuilt from its parts, for writing it into another call: escapes in the literal
+ * pieces decoded, whitespace collapsed only inside the `${…}` holes. Null when a decoded literal piece
+ * holds a newline, a backtick or `${` (it could not be written back as one template), or a hole
+ * nests a template of its own.
+ */
+function rebuiltTemplate(template: Node): string | null {
+  let out = "`";
+  // The literal text since the last hole: checked whole, so `\$` beside a `{id}` fragment is no hole.
+  let literal = "";
+  const flush = (): boolean => {
+    if (/[\n`]|\$\{/.test(literal)) return false;
+    out += literal;
+    literal = "";
+    return true;
+  };
+  for (const part of template.children) {
+    if (part.type === "`") continue;
+    if (part.type === "template_substitution") {
+      const inner = part.text.slice(2, -1);
+      if (inner.includes("`") || !flush()) return null;
+      out += `\${${inner.replace(/\s+/g, " ").trim()}}`;
+    } else {
+      const text = part.type === "escape_sequence" ? decodeEscape(part.text) : part.text;
+      if (text === null) return null;
+      literal += text;
+    }
+  }
+  return flush() ? `${out}\`` : null;
+}
+
 const MEMBER_HOLE = /^\$\{[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+\}$/;
 
 /** Named HTTP clients — trusted as API calls without a URL-shape check. */
@@ -1164,8 +1209,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     };
     const home = scopeOf(value);
     if (home === null || home !== scopeOf(id)) return null;
-    const text = value.text;
-    return text.indexOf("`", 1) === text.length - 1 && !/[\\\n]/.test(text) ? text : null;
+    return rebuiltTemplate(value);
   }
 
   /** {@link resolveUrlArg} on a value a local holds, guarded against a local built on itself. */

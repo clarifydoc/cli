@@ -1,7 +1,7 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { ReactiveCells } from "../../../types/analysis.js";
 import { sameCell } from "../../../core/reactive-triggers.js";
-import { withStoreWatchers, type StoreTrigger } from "./store-reads.js";
+import { withStoreWatchers, type StoreTrigger, type StoreWrite } from "./store-reads.js";
 import { TEMPLATE_WRITE_MARK } from "./markup-expressions.js";
 import { decodeTargets, type TemplateTarget } from "./template-targets.js";
 
@@ -74,6 +74,8 @@ export interface CellFacts {
   subjectListens?: SubjectListen[];
   /** Watchers reading state a store holds (`watch(() => store.filters.league, …)`): the project pass joins them to the actions writing it. */
   storeTriggers?: StoreTrigger[];
+  /** Writes a component makes to state a store holds (`page.value = 2` on a `storeToRefs` ref, `store.page = 2`, `store.$patch({ page })`), naming the store factory as written. */
+  storeWrites?: StoreWrite[];
 }
 
 /** A subscription on `via.field` — a member of a service the class holds as `via` — whose callback is held as its own function. */
@@ -92,7 +94,7 @@ export function reactiveCellsOf(tree: Tree): CellFacts {
   memoTree = tree;
   const text = tree.rootNode.text;
   const template = templateWritesOf(tree, text);
-  memo = withStoreWatchers(tree, withSubjectListeners(tree, withPropWatchers(tree, withOptionsApi(tree, read(tree, text, template), text, template), text), text), text);
+  memo = withStoreWatchers(tree, withSubjectListeners(tree, withPropWatchers(tree, withOptionsApi(tree, read(tree, text, template), text, template), text), text), text, template);
   return memo;
 }
 
@@ -132,6 +134,30 @@ export function memberTypes(cls: Node): Map<string, string> {
     }
     if (type) out.set(name, type);
   }
+  const members = new Set(out.keys());
+  // A local a method sets to an injected service (`const svc = inject(ClubService)`); a member of the name wins, and a
+  // name two methods set to different services is no one's.
+  const conflicting = new Set<string>();
+  for (const d of cls.descendantsOfType("variable_declarator")) {
+    const name = d?.childForFieldName("name");
+    const value = d?.childForFieldName("value");
+    const arg = value?.type === "call_expression" && value.childForFieldName("function")?.text === "inject" ? argumentsOf(value)[0] : null;
+    if (!d || name?.type !== "identifier" || arg?.type !== "identifier" || ownerClass(d)?.id !== cls.id || members.has(name.text)) continue;
+    if (out.has(name.text) && out.get(name.text) !== arg.text) conflicting.add(name.text);
+    else out.set(name.text, arg.text);
+  }
+  for (const name of conflicting) out.delete(name);
+  return out;
+}
+
+/** Names of locals a class's methods set once to an injected service (`const svc = inject(ClubService)`). */
+export function injectedLocals(cls: Node): Set<string> {
+  const out = new Set<string>();
+  for (const d of cls.descendantsOfType("variable_declarator")) {
+    const name = d?.childForFieldName("name");
+    const value = d?.childForFieldName("value");
+    if (d && name?.type === "identifier" && value?.type === "call_expression" && value.childForFieldName("function")?.text === "inject" && ownerClass(d)?.id === cls.id) out.add(name.text);
+  }
   return out;
 }
 
@@ -144,6 +170,11 @@ function withSubjectListeners(tree: Tree, facts: CellFacts, text: string): CellF
   const declaredHere = new Set(tree.rootNode.descendantsOfType(["class_declaration", "abstract_class_declaration"]).map((c) => c?.childForFieldName("name")?.text ?? ""));
   const found: SubjectListen[] = [];
   const typesOf = new Map<number, Map<string, string>>();
+  const localsOf = new Map<number, Set<string>>();
+  const injectedLocalsOf = (n: Node): Set<string> | null => {
+    const c = ownerClass(n);
+    return c ? (localsOf.get(c.id) ?? localsOf.set(c.id, injectedLocals(c)).get(c.id)!) : null;
+  };
   for (const n of tree.rootNode.descendantsOfType("call_expression")) {
     if (!n) continue;
     const chain = subscribeChain(n);
@@ -152,7 +183,7 @@ function withSubjectListeners(tree: Tree, facts: CellFacts, text: string): CellF
     const root = chain.root;
     if (root.type !== "member_expression") continue;
     const holder = root.childForFieldName("object");
-    const via = holder?.type === "member_expression" && holder.childForFieldName("object")?.type === "this" ? holder.childForFieldName("property")?.text : holder?.type === "identifier" && inConstructor(n) ? holder.text : null;
+    const via = holder?.type === "member_expression" && holder.childForFieldName("object")?.type === "this" ? holder.childForFieldName("property")?.text : holder?.type === "identifier" && (inConstructor(n) || injectedLocalsOf(n)?.has(holder.text)) ? holder.text : null;
     const fieldName = root.childForFieldName("property")?.text;
     const cls = ownerClass(n);
     if (!via || !fieldName || !cls) continue;
@@ -211,6 +242,26 @@ function withPropWatchers(tree: Tree, facts: CellFacts, text: string): CellFacts
       }
     }
   }
+  // `const { page } = toRefs(props)`, `const size = toRef(props, "size")`: a ref onto a prop.
+  const propRefs = new Map<string, string>();
+  if (aliases.size > 0) {
+    for (const d of tree.rootNode.descendantsOfType("variable_declarator")) {
+      const value = d?.childForFieldName("value");
+      const name = d?.childForFieldName("name");
+      if (!d || value?.type !== "call_expression" || value.childForFieldName("function")?.type !== "identifier") continue;
+      const hook = value.childForFieldName("function")!.text;
+      const args = argumentsOf(value);
+      const from = sources.get(hook);
+      if ((hook !== "toRefs" && hook !== "toRef") || (from !== undefined && !VUE_SOURCES.test(from)) || args[0]?.type !== "identifier" || !aliases.has(args[0].text)) continue;
+      if (hook === "toRefs" && name?.type === "object_pattern") {
+        for (const p of name.namedChildren) {
+          if (p?.type === "shorthand_property_identifier_pattern") propRefs.set(p.text, p.text);
+          else if (p?.type === "pair_pattern" && p.childForFieldName("value")?.type === "identifier") propRefs.set(p.childForFieldName("value")!.text, p.childForFieldName("key")?.text ?? "");
+        }
+      } else if (hook === "toRef" && name?.type === "identifier" && args[1]?.type === "string") propRefs.set(name.text, args[1].text.slice(1, -1));
+    }
+    for (const [local, prop] of propRefs) if (prop) destructured.set(local, prop);
+  }
   if (aliases.size === 0 && destructured.size === 0) return facts;
   const propsRead = (expr: Node | null): string[] => {
     const out = new Set<string>();
@@ -237,7 +288,7 @@ function withPropWatchers(tree: Tree, facts: CellFacts, text: string): CellFacts
     const args = argumentsOf(n);
     if (VUE_WATCH.has(callee.text) && args.length >= 2) {
       const sourceNodes = args[0]!.type === "array" ? args[0]!.namedChildren : [args[0]];
-      const read = sourceNodes.flatMap((s) => (s && (s.type === "arrow_function" || s.type === "function_expression" || s.type === "function") ? propsRead(s.childForFieldName("body")) : []));
+      const read = sourceNodes.flatMap((s) => (s && (s.type === "arrow_function" || s.type === "function_expression" || s.type === "function") ? propsRead(s.childForFieldName("body")) : s?.type === "identifier" && propRefs.get(s.text) ? [propRefs.get(s.text)!] : []));
       if (read.length > 0) found.push({ props: read, hook: callee.text, ...callbackOf(args[1]!), at: n });
     } else if (VUE_EFFECT.has(callee.text) && args[0]) {
       const read = propsRead(getterOf(args[0]));
@@ -321,7 +372,7 @@ export function innermost(functions: ReadonlyArray<{ name: string; line: number;
 }
 
 /** What a statement the template runs writes (`@click="page = 2"`, `v-model="query"`), left in the parsed text as a comment by `withMarkupExpressions`. */
-interface TemplateStatement { line: number; targets: TemplateTarget[] }
+export interface TemplateStatement { line: number; targets: TemplateTarget[] }
 
 function templateWritesOf(tree: Tree, text: string): TemplateStatement[] {
   if (!text.includes(TEMPLATE_WRITE_MARK)) return [];
@@ -335,7 +386,7 @@ function templateWritesOf(tree: Tree, text: string): TemplateStatement[] {
 }
 
 /** The members of a cell a write lands in, as path steps: a computed member and a mutation are the elements (`[]`). */
-function stepsPath(rest: ReadonlyArray<string | null>, mutated: boolean): string[] {
+export function stepsPath(rest: ReadonlyArray<string | null>, mutated: boolean): string[] {
   const cut = rest.indexOf(null);
   const path = (cut < 0 ? rest : rest.slice(0, cut)).map((x) => x ?? "[]");
   if (cut >= 0 || mutated) path.push("[]");
@@ -343,7 +394,7 @@ function stepsPath(rest: ReadonlyArray<string | null>, mutated: boolean): string
 }
 
 function read(tree: Tree, text: string, template: readonly TemplateStatement[]): CellFacts {
-  const vue = /\b(?:ref|shallowRef|reactive|shallowReactive|computed|customRef|defineModel|toRef|useVModel|use(?:Local|Session)?Storage|useRoute)\s*(?:<[^>]*>)?\s*\(/.test(text) && /\b(?:watch\w*|whenever|\w+Watch)\s*\(/.test(text);
+  const vue = /\b(?:ref|shallowRef|reactive|shallowReactive|computed|customRef|defineModel|toRefs?|useVModel|use(?:Local|Session)?Storage|useRoute)\s*(?:<[^>]*>)?\s*\(/.test(text) && /\b(?:watch\w*|whenever|\w+Watch)\s*\(/.test(text);
   const react = /\buse(?:Layout|Insertion)?Effect\s*\(/.test(text) && /\buseState\b/.test(text);
   const angular = /\b(?:effect|toObservable)\s*\(/.test(text) && /\b(?:signal|model|linkedSignal)\s*(?:<[^>]*>)?\s*\(/.test(text);
   if (!vue && !react && !angular) return EMPTY;
@@ -355,8 +406,8 @@ function read(tree: Tree, text: string, template: readonly TemplateStatement[]):
 
   // Declarations: scope node id → name → cell.
   const byScope = new Map<number, Map<string, Cell>>();
-  const declare = (scope: Node, cell: Omit<Cell, "key">): Cell => {
-    const full: Cell = { ...cell, key: `${scope.startPosition.row + 1}:${cell.name}` };
+  const declare = (scope: Node, cell: Omit<Cell, "key"> & { key?: string }): Cell => {
+    const full: Cell = { ...cell, key: cell.key ?? `${scope.startPosition.row + 1}:${cell.name}` };
     (byScope.get(scope.id) ?? byScope.set(scope.id, new Map()).get(scope.id)!).set(cell.name, full);
     return full;
   };
@@ -390,6 +441,26 @@ function read(tree: Tree, text: string, template: readonly TemplateStatement[]):
     if (d.type === "variable_declarator") {
       const nameNode = d.childForFieldName("name");
       const scope = scopeOf(d);
+      // `const { page } = toRefs(state)`, `const size = toRef(state, "size")`: the same cell as `state.page`.
+      if (vue && (hook === "toRefs" || hook === "toRef") && isFrom(hook, VUE_SOURCES, true)) {
+        const source = args[0]?.type === "identifier" ? resolve(args[0].text, args[0]) : undefined;
+        // A reactive object (not a ref, whose members are read below `.value`).
+        const holds = source && !source.opaque && source.kind === "reactive";
+        if (holds && hook === "toRefs" && nameNode?.type === "object_pattern") {
+          for (const p of nameNode.namedChildren) {
+            if (p?.type === "shorthand_property_identifier_pattern") declare(scope, { name: p.text, kind: "ref", key: `${source.key}.${p.text}` });
+            else if (p?.type === "pair_pattern" && p.childForFieldName("value")?.type === "identifier") {
+              const prop = p.childForFieldName("key")?.text.replace(/^['"]|['"]$/g, "");
+              if (prop) declare(scope, { name: p.childForFieldName("value")!.text, kind: "ref", key: `${source.key}.${prop}` });
+            }
+          }
+          continue;
+        }
+        if (holds && hook === "toRef" && nameNode?.type === "identifier" && args[1]?.type === "string") {
+          declare(scope, { name: nameNode.text, kind: "ref", key: `${source.key}.${args[1].text.slice(1, -1)}` });
+          continue;
+        }
+      }
       if (vue && nameNode?.type === "identifier" && VUE_CELLS.has(hook) && isFrom(hook, VUE_SOURCES, true)) {
         const typeArgs = value.childForFieldName("type_arguments")?.text ?? "";
         const opaque = hook === "shallowRef" || hook === "useTemplateRef" || DOM_TYPE.test(typeArgs);
@@ -799,6 +870,41 @@ function optionsObjects(tree: Tree): Node[] {
   return out;
 }
 
+/** The bodies of an options object's `computed` group, by member name (a method, a function value, or `{ get() {…} }`). */
+function computedMembers(options: Node): Map<string, Node> {
+  const out = new Map<string, Node>();
+  for (const m of options.namedChildren) {
+    if (m?.type !== "pair" || optionKey(m.childForFieldName("key")) !== "computed" || m.childForFieldName("value")?.type !== "object") continue;
+    for (const e of m.childForFieldName("value")!.namedChildren) {
+      const key = optionKey(e?.type === "pair" ? e.childForFieldName("key") : e?.type === "method_definition" ? e.childForFieldName("name") : null);
+      const body = e?.type === "method_definition" ? e.childForFieldName("body") : e?.type === "pair" ? getterOf(e.childForFieldName("value") ?? undefined) : null;
+      if (key && body) out.set(key, body);
+    }
+  }
+  return out;
+}
+
+/**
+ * The cells a computed member reads — `this.page * this.size` → `<scope>:page`, `<scope>:size` — through the computed
+ * members it reads in turn. A member used whole or measured (`this.rows.length`, `this.rows.filter(…)`) is read through.
+ */
+function computedReads(computed: ReadonlyMap<string, Node>, name: string, scope: number, seen: Set<string> = new Set()): string[] {
+  if (seen.has(name)) return [];
+  seen.add(name);
+  const out = new Set<string>();
+  for (const t of computed.get(name)?.descendantsOfType("this") ?? []) {
+    if (!t || t.parent?.type !== "member_expression" || t.parent.childForFieldName("object")?.id !== t.id) continue;
+    const { path, deep } = readPath(t);
+    const first = path[0];
+    // `$store`, `$route` and `$refs` are not the component's data; a method call (`this.helper()`) has no path.
+    if (!first || first.startsWith("$")) continue;
+    if (computed.has(first)) {
+      for (const r of computedReads(computed, first, scope, seen)) out.add(r);
+    } else out.add(cellPath(`${scope}:${first}`, path.slice(1)) + (deep ? "*" : ""));
+  }
+  return [...out];
+}
+
 /**
  * Options API watchers: `watch: { page() { … } }` re-runs when `this.page` is written (`this.page = n`, `this.page++`,
  * `this.filters.league = id`, a mutator call under `deep`) in a function of the same component. A cell is the
@@ -815,11 +921,14 @@ function withOptionsApi(tree: Tree, base: CellFacts, text: string, template: rea
   const optionsIds = new Set(components.map((c) => c.id));
   for (const options of components) {
     const scope = options.startPosition.row + 1;
+    const computed = computedMembers(options);
     for (const w of optionsWatchers(options)) {
       const cell = `${scope}:${w.path}${w.deep ? "*" : ""}`;
+      // A watcher on a computed runs when something it reads changes.
+      const reads = computed.has(w.path) ? computedReads(computed, w.path, scope) : [];
       for (const cb of w.callbacks) {
         if (cb.node) optionNames.set(cb.node.id, cb.name);
-        triggers.push({ cells: new Set([cell]), hook: "watch", callback: cb.node, callee: cb.callee ?? null, at: w.member, ...(w.immediate ? { immediate: true } : {}) });
+        triggers.push({ cells: new Set([cell, ...reads]), hook: "watch", callback: cb.node, callee: cb.callee ?? null, at: w.member, ...(w.immediate ? { immediate: true } : {}) });
       }
     }
   }

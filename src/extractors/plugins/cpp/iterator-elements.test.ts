@@ -125,6 +125,79 @@ void Squad::i() {
   });
 });
 
+describe("C++ range-for over a map field", () => {
+  it("types `p.second.m()` and a structured binding's value from the header's field", () => {
+    const all = body(`void Squad::a() {
+  for (auto& p : clubs) p.second.sign();
+}
+void Squad::b() {
+  for (const auto& kv : byName) {
+    kv.second.sign();
+    kv.first.sign();
+  }
+}
+void Squad::c() {
+  for (auto& [id, club] : clubs) club.sign();
+}
+void Squad::d() {
+  for (auto& [name, club] : byName) {
+    name.sign();
+    club.sign();
+  }
+}
+`);
+    expect(at(all, 7)).toEqual(["Club.sign:3"]);
+    expect(at(all, 11)).toEqual(["Club.sign:3"]);
+    expect(at(all, 12)).toEqual([]);
+    expect(at(all, 16)).toEqual(["Club.sign:3"]);
+    expect(at(all, 20)).toEqual([]);
+    expect(at(all, 21)).toEqual(["Club.sign:3"]);
+  });
+  it("types a key that is a class", () => {
+    const all = links({
+      "league/model.h": MODEL,
+      "league/squad.h": `#include "model.h"\n#include <map>\nclass Roster {\npublic:\n  void a();\nprivate:\n  std::map<Boot, Club> m;\n};\n`,
+      "league/squad.cpp": `${BODIES}void Roster::a() {
+  for (auto& p : m) { p.first.lace(); p.second.sign(); }
+}
+`,
+    });
+    expect(at(all, 7).sort()).toEqual(["Boot.lace:2", "Club.sign:3"]);
+  });
+});
+
+describe("C++ range-for over a container the function declares", () => {
+  it("types a map local's value through `p.second` and a structured binding, and keeps a global's plain name", () => {
+    const all = links({
+      "league/model.h": MODEL,
+      "league/run.cpp": `#include "model.h"
+#include <map>
+std::map<int, Club> registry;
+void Club::sign() {}
+void local() {
+  std::map<int, Club> m;
+  for (auto& p : m) p.second.sign();
+  for (auto& [id, club] : m) club.sign();
+}
+void global() {
+  for (auto& p : registry) p.second.sign();
+}
+`,
+    });
+    expect(at(all, 7)).toEqual(["Club.sign:4"]);
+    expect(at(all, 8)).toEqual(["Club.sign:4"]);
+  });
+  it("names the call on a global container as written, never `p$second`", () => {
+    const a = analyze(`#include <map>
+std::map<int, Club> registry;
+void global() {
+  for (auto& p : registry) p.second.sign();
+}
+`, "league/run.cpp");
+    expect(a.functions.find((f) => f.name === "global")!.calls.map((c) => c.name)).toEqual(["p.second.sign"]);
+  });
+});
+
 describe("C++ iterator decoys", () => {
   it("types a pointer element only through `(*it)->`, a value element only through `it->`", () => {
     const all = body(`void Squad::a() {

@@ -45,6 +45,29 @@ const FILES: Record<string, string> = {
   // the token is a class alias of config/app.php
   "app/Support/Facades/Umpire.php": facade("League\\Support\\Facades", "Umpire", "'Umpire'"),
   "app/Support/Umpire.php": php("League\\Support", "class Umpire { public function call(): int { return 1; } }"),
+  // the accessor is a class constant of the facade, or several returns that all say the same
+  "app/Support/Facades/Dugout.php": php(
+    "League\\Support\\Facades",
+    "class Dugout extends Facade { const NAME = 'dugout'; protected static function getFacadeAccessor() { return self::NAME; } }",
+    ["Illuminate\\Support\\Facades\\Facade"],
+  ),
+  "app/Support/Dugout.php": php("League\\Support", "class Dugout { public function sit(): int { return 1; } }"),
+  "app/Support/Facades/Bench.php": php(
+    "League\\Support\\Facades",
+    "class Bench extends Facade { protected static function getFacadeAccessor() { if (app()->isLocal()) { return 'bench'; } return 'bench'; } }",
+    ["Illuminate\\Support\\Facades\\Facade"],
+  ),
+  "app/Support/Bench.php": php("League\\Support", "class Bench { public function rest(): int { return 1; } }"),
+  // two returns that disagree: not one accessor
+  "app/Support/Facades/Booth.php": php(
+    "League\\Support\\Facades",
+    "class Booth extends Facade { protected static function getFacadeAccessor() { if (app()->isLocal()) { return 'booth'; } return 'box'; } }",
+    ["Illuminate\\Support\\Facades\\Facade"],
+  ),
+  "app/Support/Booth.php": php("League\\Support", "class Booth { public function talk(): int { return 1; } }"),
+  // one implementation registered twice under the token
+  "app/Support/Facades/Turf.php": facade("League\\Support\\Facades", "Turf", "'turf'"),
+  "app/Support/Turf.php": php("League\\Support", "class Turf { public function roll(): int { return 1; } }"),
   "config/app.php": [
     "<?php",
     "use League\\Support\\Umpire;",
@@ -61,10 +84,15 @@ const FILES: Record<string, string> = {
       "    $this->app->singleton('referee', Referee::class);",
       "    $this->app->scoped('scout', function ($app) { return new Scout(); });",
       "    $this->app->bind(SponsorBook::class, PaidSponsorBook::class);",
+      "    $this->app->bind('dugout', Dugout::class);",
+      "    $this->app->bind('bench', Bench::class);",
+      "    $this->app->bind('booth', Booth::class);",
+      "    $this->app->bind('turf', Turf::class);",
+      "    $this->app->singleton('turf', Turf::class);",
       "  }",
       "}",
     ].join("\n"),
-    ["League\\Support\\Ledger", "League\\Support\\Referee", "League\\Support\\Scout", "League\\Support\\SponsorBook", "League\\Support\\PaidSponsorBook"],
+    ["League\\Support\\Ledger", "League\\Support\\Referee", "League\\Support\\Scout", "League\\Support\\SponsorBook", "League\\Support\\PaidSponsorBook", "League\\Support\\Dugout", "League\\Support\\Bench", "League\\Support\\Booth", "League\\Support\\Turf"],
   ),
   "app/Http/Run.php": php(
     "League\\Http",
@@ -77,6 +105,10 @@ const FILES: Record<string, string> = {
       "  public function sell() { return Tickets::sell(); }",
       "  public function sign() { return Sponsors::sign(); }",
       "  public function call() { return Umpire::call(); }",
+      "  public function sit() { return Dugout::sit(); }",
+      "  public function rest() { return Bench::rest(); }",
+      "  public function talk() { return Booth::talk(); }",
+      "  public function roll() { return Turf::roll(); }",
       "}",
     ].join("\n"),
     [
@@ -87,6 +119,10 @@ const FILES: Record<string, string> = {
       "League\\Support\\Facades\\Tickets",
       "League\\Support\\Facades\\Sponsors",
       "League\\Support\\Facades\\Umpire",
+      "League\\Support\\Facades\\Dugout",
+      "League\\Support\\Facades\\Bench",
+      "League\\Support\\Facades\\Booth",
+      "League\\Support\\Facades\\Turf",
     ],
   ),
 };
@@ -130,5 +166,15 @@ describe("Laravel facades resolve to the class the container yields", () => {
   it("an accessor naming a class reaches it, or the implementation the class's binding says", () => {
     expect(links("sell")).toEqual(["Tickets.sell -> app/Support/BoxOffice.php::BoxOffice.sell INFERRED injection"]);
     expect(links("sign")).toEqual(["Sponsors.sign -> app/Support/PaidSponsorBook.php::PaidSponsorBook.sign INFERRED di-binding"]);
+  });
+
+  it("an accessor that is a class constant, or returns that all agree, names its token", () => {
+    expect(links("sit")).toEqual(["Dugout.sit -> app/Support/Dugout.php::Dugout.sit INFERRED di-binding"]);
+    expect(links("rest")).toEqual(["Bench.rest -> app/Support/Bench.php::Bench.rest INFERRED di-binding"]);
+    expect(links("talk")).toEqual([]);
+  });
+
+  it("one implementation registered twice under a token is still one", () => {
+    expect(links("roll")).toEqual(["Turf.roll -> app/Support/Turf.php::Turf.roll INFERRED di-binding"]);
   });
 });

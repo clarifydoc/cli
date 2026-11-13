@@ -52,7 +52,10 @@ export function extractCppClasses(sourceLines: string[], fns: FunctionInfo[], sp
   const namespaces = declaredNamespaces(sourceLines);
   const anonymousAt: boolean[] = [];
   const nsAt = namespacesByLine(sourceLines, anonymousAt);
-  for (const [row, names] of opened) nsAt[row] = joinNamespaces(nsAt[row], names);
+  for (const [row, names] of opened) {
+    nsAt[row] = joinNamespaces(nsAt[row], names);
+    if (names.includes("")) anonymousAt[row] = true;
+  }
   qualifyNestedClasses(lines, classes, namespaces, nsAt);
   for (const cls of classes) {
     const head = lines[cls.line - 1] ?? "";
@@ -144,11 +147,24 @@ const TRANSPARENT_WRAPPER = /^(?:::)?(?:std::)?(?:unique_ptr|shared_ptr|weak_ptr
  * (`const T&`, `T*`, `T::value_type`, `unique_ptr<T>`, `vector<T>`), never on a mere mention — `Fixture<T>` and
  * `Table<K, V>` are classes of the project, and a call on one is a call on that class.
  */
-export function namesTemplateParameter(type: string, names: readonly string[]): boolean {
+export function namesTemplateParameter(type: string, names: readonly string[], declaresClass?: (name: string) => boolean): boolean {
   const t = type.replace(/\b(?:const|volatile|typename|struct|class)\b/g, " ").replace(/[&*]+|\.\.\.|\[[^\]]*\]/g, " ").trim();
   const open = t.indexOf("<");
   const head = (open < 0 ? t : t.slice(0, open)).replace(/\s+/g, "");
-  if (open >= 0 && TRANSPARENT_WRAPPER.test(head)) {
+  // `Ledger<M>::Row`: a name written after a template-argument list that mentions a parameter depends on it
+  // (the specialization may declare anything under that name), whatever class `Ledger` is.
+  if (open >= 0) {
+    let depth = 0;
+    for (let i = open; i < t.length; i++) {
+      if (t[i] === "<") depth++;
+      else if (t[i] === ">" && --depth === 0) {
+        if (/^\s*::\s*\w/.test(t.slice(i + 1)) && names.some((n) => new RegExp(String.raw`(?<![\w:.])${n}(?!\w)`).test(t.slice(open, i)))) return true;
+        break;
+      }
+    }
+  }
+  // A wrapper's name the file declares as its own class (`template<class T> struct queue`) is that class, not the standard one.
+  if (open >= 0 && TRANSPARENT_WRAPPER.test(head) && !declaresClass?.(head.replace(/^::/, "").split("::").pop()!)) {
     let depth = 0;
     let current = "";
     const args: string[] = [];
@@ -159,9 +175,30 @@ export function namesTemplateParameter(type: string, names: readonly string[]): 
       if (c === "," && depth === 0) { args.push(current); current = ""; } else current += c;
     }
     args.push(current);
-    return args.some((a) => namesTemplateParameter(a, names));
+    return args.some((a) => namesTemplateParameter(a, names, declaresClass));
   }
   return names.includes(head.replace(/^::/, "").split("::")[0]!);
+}
+
+/**
+ * The `Class::Member` types a text writes through template arguments that mention a parameter
+ * (`typename Ledger<M>::Row`): parameter and local types are kept without the arguments (`Ledger::Row`), so the
+ * dependent ones are found here, in the text they were read from.
+ */
+function dependentTypes(text: string, names: readonly string[], ownerName?: string): Set<string> {
+  const found = new Set<string>();
+  for (const m of text.matchAll(/(?<![\w:.])(?:[A-Za-z_]\w*\s*::\s*)*([A-Za-z_]\w*)\s*<((?:[^<>;{}()]|<[^<>;{}()]*>)*)>\s*::\s*([A-Za-z_]\w*)/g)) {
+    // The class's own name with its own parameters (`Squad<K, C>::Slot` inside `Squad<K, C>::Find`, or in its
+    // body) is the class being defined: its nested types are not dependent.
+    const own = m[1] === ownerName || (m[2]!.replace(/\s+/g, "") === names.join(",") && new RegExp(String.raw`(?<![\w:.])${m[1]}\s*<[^;{}()]*>\s*::\s*~?\w+\s*\(`).test(text));
+    if (m[1] !== "template" && !own && names.some((n) => new RegExp(String.raw`(?<![\w:.])${n}(?!\w)`).test(m[2]!))) found.add(`${m[1]}::${m[3]}`);
+  }
+  return found;
+}
+
+/** `typename Ledger::Row*` → `Ledger::Row`: the class and the name under it, as `dependentTypes` writes them. */
+function scopedTail(type: string): string {
+  return type.replace(/\b(?:const|volatile|typename|struct|class)\b|[&*\s]/g, "").split("::").slice(-2).join("::");
 }
 
 /** The template heads a file writes: where each ends, and the type parameters it binds. */
@@ -173,12 +210,17 @@ function templateHeads(lines: readonly string[]): TemplateHead[] {
     const start = /^\s*(?:export\s+)?template\s*</.exec(lines[i]!);
     if (!start) continue;
     let depth = 0;
+    // A `>` inside parentheses compares (`int N = (A > B)`); it never closes the head.
+    let parens = 0;
     let text = "";
     for (let k = i; k < Math.min(lines.length, i + 16); k++) {
       const line = k === i ? lines[k]!.slice(start[0].length - 1) : lines[k]!;
       let closed = -1;
       for (let c = 0; c < line.length && closed < 0; c++) {
-        if (line[c] === "<") depth++;
+        if (line[c] === "(") parens++;
+        else if (line[c] === ")") parens = Math.max(0, parens - 1);
+        else if (parens > 0) continue;
+        else if (line[c] === "<") depth++;
         else if (line[c] === ">" && line[c - 1] !== "-" && --depth === 0) closed = c;
       }
       if (closed < 0) {
@@ -206,6 +248,7 @@ function templateHeads(lines: readonly string[]): TemplateHead[] {
 function untypeTemplateParameters(classes: readonly ClassInfo[], fns: readonly FunctionInfo[], lines: readonly string[]): void {
   const heads = templateHeads(lines);
   if (heads.length === 0) return;
+  const declaresClass = (name: string): boolean => classes.some((c) => c.name === name);
   const all = [...new Set([...fns, ...classes.flatMap((c) => c.methods)])].sort((a, b) => a.line - b.line);
   const bodies = [...classes].sort((a, b) => a.line - b.line);
   // Nothing but the declaration's own words stands between a head and what it binds: no `;`, `{` or `}`.
@@ -219,8 +262,9 @@ function untypeTemplateParameters(classes: readonly ClassInfo[], fns: readonly F
   };
   // What the head's names type becomes untyped, and the call on it an unknown type's: the linker's unique-name guess
   // must not pick the namesake class's member either.
-  const untype = (names: readonly string[], fn: FunctionInfo, fields: readonly string[] = []): void => {
-    const word = { test: (type: string) => namesTemplateParameter(type, names) };
+  const untype = (names: readonly string[], fn: FunctionInfo, fields: readonly string[] = [], scopeText = ""): void => {
+    const dependent = dependentTypes(`${scopeText}\n${lines.slice(fn.line - 1, Math.max(fn.line, fn.endLine)).join("\n")}`, names);
+    const word = { test: (type: string) => namesTemplateParameter(type, names, declaresClass) || (dependent.size > 0 && dependent.has(scopedTail(type))) };
     const untyped = new Set(fn.untypedLocals);
     for (const p of fn.params) {
       if (p.type && word.test(p.type)) {
@@ -242,7 +286,9 @@ function untypeTemplateParameters(classes: readonly ClassInfo[], fns: readonly F
   for (const head of heads) {
     const owner = bodies.find((c) => c.line >= head.endLine && /\b(?:class|struct)\b/.test(lines[c.line - 1] ?? "") && bound(head, c.line, /\b(?:class|struct)\b/));
     if (owner) {
-      const word = { test: (type: string) => namesTemplateParameter(type, head.names) };
+      const bodyText = lines.slice(owner.line - 1, owner.endLine).join("\n");
+      const dependent = dependentTypes(bodyText, head.names, owner.name);
+      const word = { test: (type: string) => namesTemplateParameter(type, head.names, declaresClass) || (dependent.size > 0 && dependent.has(scopedTail(type))) };
       const fields: string[] = [];
       for (const c of bodies) {
         if (c.line < head.line || c.line > owner.endLine) continue;
@@ -256,7 +302,7 @@ function untypeTemplateParameters(classes: readonly ClassInfo[], fns: readonly F
       // A one-line body states its fields on no line of their own: read `T value;` off the text between members.
       const text = lines.slice(owner.line - 1, owner.endLine).join("\n");
       for (const m of text.matchAll(new RegExp(String.raw`(?<![\w:])(?:${head.names.join("|")})(?:\s*<[^;{}()]*>)?[\s*&]+(\w+)\s*(?:;|=[^;(){}]*;)`, "g"))) fields.push(m[1]!);
-      for (const fn of all) if (fn.line >= head.line && fn.line <= owner.endLine) untype(head.names, fn, fields);
+      for (const fn of all) if (fn.line >= head.line && fn.line <= owner.endLine) untype(head.names, fn, fields, bodyText);
       continue;
     }
     const fn = all.find((f) => f.line >= head.endLine);

@@ -558,7 +558,7 @@ function macroCalls(tokens: Token[], owner: PatternCallName[]): void {
       if ((NAME_TOKENS.has(prev.type) || prev.type === RustLexer.KW_SELFTYPE) && /^[A-Z]/.test(prev.text ?? "")) {
         // The module names written before the type (`crate::garage::Garage::new(`) bind it: kept on `receiverType`.
         const path: string[] = [prev.text ?? ""];
-        for (let i = typeIndex; i >= 2 && tokens[i - 1]!.type === RustLexer.PATHSEP && /^[a-z_]\w*$/.test(tokens[i - 2]!.text ?? ""); i -= 2) path.unshift(tokens[i - 2]!.text!);
+        for (let i = typeIndex; i >= 2 && tokens[i - 1]!.type === RustLexer.PATHSEP && /^[A-Za-z_]\w*$/.test(tokens[i - 2]!.text ?? ""); i -= 2) path.unshift(tokens[i - 2]!.text!);
         owner.push(call(`${prev.text}.${name}`, name, prev, path.join("::")));
       }
       else owner.push(call(name, name, leaf));

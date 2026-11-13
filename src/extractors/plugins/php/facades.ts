@@ -26,13 +26,30 @@ export function facadeProxyOf(
     for (const c of n.children) walk(c);
   };
   walk(fnBody);
-  if (returns.length !== 1) return undefined;
-  const value = returns[0]!.namedChildren[0];
+  if (returns.length === 0) return undefined;
+  // Every `return` must say the same: one branch per environment, one answer.
+  const answers = returns.map((r) => proxyOfValue(r.namedChildren[0], body, aliases));
+  const first = answers[0];
+  return first && answers.every((a) => a && a.type === first.type && a.token === first.token) ? first : undefined;
+}
+
+function proxyOfValue(value: Node | undefined, classBody: Node | undefined, aliases: ReadonlyMap<string, string>): ClassInfo["staticProxyOf"] | undefined {
   if (!value) return undefined;
   if (value.type === "class_constant_access_expression") {
     const parts = value.namedChildren;
-    if (parts.length !== 2 || parts[1]!.text !== "class") return undefined;
-    const raw = simpleClassName(parts[0]!.text);
+    if (parts.length !== 2) return undefined;
+    const holder = parts[0]!.text;
+    if (parts[1]!.text !== "class") {
+      // `return self::TOKEN;` — the class constant of this very class.
+      if (holder !== "self" && holder !== "static") return undefined;
+      const constant = classBody?.children
+        .filter((m) => m.type === "const_declaration")
+        .flatMap((m) => m.namedChildren.filter((e) => e.type === "const_element"))
+        .find((e) => e.namedChildren.find((c) => c.type === "name")?.text === parts[1]!.text);
+      const literal = constant?.namedChildren.filter((c) => c.type !== "name").at(-1);
+      return literal && literal.type !== "class_constant_access_expression" ? proxyOfValue(literal, undefined, aliases) : undefined;
+    }
+    const raw = simpleClassName(holder);
     return raw && raw !== "static" && raw !== "self" ? { type: aliases.get(raw) ?? raw } : undefined;
   }
   if (value.type === "string" || value.type === "encapsed_string") {

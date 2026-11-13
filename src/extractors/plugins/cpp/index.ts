@@ -8,7 +8,7 @@ import { CLASS_PATTERN, declaredNamespaces, extractCppClasses } from "./classes.
 import { markLocalCallables } from "../shared/c-family-callables.js";
 import { extractCFamilyValueFlow } from "../shared/c-family-value-flow.js";
 import { extractCFamilyLocalTypes, keepTypeScopes } from "../shared/c-family-locals.js";
-import { cppCollectionElement } from "./collection-element.js";
+import { cppCollectionElement, cppMapTypes } from "./collection-element.js";
 import { extractCFamilyTypeAliases } from "../shared/c-family-aliases.js";
 import { extractCFamilyMacros } from "../shared/c-family-macros.js";
 import { CPP_CODE, definitionAt } from "../shared/c-family-code.js";
@@ -212,6 +212,13 @@ export const cppSpec: RegexLangSpec = {
       accept: definitionAt(CPP_CODE),
     },
     {
+      // An explicit specialization (`template<> void Run<Player>(Player& x) {`): the template arguments follow the name.
+      pattern: new RegExp(String.raw`^\s*template\s*<\s*>\s*${MODIFIERS}(?:[\w:<>,*&\s]+?[*&\s>])?${QUALIFIER}${NAME}\s*<[^;(){}]*>\s*\([^)]*\)\s*(?:const\s*)?(?:noexcept\s*)?(?:override\s*)?(?:\{|:[^;:])`),
+      isExported: (line) => !/^\s*static\b/.test(line),
+      isAsync: () => false,
+      accept: definitionAt(CPP_CODE),
+    },
+    {
       // A signature whose parameter list wraps onto later lines
       // (`Status Convert(ServerContext* context,` …), or one whose body opens
       // on the next line (`void Club::play() const` / `{`): taken when a body
@@ -300,7 +307,7 @@ export const cppSpec: RegexLangSpec = {
   postProcessClasses: tagQmlElementClasses,
   markLocalCalls: markLocalCallables,
   extractValueFlow: (lines, analysis) => extractCFamilyValueFlow(lines, analysis, true),
-  extractLocalTypes: (body, fn) => extractCFamilyLocalTypes(body, fn.params, cppCollectionElement),
+  extractLocalTypes: (body, fn) => extractCFamilyLocalTypes(body, fn.params, cppCollectionElement, (type) => { const m = cppMapTypes(type); return m ? [m.key, m.value] : null; }),
   // `using Ride = Car;`, `typedef struct car car_t;`: core types a receiver declared with the alias by what it names.
   extractTypeAliases: extractCFamilyTypeAliases,
   // `#define for_each_club(c, l) …` outside a function: a call of it links to the definition.

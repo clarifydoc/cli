@@ -71,6 +71,9 @@ export class CSharpImportExportExtractor extends ImportExportExtractor {
         .trim();
     }
 
+    // `global::League.X`, `League . X`: the name the compiler reads.
+    source = source.replace(/\s+/g, "").replace(/^global::/, "");
+
     const specifiers = alias ? [alias] : [];
 
     return {

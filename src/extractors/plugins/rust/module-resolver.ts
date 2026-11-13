@@ -18,15 +18,24 @@ import type { ImportResolveContext } from "../../../types/language-plugin.js";
  * one path) is tried as the item of its parent module too. Leaf code.
  */
 export function resolveRustImport(importingFile: string, source: string, specifier: string | undefined, ctx: ImportResolveContext, depth = 0): string | null {
-  // `#[path = "export.rs"] mod export_;` is an import of that file, relative to the declaring file's directory.
+  // `#[path = "export.rs"] mod export_;` is an import of that file, relative to the declaring file's directory;
+  // further segments (`./export.rs::inner`) are modules below it, which a file loaded by `#[path]` holds as a `mod.rs` does.
   if (source.startsWith(".")) {
+    const at = source.indexOf("::");
     const parts = (importingFile.includes("/") ? importingFile.slice(0, importingFile.lastIndexOf("/")).split("/") : []);
-    for (const seg of source.split("/")) {
+    for (const seg of (at < 0 ? source : source.slice(0, at)).split("/")) {
       if (seg === "..") parts.pop();
       else if (seg !== "." && seg !== "") parts.push(seg);
     }
     const file = parts.join("/");
-    return ctx.files.has(file) ? file : null;
+    if (!ctx.files.has(file)) return null;
+    const below = at < 0 ? [] : source.slice(at + 2).replace(/\./g, "::").split("::").filter((s) => s && s !== "*");
+    const dir = file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : "";
+    // The longest run of segments that is a module file (the rest names an item); none is the file itself.
+    for (let k = below.length; k >= 1; k--) {
+      if (exactModuleFile(dir, below.slice(0, k), ctx)) return finishModulePath(dir, below.slice(0, k), specifier, ctx, depth);
+    }
+    return file;
   }
   // A path may come joined with `.` (`crate::garage.tools`: a module path and the name an import binds).
   const segs = source.replace(/\./g, "::").split("::").filter((s) => s && s !== "*");
@@ -52,6 +61,11 @@ export function resolveRustImport(importingFile: string, source: string, specifi
     dir = up(dir);
     path = path.slice(1);
   }
+  return finishModulePath(dir, path, specifier, ctx, depth);
+}
+
+/** The module file the path `path` names below `dir`, then the file that declares `specifier` (re-exports followed). */
+function finishModulePath(dir: string, path: string[], specifier: string | undefined, ctx: ImportResolveContext, depth: number): string | null {
   const module = moduleFile(dir, path, ctx);
   if (!module) return null;
   // `use crate::garage::tools;` binds the module `tools` itself.

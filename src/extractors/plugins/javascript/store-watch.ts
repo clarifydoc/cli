@@ -33,10 +33,16 @@ export function storeWatch(tree: Tree, sourceText: string, functions: ReadonlyAr
     }
     if (watchers.length > 0) out.watchers = watchers;
   }
-  if (sourceText.includes("defineStore")) {
-    const writes = storeWrites(tree, functions);
-    if (writes.length > 0) out.writes = writes;
+  const writes: Write[] = sourceText.includes("defineStore") ? storeWrites(tree, functions) : [];
+  // What a component writes in a store it holds, by the factory it asked for.
+  for (const w of facts.storeWrites ?? []) {
+    const line = w.line ?? w.node!.startPosition.row + 1;
+    // A statement the template runs is the component's own, which its `<setup>` stands for.
+    const fn = w.template ? "<setup>" : innermost(functions, line);
+    if (!fn || writes.some((o) => o.viaFactory && o.store === w.factory && o.path === w.path && o.function === fn && o.line === line)) continue;
+    writes.push({ store: w.factory, path: w.path, function: fn, line, spelling: w.path.split(".").find((p) => p !== "[]") ?? "", viaFactory: true, ...(w.falsy ? { falsy: true } : {}) });
   }
+  if (writes.length > 0) out.writes = writes;
   return out.watchers || out.writes ? out : null;
 }
 
@@ -241,13 +247,6 @@ export class JsStoreWatchResolver implements DispatchResolver {
   resolve(analyses: FileAnalysis[]): SymbolLink[] {
     if (!analyses.some((a) => a.storeWatch?.watchers?.length) || !analyses.some((a) => a.storeWatch?.writes?.length)) return [];
     const files: Files = { byPath: new Map(analyses.map((a) => [a.filePath, a])), filePathMap: buildFilePathMap(analyses) };
-    const writesByStore = new Map<string, Array<{ file: FileAnalysis; write: Write }>>();
-    for (const a of analyses) {
-      for (const w of a.storeWatch?.writes ?? []) {
-        const key = `${a.filePath}#${w.store}`;
-        (writesByStore.get(key) ?? writesByStore.set(key, []).get(key)!).push({ file: a, write: w });
-      }
-    }
     /** The file declaring `name` below a module that only forwards it (`export { useClubStore } from './club-store'`, `export * from`). */
     const forwarded = (module: FileAnalysis, name: string, hops: number): { file: FileAnalysis; name: string } | null => {
       if (module.functions.some((f) => f.name === name)) return { file: module, name };
@@ -290,6 +289,14 @@ export class JsStoreWatchResolver implements DispatchResolver {
       stores.set(memo, key);
       return key;
     };
+    // Writes by the store they land in: a store file's own name the class, a component's the factory it asked for.
+    const writesByStore = new Map<string, Array<{ file: FileAnalysis; write: Write }>>();
+    for (const a of analyses) {
+      for (const w of a.storeWatch?.writes ?? []) {
+        const key = w.viaFactory ? storeOf(a, w.store) : `${a.filePath}#${w.store}`;
+        if (key) (writesByStore.get(key) ?? writesByStore.set(key, []).get(key)!).push({ file: a, write: w });
+      }
+    }
     const links: SymbolLink[] = [];
     const seen = new Set<string>();
     for (const a of analyses) {

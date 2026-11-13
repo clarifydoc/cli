@@ -49,6 +49,7 @@ import { readC } from "../c/antlr.js";
 import { cppSpec } from "./index.js";
 import { namesTemplateParameter } from "./classes.js";
 import { cppOverloadTypeKey } from "./arg-kinds.js";
+import { ITERATOR_INIT } from "../shared/c-family-locals.js";
 import { cppCollectionElement, cppCollectionElementOf, cppMapTypes } from "./collection-element.js";
 
 /** How many calls deep a chain is named. */
@@ -133,7 +134,7 @@ function blankRawStrings(text: string): string {
 interface OperatorSite { calls: PatternCallName[]; type: string; name: string; line: number; column: number; rightKey: string }
 
 /** A declared parameter, local or field: the class it is a value of (false for a pointer, a primitive, `auto`), its overload key, its type as written. */
-interface Declared { cls: string | false; key: string; text: string; pointer: boolean; iterOf?: string }
+interface Declared { cls: string | false; key: string; text: string; pointer: boolean; iterOf?: string; /** `for (auto& p : clubs)`: the container name `p` is an element of. */ rangeOf?: string }
 
 /** What a function sees by name: its parameters and locals, then the fields of the class it belongs to. */
 interface Scope { locals: Map<string, Declared>; owner: string | null; fields: () => Map<string, Map<string, Declared>>; templates?: string[] }
@@ -204,7 +205,9 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
       // The definition starts at its specifiers, which the declaration around it holds.
       into = name ? own(name, ctx, ctx.parent?.start?.line ?? ctx.start!.line) : [];
       if (name) {
-        scopeOf(into).owner = enclosingClass(ctx);
+        const owner = enclosingClass(ctx);
+        scopeOf(into).owner = owner;
+        if (owner) found[found.length - 1]!.span.owner = owner;
         const bound = templateTypes(ctx);
         if (bound) scopeOf(into).templates = bound;
       }
@@ -256,6 +259,11 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
         if (declared.cls) map.set(name, declared.cls);
         else map.delete(name);
       }
+    } else if (calls && ctx instanceof ForRangeDeclarationContext) {
+      // `for (auto& p : clubs)`: `p` is an element of `clubs`, which `p.second.m()` reads through a map's key and value.
+      const over = rangeContainer(ctx);
+      const id = over && /\bauto\b/.test(specifierText(ctx.declSpecifierSeq())) && ctx.declarator() ? declaredIdentifier(ctx.declarator()!) : null;
+      if (id) scopeOf(calls).locals.set(id.text ?? "", { cls: false, key: "?", text: "auto", pointer: false, rangeOf: over! });
     } else if (calls && ctx instanceof NewExpression_Context) {
       newCall(ctx, calls, text, stream);
     } else if (calls && ctx instanceof MemInitializerContext) {
@@ -429,7 +437,7 @@ function describe(seq: string, decl: DeclaratorContext | null, init?: string): D
   // A pointer states nothing the overloads compare but a C string.
   const key = pointer && base !== "string" ? "?" : base;
   // `auto it = squad.begin();`: an iterator over what `squad` holds.
-  const iterOf = /\bauto\b/.test(seq) && init ? /^=(?:this->)?(?!this\b)([A-Za-z_]\w*)(?:\.|->)(?:c?r?begin|find|lower_bound|upper_bound)\([^()]*\)$/.exec(init)?.[1] : undefined;
+  const iterOf = /\bauto\b/.test(seq) && init?.startsWith("=") ? ITERATOR_INIT.exec(init.slice(1))?.[1] : undefined;
   return { cls, key, text: seq, pointer, ...(iterOf ? { iterOf } : {}) };
 }
 
@@ -471,11 +479,26 @@ function iteratorKind(d: Declared | undefined, scope: Scope): { text: string | n
   return m ? { text: m[1]!, unresolved: false } : null;
 }
 
+/** The name a range-for walks when it is a plain one (`clubs`, `this->clubs`). */
+function rangeContainer(ctx: ForRangeDeclarationContext): string | null {
+  const initializer = (ctx.parent as IterationStatementContext | null)?.forRangeInitializer?.()?.getText() ?? "";
+  return /^(?:this->)?([A-Za-z_]\w*)$/.exec(initializer)?.[1] ?? null;
+}
+
+/** The container a range-for local is an element of, as `iteratorKind` reads an iterator's: its declared type, or a name no function of the file declares. */
+function rangeKind(d: Declared, scope: Scope): { text: string | null; unresolved: boolean } | null {
+  const container = lookupIn(scope, d.rangeOf!);
+  // A name no function declares, in a free function, is a global the linker cannot type: the plain name stays.
+  if (!container) return scope.owner ? { text: null, unresolved: true } : null;
+  return { text: container.pointer ? null : container.text, unresolved: false };
+}
+
 /** `it->second.sign()` over an iterator of a map: the call on the value (or key) class the map's type states; over a header's field, on a name the linker types. */
 function pairMemberCall(named: PatternCallName, scope: Scope): PatternCallName | null {
   const m = /^([A-Za-z_]\w*)\.(first|second)\.([A-Za-z_]\w*)$/.exec(named.name);
   if (!m) return null;
-  const kind = iteratorKind(scope.locals.get(m[1]!), scope);
+  const local = scope.locals.get(m[1]!);
+  const kind = local?.rangeOf ? rangeKind(local, scope) : iteratorKind(local, scope);
   if (!kind) return null;
   if (kind.unresolved) return { ...named, name: `${m[1]}$${m[2]}.${m[3]}` };
   const pair = cppMapTypes(kind.text);

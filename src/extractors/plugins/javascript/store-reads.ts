@@ -12,8 +12,12 @@ import {
   importSources,
   isDeep,
   isOption,
+  MUTATORS,
+  FALSY,
   readPath,
+  stepsPath,
   type CellFacts,
+  type TemplateStatement,
 } from "./reactive-cells.js";
 
 /**
@@ -34,6 +38,12 @@ export interface StoreRead { factory: string; path: string }
 /** A watcher whose source reads store state. `truthyOnly`: it runs only when the value turns truthy (VueUse `whenever`). */
 export interface StoreTrigger { reads: StoreRead[]; hook: string; callback: Node | null; callee: string | null; at: Node; immediate?: boolean; truthyOnly?: boolean }
 
+/**
+ * A write a component makes to state a store holds: the factory as written and the path below the store (`""` for the
+ * whole of it — `$patch(fn)`, `$reset()`), on a statement of the script (`node`) or of the template (`line`).
+ */
+export interface StoreWrite { factory: string; path: string; node: Node | null; line?: number; template?: true; falsy?: boolean }
+
 type Local =
   | { kind: "store"; factory: string }
   | { kind: "ref"; factory: string; member: string }
@@ -41,8 +51,9 @@ type Local =
 
 const STORE_FACTORY = /^use[A-Z][\w$]*Store$/;
 
-export function withStoreWatchers(tree: Tree, facts: CellFacts, text: string): CellFacts {
-  if (!/Store\b|storeToRefs/.test(text) || !/\b(?:watch\w*|whenever|\w+Watch)\s*\(/.test(text)) return facts;
+export function withStoreWatchers(tree: Tree, facts: CellFacts, text: string, template: readonly TemplateStatement[] = []): CellFacts {
+  if (!/Store\b|storeToRefs/.test(text)) return facts;
+  const watching = /\b(?:watch\w*|whenever|\w+Watch)\s*\(/.test(text);
   const sources = importSources(tree.rootNode);
   const fromVue = (name: string): boolean => {
     const src = sources.get(name);
@@ -192,7 +203,10 @@ export function withStoreWatchers(tree: Tree, facts: CellFacts, text: string): C
       }
     }
   }
-  if (byScope.size === 0) return facts;
+  // No local holds a store, but `useClubStore().page = 2` writes one all the same.
+  const writes = storeWritesOf(tree, template, byScope, resolve, factoryOf, declare);
+  const withWrites = (f: CellFacts): CellFacts => (writes.length > 0 ? { ...f, storeWrites: writes } : f);
+  if (!watching || byScope.size === 0) return withWrites(facts);
 
   const found: StoreTrigger[] = [];
   for (const n of tree.rootNode.descendantsOfType("call_expression")) {
@@ -212,6 +226,100 @@ export function withStoreWatchers(tree: Tree, facts: CellFacts, text: string): C
       if (reads.length > 0) found.push({ reads, hook: callee.text, ...callbackOf(args[0]), at: n, immediate: true });
     }
   }
-  if (found.length === 0) return facts;
-  return { ...facts, held: holdCallbacks(facts.held, found), storeTriggers: found };
+  if (found.length === 0) return withWrites(facts);
+  return withWrites({ ...facts, held: holdCallbacks(facts.held, found), storeTriggers: found });
+}
+
+/**
+ * What a component writes in the state of the stores it holds: through the instance (`store.page = 2`,
+ * `store.filters.league = x`, `store.picked.push(c)`, `store.$patch({ page })`, `store.$patch((s) => { s.page = 2 })`,
+ * `store.$reset()`), through a `storeToRefs` ref (`page.value = 2`) and, in the template, by the name the script
+ * exposes (`@click="page = 2"`, `v-model="store.query"`).
+ */
+function storeWritesOf(
+  tree: Tree,
+  template: readonly TemplateStatement[],
+  byScope: ReadonlyMap<number, ReadonlyMap<string, Local>>,
+  resolve: (name: string, at: Node) => Local | undefined,
+  factoryOf: (e: Node | null | undefined) => string | null,
+  declare: (at: Node, name: string, local: Local) => void,
+): StoreWrite[] {
+  const out: StoreWrite[] = [];
+  const isFunction = (n: Node | undefined): n is Node => n?.type === "arrow_function" || n?.type === "function_expression" || n?.type === "function";
+  // `store.$patch((state) => …)`: the parameter is the store.
+  for (const c of tree.rootNode.descendantsOfType("call_expression")) {
+    const callee = c?.childForFieldName("function");
+    if (!c || callee?.type !== "member_expression" || callee.childForFieldName("property")?.text !== "$patch") continue;
+    const factory = factoryOf(callee.childForFieldName("object"));
+    const arg = argumentsOf(c)[0];
+    if (!factory || !isFunction(arg)) continue;
+    let p = arg.childForFieldName("parameters")?.namedChildren[0] ?? arg.childForFieldName("parameter");
+    if (p?.type === "required_parameter") p = p.childForFieldName("pattern");
+    if (p?.type === "identifier") declare(p, p.text, { kind: "store", factory });
+  }
+  const add = (w: StoreWrite): void => {
+    if (!out.some((o) => o.factory === w.factory && o.path === w.path && o.node === w.node && o.line === w.line)) out.push(w);
+  };
+  /** `rest` is the member path below the store; a write of nothing, of a `$` member or of an element alone is no state. */
+  const emit = (factory: string, rest: ReadonlyArray<string | null>, mutated: boolean, base: Omit<StoreWrite, "factory" | "path">): void => {
+    if (rest.length === 0 || rest[0] === null || rest[0]!.startsWith("$")) return;
+    add({ ...base, factory, path: stepsPath(rest, mutated).join(".") });
+  };
+  /** The store a chain starts from, and the members read off it. */
+  const chainOf = (target: Node | null): { factory: string; rest: Array<string | null> } | null => {
+    let n = target;
+    const steps: Array<string | null> = [];
+    while (n && (n.type === "member_expression" || n.type === "subscript_expression")) {
+      steps.unshift(n.type === "member_expression" ? n.childForFieldName("property")?.text ?? null : null);
+      n = n.childForFieldName("object");
+    }
+    if (!n) return null;
+    const local = n.type === "identifier" ? resolve(n.text, n) : undefined;
+    if (local?.kind === "ref") return steps[0] === "value" ? { factory: local.factory, rest: [local.member, ...steps.slice(1)] } : null;
+    const factory = local?.kind === "store" ? local.factory : n.type === "call_expression" ? factoryOf(n) : null;
+    return factory ? { factory, rest: steps } : null;
+  };
+  for (const n of tree.rootNode.descendantsOfType(["assignment_expression", "augmented_assignment_expression", "update_expression", "call_expression"])) {
+    if (!n) continue;
+    if (n.type === "call_expression") {
+      const callee = n.childForFieldName("function");
+      if (callee?.type !== "member_expression") continue;
+      const method = callee.childForFieldName("property")?.text ?? "";
+      const object = callee.childForFieldName("object") ?? null;
+      if (method === "$patch" || method === "$reset") {
+        const factory = factoryOf(object);
+        if (!factory) continue;
+        const arg = argumentsOf(n)[0];
+        if (method === "$reset" || !arg) add({ factory, path: "", node: n });
+        else if (arg.type === "object") {
+          for (const p of arg.namedChildren) {
+            const key = p?.type === "shorthand_property_identifier" ? p.text : p?.type === "pair" ? p.childForFieldName("key")?.text.replace(/^['"]|['"]$/g, "") : null;
+            if (key) add({ factory, path: key, node: p! });
+            else add({ factory, path: "", node: n });
+          }
+        } else if (!isFunction(arg)) add({ factory, path: "", node: n });
+        continue;
+      }
+      if (!MUTATORS.has(method)) continue;
+      const chain = chainOf(object);
+      if (chain) emit(chain.factory, chain.rest, true, { node: n });
+      continue;
+    }
+    const left = n.type === "update_expression" ? n.childForFieldName("argument") : n.childForFieldName("left");
+    const chain = chainOf(left);
+    if (chain) emit(chain.factory, chain.rest, false, { node: n, ...(n.type === "assignment_expression" && FALSY.test(n.childForFieldName("right")?.text.trim() ?? "") ? { falsy: true } : {}) });
+  }
+  // The template reads the script's top-level names: a ref without `.value`.
+  const top = byScope.get(tree.rootNode.id);
+  if (top) {
+    for (const stmt of template) {
+      for (const t of stmt.targets) {
+        const local = top.get(t.root);
+        const base = { node: null, line: stmt.line, template: true as const, ...(t.falsy ? { falsy: true as const } : {}) };
+        if (local?.kind === "store") emit(local.factory, t.steps, t.mutated, base);
+        else if (local?.kind === "ref") emit(local.factory, [local.member, ...t.steps], t.mutated, base);
+      }
+    }
+  }
+  return out;
 }

@@ -73,6 +73,13 @@ describe("resolveUrlBuilders", () => {
     expect(calls.map((c) => c.target)).toEqual(["/api/v1/clubs/${leagueSlug}/fixtures?{}"]);
   });
 
+  it("fills the {key} placeholder of a destructured parameter, a renamed binding by its key", () => {
+    const clubUrl = fn("clubUrl", "/api/clubs/{id}/seats/{n}", [{ name: "{ id, seat: n }", type: "{ id: number; seat: number }", defaultValue: null }]);
+    const calls = [apiCall("clubUrl({ id: 7, seat: 3 })"), apiCall("clubUrl({ id: club.id, seat: 3 })")];
+    resolveUrlBuilders(calls, [analysis([clubUrl])]);
+    expect(calls.map((c) => c.target)).toEqual(["/api/clubs/${7}/seats/${3}", "/api/clubs/${club.id}/seats/${3}"]);
+  });
+
   it("substitutes literal args, dropping the env base and runtime refs to {}", () => {
     const calls = [apiCall("requestUri('teamtalk', 'v4')")];
     const n = resolveUrlBuilders(calls, [analysis([requestUri])]);

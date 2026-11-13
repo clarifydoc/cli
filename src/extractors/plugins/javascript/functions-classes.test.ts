@@ -731,3 +731,46 @@ export const links = { players: () => '/players' } satisfies Record<string, () =
     ]);
   });
 });
+
+describe("destructured parameters", () => {
+  async function fnsOf(src: string) {
+    const tree = await parseSource(src, "typescript" as any, "x.tsx");
+    return new JavaScriptExtractor().extractFunctions(tree, src);
+  }
+
+  it("types the names an object pattern binds from its inline annotation", async () => {
+    const fns = await fnsOf(`
+export function Pager({ table, count: n, seat = 1 }: { table: Table; count?: Counter; seat?: Seat | undefined; onDone: () => void }) {
+  table.nextPage();
+}
+`);
+    const types = fns.find((f) => f.name === "Pager")?.localTypes ?? [];
+    expect(types).toEqual([
+      { name: "table", type: "Table" },
+      { name: "n", type: "Counter" },
+      { name: "seat", type: "Seat" },
+    ]);
+  });
+
+  it("types them from a same-file interface or type alias, and not past a redeclaration", async () => {
+    const fns = await fnsOf(`
+interface Props { table: Table }
+type Other = { garage: Garage };
+export const A = ({ table }: Props) => table.nextPage();
+export const B = ({ garage }: Other) => garage.open();
+export const C = ({ table }: Props) => { const table = other(); return table.nextPage(); };
+export const D = ({ table }: Missing) => table.nextPage();
+`);
+    const types = (n: string) => fns.find((f) => f.name === n)?.localTypes ?? [];
+    expect(types("A")).toEqual([{ name: "table", type: "Table" }]);
+    expect(types("B")).toEqual([{ name: "garage", type: "Garage" }]);
+    expect(types("C")).toEqual([]);
+    expect(types("D")).toEqual([]);
+  });
+
+  it("writes a destructured binding as a {name} placeholder in a URL template", async () => {
+    const fns = await fnsOf("export const clubUrl = ({ id }: { id: number }) => `/api/clubs/${id}`;\n");
+    expect(fns.find((f) => f.name === "clubUrl")?.urlTemplate).toBe("/api/clubs/{id}");
+  });
+});
+

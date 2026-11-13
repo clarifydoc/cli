@@ -81,7 +81,20 @@ export class PhpExtractor extends FunctionClassExtractor {
     }
   }
 
+  /**
+   * The namespace the declarations being read sit in, set only for a file that opens more than one
+   * (`namespace A { … } namespace B { … }`, or `namespace A;` then `namespace B;`): each of its classes then
+   * carries its own `ClassInfo.namespace`, which `declaredNamespace` (the first one) cannot say. A file with one
+   * namespace states it once, on the file.
+   */
+  private classNamespace: string | undefined;
+  private multiNamespace = false;
+
   protected collectClasses(node: Node, classes: ClassInfo[]): void {
+    if (node.type === "program") {
+      this.classNamespace = undefined;
+      this.multiNamespace = node.namedChildren.filter((c) => c.type === "namespace_definition").length > 1;
+    }
     for (const child of node.children) {
       if (
         child.type === "class_declaration" ||
@@ -89,10 +102,21 @@ export class PhpExtractor extends FunctionClassExtractor {
         child.type === "trait_declaration" ||
         child.type === "enum_declaration"
       ) {
-        classes.push(this.parseClass(child));
+        const cls = this.parseClass(child);
+        if (this.multiNamespace && this.classNamespace) cls.namespace = this.classNamespace;
+        classes.push(cls);
       } else if (child.type === "namespace_definition") {
+        const name = child.childForFieldName("name")?.text ?? child.namedChildren.find((c) => c.type === "namespace_name")?.text;
         const block = child.childForFieldName("body") ?? this.findChildByType(child, "compound_statement");
-        if (block) this.collectClasses(block, classes);
+        if (block) {
+          const outer = this.classNamespace;
+          this.classNamespace = name;
+          this.collectClasses(block, classes);
+          this.classNamespace = outer;
+        } else {
+          // `namespace A;` holds the declarations that follow, up to the next `namespace`.
+          this.classNamespace = name;
+        }
       } else if (child.type === "if_statement") {
         for (const block of conditionalBlocks(child)) this.collectClasses(block, classes);
       }

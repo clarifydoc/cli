@@ -2,7 +2,7 @@ import type { Node, Tree } from "web-tree-sitter";
 import type { FileAnalysis, Language, SubjectFlows, SymbolLink } from "../../../types/analysis.js";
 import type { DispatchResolver } from "../../dispatch/base.js";
 import { resolveTarget, buildFilePathMap } from "../../shared/link-scoring.js";
-import { inConstructor, memberTypes, reactiveCellsOf } from "./reactive-cells.js";
+import { inConstructor, injectedLocals, memberTypes, reactiveCellsOf } from "./reactive-cells.js";
 
 const SUBJECT_CLASSES = /^(?:Subject|ReplaySubject|BehaviorSubject|AsyncSubject)$/;
 const CLASS_NODES: ReadonlySet<string> = new Set(["class_declaration", "class", "abstract_class_declaration"]);
@@ -27,6 +27,28 @@ function innermost(functions: ReadonlyArray<{ name: string; line: number; endLin
 }
 
 /**
+ * What a member's value exposes of another member: `this.a`, `this.a.asObservable()`, `this.a.pipe(…)` (any chain of
+ * the two), or the same on a service the class holds — `this.svc.a`, and in a constructor `svc.a`.
+ */
+function exposedMember(value: Node, inCtor: boolean): { observes: string; via?: string } | null {
+  let n: Node | null = value;
+  while (n?.type === "call_expression") {
+    const c: Node | null = n.childForFieldName("function");
+    const prop = c?.type === "member_expression" ? c.childForFieldName("property")?.text : null;
+    if (prop !== "asObservable" && prop !== "pipe") return null;
+    n = c!.childForFieldName("object");
+  }
+  if (n?.type !== "member_expression") return null;
+  const observes = n.childForFieldName("property")?.text;
+  const holder = n.childForFieldName("object");
+  if (!observes) return null;
+  if (holder?.type === "this") return { observes };
+  if (holder?.type === "member_expression" && holder.childForFieldName("object")?.type === "this") return { observes, via: holder.childForFieldName("property")!.text };
+  if (holder?.type === "identifier" && inCtor) return { observes, via: holder.text };
+  return null;
+}
+
+/**
  * Observable subjects a class holds and the classes that feed and listen to them (`FileAnalysis.subjectFlows`):
  *
  *     export class LeagueService {
@@ -41,36 +63,10 @@ function innermost(functions: ReadonlyArray<{ name: string; line: number; endLin
  * `next` elsewhere runs. `JsSubjectResolver` joins them through the service's declared type.
  */
 export function subjectFlows(tree: Tree, sourceText: string, functions: ReadonlyArray<{ name: string; line: number; endLine: number }>): SubjectFlows | null {
-  if (!/\bSubject\b|\bReplaySubject\b|\bBehaviorSubject\b|\bAsyncSubject\b|\.next\s*\(|\.subscribe\s*\(/.test(sourceText)) return null;
+  if (!/\bInjectable\b|\.pipe\s*\(|\bSubject\b|\bReplaySubject\b|\bBehaviorSubject\b|\bAsyncSubject\b|\.next\s*\(|\.subscribe\s*\(/.test(sourceText)) return null;
   const out: SubjectFlows = {};
   const classes = tree.rootNode.descendantsOfType(["class_declaration", "class", "abstract_class_declaration"]).filter((c): c is Node => !!c);
   const subjects = new Set<string>();
-  for (const cls of classes) {
-    const className = nameOfClass(cls);
-    if (!className) continue;
-    for (const d of cls.descendantsOfType(["public_field_definition", "field_definition"])) {
-      if (!d || classOf(d)?.id !== cls.id) continue;
-      const name = (d.childForFieldName("name") ?? d.childForFieldName("property"))?.text;
-      const value = d.childForFieldName("value");
-      if (!name || !value) continue;
-      if (value.type === "new_expression") {
-        const ctor = value.childForFieldName("constructor")?.text ?? "";
-        if (SUBJECT_CLASSES.test(ctor)) {
-          subjects.add(`${className}.${name}`);
-          (out.subjects ??= []).push({ class: className, field: name });
-        }
-      } else if (value.type === "call_expression") {
-        // `changes$ = this.changes.asObservable()`
-        const callee = value.childForFieldName("function");
-        const source = callee?.type === "member_expression" && callee.childForFieldName("property")?.text === "asObservable" ? callee.childForFieldName("object") : null;
-        if (source?.type === "member_expression" && source.childForFieldName("object")?.type === "this") {
-          (out.subjects ??= []).push({ class: className, field: name, observes: source.childForFieldName("property")!.text });
-        }
-      }
-    }
-  }
-  // Aliases only count when what they expose is a subject the class declares.
-  if (out.subjects) out.subjects = out.subjects.filter((s) => !s.observes || subjects.has(`${s.class}.${s.observes}`));
   const types: Record<string, Record<string, string>> = {};
   for (const cls of classes) {
     const name = nameOfClass(cls);
@@ -78,7 +74,53 @@ export function subjectFlows(tree: Tree, sourceText: string, functions: Readonly
     const t = memberTypes(cls);
     if (t.size > 0) types[name] = Object.fromEntries(t);
   }
+  const locals = new Map<number, Set<string>>();
+  const localsOf = (cls: Node) => locals.get(cls.id) ?? locals.set(cls.id, injectedLocals(cls)).get(cls.id)!;
   const typed = (cls: string, member: string) => types[cls]?.[member] !== undefined;
+  const isSubjectNew = (value: Node) => value.type === "new_expression" && SUBJECT_CLASSES.test(value.childForFieldName("constructor")?.text ?? "");
+  /** Records a member `name` of `className` whose value is `value`: a subject, or what another member or service exposes. */
+  const record = (className: string, name: string, value: Node, inCtor: boolean) => {
+    if (isSubjectNew(value)) {
+      if (subjects.has(`${className}.${name}`)) return;
+      subjects.add(`${className}.${name}`);
+      (out.subjects ??= []).push({ class: className, field: name });
+      return;
+    }
+    const source = exposedMember(value, inCtor);
+    if (out.subjects?.some((x) => x.class === className && x.field === name)) return;
+    if (!source || (source.via !== undefined && !typed(className, source.via))) return;
+    (out.subjects ??= []).push({ class: className, field: name, observes: source.observes, ...(source.via ? { via: source.via } : {}) });
+  };
+  for (const cls of classes) {
+    const className = nameOfClass(cls);
+    if (!className) continue;
+    for (const d of cls.descendantsOfType(["public_field_definition", "field_definition"])) {
+      if (!d || classOf(d)?.id !== cls.id) continue;
+      const name = (d.childForFieldName("name") ?? d.childForFieldName("property"))?.text;
+      const value = d.childForFieldName("value");
+      if (name && value) record(className, name, value, false);
+    }
+    for (const m of cls.descendantsOfType("method_definition")) {
+      if (!m || classOf(m)?.id !== cls.id) continue;
+      const name = m.childForFieldName("name")?.text;
+      if (name === "constructor") {
+        for (const as of m.descendantsOfType("assignment_expression")) {
+          const left = as?.childForFieldName("left");
+          const right = as?.childForFieldName("right");
+          if (!as || !right || left?.type !== "member_expression" || left.childForFieldName("object")?.type !== "this") continue;
+          record(className, left.childForFieldName("property")!.text, right, true);
+        }
+      } else if (name && m.children.some((c) => c?.type === "get")) {
+        const returns = m.descendantsOfType("return_statement");
+        const value = returns.length === 1 ? returns[0]?.namedChildren[0] : null;
+        if (value) record(className, name, value, false);
+      }
+    }
+  }
+  // An exposing member only counts when the chain it names is another member of the class, or a service it holds.
+  if (out.subjects) {
+    out.subjects = out.subjects.filter((s) => s.via !== undefined || !s.observes || out.subjects!.some((o) => o.class === s.class && o.field === s.observes));
+  }
   for (const n of tree.rootNode.descendantsOfType("call_expression")) {
     const callee = n?.childForFieldName("function");
     if (!n || callee?.type !== "member_expression" || callee.childForFieldName("property")?.text !== "next") continue;
@@ -94,7 +136,7 @@ export function subjectFlows(tree: Tree, sourceText: string, functions: Readonly
     let via: string | null | undefined;
     if (holder?.type === "this") via = undefined;
     else if (holder?.type === "member_expression" && holder.childForFieldName("object")?.type === "this") via = holder.childForFieldName("property")?.text ?? null;
-    else if (holder?.type === "identifier" && inConstructor(n)) via = holder.text;
+    else if (holder?.type === "identifier" && (inConstructor(n) || (cls && localsOf(cls).has(holder.text)))) via = holder.text;
     else continue;
     if (via === null || (via !== undefined && !typed(className, via))) continue;
     if (via === undefined && !subjects.has(`${className}.${field}`)) continue;
@@ -146,10 +188,16 @@ export class JsSubjectResolver implements DispatchResolver {
       return file && byPath.has(file) ? { file, type } : null;
     };
     /** The subject a member of a service class is: its own, or the one an `asObservable` member exposes. */
-    const subjectKey = (file: string, type: string, field: string): string | null => {
-      const subjects = byPath.get(file)?.subjectFlows?.subjects;
-      const s = subjects?.find((x) => x.class === type && x.field === field);
-      return s ? `${file}\0${type}\0${s.observes ?? s.field}` : null;
+    const subjectKey = (file: string, type: string, field: string, depth = 0): string | null => {
+      const a = byPath.get(file);
+      const s = a?.subjectFlows?.subjects?.find((x) => x.class === type && x.field === field && !(x.via === undefined && x.observes === field));
+      if (!a || !s || depth > 6) return null;
+      if (s.observes === undefined) return `${file}\0${type}\0${s.field}`;
+      if (s.via !== undefined) {
+        const service = serviceOf(a, type, s.via);
+        return service ? subjectKey(service.file, service.type, s.observes, depth + 1) : null;
+      }
+      return subjectKey(file, type, s.observes, depth + 1);
     };
     const lineOf = (a: FileAnalysis, symbol: string): number | undefined => {
       const fn = a.functions.find((f) => f.name === symbol);

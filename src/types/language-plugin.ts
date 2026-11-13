@@ -1501,8 +1501,11 @@ export interface LanguagePluginManifest {
    * namesake or lone declaration elsewhere in the project that nothing in the file reaches — it
    * leaves the call unlinked, and a link it does make is the class-name one. `separator` splits a written
    * path (`CallInfo.receiverType`, `crate::garage::Garage`); `selfTypes` are the names that mean the caller's own type.
+   * `typeSegment` says which segments before the last name a TYPE rather than a module (`Shape` in
+   * `Shape::Kind::make()`): the path is then an associated item of that type, which no import or module path
+   * binds, so the call stays unlinked.
    */
-  pathCallTypesNeedScope?: { separator: string; selfTypes: string[] };
+  pathCallTypesNeedScope?: { separator: string; selfTypes: string[]; typeSegment?: RegExp };
   /**
    * How a structurally satisfied interface (`ClassInfo.structural`) is checked
    * beyond a method's name and parameter count — a language that demands
@@ -2008,6 +2011,8 @@ export interface ParsedFunctionSpan {
   isConstructor?: true;
   /** The template arguments of an explicit specialization (`FunctionInfo.specializedOn`). */
   specializedOn?: string[];
+  /** The class whose body declares it, by name: a member the class pass could not read is still adopted by it, even on the class's own line. */
+  owner?: string;
   calls: CallInfo[];
   /** The function-value steps its body states (`FunctionInfo.valueFlow`). */
   valueFlow?: ValueFlowFact[];

@@ -82,7 +82,19 @@ export const DISPATCH_KEY_SEPARATOR = "|";
 export const ROOT_KEY_PREFIX = "/";
 
 /** A bare `dispatch` (or `context.dispatch`) is the action context's: local to its module. */
-const CONTEXT_DISPATCH = /^(?:dispatch|context\.dispatch)$/;
+const CONTEXT_DISPATCH = /^(?:dispatch|commit|context\.dispatch|context\.commit)$/;
+
+/** A key `mapMutations` bound (`this.SET_PAGE()`): the mutation it names, not an action (call-hooks.ts). */
+export const MUTATION_KEY_PREFIX = "commit:";
+
+/**
+ * A `commit` that is the store's: the action context's (`commit`, `context.commit`) or a store's (`this.$store.commit`,
+ * `store.commit`, `clubStore.commit`). `repo.commit(…)` is any object's, and `commit` is too common a name to join on its own.
+ */
+export const STORE_COMMIT = /^(?:commit|(?:context|ctx)\.commit|(?:[\w$]+\.)*\$?\w*[sS]tore\.commit)$/;
+
+/** Which table of a store module a call names: its `actions` (a dispatch) or its `mutations` (a commit). */
+type Section = "actions" | "mutations";
 
 /** Most action names one computed dispatch name may stand for. */
 const MAX_NAMES = 6;
@@ -145,13 +157,14 @@ function actionNames(node: Node | null | undefined, depth: number): string[] | n
       return fallback ? [...(actionNames(n.childForFieldName("left"), depth + 1) ?? []), ...fallback] : null;
     }
     case "identifier":
-      return valuesOfName(n, depth);
+      return valuesOfName(n, depth) ?? (depth > 0 ? holeOf(n) : null);
     case "member_expression": {
       // `ACTIONS.FETCH_CLUBS` over a map the file declares (`const ACTIONS = { FETCH_CLUBS: 'clubs/fetchAll' }`).
       const obj = n.childForFieldName("object");
       const prop = n.childForFieldName("property")?.text;
       const map = obj?.type === "identifier" && prop ? declaredValue(obj) : null;
-      if (map?.type !== "object") return null;
+      // `'clubs/' + types.FETCH`: a constant another module declares stays a hole, filled where the project is joined.
+      if (map?.type !== "object") return depth > 0 ? holeOf(n) : null;
       const pair = map.namedChildren.find((p) => p?.type === "pair" && keyText(p) === prop);
       return pair ? actionNames(pair.childForFieldName("value"), depth + 1) : null;
     }
@@ -172,6 +185,26 @@ function actionNames(node: Node | null | undefined, depth: number): string[] | n
       return null;
   }
 }
+
+/**
+ * A part of a name that nothing in the file declares — an import's constant (`types.FETCH`, `FETCH`): written `${ref}`
+ * in the key, for the join to fill with the constant's value (`constantValue`). Null for a local, a parameter,
+ * `this`/`props`, or anything that is not a plain name chain.
+ */
+function holeOf(n: Node): string[] | null {
+  if (!/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(n.text)) return null;
+  const head = n.text.split(".")[0]!;
+  if (head === "this" || head === "props" || head === "undefined") return null;
+  for (let s = scopeOf(n); s; s = scopeOf(s)) {
+    if (s.descendantsOfType("variable_declarator").some((d) => d?.childForFieldName("name")?.text === head && scopeOf(d)?.id === s.id)) return null;
+    const params = s.childForFieldName("parameters")?.text ?? s.childForFieldName("parameter")?.text ?? "";
+    if (s.type !== "program" && (params.match(/[\w$]+/g) ?? ([] as string[])).includes(head)) return null;
+  }
+  return [`\${${n.text}}`];
+}
+
+/** `${ref}` holes of a key: the references to fill. */
+const HOLE = /\$\{([^}]+)\}/g;
 
 /** The names a variable can hold: its declaration's value and every value assigned to it, or its parameter default. */
 function valuesOfName(id: Node, depth: number): string[] | null {
@@ -282,14 +315,17 @@ export class VuexDispatchResolver implements DispatchResolver {
     }
 
     // Whether any store names an action by a constant: the whole-name lookup below is only worth making then.
-    const hasComputedActions = analyses.some((a) => a.functions.some((f) => COMPUTED_ACTION.test(f.name)));
+    const hasComputed: Record<Section, boolean> = {
+      actions: analyses.some((a) => a.functions.some((f) => computedRe.actions.test(f.name))),
+      mutations: analyses.some((a) => a.functions.some((f) => computedRe.mutations.test(f.name))),
+    };
 
     /** The action a module file (or a file it imports) declares under a constant whose value `test` accepts. */
-    const computedAction = (mod: FileAnalysis, test: (value: string) => boolean): Hit | null => {
+    const computedAction = (mod: FileAnalysis, test: (value: string) => boolean, section: Section = "actions"): Hit | null => {
       for (const f of filesOf(mod)) {
         if (f !== mod && registered.has(f.filePath)) continue;
         for (const fn of f.functions) {
-          const ref = COMPUTED_ACTION.exec(fn.name)?.[1];
+          const ref = computedRe[section].exec(fn.name)?.[1];
           const value = ref ? constantValue(f, ref, ctx) : null;
           if (value !== null && test(value)) return { file: f, fn };
         }
@@ -298,21 +334,21 @@ export class VuexDispatchResolver implements DispatchResolver {
     };
 
     /** The `actions.<act>` a module file defines, there or in a file it imports. */
-    const literalAction = (mod: FileAnalysis, act: string): Hit | null => {
+    const literalAction = (mod: FileAnalysis, act: string, section: Section = "actions"): Hit | null => {
       // A module file it imports (to register under `modules:`) holds that module's actions, not its own.
       for (const f of filesOf(mod)) {
         if (f !== mod && registered.has(f.filePath)) continue;
-        const fn = f.functions.find((x) => x.name === `actions.${act}` || x.name.endsWith(`.actions.${act}`));
+        const fn = f.functions.find((x) => x.name === `${section}.${act}` || x.name.endsWith(`.${section}.${act}`));
         if (fn) return { file: f, fn };
       }
       // `[ACTIONS.FETCH_CLUBS]() {…}`: an action named by a constant, read in the module that declares it.
-      const named = computedAction(mod, (v) => v === act);
+      const named = computedAction(mod, (v) => v === act, section);
       if (named) return named;
       // `actions = { …, ...readActions }`: the object an import names (`export const readActions = {…}`,
       // or the file's `export default {…}`), or one the file declares itself.
       for (const f of filesOf(mod)) {
         if (f !== mod && registered.has(f.filePath)) continue;
-        for (const name of f.storeShapes?.spreads?.actions ?? []) {
+        for (const name of f.storeShapes?.spreads?.[section] ?? []) {
           const from = importedName(f, name, ctx);
           const file = from?.file ?? f;
           const held = from ? localName(from.file, from.name) : name;
@@ -368,17 +404,17 @@ export class VuexDispatchResolver implements DispatchResolver {
       }
       return out;
     };
-    const actionIn = (mod: Module, act: string): Hit | null => literalAction(mod.file, act) ?? factoryAction(mod, act);
+    const actionIn = (mod: Module, act: string, section: Section): Hit | null => literalAction(mod.file, act, section) ?? (section === "actions" ? factoryAction(mod, act) : null);
 
     /** The distinct actions `key` names under the given root stores. */
-    const hitsFor = (key: string, among: readonly FileAnalysis[]): Hit[] => {
+    const hitsFor = (key: string, among: readonly FileAnalysis[], section: Section): Hit[] => {
       const parts = key.split("/").filter(Boolean);
       const act = parts.pop();
       if (!act) return [];
       // `[FETCH_CLUBS]() {…}` with `FETCH_CLUBS = 'clubs/fetch'` in a store that is not namespaced: the whole name is the action's.
-      const whole = parts.length > 0 && hasComputedActions ? distinct(among.flatMap((root) => [root, ...(trees.get(root)?.values() ?? [])].map((m) => {
+      const whole = parts.length > 0 && hasComputed[section] ? distinct(among.flatMap((root) => [root, ...(trees.get(root)?.values() ?? [])].map((m) => {
         const file = "exported" in m ? m.file : m;
-        return namespacedFiles.has(file) ? null : computedAction(file, (v) => v === key);
+        return namespacedFiles.has(file) ? null : computedAction(file, (v) => v === key, section);
       }))) : [];
       if (whole.length > 0) return whole;
       if (parts.length === 0) {
@@ -388,11 +424,11 @@ export class VuexDispatchResolver implements DispatchResolver {
           files.add(root);
           for (const m of trees.get(root)?.values() ?? []) files.add(m.file);
         }
-        return distinct([...files].filter((f) => !namespacedFiles.has(f)).map((f) => literalAction(f, act)));
+        return distinct([...files].filter((f) => !namespacedFiles.has(f)).map((f) => literalAction(f, act, section)));
       }
       return distinct(among.map((root) => {
         const mod = trees.get(root)?.get(parts.join("/"));
-        return mod ? actionIn(mod, act) : null;
+        return mod ? actionIn(mod, act, section) : null;
       }));
     };
 
@@ -439,19 +475,20 @@ export class VuexDispatchResolver implements DispatchResolver {
     };
 
     const allMemo = new Map<string, Hit[]>();
-    const pick = (key: string, caller: string, local: boolean): Hit | null => {
+    const pick = (key: string, caller: string, local: boolean, section: Section): Hit | null => {
       // Inside a module, an action context's dispatch names the module's own action first.
       if (local) {
-        const own = distinct((ownerOf.get(caller) ?? []).flatMap(({ root, ns }) => hitsFor(`${ns}/${key}`, [root])));
+        const own = distinct((ownerOf.get(caller) ?? []).flatMap(({ root, ns }) => hitsFor(`${ns}/${key}`, [root], section)));
         if (own.length === 1) return own[0]!;
       }
-      let all = allMemo.get(key);
-      if (!all) allMemo.set(key, (all = hitsFor(key, roots)));
+      const memoKey = `${section}\0${key}`;
+      let all = allMemo.get(memoKey);
+      if (!all) allMemo.set(memoKey, (all = hitsFor(key, roots, section)));
       if (all.length <= 1) return all[0] ?? null;
       // Several root stores answer: the caller's app's own.
       const pref = preferred(caller);
       if (pref.length === 0 || pref.length === roots.length) return null;
-      const hits = hitsFor(key, pref);
+      const hits = hitsFor(key, pref, section);
       return hits.length === 1 ? hits[0]! : null;
     };
 
@@ -463,16 +500,31 @@ export class VuexDispatchResolver implements DispatchResolver {
       const fns = [...a.functions, ...a.classes.flatMap((c) => c.methods.map((m) => ({ ...m, name: `${c.name}.${m.name}` })))];
       for (const fn of fns) {
         for (const call of fn.calls) {
+          // A commit runs a mutation, a dispatch an action; `this.SET_PAGE()` bound by `mapMutations` says so in its key.
+          const mapped = call.key?.startsWith(MUTATION_KEY_PREFIX) ?? false;
+          const commit = mapped || STORE_COMMIT.test(call.name);
+          const section: Section = commit ? "mutations" : "actions";
           const emit = (written: string, usage?: Usage[]) => {
+            // `'clubs/' + types.FETCH`: each hole is the constant's value, from the module declaring it.
+            if (written.includes("${")) {
+              let missing = false;
+              const filled = written.replace(HOLE, (_, ref: string) => {
+                const v = constantValue(a, ref, ctx);
+                if (v === null) missing = true;
+                return v ?? "";
+              });
+              if (missing) return;
+              written = filled;
+            }
             const root = written.startsWith(ROOT_KEY_PREFIX);
             const key = root ? written.slice(ROOT_KEY_PREFIX.length) : written;
-            const hit = pick(key, a.filePath, !root && CONTEXT_DISPATCH.test(call.name));
+            const hit = pick(key, a.filePath, !root && CONTEXT_DISPATCH.test(call.name), section);
             if (!hit) return;
             const link = (t: Target): SymbolLink => ({
               sourceFile: a.filePath,
               sourceSymbol: fn.name,
               sourceLine: call.line,
-              callName: `dispatch:${key}`,
+              callName: `${commit ? "commit" : "dispatch"}:${key}`,
               targetFile: t.file,
               targetSymbol: t.symbol,
               targetLine: t.line,
@@ -485,10 +537,10 @@ export class VuexDispatchResolver implements DispatchResolver {
           };
           if (!call.key) {
             // The action a prop names: one link per name a user binds, kept to that user (`viaUsage`).
-            const prop = !call.passed && !call.read && /(?:^|\.)dispatch$/.test(call.name) ? propNamedAction(call) : null;
+            const prop = !call.passed && !call.read && (/(?:^|\.)dispatch$/.test(call.name) || STORE_COMMIT.test(call.name)) ? propNamedAction(call) : null;
             if (!prop) {
               // `store.dispatch(ACTIONS.FETCH_CLUBS)`: the constant another file declares.
-              const ref = !call.passed && !call.read && /(?:^|\.)dispatch$/.test(call.name) ? call.args?.[0] : undefined;
+              const ref = !call.passed && !call.read && (/(?:^|\.)dispatch$/.test(call.name) || STORE_COMMIT.test(call.name)) ? call.args?.[0] : undefined;
               const named = ref ? constantValue(a, ref, ctx) : null;
               if (named) emit(named);
               continue;
@@ -499,8 +551,8 @@ export class VuexDispatchResolver implements DispatchResolver {
           }
           // `this.send()` carries a key when `mapActions` bound it (call-hooks.ts).
           // `this['clubs/update']()` likewise (`this.clubs/update`).
-          if (!/(?:^|\.)dispatch$|^this\.[\w$/]+$/.test(call.name)) continue;
-          for (const written of call.key.split(DISPATCH_KEY_SEPARATOR)) emit(written);
+          if (!/(?:^|\.)dispatch$|^this\.[\w$/]+$/.test(call.name) && !STORE_COMMIT.test(call.name)) continue;
+          for (const written of (mapped ? call.key.slice(MUTATION_KEY_PREFIX.length) : call.key).split(DISPATCH_KEY_SEPARATOR)) emit(written);
         }
       }
     }
@@ -578,7 +630,10 @@ function commonDirs(a: string, b: string): number {
 }
 
 /** An action declared under a constant: `actions.[ACTIONS.FETCH_CLUBS]` (`functions-classes.ts` `actionKeyName`). */
-const COMPUTED_ACTION = /(?:^|\.)actions\.\[([^\]]+)\]$/;
+const computedRe: Record<Section, RegExp> = {
+  actions: /(?:^|\.)actions\.\[([^\]]+)\]$/,
+  mutations: /(?:^|\.)mutations\.\[([^\]]+)\]$/,
+};
 
 /**
  * The string a module-level name stands for, read where it is declared (`FileAnalysis.stringConstants`): in `file`

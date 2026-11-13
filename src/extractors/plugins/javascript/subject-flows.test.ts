@@ -166,6 +166,96 @@ export class ClubDetailComponent {
     expect(links).toEqual(["src/league.ts::LeagueService.announce -> src/league.ts::<subscribe@10>"]);
   });
 
+  const serviceWith = (body: string) => `import { Injectable } from '@angular/core';
+import { Subject } from 'rxjs';
+@Injectable({ providedIn: 'root' })
+export class LeagueService {
+${body}
+  announce(c: string) { this.changes.next(c); }
+}`;
+  const chained = async (body: string, extra: Record<string, string> = {}) =>
+    new JsSubjectResolver().resolve(await analyzeAll({ ...files, ...extra, "src/league.service.ts": serviceWith(body) })).map(show);
+  const announce = "src/league.service.ts::LeagueService.announce -> src/club-detail.component.ts::<pipe@9>";
+
+  it("follows an alias of an alias, and a pipe or shareReplay on the way", async () => {
+    expect(await chained(`  private readonly changes = new Subject<string>();
+  private readonly a$ = this.changes.asObservable().pipe(shareReplay(1));
+  readonly changes$ = this.a$;`)).toContain(announce);
+    expect(await chained(`  private readonly changes = new Subject<string>();
+  readonly changes$ = this.changes.pipe(map((x) => x));`)).toContain(announce);
+  });
+
+  it("follows a getter and a constructor assignment, and a subject created in the constructor", async () => {
+    expect(await chained(`  private readonly changes = new Subject<string>();
+  get changes$() { return this.changes.asObservable(); }`)).toContain(announce);
+    expect(await chained(`  private changes!: Subject<string>;
+  readonly changes$: Observable<string>;
+  constructor() { this.changes = new Subject<string>(); this.changes$ = this.changes.asObservable(); }`)).toContain(announce);
+  });
+
+  it("follows a service that re-exposes another service's subject, and leaves a cycle alone", async () => {
+    const facade = `import { Injectable, inject } from '@angular/core';
+import { LeagueService } from './league.service';
+@Injectable({ providedIn: 'root' })
+export class FacadeService {
+  private readonly league = inject(LeagueService);
+  readonly changes$ = this.league.changes$;
+}`;
+    const listenerOnFacade = listener("Facade", "facade.service", "/api/facade");
+    const links = new JsSubjectResolver()
+      .resolve(await analyzeAll({ ...files, "src/facade.service.ts": facade, "src/facade-listener.component.ts": listenerOnFacade }))
+      .map(show);
+    expect(links).toContain("src/league.service.ts::LeagueService.announce -> src/facade-listener.component.ts::<pipe@9>");
+    const cyc = await chained(`  readonly a$ = this.b$;
+  readonly b$ = this.a$;
+  readonly changes$ = this.a$;
+  private readonly changes = new Subject<string>();`);
+    expect(cyc.filter((l) => l.includes("club-detail"))).toEqual([]);
+  });
+
+  it("listens through a service injected into a local of the function", async () => {
+    const links = new JsSubjectResolver()
+      .resolve(
+        await analyzeAll({
+          ...files,
+          "src/club-detail.component.ts": `import { Component, inject } from '@angular/core';
+import { switchMap } from 'rxjs/operators';
+import { HttpClient } from '@angular/common/http';
+import { LeagueService } from './league.service';
+@Component({ selector: 'app-x', template: '' })
+export class LeagueListenerComponent {
+  private http = inject(HttpClient);
+  ngOnInit() {
+    const svc = inject(LeagueService);
+    svc.changes$.pipe(switchMap(() => this.http.get('/api/matches'))).subscribe();
+  }
+}`,
+        }),
+      )
+      .map(show);
+    expect(links).toContain("src/league.service.ts::LeagueService.announce -> src/club-detail.component.ts::<pipe@10>");
+  });
+
+  it("leaves a local name two methods inject different services into alone", async () => {
+    const links = new JsSubjectResolver()
+      .resolve(
+        await analyzeAll({
+          ...files,
+          "src/club-detail.component.ts": `import { Component, inject } from '@angular/core';
+import { switchMap } from 'rxjs/operators';
+import { LeagueService } from './league.service';
+import { GarageService } from './garage.service';
+@Component({ selector: 'app-x', template: '' })
+export class MixedComponent {
+  a() { const svc = inject(LeagueService); svc.changes$.pipe(switchMap(() => this.http.get('/api/a'))).subscribe(); }
+  b() { const svc = inject(GarageService); svc.changes$.pipe(switchMap(() => this.http.get('/api/b'))).subscribe(); }
+}`,
+        }),
+      )
+      .map(show);
+    expect(links.filter((l) => l.includes("MixedComponent") || l.includes("club-detail"))).toEqual([]);
+  });
+
   it("leaves a subject of a service no listener holds, and a listener on a framework service, alone", async () => {
     const analyses = await analyzeAll({
       "src/league.service.ts": service("League"),

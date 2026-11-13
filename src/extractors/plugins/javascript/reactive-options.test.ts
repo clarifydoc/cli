@@ -126,16 +126,22 @@ const STANDINGS = `<template><button @click="reload([])">Reload</button></templa
 import axios from "axios";
 export default {
   data() {
-    return { rows: [] };
+    return { rows: [], size: 10 };
   },
   computed: {
     total() {
       return this.rows.length;
     },
+    pages() {
+      return Math.ceil(this.total / this.size) + this.countDecoy();
+    },
   },
   watch: {
     total() {
       axios.get("/api/standings");
+    },
+    pages() {
+      axios.get("/api/pages");
     },
     rows: [
       {
@@ -149,6 +155,12 @@ export default {
   methods: {
     reload(r) {
       this.rows = r;
+    },
+    resize(n) {
+      this.size = n;
+    },
+    countDecoy() {
+      return 0;
     },
     build() {
       return {
@@ -226,6 +238,19 @@ describe("Vue Options API watchers and watchers run at setup", () => {
     expect(triggers().join("\\n")).not.toContain("::reset");
     // Nothing writes `total` (a computed), and no watcher shares its function name.
     expect(triggers().join("\\n")).not.toContain("--> total");
+  });
+
+  it("runs a watcher on a computed when a member it reads is written, through the computeds it reads in turn", () => {
+    const f = "web/src/Standings.vue";
+    const onTotal = `<watch@${lineOf(STANDINGS, 'axios.get("/api/standings")') - 1}>`;
+    const onPages = `<watch@${lineOf(STANDINGS, 'axios.get("/api/pages")') - 1}>`;
+    // `total` measures `this.rows`; `pages` reads `total` and `size`.
+    expect(triggers()).toContain(`${f}::reload --rows--> ${onTotal}`);
+    expect(triggers()).toContain(`${f}::reload --rows--> ${onPages}`);
+    expect(triggers()).toContain(`${f}::resize --size--> ${onPages}`);
+    // `resize` writes nothing `total` reads, and a method a computed calls is no read.
+    expect(triggers()).not.toContain(`${f}::resize --size--> ${onTotal}`);
+    expect(triggers().join("\n")).not.toContain("::countDecoy");
   });
 
   it("runs an immediate watcher from the component's setup, written to or not", () => {

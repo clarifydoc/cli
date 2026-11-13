@@ -90,4 +90,40 @@ void run() {
       .sort();
     expect(links).toEqual(["b.Work -> src/base.h:Base.Work", "c.Play -> src/base.h:Club.Play"]);
   });
+
+  it.skipIf(_reader === "regex")("keeps a member the class pass cannot read in its class, so no bare call binds it as a free function", () => {
+    const a = read(`struct Squad { auto gather() -> int { return 1; } };
+struct Bench { constexpr static int pick(int n) noexcept(true) { return n; } int total() const { return 2; } };
+void use() { gather(); pick(1); }
+`, "src/squad.cpp");
+    const sorted = shape(a);
+    for (const c of sorted.classes) c.methods.sort();
+    expect(sorted).toEqual({
+      classes: [
+        { name: "Squad", namespace: undefined, methods: ["gather"], props: [] },
+        { name: "Bench", namespace: undefined, methods: ["pick", "total"], props: [] },
+      ],
+      functions: ["use"],
+    });
+  });
+
+  it("links a call in a free function written after a one-line class through its local's type", () => {
+    const files = {
+      "src/roster.h": "struct Roster { void tally() {} };\n",
+      "src/squad.cpp": `#include "roster.h"
+struct Squad { void gather() {} }; void helperRun() { Roster r; r.tally(); }
+`,
+    };
+    const links = buildSymbolLinks(Object.entries(files).map(([rel, src]) => read(src, rel))).map((l) => `${l.callName} -> ${l.targetFile}:${l.targetSymbol}`);
+    expect(links).toEqual(["r.tally -> src/roster.h:Roster.tally"]);
+  });
+
+  it("finds a free function written after a one-line class on its line", () => {
+    const a = read(`struct Squad { void gather() {} }; void helperRun() { Roster r; r.tally(); }
+`, "src/squad.cpp");
+    expect(shape(a)).toEqual({
+      classes: [{ name: "Squad", namespace: undefined, methods: ["gather"], props: [] }],
+      functions: ["helperRun"],
+    });
+  });
 });

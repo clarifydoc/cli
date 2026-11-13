@@ -30,6 +30,7 @@ import { optionsWatchers } from "./reactive-cells.js";
 import { isMemberLoaderBody, loadedDefaultSource, loadedMemberCall } from "./loaded-members.js";
 import { recordEntries, recordIndexOrigin, recordMemberChain } from "./dispatch-maps.js";
 import { ELEMENT_CALLBACKS, KEEPS_ELEMENTS, collectionElement } from "./element-types.js";
+import { destructuredParamTypes, objectTypesOf, paramNameSet, type ObjectTypes } from "./destructured-params.js";
 
 /** A local variable whose type the body states (see `FunctionInfo.localTypes`). */
 type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
@@ -48,6 +49,8 @@ interface ScanContext {
   moduleStrings: ReadonlyMap<string, string>;
   /** Classes function bodies declare, by name: whether the class is reported (its name is the file's only one). */
   localClasses: ReadonlyMap<string, boolean>;
+  /** Members of the file's own object types, for a destructured parameter annotated with one (see `destructuredParamTypes`). */
+  objectTypes?: ObjectTypes;
 }
 
 /**
@@ -102,6 +105,10 @@ function finishBody(
   skip?: (node: Node) => boolean,
 ): { calls: CallInfo[]; localTypes?: LocalType[]; returnedSpreads?: string[]; returnedMembers?: NonNullable<FunctionInfo["returnedMembers"]>; returnedFrom?: string[]; valueFlow?: ValueFlowFact[] } {
   const scan = scanBody(body, paramNames, ctx, params, skip);
+  // `({ table }: { table: Table })`: the parameter's annotation types the names it binds.
+  for (const local of destructuredParamTypes(params, ctx.objectTypes, body)) {
+    if (!scan.localTypes.some((l) => l.name === local.name)) scan.localTypes.push(local);
+  }
   const returnedMembers = returnedMembersOf(body);
   // A concise arrow returns its body.
   const returnedFrom = body && body.type !== "statement_block" ? resultChains(body, []) : scan.returnedFrom;
@@ -967,6 +974,26 @@ function returnedSegment(body: Node | null): string | null {
   return text && /^[a-z][\w-]*(?:\/[\w-]+)*$/.test(text) ? text : null;
 }
 
+/**
+ * The parameter a named base is followed by (`${API_BASE}{path}` → `path`). A constant named in capitals is a base by
+ * convention; any other name must be a constant of the module that holds a string — a lowercase `stadiumOrigin` that
+ * reads the environment or a store is a runtime value no other file's helper can be told from.
+ */
+function namedBasePath(tpl: string, body: Node | null): string | undefined {
+  const m = /^\$\{([A-Za-z_$][\w$]*)\}\{([A-Za-z_$][\w$]*)\}$/.exec(tpl);
+  if (!m) return undefined;
+  if (/^[A-Z][A-Z0-9_]*$/.test(m[1]!)) return m[2];
+  for (const stmt of body?.tree.rootNode.namedChildren ?? []) {
+    const decl = stmt.type === "export_statement" ? stmt.childForFieldName("declaration") : stmt;
+    if (decl?.type !== "lexical_declaration" || !decl.text.startsWith("const")) continue;
+    for (const d of decl.namedChildren) {
+      const kind = d.childForFieldName("value")?.type;
+      if (d.childForFieldName("name")?.text === m[1] && (kind === "string" || kind === "template_string")) return m[2];
+    }
+  }
+  return undefined;
+}
+
 export function extractUrlTemplates(
   body: Node | null,
   paramNames: ReadonlySet<string>,
@@ -1030,7 +1057,7 @@ export function extractUrlTemplates(
     const tpl = pathOnly ? `{${handed}}` : stripUrlBase(text);
     // A parameter extended by a path piece (`{apiRoute}series`): the caller's argument completes it.
     // A named base before the path the caller hands in (`${API_BASE}${path}`): the hole stays, the base filled where the project states it.
-    const basedPath = /^\$\{[A-Z][A-Z0-9_]*\}\{([A-Za-z_$][\w$]*)\}$/.exec(tpl)?.[1];
+    const basedPath = namedBasePath(tpl, body);
     const ok = tpl.includes("/") || pathOnly || (!!basedPath && paramNames.has(basedPath) && URL_PARAM.test(basedPath)) || (bareMember && /^\$\{this\.[\w$]+\}$/.test(tpl)) || /^\{[A-Za-z_$][\w$]*\}[\w.-]+$/.test(tpl) ||
       // A helper handing back another of its class's URL methods (`${this.getResourceUrl({id}, 'download')}`).
       /^\$\{this\.[\w$]+\([^{}]*(?:\{[\w$]+\}[^{}]*)*\)\}$/.test(tpl);
@@ -1711,7 +1738,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       if (!/^(?:method_definition|function_declaration|generator_function_declaration|arrow_function|function_expression|generator_function)$/.test(p.type)) continue;
       const params = this.extractJsParams(p.childForFieldName("parameters") ?? p.childForFieldName("parameter"));
       const body = p.childForFieldName("body");
-      const locals = body?.type === "statement_block" ? scanBody(body, new Set(params.map((x) => x.name)), this.ctx, params).localTypes : [];
+      const locals = body?.type === "statement_block" ? scanBody(body, paramNameSet(params), this.ctx, params).localTypes : [];
       for (const param of params) {
         if (own.has(param.name)) continue;
         own.add(param.name);
@@ -1949,6 +1976,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       dispatchMappers: sourceText.includes("connect(") ? dispatchMappersOf(tree.rootNode) : new Set(),
       moduleStrings: sourceText.includes("class ") ? moduleStringConstants(tree.rootNode) : new Map(),
       localClasses: sourceText.includes("class ") ? localClassesOf(tree.rootNode) : new Map(),
+      objectTypes: /\(\s*\{/.test(sourceText) ? objectTypesOf(tree.rootNode) : new Map(),
     };
   }
 
@@ -2214,7 +2242,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const decorators = this.extractDecorators(node);
 
     const body = node.childForFieldName("body");
-    const paramNames = new Set(params.map((p) => p.name));
+    const paramNames = paramNameSet(params);
     const stripped: UrlTemplateFound = {};
     const templates = extractUrlTemplates(body, paramNames, stripped);
     const requestAccess = requestAccessOf(params, body);
@@ -2283,7 +2311,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const isAsync = funcNode.text.startsWith("async ");
 
     const body = funcNode.childForFieldName("body") ?? funcNode;
-    const paramNames = new Set(params.map((p) => p.name));
+    const paramNames = paramNameSet(params);
     const stripped: UrlTemplateFound = {};
     const templates = extractUrlTemplates(body, paramNames, stripped);
     const requestAccess = requestAccessOf(params, body);
@@ -2483,7 +2511,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
   /**
    * A store built by a call (`createStore({ actions: types => ({ async sync() {…} }) })`,
    * `new Vuex.Store({ actions: { reset() {…} } })`): each action written as a method is a
-   * function `actions.<key>`, the name a module's own `actions` object gives it. A method's
+   * function `actions.<key>` (a mutation `mutations.<key>`), the name a module's own object gives it. A method's
    * body is a scope of its own, so its calls belonged to no function at all; an action
    * written as `k: function () {…}` or an arrow is read the same way.
    */
@@ -2493,7 +2521,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     for (const arg of call.childForFieldName("arguments")?.namedChildren ?? []) {
       if (arg.type !== "object") continue;
       for (const pair of arg.namedChildren) {
-        if (pair.type !== "pair" || objectKeyName(pair.childForFieldName("key")) !== "actions") continue;
+        const section = pair.type === "pair" ? objectKeyName(pair.childForFieldName("key")) : null;
+        if (section !== "actions" && section !== "mutations") continue;
         const value = pair.childForFieldName("value");
         const actions = value?.type === "object" ? value : value ? returnedObject(value) : null;
         for (const member of actions?.namedChildren ?? []) {
@@ -2502,8 +2531,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           // `k: async function k() {…}` / `k: async ({ commit }) => {…}`: a function written as the entry's value.
           const written = member.type === "pair" ? member.childForFieldName("value") : null;
           if (member.type === "pair" && !(written && (written.type === "function_expression" || written.type === "arrow_function"))) continue;
-          const fn = written ? this.parseJsArrowOrExpr(`actions.${key}`, written, false) : this.parseJsFunction(member, false);
-          fn.name = `actions.${key}`;
+          const fn = written ? this.parseJsArrowOrExpr(`${section}.${key}`, written, false) : this.parseJsFunction(member, false);
+          fn.name = `${section}.${key}`;
           functions.push(fn);
         }
       }
@@ -2529,7 +2558,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       }
       return fn;
     };
-    const isActions = prefix !== null && /(?:^|\.)actions$/.test(prefix);
+    const isActions = prefix !== null && /(?:^|\.)(?:actions|mutations)$/.test(prefix);
     const keyName = isActions ? actionKeyName : objectKeyName;
     for (const member of obj.namedChildren) {
       if (member.type === "pair") {
@@ -2823,7 +2852,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           const methodBody = member.childForFieldName("body");
           const requestAccess = requestAccessOf(params, methodBody);
           const responses = responsesOf(params, methodBody);
-          const paramNames = new Set(params.map((p) => p.name));
+          const paramNames = paramNameSet(params);
           // A URL-builder helper is as often a service-class method
           // (`configService.APIUrl(sub)`) as a free function.
           const stripped: UrlTemplateFound = {};
