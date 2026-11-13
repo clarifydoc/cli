@@ -27,9 +27,6 @@ A language is read by one of three front ends. All three produce the same `FileA
   cannot link in Wasm (`fprintf`/`exit`), or keeps state across parses. Record the pin, and the reason for it, on
   this page.
 
-Pinned today: Dart (npm 1.0.0 is from 2023 and its wasm does not load), Scala (npm 0.24.0 fails on about a fifth of
-real files), and Swift (npm stops at 0.7.1 with no wasm; upstream 0.7.4 is built with its scanner patched).
-
 ## tree-sitter grammars on npm (checked under web-tree-sitter 0.27)
 
 - **Load:** bash, powershell, groovy, fsharp, julia, ocaml (+ `ocaml_interface`), batch, css, ruby, scala, haskell,
