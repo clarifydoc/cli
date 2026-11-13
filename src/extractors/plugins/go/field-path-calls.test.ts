@@ -172,7 +172,7 @@ func (r *PlayersRepository) Transfer(ctx context.Context, id string) error {
 };
 
 describe("a Go call through fields of fields", () => {
-  it("is named from the receiver or a parameter; the receiver's own field, a local's path and a package member keep two names", () => {
+  it("is named from the receiver or a parameter; a local's path from its head too; the receiver's own field and a package member keep two names", () => {
     const parsed = readGo(`package api
 
 func (h *Handlers) Promote(c *gin.Context, coach *Coach) {
@@ -193,7 +193,7 @@ func (h *Handlers) Promote(c *gin.Context, coach *Coach) {
       "coach.Staff.Notify",
       "DefaultClient.Do",
       "Clubs.Relegate",
-      "Ground.Book",
+      "club.Ground.Book",
     ]);
   });
 

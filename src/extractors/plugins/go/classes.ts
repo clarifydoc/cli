@@ -5,6 +5,7 @@ import { extractGoLocalTypes, goPackageVars, initializerType, type GoBodyReading
 import { addExpressionReceiverCalls, type GoTypeEnv } from "./element-types.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
 import { boundFromTags } from "./bound-tags.js";
+import { withHeadPathNames } from "./head-paths.js";
 import { bracketDelta, goContainerResult, goResultTextAt, goResultTypes, splitGoStatements, splitGoTopLevel, stripGoComment } from "./syntax.js";
 
 /**
@@ -80,6 +81,7 @@ export function extractGoClasses(lines: string[], fns: FunctionInfo[], parsePara
     else delete fn.localTypes;
     typeSwitchCalls(lines, fn);
     if (reading.typeOfName) addExpressionReceiverCalls(fn, lines, env, reading.typeOfName);
+    withHeadPathNames(lines, fn, receiver?.name, declared);
 
     if (!receiver) continue;
     const owner = structs.get(receiver.type) ?? stubs.get(receiver.type) ?? newStub(receiver.type, fn, stubs);

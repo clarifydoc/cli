@@ -26,6 +26,7 @@ export const goManifest: LanguagePluginManifest = {
   family: "go",
   // A package is its directory: a bare call reaches the function a sibling file declares.
   directoryScope: true,
+  valuePathsNameNoType: true,
   importsNameDirectories: true,
   // An import path is the go.mod module path, then the package's directory under it.
   packageDirectory: goPackageDirectory,

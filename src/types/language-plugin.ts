@@ -1632,6 +1632,15 @@ export interface LanguagePluginManifest {
    */
   callPathsFromHead?: boolean;
   /**
+   * A type is never reached through a path of values: in `a.b.C.m(` the middle name is a field or a variable, whatever
+   * class of that name the project declares (Go has no nested type paths; `pkg.Type.M(` is no call syntax). A call
+   * whose name keeps only the last names of such a path (`CallInfo.receiverCut`, `s.Controller.Delete(` read as
+   * `Controller.Delete`) is then never given to a namesake class by the name guess, and a member held back as noise
+   * (`String`, `Close`) that is called through such a path from a typed head (`c.Status.String(`) is restored. Unset where a dotted path may
+   * name a type (a namespace, a package: Java, Elixir, C#).
+   */
+  valuePathsNameNoType?: boolean;
+  /**
    * Inside a method, a bare call names the enclosing class's member (or a base's) before a free function
    * of the same name in the file: the implicit receiver's scope comes first (Kotlin). Outside the class
    * body the free function stays. Unset where a bare name in a method is the free function (Rust,

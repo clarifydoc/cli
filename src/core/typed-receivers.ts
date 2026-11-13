@@ -36,6 +36,9 @@ export function restoreTypedReceiverCalls(analysis: FileAnalysis, caseInsensitiv
   const fold = (n: string): string => (caseInsensitive ? n.toLowerCase() : n);
   const declared = (type: string | null | undefined): boolean => receiverTypeName(type, language) !== null;
   const classByName = new Map(analysis.classes.map((c) => [c.name, c]));
+  // Where a dotted path is always a path of values, a member called through fields of a typed head (`c.Status.String(`)
+  // is the field type's method, as one called on the head itself.
+  const valuePaths = !!manifestFor(language)?.valuePathsNameNoType;
 
   const membersOf = (cls: ClassInfo): Set<string> => {
     const names = new Set<string>();
@@ -94,7 +97,7 @@ export function restoreTypedReceiverCalls(analysis: FileAnalysis, caseInsensitiv
     const params = new Set(fn.params.map((p) => fold(p.name)));
     restoreHeldCalls(
       fn.calls,
-      (call) => (!call.name.includes(".") && importedFns.has(fold(call.name)) && !params.has(fold(call.name))) || factoryProduct(call.name, factoryHeads, params) || receiverIn(call.name, scope, fold) || ownMethodCall(call.name, own, bareIsMember, fold) || classReceiver(call.name, scope, fold, namesClass),
+      (call) => (!call.name.includes(".") && importedFns.has(fold(call.name)) && !params.has(fold(call.name))) || factoryProduct(call.name, factoryHeads, params) || receiverIn(call.name, scope, fold, valuePaths) || ownMethodCall(call.name, own, bareIsMember, fold) || classReceiver(call.name, scope, fold, namesClass),
     );
   };
 
@@ -143,7 +146,7 @@ function classReceiver(callName: string, scope: ReadonlySet<string>, fold: (n: s
  * typed — a type's function (`Season.named().close`) or a member of a name in scope (`repo.find().close`) —
  * which the linker types step by step through declared return types.
  */
-function receiverIn(callName: string, scope: ReadonlySet<string>, fold: (n: string) => string): boolean {
+function receiverIn(callName: string, scope: ReadonlySet<string>, fold: (n: string) => string, valuePaths = false): boolean {
   const parts = callName.split(".");
   if (parts.length < 2) return false;
   const call = parts.findIndex((p) => p.endsWith("()"));
@@ -156,7 +159,7 @@ function receiverIn(callName: string, scope: ReadonlySet<string>, fold: (n: stri
   // `x?.find`, `x!.find`, `x!!.find` and a line-broken chain all call through `x`.
   let receiver = parts.slice(0, -1).map((seg) => seg.replace(/\s+/g, "").replace(/(?:\?|!+)$/, ""));
   if (receiver.length === 2 && SELF_HEADS.has(receiver[0]!)) receiver = receiver.slice(1);
-  return receiver.length === 1 && scope.has(fold(receiver[0]!));
+  return (receiver.length === 1 || (valuePaths && receiver.length > 1 && receiver.every((seg) => /^[A-Za-z_]\w*$/.test(seg)))) && scope.has(fold(receiver[0]!));
 }
 
 /**

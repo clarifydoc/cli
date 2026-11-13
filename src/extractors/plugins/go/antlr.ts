@@ -303,9 +303,11 @@ function invokedInPlace(literal: FunctionLitContext): boolean {
 interface CallScope {
   typed: ReadonlySet<string>;
   receiver?: string;
+  /** Names the body declares (short declaration, `var`, `range`), each with where its scope starts (line, column). */
+  locals: ReadonlyMap<string, ReadonlyArray<readonly [number, number]>>;
 }
 
-/** The receiver and parameters of `roots` and of the function literals in them — never a local, whose type is not written. */
+/** The receiver and parameters of `roots` and of the function literals in them, and the locals they declare. */
 function callScope(roots: readonly ParserRuleContext[], receiver?: ParserRuleContext): CallScope {
   const typed = new Set<string>();
   const stack: ParseTree[] = [...roots];
@@ -318,23 +320,35 @@ function callScope(roots: readonly ParserRuleContext[], receiver?: ParserRuleCon
   }
   const own = new Set<string>();
   if (receiver) declaredNames(receiver, own);
-  return { typed, ...(own.size === 1 ? { receiver: [...own][0]! } : {}) };
+  const locals = new Map<string, Array<readonly [number, number]>>();
+  for (const root of roots) {
+    const bound = new Map<string, Array<readonly [number, number]>>();
+    boundPositions(root, bound);
+    for (const [name, at] of bound) {
+      const starts = at.filter(([line]) => line > 0);
+      if (starts.length > 0) locals.set(name, [...(locals.get(name) ?? []), ...starts]);
+    }
+  }
+  return { typed, locals, ...(own.size === 1 ? { receiver: [...own][0]! } : {}) };
 }
 
 /**
  * A member called through fields of a value whose type the function states — its receiver or a parameter —, named by
  * every name back to that value: `h.Module.Clubs.Promote(` is `h.Module.Clubs.Promote`, so the linker types the
  * receiver from `h` field by field. Its last two names (`Clubs.Promote`) would say the caller's own field `Clubs`,
- * which a value two fields away is not. The receiver's own field (`s.repo.Find(`, read as `repo.Find`), a local's
- * path (a range variable states no type to start from), a package's member and a path split over lines (whose text
- * the argument readers look the name up by) keep the scan's name.
+ * which a value two fields away is not. A local is a head too — `for _, c := range clubs { c.Status.String() }` is
+ * `c.Status.String`, the local `c` typed by its range element (`localTypes`), so is `x := m.Club(); x.League.Close()`;
+ * only from where its declaration ends, since the scope starts after it. The receiver's own field (`s.repo.Find(`,
+ * read as `repo.Find`), a package's member and a path split over lines (whose text the argument readers look the
+ * name up by) keep the scan's name, marked `receiverCut`: its first name is a field or a package value, never a class.
  */
 function pathFromHead(segments: readonly CalleeSegment[], scope: CallScope | undefined): PatternCallName | null {
   if (!scope || segments.length < 3 || !segments.every((s) => s.kind === "id" && !s.colon)) return null;
   const ids = segments as ReadonlyArray<Extract<CalleeSegment, { kind: "id" }>>;
   const head = ids[0]!;
   const last = ids.at(-1)!;
-  if (!scope.typed.has(head.name) || (ids.length === 3 && head.name === scope.receiver)) return null;
+  const local = scope.locals.get(head.name)?.some(([line, column]) => head.line > line || (head.line === line && head.column >= column));
+  if (!(scope.typed.has(head.name) || local) || (ids.length === 3 && head.name === scope.receiver)) return null;
   if (ids.some((s) => s.line !== head.line)) return null;
   return { name: ids.map((s) => s.name).join("."), leafName: last.name, line: head.line, column: head.column };
 }
@@ -371,13 +385,20 @@ function applications(ctx: PrimaryExprContext, scope?: CallScope): Array<{ at: n
     // `lru.New[string, *Item](n)` calls `lru.New`.
     if (child instanceof TypeArgsContext) continue;
     if (child instanceof ArgumentsContext) {
-      found.push({ at: i, named: pathFromHead(segments, scope) ?? patternCallName(segments, CHAIN_DEPTH) });
+      found.push({ at: i, named: pathFromHead(segments, scope) ?? cutName(segments) });
       segments.push({ kind: "call" });
       continue;
     }
     segments.push({ kind: "other" });
   }
   return found;
+}
+
+/** The scan's name for a call, marked `receiverCut` when it keeps the last two names of a longer path of names. */
+function cutName(segments: readonly CalleeSegment[]): PatternCallName | null {
+  const named = patternCallName(segments, CHAIN_DEPTH);
+  const cut = named && segments.length >= 3 && segments.every((s) => s.kind === "id" && !s.colon) && named.name.split(".").length === 2;
+  return cut ? { ...named, receiverCut: true } : named;
 }
 
 function idOf(token: Token): CalleeSegment {

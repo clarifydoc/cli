@@ -4872,7 +4872,7 @@ function resolveCallToDefinitionBody(
       const viaParent = resolveCallToDefinition(sourceFile, sourceSymbol, { ...call, kind: "internal" }, analysis, ctx, reference);
       if (viaParent?.strategy === "inheritance") return viaParent;
     }
-    return throughDeclaredType() ?? (parts.length === 2 && ctx.classNameIndex.has(parts[0]!) ? classNameMember(ctx, analysis, sourceFile, parts, mkLink, call.line) : null);
+    return throughDeclaredType() ?? (parts.length === 2 && !cutNameNamesNoType(analysis, call) && ctx.classNameIndex.has(parts[0]!) ? classNameMember(ctx, analysis, sourceFile, parts, mkLink, call.line) : null);
   }
 
   let targetFile: string | null;
@@ -5381,7 +5381,9 @@ function resolveCallToDefinitionBody(
   // ── Strategy 4: ClassName.method resolution for static/class methods ──
   // For calls like "UserService.find_by_id" — searches all files for the class.
   // Without an explicit import this is at best INFERRED.
-  if (!def && isQualified) {
+  // A name that keeps only the last names of a longer path (`CallInfo.receiverCut`: `s.Controller.Delete` read as
+  // `Controller.Delete`) names no class — its first name is a field or a value, and a namesake class is a guess.
+  if (!def && isQualified && !cutNameNamesNoType(analysis, call)) {
     const link = classNameMember(ctx, analysis, sourceFile, parts, mkLink, call.line);
     if (link) return link;
   }
@@ -5847,6 +5849,14 @@ type MkLink = (
 
 /** Receiver heads that name the parent class's implementation (`super.foo()`, PHP `parent::foo()`, C# `base.Foo()`). */
 const SUPER_HEADS: ReadonlySet<string> = new Set(["super", "parent", "base", "MyBase"]);
+
+/**
+ * A call whose name keeps only the last names of a path of values (`CallInfo.receiverCut`) in a language whose
+ * paths of values never name a type (`valuePathsNameNoType`): the name guess has no class to find in it.
+ */
+function cutNameNamesNoType(analysis: FileAnalysis, call: CallInfo): boolean {
+  return !!call.receiverCut && !!manifestFor(analysis.language as Language)?.valuePathsNameNoType;
+}
 
 /**
  * The call names only the last names of its receiver (`items[0].league.markTable(` read as `league.markTable`), in a
