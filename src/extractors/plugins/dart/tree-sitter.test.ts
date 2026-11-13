@@ -51,8 +51,10 @@ describe("Dart through tree-sitter", () => {
       ["fromEnv", 10, 10],
       ["load", 12, 20],
       ["note", 17, 17],
+      ["size", 22, 22],
       ["registerAll", 25, 28],
     ]);
+    expect(parsed.functions.find((f) => f.name === "size")!.calls.map((c) => c.name)).toEqual(["repo.count"]);
     expect(parsed.functions.find((f) => f.name === "note")!.calls.map((c) => c.name)).toEqual(["log"]);
   });
 

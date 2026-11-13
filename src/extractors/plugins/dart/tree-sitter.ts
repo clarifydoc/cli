@@ -13,7 +13,7 @@ const CHAIN_DEPTH = 8;
 /** Declarations whose bodies are no function's outside a member (field initializers). */
 const TYPES: ReadonlySet<string> = new Set(["class_definition", "mixin_declaration", "extension_declaration", "extension_type_declaration", "enum_declaration"]);
 
-/** A signature node that names a function as the Dart spec reads them; getters, setters and operators name none. */
+/** A signature node that names a function as the Dart spec reads them; setters and operators name none. */
 const SIGNATURES: ReadonlySet<string> = new Set([
   "function_signature", "constructor_signature", "factory_constructor_signature", "redirecting_factory_constructor_signature",
   "constant_constructor_signature", "getter_signature", "setter_signature", "operator_signature",
@@ -36,7 +36,6 @@ interface Walk {
   /** Each call by its argument list's node id, as named in the call list (the value-flow facts name calls so). */
   callRefs: CallRefs;
   file: FileScope;
-  /** The tree's root: a getter is a function only directly below it. */
   root: TSNode;
 }
 
@@ -44,8 +43,8 @@ interface Walk {
  * Dart's functions and calls from a tree-sitter-dart tree. A function is a top-level, member or local function, a
  * constructor (named by its class, a named or factory one by its own name, as the spec's patterns name them) or an
  * abstract signature, spanning its name's line to its body's end, and owns the calls in its body and initializer
- * list except those of a function declared inside it; a closure's calls are its owner's. A top-level getter is a
- * function named as it; a member's getter, setters and operators are none, as the patterns read them. A call is named by the Dart spec's call patterns where one
+ * list except those of a function declared inside it; a closure's calls are its owner's. A getter is a
+ * function named as it; setters and operators are none, as the patterns read them. A call is named by the Dart spec's call patterns where one
  * reads its callee's text (a field path `this.squad.coach.brief(`, a container lookup `getIt<Repo>().find(`, a
  * generic call `context.read<Repo>(`), else as the patterns name a path (`repo.find(`, a cascade's bare `..add(`),
  * and one through a type's static member by every name (`PlayerService.instance.addPlayer(`), not its last two;
@@ -105,14 +104,15 @@ function signatureOf(node: TSNode): TSNode | null {
 }
 
 /**
- * The name the spec's patterns give a function, and the node naming it; null for an accessor or operator — except a
- * library's own top-level getter (`FlagService get flagService { _flagService ??= FlagService(dio); … }`), a function
- * named as the getter whose body's calls and constructions are its own.
+ * The name the spec's patterns give a function, and the node naming it; null for a setter or operator. A getter is a
+ * function named as it, top-level or a member of a class, mixin or extension
+ * (`FlagService get flags { _flags ??= FlagService(dio); … }`, `Club get club => Club(id)`): its body's calls and
+ * constructions are its own.
  */
-function functionName(sig: TSNode, topLevel: boolean): TSNode | null {
+function functionName(sig: TSNode): TSNode | null {
   if (sig.type === "function_signature") return sig.childForFieldName("name");
-  if (sig.type === "getter_signature" && topLevel) return sig.childForFieldName("name") ?? namedChildren(sig).filter((c) => c.type === "identifier").pop() ?? null;
-  if (sig.type === "getter_signature" || sig.type === "setter_signature" || sig.type === "operator_signature") return null;
+  if (sig.type === "getter_signature") return sig.childForFieldName("name") ?? namedChildren(sig).filter((c) => c.type === "identifier").pop() ?? null;
+  if (sig.type === "setter_signature" || sig.type === "operator_signature") return null;
   // `A(…)` is named `A`; `A.named(…)` and `factory A.make(…)` by their own names.
   const names = namedChildren(sig).filter((c) => c.type === "identifier");
   return names.length >= 2 ? names[1]! : names[0] ?? null;
@@ -125,7 +125,7 @@ function visit(node: TSNode, owner: PatternCallName[] | null, walk: Walk, cls: C
     const sig = signatureOf(child);
     if (sig) {
       const body = children[i + 1]?.type === "function_body" ? children[i + 1]! : null;
-      const name = functionName(sig, node === walk.root);
+      const name = functionName(sig);
       let calls = owner;
       if (name) {
         calls = [];

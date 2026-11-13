@@ -1499,6 +1499,12 @@ export interface FunctionInfo {
    * the modules the class extends, never those it includes. Absent otherwise.
    */
   classLevel?: true;
+  /**
+   * A function with no declaration of its own — an inline closure given a pseudo-name — written in a method of this
+   * class: value flow reads `this.x` / `widget.x` in it as that class's receiver and its locals as the method's.
+   * Absent for declared functions.
+   */
+  enclosingClass?: string;
   isAsync: boolean;
   isExported: boolean;
   decorators: string[];

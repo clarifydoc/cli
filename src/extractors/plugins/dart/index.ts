@@ -1,4 +1,5 @@
 import { addDartElementTypes, fieldCollections } from "./element-types.js";
+import { closureValueFlow } from "./closure-flow.js";
 import type {
   RouteInfo,
   ClassInfo,
@@ -227,6 +228,15 @@ const STATIC_FIELD_CALL: CallPattern = {
  */
 const DOLLAR_NAME_CALL: CallPattern = {
   pattern: /(?<![\w$])((?:[A-Za-z_$][\w$]*\s*\.\s*)*(?=[A-Za-z_$][\w$]*\s*\()[A-Za-z_$]*\$[\w$]*)\s*\(/,
+  buildName: (m) => ({ name: m[1]!.replace(/\s+/g, ""), leafName: m[1]!.replace(/\s+/g, "").split(".").pop()! }),
+};
+
+/**
+ * A call through a null assertion, `onLongPress!(club)` / `widget.onSelect!(club)`: the baseline matcher stops at the
+ * `!`. The path is the callee as written, as the parser names it; `return !(x)` and `a != (b)` have no name before the `!`.
+ */
+const NULL_ASSERTED_CALL: CallPattern = {
+  pattern: /(?<![\w$.])((?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*)!\s*\(/,
   buildName: (m) => ({ name: m[1]!.replace(/\s+/g, ""), leafName: m[1]!.replace(/\s+/g, "").split(".").pop()! }),
 };
 
@@ -715,6 +725,7 @@ interface FlutterClosure {
  */
 function flutterClosureHandlers(lines: string[]): FlutterClosure[] {
   const out: FlutterClosure[] = [];
+  let callbacks: Set<string> | undefined;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     if (!line.includes("on") || !/[=)]\s*(?:=>|\{|async)/.test(line)) continue;
@@ -732,12 +743,27 @@ function flutterClosureHandlers(lines: string[]): FlutterClosure[] {
       // `() => _save(ctx)` forwards to a named function: that name is the handler.
       if (closure[1] === "=>" && span.line === i) {
         const body = line.slice(headAt + closure[0].length, span.col).trim();
-        if (/^(?:await\s+)?_?[a-z]\w*\s*\([^()]*\)$/.test(body) && !/^(?:unawaited|setState|print)\b/.test(body)) continue;
+        // A callback the widget is handed is no function to name: the closure is the handler, and holds the call.
+        const forwarded = /^(?:await\s+)?(_?[a-z]\w*)\s*\([^()]*\)$/.exec(body);
+        if (forwarded && !/^(?:unawaited|setState|print)\b/.test(body) && !(callbacks ??= dartCallbackNames(lines)).has(forwarded[1]!)) continue;
       }
       out.push({ line: i + 1, column: m.index, name: `<${m[1]}@${i + 1}>`, start: i, startCol: valueAt, end: span.line, endCol: span.col });
     }
   }
   return out;
+}
+
+/**
+ * The names the file declares as function-typed fields or parameters — `final void Function(Club)? onSelect;`,
+ * `required this.onSave`, `VoidCallback onRefresh`: a call of one runs whatever the parent passed, never a function
+ * of that name elsewhere.
+ */
+function dartCallbackNames(lines: string[]): Set<string> {
+  const text = lines.join("\n");
+  const names = new Set<string>();
+  for (const m of text.matchAll(/\bthis\.([A-Za-z_$][\w$]*)/g)) names.add(m[1]!);
+  for (const m of text.matchAll(/\b(?:Function\s*(?:<[^>]*>)?\s*\([^()]*\)|VoidCallback|\w*Callback|ValueChanged<[^;]*?>|ValueSetter<[^;]*?>|\w*Handler)\??\s+([A-Za-z_$][\w$]*)\b/g)) names.add(m[1]!);
+  return names;
 }
 
 /** Where the closure starting at `lines[line][col]` ends: the `,`/`)` closing its argument at depth 0, or its block's `}`. */
@@ -1154,6 +1180,12 @@ export const dartSpec: RegexLangSpec = {
       isAsync: () => false,
     },
     {
+      // A getter of a class, mixin or extension, indented: `FlagService get flags { … }` / `Club get club => Club(id);`.
+      pattern: new RegExp(String.raw`^\s+(?:static\s+)?(?:(?!(?:${STMT_KEYWORDS})\b)[A-Za-z_$][\w$.]*(?:<[^;=()]*>)?\??\s+)?get\s+([A-Za-z_$][\w$]*)\s*(?:=>|\{|async\b)`),
+      isExported: (_line, name) => !name.startsWith("_"),
+      isAsync: (line) => /\basync\b/.test(line),
+    },
+    {
       pattern: DART_FUNCTION_WRAPPED,
       isExported: (_line, name) => !name.startsWith("_"),
       isAsync: (line, lines, i) => dartAsyncAfterParams(lines, i, line),
@@ -1263,7 +1295,7 @@ export const dartSpec: RegexLangSpec = {
 
   extractClasses: (lines, fns) => extractDartClasses(lines, fns),
 
-  callPatterns: [...dartDiCallPatterns, STATIC_CHAIN_CALL, STATIC_FIELD_CALL, DOLLAR_NAME_CALL],
+  callPatterns: [...dartDiCallPatterns, STATIC_CHAIN_CALL, STATIC_FIELD_CALL, DOLLAR_NAME_CALL, NULL_ASSERTED_CALL],
   extractLocalTypes: extractDartLocalTypes,
   extractDiBindings: (lines) => extractDartDiBindings(lines),
 
@@ -1299,6 +1331,7 @@ export const dartSpec: RegexLangSpec = {
     }
     return classes;
   },
+  extractValueFlow: (_lines, analysis) => closureValueFlow(analysis),
   extractScreens: (lines, filePath, classes) => extractFlutterScreens(lines, filePath, classes),
   extractUiComponents: (lines, filePath, classes) => flutterUi(lines, filePath, classes).components,
   extractNavigationHelpers: flutterNavigationHelpers,

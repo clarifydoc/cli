@@ -68,12 +68,17 @@ interface Scope {
   facts: readonly ValueFlowFact[];
 }
 
+/** The class a closure's pseudo-function is written in (`FunctionInfo.enclosingClass`), else null. */
+function closureClassOf(analysis: FileAnalysis, fn: FunctionInfo): ClassInfo | null {
+  return fn.enclosingClass ? analysis.classes.find((c) => c.name === fn.enclosingClass) ?? null : null;
+}
+
 function* scopesOf(analysis: FileAnalysis): Generator<Scope> {
   const setup = analysis.functions.find((f) => f.name === "<setup>") ?? null;
   const moduleFacts = analysis.moduleValueFlow ?? [];
   for (const fn of analysis.functions) {
     const facts = fn === setup ? [...(fn.valueFlow ?? []), ...moduleFacts] : fn.valueFlow ?? [];
-    yield { file: analysis.filePath, symbol: fn.name, analysis, fn, cls: null, facts };
+    yield { file: analysis.filePath, symbol: fn.name, analysis, fn, cls: closureClassOf(analysis, fn), facts };
   }
   for (const cls of analysis.classes) {
     for (const m of cls.methods) yield { file: analysis.filePath, symbol: `${cls.name}.${m.name}`, analysis, fn: m, cls, facts: m.valueFlow ?? [] };
@@ -163,7 +168,7 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
     }
     for (const f of a.functions) {
       const key = `${a.filePath}\0${f.name}`;
-      if (!scopeAt.has(key)) scopeAt.set(key, { file: a.filePath, symbol: f.name, analysis: a, fn: f, cls: null, facts: [] });
+      if (!scopeAt.has(key)) scopeAt.set(key, { file: a.filePath, symbol: f.name, analysis: a, fn: f, cls: closureClassOf(a, f), facts: [] });
     }
   }
 
@@ -232,7 +237,7 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
   }
 
   const enclosingBinder = (s: Scope, name: string): Scope | null => {
-    if (!s.fn || s.cls || s.symbol === "<setup>") return null;
+    if (!s.fn || (s.cls && !s.fn.enclosingClass) || s.symbol === "<setup>") return null;
     let best: Scope | null = null;
     const consider = (g: FunctionInfo, symbol: string): void => {
       if (g === s.fn || g.name === "<setup>" || g.line > s.fn!.line || g.endLine < s.fn!.endLine) return;
