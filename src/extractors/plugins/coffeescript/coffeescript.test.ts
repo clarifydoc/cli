@@ -103,3 +103,41 @@ describe("CoffeeScript routes and data access", () => {
     expect(a.functions.map((f) => [f.name, f.calls.map((c) => c.name)])).toEqual([["render", ["show"]]]);
   });
 });
+
+describe("CoffeeScript routes registered inside a callback", () => {
+  const a = analyze([
+    "express = require 'express'",
+    "db = require './db'",
+    "",
+    "module.exports = (app) ->",
+    "  app.get '/clubs', (req, res) ->",
+    "    rows = db.query 'SELECT * FROM clubs'",
+    "    res.json rows",
+    "",
+    "  router.post '/players', auth, (req, res) ->  # create",
+    "    db.query 'INSERT INTO players (name) VALUES (?)', [req.body.name]",
+    "    res.send 'ok'",
+    "",
+    "  app.use '/api', apiRouter",
+    "  setTimeout (-> db.query 'SELECT * FROM audit_log'), 1000",
+    "  app.get '/health', healthCheck",
+  ].join("\n"));
+
+  it("gives each route the calls of its own handler body", () => {
+    expect(a.routes.map((r) => `${r.httpMethod ?? "mount"} ${r.path} [${r.calls.map((c) => c.name)}]`)).toEqual([
+      "GET /clubs [db.query,res.json]",
+      "POST /players [db.query,res.send]",
+      "mount /api []",
+      "GET /health []",
+    ]);
+  });
+
+  it("keeps those calls out of <setup>, and a non-route callback's calls in it", () => {
+    const setup = calls(a, "<setup>")!;
+    expect(setup).toContain("setTimeout");
+    expect(setup).toContain("app.use");
+    expect(setup.filter((n) => n === "db.query")).toHaveLength(1);
+    expect(setup).not.toContain("res.json");
+    expect(setup).not.toContain("res.send");
+  });
+});

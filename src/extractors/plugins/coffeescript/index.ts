@@ -1,5 +1,5 @@
 import type { DataSourceInfo, ImportInfo, RouteInfo } from "../../../types/analysis.js";
-import { extractClassesWithSpec, findEndLine, type CallPattern, type RegexLangSpec } from "../shared/regex-base.js";
+import { extractCallsFromBody, extractClassesWithSpec, findEndLine, type CallPattern, type RegexLangSpec } from "../shared/regex-base.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 
 /**
@@ -71,6 +71,9 @@ export function coffeeImports(lines: string[]): ImportInfo[] {
   return out;
 }
 
+/** A route line whose handler is a function written inline, its body on the lines below: `app.get '/x', (req, res) ->`. */
+const INLINE_HANDLER = new RegExp(String.raw`${FN_VALUE}\s*(?:#.*)?$`);
+
 const ROUTER = /^\s*(app|router|server|api|robot\.router)\.(get|post|put|patch|delete|del|all|use)\s*\(?\s*(['"])([^'"]+)\3(.*)$/;
 
 /**
@@ -96,13 +99,29 @@ function coffeeRoutes(lines: string[]): RouteInfo[] {
       httpMethod: verb === "use" || verb === "all" ? null : verb === "del" ? "DELETE" : verb.toUpperCase(),
       kind: "api",
       handler,
-      calls: [],
+      // An inline handler's body is the route's own: what it calls runs when the route is hit.
+      calls: verb !== "use" && INLINE_HANDLER.test(line) ? extractCallsFromBody(lines, i + 1, findEndLine(lines, i, "indent"), coffeeSpec.lineCommentPrefixes, coffeeSpec.callPatterns) : [],
       middleware,
       line: i + 1,
       ...(verb === "use" ? { mount: true as const } : {}),
     });
   });
   return routes;
+}
+
+/**
+ * 1-based spans of the bodies of inline route handlers: they run when the route
+ * is hit, not when the file loads — a route registered inside `module.exports =
+ * (app) ->` or `db.connect ->` is still the route's own code — so the route
+ * carries their calls and `<setup>` leaves them out.
+ */
+function coffeeRouteBlocks(lines: string[]): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = ROUTER.exec(lines[i]!);
+    if (m && m[2] !== "use" && INLINE_HANDLER.test(lines[i]!)) spans.push([i + 1, findEndLine(lines, i, "indent")]);
+  }
+  return spans;
 }
 
 const AJAX = /(?:\$|jQuery)\.(ajax|get|post|getJSON)\b\s*\(?\s*(?:['"]([^'"]+)['"]|url\s*:\s*['"]([^'"]+)['"])?(.*)$/;
@@ -342,6 +361,7 @@ export const coffeeSpec: RegexLangSpec = {
   indentBased: true,
   lineCommentPrefixes: ["#"],
   topLevelCalls: true,
+  deferredBlocks: coffeeRouteBlocks,
   functionPatterns: [
     // `name = (args) ->` / `export name = ->` / `@name = =>`
     { pattern: new RegExp(String.raw`^\s*(?:export\s+)?@?([A-Za-z_$][\w$]*)\s*=\s*${FN_VALUE}`), isExported: () => true },

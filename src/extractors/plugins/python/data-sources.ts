@@ -486,6 +486,18 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
             else if (stated?.parameter) entityParameter = stated.parameter;
             if (stated) access ??= stated.access;
           }
+          // A statement builder is no datastore: `func.count(x)` alone is an expression, and `select(…).filter_by(…)` names
+          // the model it selects — or, when that is a parameter, the one the session call on the same line already carries.
+          // No row ever takes the library's name for a table.
+          if (STATEMENT_BUILDER_ROOT.test(fnName) && !table && !tableRef && !instance) {
+            const own = STATEMENT_FUNC_ROOT.test(fnName) ? null : rootStatement(node);
+            const line = node.startPosition.row + 1;
+            if (!own || sources.some((d) => d.line === line && (own.model ? d.entity === own.model : own.attribute ? d.entityAttribute === own.attribute : d.entityParameter === own.parameter))) return;
+            if (own.model) table = own.model;
+            else if (own.attribute) entityAttribute = own.attribute;
+            else entityParameter = own.parameter;
+            access ??= own.access;
+          }
           // Each call of a chain is a row of its own (`query(…).filter(…).first()`): the filter is told once per line.
           const found = pythonWhereFields(node);
           const json = found ? JSON.stringify(found) : "";
@@ -599,6 +611,12 @@ function statementModel(call: Node): StatedModel | null {
   return found.size === 1 ? [...found.values()][0]! : null;
 }
 
+/** A call chain that starts at an SQL statement builder (`select(…)`, `sa.select(…)`) or an SQL function (`func.count(…)`); a member of `self`/`cls` named `func` is none. */
+const SQL_MODULE = String.raw`(?:(?!self\b|cls\b)[a-z_]\w*\.)*`;
+const STATEMENT_BUILDER_ROOT = new RegExp(String.raw`^${SQL_MODULE}(?:(?:select|insert|update|delete)\(|func\.\w+(?:\(|$))`);
+const STATEMENT_FUNC_ROOT = new RegExp(String.raw`^${SQL_MODULE}func\.`);
+const SQL_FUNC_CALL = new RegExp(String.raw`^${SQL_MODULE}func\.\w+$`);
+
 /** `select(Club).where(…).order_by(…)` → the model `select` is given; null for any other expression. */
 function rootStatement(expr: Node): StatedModel | null {
   let cur: Node = expr;
@@ -621,7 +639,7 @@ function rootStatement(expr: Node): StatedModel | null {
  * `model.id` where `model` is a parameter the enclosing function never rebinds → the parameter.
  */
 function modelExpression(node: Node): { model?: string; attribute?: string; parameter?: string; more?: string[] } | null {
-  if (node.type === "call" && /^(?:sqlalchemy\.)?func\.\w+$/.test(node.childForFieldName("function")?.text ?? "")) {
+  if (node.type === "call" && SQL_FUNC_CALL.test(node.childForFieldName("function")?.text ?? "")) {
     const column = positional(node)[0];
     return column ? modelExpression(column) : null;
   }
