@@ -822,6 +822,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         target: resolved.url,
         ...(resolved.alternatives?.length ? { targetAlternatives: resolved.alternatives } : {}),
         line: node.startPosition.row + 1,
+        column: node.startPosition.column,
       }));
     }
     return true;
@@ -844,6 +845,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
 
   private rtkCall(node: Node, fn: Node | null, fnName: string, sources: DataSourceInfo[]): boolean {
     const line = node.startPosition.row + 1;
+    const column = node.startPosition.column;
     if (fn?.type === "member_expression" && (fnName === "query" || fnName === "mutation" || fnName === "infiniteQuery")) {
       const rtk = (this.rtk ??= rtkEvidence(this.sourceText));
       const pair = node.parent?.type === "pair" ? node.parent : null;
@@ -871,7 +873,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       const method = stated?.toUpperCase() ?? (fnName === "mutation" ? "POST" : "GET");
       const targets = [...new Set(paths.map((path) => rtk.base ? `${rtk.base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}` : path.startsWith("/") ? path : `/${path}`))];
       sources.push(this.ds({
-        kind: "api-call", name: method, target: targets[0]!, line, endpoint: stripQuotes(endpoint),
+        kind: "api-call", name: method, target: targets[0]!, line, column, endpoint: stripQuotes(endpoint),
         ...(targets.length > 1 ? { targetAlternatives: targets.slice(1) } : {}),
       }));
       return true;
@@ -886,11 +888,11 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       const path = options?.type === "object" ? optionString(options, /^(?:path|url)$/) : null;
       if (path !== null && /^\/|^\$\{[\w$.]+\}\//.test(path)) {
         const verb = optionString(options!, /^method$/)?.toUpperCase() ?? (/Query$/.test(fnName) ? "GET" : fnName);
-        sources.push(this.ds({ kind: "api-call", name: verb, target: path, line }));
+        sources.push(this.ds({ kind: "api-call", name: verb, target: path, line, column }));
         return true;
       }
       const endpoint = hook[1]![0]!.toLowerCase() + hook[1]!.slice(1);
-      sources.push(this.ds({ kind: "api-call", name: fnName, target: null, line, endpoint }));
+      sources.push(this.ds({ kind: "api-call", name: fnName, target: null, line, column, endpoint }));
       // `const [remove] = useDeleteGameMutation()`: the mutation (or lazy query)
       // is sent where the trigger is called — in a click handler, not at render;
       // a query's `const { refetch: reload } = useGetGamesQuery()` sends it again.
@@ -908,11 +910,11 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     }
     const trigger = fn?.type === "identifier" ? this.rtkTriggers?.get(fnName) : undefined;
     if (trigger && node.startIndex > trigger.start && node.startIndex < trigger.end) {
-      sources.push(this.ds({ kind: "api-call", name: trigger.hook, target: null, line, endpoint: trigger.endpoint }));
+      sources.push(this.ds({ kind: "api-call", name: trigger.hook, target: null, line, column, endpoint: trigger.endpoint }));
       return true;
     }
     if (initiate) {
-      sources.push(this.ds({ kind: "api-call", name: fn!.text.replace(/\s+/g, "").split(".")[0]!, target: null, line, endpoint: initiate[1]! }));
+      sources.push(this.ds({ kind: "api-call", name: fn!.text.replace(/\s+/g, "").split(".")[0]!, target: null, line, column, endpoint: initiate[1]! }));
       return true;
     }
     return false;
@@ -1673,6 +1675,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
           ...(resolved.alternatives?.length ? { targetAlternatives: resolved.alternatives } : {}),
           ...(resolved.alternatives?.length && resolved.choice ? { targetChoice: true as const } : {}),
           line: node.startPosition.row + 1,
+          column: node.startPosition.column,
         }));
         return;
       }
@@ -1734,7 +1737,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       if (fnName && (this.convexFile ??= namesConvex(this.sourceText))) {
         const ref = convexReference(node);
         if (ref) {
-          sources.push(this.ds({ kind: "api-call", name: ref.method, target: ref.target, line: node.startPosition.row + 1 }));
+          sources.push(this.ds({ kind: "api-call", name: ref.method, target: ref.target, line: node.startPosition.row + 1, column: node.startPosition.column }));
           return;
         }
         const db = /_generated\/server|convex\/server/.test(this.sourceText) ? convexDbAccess(node) : null;
@@ -1767,7 +1770,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         // defining a procedure (routes/trpc.ts reads it), never a request.
         if (parts.some((p) => /^(?:procedure|\w+Procedure)$/.test(p))) return;
         if (parts.length && parts[0] !== "this" && path.length) {
-          sources.push(this.ds({ kind: "api-call", name: TRPC_CLIENT_VERBS.get(fnName)!, target: `/trpc/${path.join(".")}`, line: node.startPosition.row + 1 }));
+          sources.push(this.ds({ kind: "api-call", name: TRPC_CLIENT_VERBS.get(fnName)!, target: `/trpc/${path.join(".")}`, line: node.startPosition.row + 1, column: node.startPosition.column }));
           return;
         }
       }
@@ -1911,6 +1914,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
               ...(resolved.alternatives?.length ? { targetAlternatives: resolved.alternatives } : {}),
               ...(resolved.alternatives?.length && resolved.choice ? { targetChoice: true as const } : {}),
               line: node.startPosition.row + 1,
+              column: node.startPosition.column,
               // Recovered env base (display only; `target` stays app-relative).
               ...(resolved.baseEnv ? { baseEnv: resolved.baseEnv } : {}),
               // The client instance (`apiClient.get(...)`): its base URL is
@@ -2189,6 +2193,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
                 name: "GET",
                 target: resolved.url,
                 line: node.startPosition.row + 1,
+                column: node.startPosition.column,
                 ...(resolved.baseEnv ? { baseEnv: resolved.baseEnv } : {}),
               }));
             }
@@ -2405,6 +2410,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
             name: method ?? "request",
             target: url,
             line: node.startPosition.row + 1,
+            column: node.startPosition.column,
             ...(descriptorSchema ? { requestBody: descriptorSchema } : {}),
             ...(pathValues ? { pathValues } : {}),
             ...(urls.length > 1 ? { targetAlternatives: urls.slice(1) } : {}),

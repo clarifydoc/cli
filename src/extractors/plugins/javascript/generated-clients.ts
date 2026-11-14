@@ -46,7 +46,7 @@ export function generatedClientCall(declarator: Node): DataSourceInfo | null {
       if (d.type !== "variable_declarator" || d.childForFieldName("name")?.text !== "localVarPath") continue;
       const path = literalPath(d.childForFieldName("value"));
       if (!path) return null;
-      return { kind: "api-call", name: method, target: path, line: d.startPosition.row + 1, calls: [] };
+      return { kind: "api-call", name: method, target: path, line: d.startPosition.row + 1, column: d.startPosition.column, calls: [] };
     }
   }
   return null;

@@ -2753,6 +2753,15 @@ export interface DataSourceInfo {
   calls: CallInfo[];
   line: number;
   /**
+   * The column the call starts at (0-based, in UTF-16 code units from the
+   * line's start — tree-sitter's `startPosition.column`, which counts
+   * characters, not bytes; the same unit LSP and VS Code use for a Range),
+   * beside `line`: a CodeLens or diagnostic on an api-call points at the
+   * exact location, not the whole line. Set by a plugin's per-file pass;
+   * absent on rows derived from a call that carries none.
+   */
+  column?: number;
+  /**
    * Resolved ORM entity/model/table this DB op touches, when derivable from
    * the call chain (e.g. "user" from `prisma.user.findMany`) or the DML target
    * (e.g. the table named in `knex("users")`). Only meaningful for

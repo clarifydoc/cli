@@ -211,6 +211,9 @@ export function resolveKubbClientCalls(calls: ProjectApiCall[], analyses: readon
           name: route.httpMethod!.toLowerCase(),
           target: route.path,
           line: call.line,
+          // `CallInfo.column` is optional, unlike a node's own position: a row
+          // derived from a call that carries none stays column-less.
+          ...(call.column !== undefined ? { column: call.column } : {}),
           calls: [],
           endpoint: route.handler!,
           filePath: a.filePath,

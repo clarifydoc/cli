@@ -88,7 +88,11 @@ export function extractGqlOperationCalls(sourceText: string): DataSourceInfo[] {
     const fields = parseGqlOperationRootFields(m[1]!);
     if (fields.length === 0) continue;
     let line = 1;
-    for (let i = 0; i < m.index; i++) if (sourceText.charCodeAt(i) === 10) line++;
+    let column = 0;
+    for (let i = 0; i < m.index; i++) {
+      if (sourceText.charCodeAt(i) === 10) { line++; column = 0; }
+      else column++;
+    }
     for (const field of fields) {
       out.push({
         kind: "api-call",
@@ -98,6 +102,7 @@ export function extractGqlOperationCalls(sourceText: string): DataSourceInfo[] {
         target: `/graphql/${field}`,
         calls: [],
         line,
+        column,
       });
     }
   }
