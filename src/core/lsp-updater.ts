@@ -10,9 +10,11 @@ import type { DiscoveredFile } from "./file-discovery.js";
 import {
   writeLspEnhancement,
   writeLspGroundTruth,
+  writeSummaryHead,
   type LspEnhancement,
   type OutputOptions,
 } from "./output-writer.js";
+import { loadReportSummary } from "./report-payload.js";
 import {
   enrichGraphFromSymbolLinks,
   enrichLinkGraphFromComponentGraph,
@@ -220,6 +222,10 @@ export async function updateLsp(options: UpdateLspOptions): Promise<UpdateLspRes
 
   const outputOpts: OutputOptions = { outputDir: dir, pretty: options.pretty };
   const outputPath = await writeLspEnhancement(enhancement, outputOpts);
+  // The head must postdate the delta: this run's delta is fresh (its
+  // enhancedAt is now), so the merge applies it wholesale — derive the head
+  // from the merged view, the only one the extension would compute.
+  await writeSummaryHead(await loadReportSummary(dir), outputOpts);
 
   // 6. Export the raw query/answer log alongside the merged enhancement, so
   // the text linker can be optimized against it. Only the Docker servers'

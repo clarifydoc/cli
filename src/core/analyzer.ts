@@ -50,6 +50,7 @@ import {
   writeReportData,
   writeLspGroundTruth,
   writeImpactDiff,
+  writeSummaryHead,
   ensureSelfIgnored,
   fileAnalysisPath,
   writeOutputFilesSync,
@@ -410,6 +411,9 @@ async function loadCachedFileResult(
 async function upToDateResult(outputDir: string, outputOpts: OutputOptions): Promise<AnalyzeResult> {
   const summary = await loadReportSummary(outputDir);
   await writeImpactDiff(computeImpactDiff(summary, [], { removedFiles: [], baseLabel: "previous analysis run" }), outputOpts);
+  // Rewrite the head too: an analysis dir written by an older build predates
+  // the file, and a moved LSP delta moves the counts summarize() would read.
+  await writeSummaryHead(summary, outputOpts);
   return { ...resultOf(summary, outputDir), upToDate: true };
 }
 
@@ -459,6 +463,14 @@ async function docsOnlyResult(args: {
     fingerprint: args.fingerprints.full,
     codeFingerprint: args.fingerprints.code,
   });
+  // The manifest must be written first: loadReportSummary's age guard reads it
+  // when it decides which of the LSP delta's links survive the re-analysis.
+  // Same in-memory-first rule as the main path: re-read the summary only when
+  // a delta file exists.
+  await writeSummaryHead(
+    existsSync(join(args.outputDir, "lsp-enhancement.json")) ? await loadReportSummary(args.outputDir) : summary,
+    args.outputOpts,
+  );
   return { ...resultOf(summary, args.outputDir), docsOnly: true };
 }
 
@@ -2723,6 +2735,20 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
       if (removed > 0) progress.detail(`  Incremental: removed ${removed} stale artifact(s)`);
     }
   }
+
+  // The extension's headline view. With no separately written LSP delta the
+  // in-memory summary is what the extension would read, so use it — the merged
+  // copy is worth re-reading project-summary.json from disk for only when a
+  // delta exists (on a 65 MB summary that re-read was ~400 ms and ~400 MB of
+  // heap at the end of every run). With a delta, go through loadReportSummary
+  // — the same merge the extension applies (a fresh delta replaces the links
+  // layer wholesale, a stale one carries only the links whose files still hash
+  // the same, guarded by the manifest written above) — so the head always
+  // equals what the extension's summarize() would compute from these artifacts.
+  await writeSummaryHead(
+    existsSync(join(outputDir, "lsp-enhancement.json")) ? await loadReportSummary(outputDir) : summary,
+    outputOpts,
+  );
 
   if (verbose) {
     const t = progress.timings().filter((x) => x.ms >= 1);

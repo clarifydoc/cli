@@ -4,7 +4,7 @@ Every `clarifydoc` command and option. For what the files it writes contain and 
 [Reading the output](reading-the-output.md).
 
 ```text
-clarifydoc analyze <path>             Analyze a codebase → per-file JSON, project-summary.json, report-data.json
+clarifydoc analyze <path>             Analyze a codebase → per-file JSON, project-summary.json, summary-head.json, report-data.json
 clarifydoc impact <path>              What a set of changed files reaches: screens, routes, entities, tests
 clarifydoc diff <base> <head>         What changed in the API surface between two analyses, and what breaks
 clarifydoc report <analysis-dir>      (Re)build report.html from an existing analysis

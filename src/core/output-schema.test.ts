@@ -28,7 +28,7 @@ describe("clarifydoc schema", () => {
   it("lists every key a per-file JSON carries", () => {
     const perFile = globSync("test-output/*/**/*.json", {
       cwd: REPO_ROOT,
-      ignore: ["**/project-summary.json", "**/report-data.json", "**/manifest.json", "**/lsp-*.json", "**/impact-latest.json"],
+      ignore: ["**/project-summary.json", "**/report-data.json", "**/manifest.json", "**/lsp-*.json", "**/impact-latest.json", "**/summary-head.json"],
     }).slice(0, 400);
     expect(perFile.length).toBeGreaterThan(50);
     const unknown = new Set<string>();

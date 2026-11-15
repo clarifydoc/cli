@@ -235,6 +235,86 @@ export async function writeProjectSummary(
 }
 
 /**
+ * The extension's `summarize()` view of one analysis — the few-KB
+ * `summary-head.json` written beside `project-summary.json` so a host that
+ * wants the headline numbers (the status bar) never has to parse the full
+ * summary. Same fields, same names as the extension's AnalysisSummary.
+ */
+export interface SummaryHead {
+  schemaVersion: 1;
+  projectRoot: string;
+  analyzedAt: string;
+  frameworks: Array<{ name: string; confidence?: string; detectedVia?: string }>;
+  health?: { score: number; grade: string };
+  counts: {
+    files: number;
+    routes: number;
+    links: number;
+    traces: number;
+    screens: number;
+    apiCalls: number;
+    entities: number;
+    security: number;
+    suggestions: number;
+    subProjects: number;
+    layerViolations: number;
+    duplicates: number;
+  };
+}
+
+const headLen = (v: unknown): number => (Array.isArray(v) ? v.length : 0);
+
+/**
+ * The fields the extension's `summarize()` reads — the big arrays as lengths
+ * only; everything else in the summary stays out of the head.
+ */
+export function summaryHeadOf(summary: ProjectAnalysis): SummaryHead {
+  return {
+    schemaVersion: 1,
+    projectRoot: summary.projectRoot,
+    analyzedAt: summary.analyzedAt,
+    frameworks: Array.isArray(summary.detectedFrameworks)
+      ? summary.detectedFrameworks.map((f) => ({ name: f.name, confidence: f.confidence, detectedVia: f.detectedVia }))
+      : [],
+    ...(summary.healthScore
+      ? { health: { score: summary.healthScore.score, grade: summary.healthScore.grade } }
+      : {}),
+    counts: {
+      files: headLen(summary.files),
+      routes: headLen(summary.routeMap),
+      links: headLen(summary.linkGraph),
+      traces: headLen(summary.symbolLinks),
+      screens: headLen(summary.screens),
+      apiCalls: headLen(summary.apiCalls),
+      // The extension's summarize reads both spellings of the ER graph.
+      entities:
+        headLen((summary.entityGraph as { entities?: unknown[] } | undefined)?.entities) ||
+        headLen(summary.entityGraph?.nodes) ||
+        0,
+      security: headLen(summary.securityIssues),
+      suggestions: headLen(summary.suggestions),
+      subProjects: headLen(summary.subProjects),
+      layerViolations: headLen(summary.layerViolations),
+      duplicates: headLen(summary.duplicates),
+    },
+  };
+}
+
+/**
+ * Write the extension's headline view beside the summary.
+ * Pass the summary AS THE EXTENSION LOADS IT (the `loadReportSummary` result:
+ * base summary + the LSP delta merge, when one applies) so the head always
+ * equals what its `summarize()` computes.
+ * Creates: <outputDir>/summary-head.json
+ */
+export async function writeSummaryHead(
+  summary: ProjectAnalysis,
+  options: OutputOptions,
+): Promise<string> {
+  return writeJson("summary-head.json", summaryHeadOf(summary), options);
+}
+
+/**
  * Write the diff-scoped impact of the latest incremental run.
  * Creates: <outputDir>/impact-latest.json
  */

@@ -44,6 +44,7 @@ per-file JSON of their own.
 ```text
 .clarifydoc/shop/
 ├── project-summary.json      the whole project, linked — start here
+├── summary-head.json         the headline view of the summary: health, counts, frameworks — a few KB
 ├── <source path>.json        one per analyzed file: orders/Controllers/OrdersController.cs.json, …
 ├── report-data.json          the report viewer's input
 ├── report.html               the interactive report (--html, or `clarifydoc report`)
@@ -57,6 +58,7 @@ per-file JSON of their own.
 | File | Written by | Read it when |
 |------|------------|--------------|
 | `project-summary.json` | every `analyze` | You want anything that spans files: routes, who calls them, what they reach, the data model, risk, quality. |
+| `summary-head.json` | every `analyze`, `lsp-update` | You want the headline numbers — health, the twelve counts, frameworks — without parsing the full summary. |
 | `<path>.json` | every `analyze` | You want everything extracted from one file, before any cross-file linking. |
 | `report.html` | `analyze --html`, `report` | You want to look rather than query. One self-contained file. |
 | `report-data.json` | every `analyze` | Rarely — it is a subset of the summary shaped for the viewer, and its format follows the viewer. |
@@ -430,6 +432,16 @@ The ClarifyDoc linker refuses rather than guesses: a refused call is reported, n
 look-alike.
 
 ## The other files
+
+### `summary-head.json`
+
+The headline view of the summary in a few KB: `schemaVersion` (1), `projectRoot`, `analyzedAt`,
+`frameworks` (`name`, `confidence`, `detectedVia`), `health` (`score`, `grade`), and twelve counts —
+files, routes, links, traces, screens, api calls, entities, security issues, suggestions, sub-projects,
+layer violations, duplicates. The big arrays of the summary are their lengths only. `analyze` and
+`lsp-update` write it beside the summary, derived through the same merge that applies the LSP delta,
+so its counts are what that merged view carries — with a stale delta's carried links, they can differ
+from the summary's own arrays on purpose.
 
 ### `impact-latest.json` and `impact --json`
 
