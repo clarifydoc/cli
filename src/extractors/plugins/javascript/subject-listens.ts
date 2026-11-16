@@ -160,8 +160,10 @@ export function withAngularListeners(tree: Tree, facts: CellFacts, text: string)
   // An observable member the class's inline template reads through `| async`.
   if (/\|\s*async\b/.test(text)) {
     for (const cls of tree.rootNode.descendantsOfType(["class_declaration", "abstract_class_declaration"])) {
-      if (!cls || !/\|\s*async\b/.test(cls.text)) continue;
-      const member = (name: string) => new RegExp(String.raw`(?<![\w$.])${name.replace(/\$/g, "\\$")}\s*\|\s*async\b`).test(cls.text);
+      // The component's decorator (with its inline template) is a child of the `export` around an exported class.
+      const scope = cls?.parent?.type === "export_statement" ? cls.parent.text : cls?.text ?? "";
+      if (!cls || !/\|\s*async\b/.test(scope)) continue;
+      const member = (name: string) => new RegExp(String.raw`(?<![\w$.])${name.replace(/\$/g, "\\$")}\s*\|\s*async\b`).test(scope);
       const consider = (name: string | undefined, value: Node | null | undefined) => {
         if (!name || !value || !member(name)) return;
         const { source, operatorCallbacks } = pipeSource(value);

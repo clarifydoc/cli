@@ -3,6 +3,7 @@ import type { ReactiveCells } from "../../../types/analysis.js";
 import { sameCell } from "../../../core/reactive-triggers.js";
 import { withStoreWatchers, type StoreTrigger, type StoreWrite } from "./store-reads.js";
 import { withVuexOptions } from "./vuex-state-reads.js";
+import { withAngularListeners } from "./subject-listens.js";
 import { TEMPLATE_WRITE_MARK } from "./markup-expressions.js";
 import { decodeTargets, type TemplateTarget } from "./template-targets.js";
 
@@ -95,7 +96,7 @@ export function reactiveCellsOf(tree: Tree): CellFacts {
   memoTree = tree;
   const text = tree.rootNode.text;
   const template = templateWritesOf(tree, text);
-  memo = withVuexOptions(tree, withStoreWatchers(tree, withSubjectListeners(tree, withPropWatchers(tree, withOptionsApi(tree, read(tree, text, template), text, template), text), text), text, template), text);
+  memo = withVuexOptions(tree, withStoreWatchers(tree, withAngularListeners(tree, withSubjectListeners(tree, withPropWatchers(tree, withOptionsApi(tree, read(tree, text, template), text, template), text), text), text), text, template), text);
   return memo;
 }
 
