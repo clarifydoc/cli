@@ -1,0 +1,113 @@
+# ClassInfo — language × field coverage
+
+Fields: **9 required** + 18 optional = 27. ✓=written, D=deliverable, N=not deliverable, ✗=required missing.
+
+> **D** = not written, but the concept exists in that language and is extractable (a real gap). **N** = no such concept in that language/framework (a legitimate absence). Core-pass fields (`doc`) count as D for every language that produces the model — core applies them uniformly, not per plugin — except that the core doc-comment pass only runs where the language manifest declares `docComments`, so the non-program languages that don't are N.
+
+| language | name* | extends* | implements* | decorators* | methods* | properties* | isExported* | line* | endLine* | namespace | synthetic | partial | doc | tableName | routeKey | staticProxyOf | typeParameters | fieldValues | superArgs | kind | abstract | structural | embeds | mixins | includerExtends | extension | fileLocal | cov |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| bash `ts` | N | N | N | N | N | N | N | N | N | N | N | N | N | N | N | N | N | N | N | N | N | N | N | N | N | N | N | 0/27 |
+| csharp `ts` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | D | D | ✓ | D | ✓ | N | N | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | 16/27 |
+| dfm `ts` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | D | N | N | N | N | N | N | 10/27 |
+| fsharp `ts` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | D | D | N | D | N | N | N | D | D | D | ✓ | D | N | N | N | N | N | N | 10/27 |
+| java `ts` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | D | ✓ | N | D | D | N | N | D | ✓ | D | ✓ | ✓ | N | N | N | N | N | N | 13/27 |
+| javascript `ts` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | 13/27 |
+| julia `ts` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | D | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| kotlin `ts` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | ✓ | N | D | D | N | N | D | ✓ | D | ✓ | ✓ | N | N | N | N | N | N | 13/27 |
+| ocaml `ts` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| pascal `ts` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | D | N | N | N | N | N | N | 10/27 |
+| php `ts` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | D | ✓ | D | ✓ | D | D | D | ✓ | ✓ | N | N | ✓ | N | N | N | 15/27 |
+| python `ts` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | D | N | D | D | N | N | N | D | D | ✓ | ✓ | ✓ | N | N | N | N | N | 12/27 |
+| r `ts` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | D | N | N | N | N | N | N | N | 9/27 |
+| typescript `ts` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | D | D | N | N | N | D | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | 13/27 |
+| zig `ts` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| applescript `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| autohotkey `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| autoit `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| batch `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| blazor `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| c `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| clojure `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| coffeescript `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| commonlisp `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| coredata `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | ✓ | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 11/27 |
+| cpp `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | D | N | N | N | D | N | N | ✓ | N | N | N | N | N | ✓ | ✓ | 13/27 |
+| crystal `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | D | N | N | D | N | N | N | D | D | D | ✓ | N | N | N | N | N | N | N | 10/27 |
+| dart `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | ✓ | N | ✓ | N | N | N | ✓ | N | N | N | 12/27 |
+| dlang `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | D | N | N | D | N | N | N | D | D | D | ✓ | N | N | N | N | N | N | N | 10/27 |
+| ejs `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| elixir `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| erb `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| erlang `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| fortran `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| freemarker `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| go `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | D | N | N | N | D | N | ✓ | N | ✓ | ✓ | N | N | D | N | 12/27 |
+| gotemplate `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| graphql `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| groovy `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | D | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| handlebars `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| haskell `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | D | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| haxe `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| heex `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| html `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| jsight `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| jsp `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| less `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| liquid `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| lua `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| mojo `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| nim `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | D | N | N | D | N | N | N | D | D | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| objc `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| openapi `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| perl `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| powershell `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| prisma `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | ✓ | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 11/27 |
+| protobuf `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| qml `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| qtui `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| racket `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| raku `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| razor `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| ruby `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | D | N | N | D | D | N | N | N | ✓ | D | ✓ | N | N | N | ✓ | ✓ | N | N | 13/27 |
+| rust `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | D | N | N | D | ✓ | N | N | D | D | N | ✓ | N | N | N | N | N | ✓ | N | 12/27 |
+| sass `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| scala `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | D | D | N | D | N | N | N | D | D | D | ✓ | N | N | N | N | N | N | N | 10/27 |
+| scheme `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| scss `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| serverless `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| springxml `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| sql `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| storyboard `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| swift `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | D | D | D | ✓ | N | N | N | N | N | N | N | 10/27 |
+| terraform `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| thrift `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| vb `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| velocity `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| vlang `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | D | N | N | N | N | D | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| wsdl `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+| xaml `regex` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | N | N | N | N | N | N | N | N | N | N | ✓ | N | N | N | N | N | N | N | 10/27 |
+
+\* = required field
+
+## Gaps (fields not written by every producing language)
+
+- `namespace`: missing in 77 → **D** csharp, fsharp, java, crystal, dlang, nim, ruby, rust, scala; **N** dfm, javascript, julia, kotlin, ocaml, pascal, python, r, typescript, zig, applescript, autohotkey, autoit, batch, blazor, c, clojure, coffeescript, commonlisp, coredata, dart, ejs, elixir, erb, erlang, fortran, freemarker, go, gotemplate, graphql, groovy, handlebars, haskell, haxe, heex, html, jsight, jsp, less, liquid, lua, mojo, objc, openapi, perl, powershell, prisma, protobuf, qml, qtui, racket, raku, razor, sass, scheme, scss, serverless, springxml, sql, storyboard, swift, terraform, thrift, vb, velocity, vlang, wsdl, xaml
+- `synthetic`: missing in 77 → **D** csharp, fsharp, python, scala; **N** dfm, javascript, julia, ocaml, pascal, php, r, typescript, zig, applescript, autohotkey, autoit, batch, blazor, c, clojure, coffeescript, commonlisp, coredata, cpp, crystal, dart, dlang, ejs, elixir, erb, erlang, fortran, freemarker, go, gotemplate, graphql, groovy, handlebars, haskell, haxe, heex, html, jsight, jsp, less, liquid, lua, mojo, nim, objc, openapi, perl, powershell, prisma, protobuf, qml, qtui, racket, raku, razor, ruby, rust, sass, scheme, scss, serverless, springxml, sql, storyboard, swift, terraform, thrift, vb, velocity, vlang, wsdl, xaml
+- `partial`: missing in 78 → **D** typescript; **N** dfm, fsharp, java, javascript, julia, kotlin, ocaml, pascal, php, python, r, zig, applescript, autohotkey, autoit, batch, blazor, c, clojure, coffeescript, commonlisp, coredata, cpp, crystal, dart, dlang, ejs, elixir, erb, erlang, fortran, freemarker, go, gotemplate, graphql, groovy, handlebars, haskell, haxe, heex, html, jsight, jsp, less, liquid, lua, mojo, nim, objc, openapi, perl, powershell, prisma, protobuf, qml, qtui, racket, raku, razor, ruby, rust, sass, scala, scheme, scss, serverless, springxml, sql, storyboard, swift, terraform, thrift, vb, velocity, vlang, wsdl, xaml
+- `doc`: missing in 79 → **D** csharp, dfm, fsharp, java, javascript, julia, kotlin, ocaml, pascal, php, python, r, typescript, zig, applescript, autohotkey, autoit, batch, c, clojure, coffeescript, commonlisp, cpp, crystal, dart, dlang, elixir, erlang, fortran, go, groovy, haskell, haxe, lua, mojo, nim, objc, perl, powershell, racket, raku, ruby, rust, scala, scheme, sql, swift, vb, vlang; **N** blazor, coredata, ejs, erb, freemarker, gotemplate, graphql, handlebars, heex, html, jsight, jsp, less, liquid, openapi, prisma, protobuf, qml, qtui, razor, sass, scss, serverless, springxml, storyboard, terraform, thrift, velocity, wsdl, xaml
+- `tableName`: missing in 74 → **D** java, kotlin, python, go, ruby; **N** dfm, fsharp, javascript, julia, ocaml, pascal, r, typescript, zig, applescript, autohotkey, autoit, batch, blazor, c, clojure, coffeescript, commonlisp, cpp, crystal, dart, dlang, ejs, elixir, erb, erlang, fortran, freemarker, gotemplate, graphql, groovy, handlebars, haskell, haxe, heex, html, jsight, jsp, less, liquid, lua, mojo, nim, objc, openapi, perl, powershell, protobuf, qml, qtui, racket, raku, razor, sass, scala, scheme, scss, serverless, springxml, sql, storyboard, swift, terraform, thrift, vb, velocity, vlang, wsdl, xaml
+- `routeKey`: missing in 79 → **D** php; **N** csharp, dfm, fsharp, java, javascript, julia, kotlin, ocaml, pascal, python, r, typescript, zig, applescript, autohotkey, autoit, batch, blazor, c, clojure, coffeescript, commonlisp, coredata, cpp, crystal, dart, dlang, ejs, elixir, erb, erlang, fortran, freemarker, go, gotemplate, graphql, groovy, handlebars, haskell, haxe, heex, html, jsight, jsp, less, liquid, lua, mojo, nim, objc, openapi, perl, powershell, prisma, protobuf, qml, qtui, racket, raku, razor, ruby, rust, sass, scala, scheme, scss, serverless, springxml, sql, storyboard, swift, terraform, thrift, vb, velocity, vlang, wsdl, xaml
+- `staticProxyOf`: missing in 78 → **N** csharp, dfm, fsharp, java, javascript, julia, kotlin, ocaml, pascal, python, r, typescript, zig, applescript, autohotkey, autoit, batch, blazor, c, clojure, coffeescript, commonlisp, coredata, cpp, crystal, dart, dlang, ejs, elixir, erb, erlang, fortran, freemarker, go, gotemplate, graphql, groovy, handlebars, haskell, haxe, heex, html, jsight, jsp, less, liquid, lua, mojo, nim, objc, openapi, perl, powershell, prisma, protobuf, qml, qtui, racket, raku, razor, ruby, rust, sass, scala, scheme, scss, serverless, springxml, sql, storyboard, swift, terraform, thrift, vb, velocity, vlang, wsdl, xaml
+- `typeParameters`: missing in 78 → **D** fsharp, java, julia, kotlin, php, typescript, cpp, crystal, dlang, haskell, nim, rust, scala, swift; **N** dfm, javascript, ocaml, pascal, python, r, zig, applescript, autohotkey, autoit, batch, blazor, c, clojure, coffeescript, commonlisp, coredata, dart, ejs, elixir, erb, erlang, fortran, freemarker, go, gotemplate, graphql, groovy, handlebars, haxe, heex, html, jsight, jsp, less, liquid, lua, mojo, objc, openapi, perl, powershell, prisma, protobuf, qml, qtui, racket, raku, razor, ruby, sass, scheme, scss, serverless, springxml, sql, storyboard, terraform, thrift, vb, velocity, vlang, wsdl, xaml
+- `fieldValues`: missing in 72 → **D** fsharp, php, python, crystal, dlang, go, groovy, nim, rust, scala, swift, vlang; **N** dfm, julia, ocaml, pascal, r, zig, applescript, autohotkey, autoit, batch, blazor, c, clojure, coffeescript, commonlisp, coredata, cpp, ejs, elixir, erb, erlang, fortran, freemarker, gotemplate, graphql, handlebars, haskell, haxe, heex, html, jsight, jsp, less, liquid, lua, mojo, objc, openapi, perl, powershell, prisma, protobuf, qml, qtui, racket, raku, razor, sass, scheme, scss, serverless, springxml, sql, storyboard, terraform, thrift, vb, velocity, wsdl, xaml
+- `superArgs`: missing in 76 → **D** fsharp, java, kotlin, php, python, crystal, dlang, ruby, scala, swift; **N** dfm, julia, ocaml, pascal, r, zig, applescript, autohotkey, autoit, batch, blazor, c, clojure, coffeescript, commonlisp, coredata, cpp, dart, ejs, elixir, erb, erlang, fortran, freemarker, go, gotemplate, graphql, groovy, handlebars, haskell, haxe, heex, html, jsight, jsp, less, liquid, lua, mojo, nim, objc, openapi, perl, powershell, prisma, protobuf, qml, qtui, racket, raku, razor, rust, sass, scheme, scss, serverless, springxml, sql, storyboard, terraform, thrift, vb, velocity, vlang, wsdl, xaml
+- `kind`: missing in 1 → **D** r
+- `abstract`: missing in 72 → **D** dfm, fsharp, pascal; **N** julia, ocaml, r, zig, applescript, autohotkey, autoit, batch, blazor, c, clojure, coffeescript, commonlisp, coredata, cpp, crystal, dart, dlang, ejs, elixir, erb, erlang, fortran, freemarker, go, gotemplate, graphql, groovy, handlebars, haskell, haxe, heex, html, jsight, jsp, less, liquid, lua, mojo, nim, objc, openapi, perl, powershell, prisma, protobuf, qml, qtui, racket, raku, razor, ruby, rust, sass, scala, scheme, scss, serverless, springxml, sql, storyboard, swift, terraform, thrift, vb, velocity, vlang, wsdl, xaml
+- `structural`: missing in 77 → **N** csharp, dfm, fsharp, java, javascript, julia, kotlin, ocaml, pascal, php, r, typescript, zig, applescript, autohotkey, autoit, batch, blazor, c, clojure, coffeescript, commonlisp, coredata, cpp, crystal, dart, dlang, ejs, elixir, erb, erlang, fortran, freemarker, gotemplate, graphql, groovy, handlebars, haskell, haxe, heex, html, jsight, jsp, less, liquid, lua, mojo, nim, objc, openapi, perl, powershell, prisma, protobuf, qml, qtui, racket, raku, razor, ruby, rust, sass, scala, scheme, scss, serverless, springxml, sql, storyboard, swift, terraform, thrift, vb, velocity, vlang, wsdl, xaml
+- `embeds`: missing in 78 → **N** csharp, dfm, fsharp, java, javascript, julia, kotlin, ocaml, pascal, php, python, r, typescript, zig, applescript, autohotkey, autoit, batch, blazor, c, clojure, coffeescript, commonlisp, coredata, cpp, crystal, dart, dlang, ejs, elixir, erb, erlang, fortran, freemarker, gotemplate, graphql, groovy, handlebars, haskell, haxe, heex, html, jsight, jsp, less, liquid, lua, mojo, nim, objc, openapi, perl, powershell, prisma, protobuf, qml, qtui, racket, raku, razor, ruby, rust, sass, scala, scheme, scss, serverless, springxml, sql, storyboard, swift, terraform, thrift, vb, velocity, vlang, wsdl, xaml
+- `mixins`: missing in 76 → **N** csharp, dfm, fsharp, java, javascript, julia, kotlin, ocaml, pascal, python, r, typescript, zig, applescript, autohotkey, autoit, batch, blazor, c, clojure, coffeescript, commonlisp, coredata, cpp, crystal, dlang, ejs, elixir, erb, erlang, fortran, freemarker, go, gotemplate, graphql, groovy, handlebars, haskell, haxe, heex, html, jsight, jsp, less, liquid, lua, mojo, nim, objc, openapi, perl, powershell, prisma, protobuf, qml, qtui, racket, raku, razor, rust, sass, scala, scheme, scss, serverless, springxml, sql, storyboard, swift, terraform, thrift, vb, velocity, vlang, wsdl, xaml
+- `includerExtends`: missing in 78 → **N** csharp, dfm, fsharp, java, javascript, julia, kotlin, ocaml, pascal, php, python, r, typescript, zig, applescript, autohotkey, autoit, batch, blazor, c, clojure, coffeescript, commonlisp, coredata, cpp, crystal, dart, dlang, ejs, elixir, erb, erlang, fortran, freemarker, go, gotemplate, graphql, groovy, handlebars, haskell, haxe, heex, html, jsight, jsp, less, liquid, lua, mojo, nim, objc, openapi, perl, powershell, prisma, protobuf, qml, qtui, racket, raku, razor, rust, sass, scala, scheme, scss, serverless, springxml, sql, storyboard, swift, terraform, thrift, vb, velocity, vlang, wsdl, xaml
+- `extension`: missing in 77 → **D** go; **N** csharp, dfm, fsharp, java, javascript, julia, kotlin, ocaml, pascal, php, python, r, typescript, zig, applescript, autohotkey, autoit, batch, blazor, c, clojure, coffeescript, commonlisp, coredata, crystal, dart, dlang, ejs, elixir, erb, erlang, fortran, freemarker, gotemplate, graphql, groovy, handlebars, haskell, haxe, heex, html, jsight, jsp, less, liquid, lua, mojo, nim, objc, openapi, perl, powershell, prisma, protobuf, qml, qtui, racket, raku, razor, ruby, sass, scala, scheme, scss, serverless, springxml, sql, storyboard, swift, terraform, thrift, vb, velocity, vlang, wsdl, xaml
+- `fileLocal`: missing in 78 → **N** csharp, dfm, fsharp, java, javascript, julia, kotlin, ocaml, pascal, php, python, r, typescript, zig, applescript, autohotkey, autoit, batch, blazor, c, clojure, coffeescript, commonlisp, coredata, crystal, dart, dlang, ejs, elixir, erb, erlang, fortran, freemarker, go, gotemplate, graphql, groovy, handlebars, haskell, haxe, heex, html, jsight, jsp, less, liquid, lua, mojo, nim, objc, openapi, perl, powershell, prisma, protobuf, qml, qtui, racket, raku, razor, ruby, rust, sass, scala, scheme, scss, serverless, springxml, sql, storyboard, swift, terraform, thrift, vb, velocity, vlang, wsdl, xaml
+
+_Never produces ClassInfo:_ bash

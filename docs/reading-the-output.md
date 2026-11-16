@@ -1,7 +1,7 @@
 # Reading the output
 
 What `clarifydoc analyze` writes, how the files are encoded, and how to get answers out of them — in the
-report, with `jq`, or from code. For the commands and their options, see the [CLI reference](cli-reference.md).
+report, with `jq`, or from code. For the commands and their options, see the [CLI reference](cli-reference.md). For which fields each language's extractor writes into these output models, see [Language × output-model field coverage](language-field-coverage.md).
 
 The examples come from a small system of five services: a Vite frontend (`web`), a YARP gateway, two
 ASP.NET APIs (`orders`, `inventory`) and a Java client (`billing`), run together by a docker-compose file.
