@@ -2871,6 +2871,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
             calls,
             line: member.startPosition.row + 1,
             endLine: member.endPosition.row + 1,
+            ...(member.children.some((c) => c.type === "static") ? { isStatic: true as const } : {}),
             ...(localTypes ? { localTypes } : {}),
             ...(valueFlow ? { valueFlow } : {}),
             ...(returnedSpreads ? { returnedSpreads } : {}),

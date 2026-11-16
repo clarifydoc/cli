@@ -256,14 +256,23 @@ type Target = { file: string; symbol: string; line: number; viaType?: string; vi
 type Hit = { file: FileAnalysis; fn?: FunctionInfo; also?: Target[] };
 type Module = { file: FileAnalysis; exported: string };
 
-export class VuexDispatchResolver implements DispatchResolver {
-  readonly id = "vuex-action";
-  readonly languages: Language[] = ["typescript", "javascript"];
-  readonly priority = 31;
+/** The root stores of a project, their modules by namespace and the root the caller's app uses (shared by the Vuex resolvers). */
+export interface VuexStores {
+  ctx: FactoryContext;
+  filePathMap: Map<string, string>;
+  byPath: Map<string, FileAnalysis>;
+  imported: (a: FileAnalysis, i: { source: string }) => FileAnalysis | null;
+  registered: Set<string>;
+  roots: FileAnalysis[];
+  filesOf: (mod: FileAnalysis) => FileAnalysis[];
+  trees: Map<FileAnalysis, Map<string, Module>>;
+  ownerOf: Map<string, Array<{ root: FileAnalysis; ns: string }>>;
+  preferred: (caller: string) => FileAnalysis[];
+}
 
-  resolve(analyses: FileAnalysis[]): SymbolLink[] {
+export function vuexStores(analyses: FileAnalysis[]): VuexStores | null {
     const registering = analyses.filter((a) => a.storeModules?.length);
-    if (registering.length === 0) return [];
+    if (registering.length === 0) return null;
     const filePathMap = buildFilePathMap(analyses);
     const byPath = new Map(analyses.map((a) => [a.filePath, a]));
     const ctx: FactoryContext = { byPath, filePathMap };
@@ -308,6 +317,60 @@ export class VuexDispatchResolver implements DispatchResolver {
       trees.set(root, tree);
     }
 
+    // The root store the caller's app uses: the one the app's entry (its mount) reaches through
+    // imports and whose closure holds the caller, else the one whose directory the caller shares.
+    const mounts = analyses.filter((a) => a.appMount);
+    const closures = new Map<FileAnalysis, Set<string>>();
+    const closureOf = (entry: FileAnalysis): Set<string> => {
+      let seen = closures.get(entry);
+      if (seen) return seen;
+      seen = new Set([entry.filePath]);
+      const queue = [entry];
+      while (queue.length > 0) {
+        const a = queue.pop()!;
+        for (const i of a.imports) {
+          if (i.isType) continue;
+          const f = imported(a, i);
+          if (f && !seen.has(f.filePath)) {
+            seen.add(f.filePath);
+            queue.push(f);
+          }
+        }
+      }
+      closures.set(entry, seen);
+      return seen;
+    };
+    const mountRoots = (entry: FileAnalysis): FileAnalysis[] => {
+      const direct = roots.filter((r) => entry.imports.some((i) => imported(entry, i) === r));
+      return direct.length > 0 ? direct : roots.filter((r) => closureOf(entry).has(r.filePath));
+    };
+    const preferredMemo = new Map<string, FileAnalysis[]>();
+    const preferred = (caller: string): FileAnalysis[] => {
+      let out = preferredMemo.get(caller);
+      if (out) return out;
+      const byMount = new Set(mounts.filter((m) => closureOf(m).has(caller)).flatMap(mountRoots));
+      if (byMount.size > 0) out = [...byMount];
+      else {
+        const shared = roots.map((r) => commonDirs(caller, r.filePath));
+        const best = Math.max(0, ...shared);
+        out = best > 0 && shared.filter((x) => x === best).length === 1 ? [roots[shared.indexOf(best)]!] : [];
+      }
+      preferredMemo.set(caller, out);
+      return out;
+    };
+
+    return { ctx, filePathMap, byPath, imported, registered, roots, filesOf, trees, ownerOf, preferred };
+}
+
+export class VuexDispatchResolver implements DispatchResolver {
+  readonly id = "vuex-action";
+  readonly languages: Language[] = ["typescript", "javascript"];
+  readonly priority = 31;
+
+  resolve(analyses: FileAnalysis[]): SymbolLink[] {
+    const stores = vuexStores(analyses);
+    if (!stores) return [];
+    const { ctx, filePathMap, byPath, imported, registered, roots, filesOf, trees, ownerOf, preferred } = stores;
     // Modules declaring `namespaced: true`: their actions answer only their namespace.
     const namespacedFiles = new Set<FileAnalysis>();
     for (const tree of trees.values()) for (const m of tree.values()) {
@@ -362,15 +425,15 @@ export class VuexDispatchResolver implements DispatchResolver {
 
     /** A module a project factory builds: the action its `actions` object names (vuex-factories.ts). */
     const tables = new Map<string, Map<string, FactoryAction[]>>();
-    const factoryAction = (mod: Module, act: string): Hit | null => {
+    const factoryAction = (mod: Module, act: string, section: Section): Hit | null => {
       const values = mod.file.storeShapes?.values;
       if (!values) return null;
-      const memoKey = `${mod.file.filePath}\0${mod.exported}`;
+      const memoKey = `${section}\0${mod.file.filePath}\0${mod.exported}`;
       let table = tables.get(memoKey);
       if (!table) {
         let value = values[mod.exported] ?? values[localName(mod.file, mod.exported)];
         if (value && "ref" in value && values[value.ref]) value = values[value.ref];
-        table = value ? factoryActions(mod.file, value, ctx) : new Map();
+        table = value ? factoryActions(mod.file, value, ctx, section) : new Map();
         tables.set(memoKey, table);
       }
       const hits = distinct((table.get(act) ?? []).map((a) => hitOfAction(a)));
@@ -404,7 +467,7 @@ export class VuexDispatchResolver implements DispatchResolver {
       }
       return out;
     };
-    const actionIn = (mod: Module, act: string, section: Section): Hit | null => literalAction(mod.file, act, section) ?? (section === "actions" ? factoryAction(mod, act) : null);
+    const actionIn = (mod: Module, act: string, section: Section): Hit | null => literalAction(mod.file, act, section) ?? factoryAction(mod, act, section);
 
     /** The distinct actions `key` names under the given root stores. */
     const hitsFor = (key: string, among: readonly FileAnalysis[], section: Section): Hit[] => {
@@ -430,48 +493,6 @@ export class VuexDispatchResolver implements DispatchResolver {
         const mod = trees.get(root)?.get(parts.join("/"));
         return mod ? actionIn(mod, act, section) : null;
       }));
-    };
-
-    // The root store the caller's app uses: the one the app's entry (its mount) reaches through
-    // imports and whose closure holds the caller, else the one whose directory the caller shares.
-    const mounts = analyses.filter((a) => a.appMount);
-    const closures = new Map<FileAnalysis, Set<string>>();
-    const closureOf = (entry: FileAnalysis): Set<string> => {
-      let seen = closures.get(entry);
-      if (seen) return seen;
-      seen = new Set([entry.filePath]);
-      const queue = [entry];
-      while (queue.length > 0) {
-        const a = queue.pop()!;
-        for (const i of a.imports) {
-          if (i.isType) continue;
-          const f = imported(a, i);
-          if (f && !seen.has(f.filePath)) {
-            seen.add(f.filePath);
-            queue.push(f);
-          }
-        }
-      }
-      closures.set(entry, seen);
-      return seen;
-    };
-    const mountRoots = (entry: FileAnalysis): FileAnalysis[] => {
-      const direct = roots.filter((r) => entry.imports.some((i) => imported(entry, i) === r));
-      return direct.length > 0 ? direct : roots.filter((r) => closureOf(entry).has(r.filePath));
-    };
-    const preferredMemo = new Map<string, FileAnalysis[]>();
-    const preferred = (caller: string): FileAnalysis[] => {
-      let out = preferredMemo.get(caller);
-      if (out) return out;
-      const byMount = new Set(mounts.filter((m) => closureOf(m).has(caller)).flatMap(mountRoots));
-      if (byMount.size > 0) out = [...byMount];
-      else {
-        const shared = roots.map((r) => commonDirs(caller, r.filePath));
-        const best = Math.max(0, ...shared);
-        out = best > 0 && shared.filter((x) => x === best).length === 1 ? [roots[shared.indexOf(best)]!] : [];
-      }
-      preferredMemo.set(caller, out);
-      return out;
     };
 
     const allMemo = new Map<string, Hit[]>();

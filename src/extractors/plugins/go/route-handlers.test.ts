@@ -131,3 +131,62 @@ func routes(e *echo.Echo) {
     expect(routes[1]!.auth?.schemes).toEqual(["jwtAuth"]);
   });
 });
+
+describe("Go routes: a handler factory handed a struct field", () => {
+  it("names the factory when its argument is a field of a value in scope, the method value stays the handler", () => {
+    expect(show(`
+import "github.com/gin-gonic/gin"
+
+type Server struct {
+	db     *sql.DB
+	router *gin.Engine
+}
+
+func (s *Server) Routes() {
+	s.router.GET("/clubs", handlers.List(s.db))
+	s.router.GET("/players", handlers.Wrap(s.Ping))
+}
+
+func (s *Server) Ping(c *gin.Context) {}
+`)).toEqual([
+      "GET /clubs -> handlers.List []",
+      "GET /players -> s.Ping [handlers.Wrap(s.Ping)]",
+    ]);
+  });
+
+  it("keeps a function-typed field and a bare receiver as handlers", () => {
+    expect(show(`
+import "github.com/gin-gonic/gin"
+
+type Server struct {
+	handler gin.HandlerFunc
+	db      *sql.DB
+}
+
+func (s *Server) Routes(r *gin.Engine) {
+	r.GET("/clubs", mw.Wrap(s.handler))
+	r.GET("/cars", mw.Wrap(s))
+}
+`)).toEqual([
+      "GET /clubs -> s.handler [mw.Wrap(s.handler)]",
+      "GET /cars -> s [mw.Wrap(s)]",
+    ]);
+  });
+
+  it("judges a name by the function it is in, not by another function of the file", () => {
+    expect(show(`
+import "github.com/gin-gonic/gin"
+
+func setupA(r *gin.Engine, db *sql.DB) {
+	r.GET("/clubs", handlers.List(db))
+}
+
+func setupB(r *gin.Engine) {
+	r.GET("/garages", timeout.New(db))
+}
+`)).toEqual([
+      "GET /clubs -> handlers.List []",
+      "GET /garages -> db [timeout.New(db)]",
+    ]);
+  });
+});

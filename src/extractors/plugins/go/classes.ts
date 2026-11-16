@@ -79,6 +79,7 @@ export function extractGoClasses(lines: string[], fns: FunctionInfo[], parsePara
     }
     if (locals.length > 0) fn.localTypes = locals;
     else delete fn.localTypes;
+    typeBlockLocalCalls(lines, fn, declared, locals, receiver?.name, constructors);
     typeSwitchCalls(lines, fn);
     if (reading.typeOfName) addExpressionReceiverCalls(fn, lines, env, reading.typeOfName);
     withHeadPathNames(lines, fn, receiver?.name, declared);
@@ -109,6 +110,28 @@ function statedDeclarationType(code: string, name: string, constructors?: GoCons
 }
 
 /**
+ * A name the body declares in several blocks with different stated types (`s := NewClub()` in one `if`, `s :=
+ * NewPlayer()` in the next): Go scopes each to its block, and the function-wide reading leaves the name untyped
+ * because the declarations disagree. Each call on it states the type of the declaration it sees; a call in a block
+ * whose declaration states no type stays as it was.
+ */
+function typeBlockLocalCalls(lines: readonly string[], fn: FunctionInfo, declared: ReadonlySet<string>, locals: ReadonlyArray<{ name: string }>, receiverName: string | undefined, constructors?: GoConstructors): void {
+  let codeLines: string[] | undefined;
+  for (const name of declared) {
+    if (name === "_" || name === receiverName || fn.params.some((p) => p.name === name) || locals.some((l) => l.name === name)) continue;
+    codeLines ??= lines.slice(fn.line, fn.endLine).map((l) => stripGoComment(l).replace(/"(?:[^"\\]|\\.)*"|`[^`]*`|'(?:[^'\\]|\\.)*'/g, '""'));
+    const word = new RegExp(`(?<![\\w.])${name}(?![\\w])`);
+    const types = new Set<string>();
+    for (const code of codeLines) {
+      if (!word.test(code)) continue;
+      const type = statedDeclarationType(code, name, constructors);
+      if (type) types.add(type.replace(/^[*&]/, ""));
+    }
+    if (types.size >= 2) typeShadowedCalls(lines, fn, name, null, constructors);
+  }
+}
+
+/**
  * A method whose body declares a local of its receiver's name (`for _, c :=
  * range parts { c.Fit() }` in `func (c *Car) Service(parts []Part)`): Go
  * scopes that local to its block. A call `c.m()` outside every such block is
@@ -116,7 +139,7 @@ function statedDeclarationType(code: string, name: string, constructors?: GoCons
  * element (`Part`); each states that type as its `receiverType`. A call in a
  * block whose local's type is not read here stays untyped.
  */
-function typeShadowedCalls(lines: readonly string[], fn: FunctionInfo, name: string, receiverType: string, constructors?: GoConstructors): void {
+function typeShadowedCalls(lines: readonly string[], fn: FunctionInfo, name: string, receiverType: string | null, constructors?: GoConstructors): void {
   const spans: Array<{ from: number; to: number; type: string | null }> = [];
   const open: Array<{ depth: number; from: number; type: string | null }> = [];
   const decl = new RegExp(`(?:^|[\\s,(;])${name}\\s*(?:,\\s*[A-Za-z_]\\w*\\s*)*:=|\\bvar\\s+${name}\\b|,\\s*${name}\\s*:=`);
@@ -158,7 +181,8 @@ function typeShadowedCalls(lines: readonly string[], fn: FunctionInfo, name: str
     if (parts.length !== 2 || parts[0] !== name || call.receiverType) continue;
     const apply = (c: CallInfo, type: string | null): void => {
       if (type) c.receiverType = type;
-      else c.boundLocally = true;
+      // With no written type outside the blocks (a body-only local), a block stating none leaves its calls alone.
+      else if (receiverType !== null) c.boundLocally = true;
     };
     apply(call, seenAt(call.line));
     // One row stands for every call of the name in the function, but the sites do not all see one declaration: a

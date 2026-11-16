@@ -765,7 +765,8 @@ export const D = ({ table }: Missing) => table.nextPage();
     expect(types("A")).toEqual([{ name: "table", type: "Table" }]);
     expect(types("B")).toEqual([{ name: "garage", type: "Garage" }]);
     expect(types("C")).toEqual([]);
-    expect(types("D")).toEqual([]);
+    // A type the file does not declare may be an import: the binding is a member read off the annotated type, which the linker types or leaves.
+    expect(types("D")).toEqual([{ name: "$param0", type: "Missing" }, { name: "table", type: "", from: "$param0.table", member: true }]);
   });
 
   it("writes a destructured binding as a {name} placeholder in a URL template", async () => {

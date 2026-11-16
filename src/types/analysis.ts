@@ -448,6 +448,8 @@ export interface FileAnalysis {
    * `withDefaults(…)`, the Options API `props:` key), by name as written. Absent where it declares none.
    */
   declaredProps?: string[];
+  /** A Vue component's literal Options API `name` — the key `Vue.component(c.name, c)` registers it under. */
+  componentName?: string;
   /**
    * The events a Vue component declares it emits (`defineEmits`, the Options API `emits:` key). Present, it is
    * the whole list: a parent's listener for an event it leaves out is a native one. Absent where nothing is declared.
@@ -1484,6 +1486,8 @@ export interface FunctionInfo {
    * its bare name. Set where the name alone does not say so — a Dart named constructor is named `fromJson`.
    */
   isConstructor?: true;
+  /** A `static` method of its class: `this` inside it is the class, not an instance. Set by the JS/TS plugin; omitted otherwise. */
+  isStatic?: true;
   /**
    * The template arguments an explicit specialization names (`template<> std::string convert<std::string>(…)` →
    * `["std::string"]`), as written: a call writing the same arguments (`CallInfo.templateArgs`) reaches it.
@@ -1849,7 +1853,7 @@ export interface ClassInfo {
    * `token` a registration binds (`bind('ledger', …)`), or the `type` it names — which the container
    * builds, or a binding of that type says otherwise. Core resolves it through the registrations.
    */
-  staticProxyOf?: { token?: string; type?: string };
+  staticProxyOf?: { token?: string; type?: string; constant?: string };
   /**
    * The class's own type parameters in order (`class Handler<TRequest, TKey>` →
    * `["TRequest", "TKey"]`): what lets a consumer substitute a subclass's
@@ -2296,7 +2300,7 @@ export interface StoreShapes {
   functions?: Record<string, ShapeFunction>;
   /** Module-level objects declaring `namespaced: true` (`export default { namespaced: true, … }` under `default`): their actions are never global. */
   namespaced?: string[];
-  /** The names a module-level `actions` object spreads in (`const actions = { load, ...readActions }` → `actions: ["readActions"]`). */
+  /** The names a module-level `actions` (or `mutations`) object spreads in (`const actions = { load, ...readActions }` → `actions: ["readActions"]`), or merges with `Object.assign`. */
   spreads?: Record<string, string[]>;
 }
 
@@ -3277,6 +3281,11 @@ export interface SubComponentInfo {
    */
   global?: true;
   /**
+   * With `global`: `name` is the local the registration names (`components.forEach((c) => Vue.component(c.name, c))`),
+   * and the tag is the `name` option the imported component declares itself (`FileAnalysis.componentName`).
+   */
+  registeredByName?: true;
+  /**
    * The names this file reaches the child's instance by: the static `ref`
    * its tags carry (`<ClubForm ref="formRef">`, read as `formRef.value`,
    * `this.$refs.formRef` or `formRef` in markup) and a variable bound to that
@@ -3400,7 +3409,21 @@ export interface StoreWatch {
     spelling: string;
     falsy?: boolean;
     viaFactory?: true;
+    /** The state is created by each call of a composable (a ref declared in the function): only a caller of the writing function shares it. */
+    instance?: true;
   }>;
+  /**
+   * Vuex state a mutation writes (`state.list = v`, `state.list.push(c)`, `Object.assign(state.filters, p)`, `Vue.set(state.byId, k, c)`),
+   * the path relative to the state of the module the file defines (`""`: members the file cannot name). A watcher reading Vuex
+   * state carries the factory `$vuex` in `watchers[].reads`, the path from the root state (`clubs.list`).
+   */
+  stateWrites?: Array<{ path: string; function: string; line: number; spelling: string; falsy?: boolean }>;
+  /**
+   * The computeds a setup store or composable returns and the state each reads (`total` → `clubs*`, `*` for what is read through):
+   * a watcher on `total` in another file runs when something writes `clubs`. `store` is the store class or composable name
+   * the writes carry; a ref the function keeps to itself is named `~local`.
+   */
+  derived?: Array<{ store: string; member: string; reads: string[] }>;
 }
 
 /**
@@ -3592,9 +3615,10 @@ export interface InteractiveElementInfo {
    * over a literal array of objects in the same component lists the functions its objects hold under each key
    * (`callbacks`: `{ action: ["remove", "refresh"] }` for `{ label, action: this.remove }`; a callback written in
    * place is its held function's name up to the line, `<items[].action@`). A loop over an array the script imports
-   * names it (`elementOf`: `clubActions`), so `a.action()` is read as a call of `clubActions[].action`.
+   * names it (`elementOf`: `clubActions`), so `a.action()` is read as a call of `clubActions[].action`. A loop over a prop the
+   * component declares names it (`fromProp`: `extra` of `v-for="x in extra"`), so `x.run()` is a call of the prop's `extra.run`.
    */
-  scope?: Array<{ name: string; type?: string; slot?: { component: string; name: string; prop: string }; callbacks?: Record<string, string[]>; elementOf?: string }>;
+  scope?: Array<{ name: string; type?: string; slot?: { component: string; name: string; prop: string }; callbacks?: Record<string, string[]>; elementOf?: string; fromProp?: string }>;
   /**
    * A markup element with no handler of its own, as a compound selector of what
    * a script can find it by — `button#save.btn[data-delete]`: tag, id, classes

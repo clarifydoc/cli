@@ -109,6 +109,53 @@ func Unknown(club *Club, open bool) {
     expect(sign("Unknown")).toEqual([[25, null, true]]);
   });
 
+  it("types a body-only local per block when sibling blocks declare it with different types", () => {
+    const a = extractWithRegex(`
+package league
+
+type Club struct{}
+
+func (c *Club) Save() {}
+
+type Player struct{}
+
+func (p *Player) Save() {}
+
+func NewClub() *Club     { return &Club{} }
+func NewPlayer() *Player { return &Player{} }
+
+func Run(a, b bool) {
+	if a {
+		s := NewClub()
+		s.Save()
+	}
+	if b {
+		s := NewPlayer()
+		s.Save()
+	}
+	if a {
+		s := other.Load()
+		s.Save()
+	}
+}
+
+func Same(a bool) {
+	if a {
+		s := NewClub()
+		s.Save()
+	}
+	s := NewClub()
+	s.Save()
+}
+`, "league.go", "go");
+    const save = (fn: string) => a.functions.find((f) => f.name === fn)!.calls.filter((c) => c.name === "s.Save")
+      .map((c) => [c.line, c.receiverType ?? null, c.boundLocally ?? false]);
+    // Each block's call takes the type its own declaration states; a block stating none stays as it was.
+    expect(save("Run")).toEqual([[18, "*Club", false], [22, "*Player", false], [26, null, false]]);
+    // One type everywhere: the function-wide local types it, nothing is added per call.
+    expect(save("Same")).toEqual([[33, null, false]]);
+  });
+
   it("reads generic receivers and generic functions", () => {
     const a = extractWithRegex(`
 type Stack[T any] struct {

@@ -329,8 +329,10 @@ function scopeOf(handler: string | null, scopes: TemplateScope[] | undefined, fu
         const type = name === scope.names[0] ? elementTypeOf(scope.source!, fullSource) : undefined;
         const callbacks = name === scope.names[0] && !type ? literalCallbacksOf(scope.source!, fullSource) ?? inlineCallbacksOf(scope.source!) : undefined;
         const elementOf = name === scope.names[0] && !type && !callbacks ? importedCollection(scope.source!, fullSource) : undefined;
-        if (type) found.push({ name, type });
-        else found.push({ name, ...(callbacks ? { callbacks } : {}), ...(elementOf ? { elementOf } : {}) });
+        // A loop over a bare name no literal declares: possibly a prop the parent hands the array in (judged by the Vue hooks).
+        const fromProp = name === scope.names[0] && !callbacks && !elementOf && /^[A-Za-z_$][\w$]*$/.test(scope.source!.trim()) ? scope.source!.trim() : undefined;
+        if (type) found.push({ name, type, ...(fromProp ? { fromProp } : {}) });
+        else found.push({ name, ...(callbacks ? { callbacks } : {}), ...(elementOf ? { elementOf } : {}), ...(fromProp ? { fromProp } : {}) });
       }
     }
   }
@@ -344,7 +346,7 @@ function scopeOf(handler: string | null, scopes: TemplateScope[] | undefined, fu
  * Only values that name a function (`fn`, `this.fn`, `{ fn }`) count; none when the collection is not declared
  * as one such literal in this component.
  */
-function literalCallbacksOf(source: string, script: string): Record<string, string[]> | undefined {
+export function literalCallbacksOf(source: string, script: string): Record<string, string[]> | undefined {
   const name = /^(?:this\.)?([A-Za-z_$][\w$]*)$/.exec(source.trim())?.[1];
   if (!name) return undefined;
   const wrapper = String.raw`(?:(?:ref|shallowRef|reactive|computed)\s*(?:<[^>()]*>)?\s*\(\s*(?:\(\s*\)\s*=>\s*)?)?`;
@@ -385,7 +387,7 @@ function literalCallbacksOf(source: string, script: string): Record<string, stri
  * The functions a loop over an array written in the template runs (`v-for="item in [{ run: () => sellPlayer() }]"`):
  * by key, each callee its objects' callbacks spell, and each function named as a value.
  */
-function inlineCallbacksOf(source: string): Record<string, string[]> | undefined {
+export function inlineCallbacksOf(source: string): Record<string, string[]> | undefined {
   const text = source.trim();
   if (!text.startsWith("[") || !text.endsWith("]")) return undefined;
   const out: Record<string, string[]> = {};

@@ -517,13 +517,20 @@ export class JsPropCallbackResolver implements DispatchResolver {
     /** A name the parent leaves to a module its import puts in scope (a Vue mixin's method, `mixins: [stadiumActions]`): the ONE function of that name there. */
     const scopeMember = (parent: FileAnalysis, name: string): { file: string; span: SymbolSpan } | null => {
       const hits: Array<{ file: string; span: SymbolSpan }> = [];
-      for (const imp of parent.imports) {
-        if (!imp.inScope || imp.inScope.names?.includes(name) === false) continue;
-        const file = resolveTarget(imp.inScope.module, parent.filePath, filePathMap);
-        const lib = file ? byPath.get(file) : undefined;
-        const span = lib ? spans(lib).find((sp) => sp.symbol === name) : undefined;
-        if (span && !hits.some((h) => h.file === lib!.filePath)) hits.push({ file: lib!.filePath, span });
-      }
+      // A mixin may take on mixins of its own (`mixins: [baseActions]`): its imports put theirs in scope the same way, a few levels down.
+      const visit = (from: FileAnalysis, depth: number, seen: Set<string>): void => {
+        for (const imp of from.imports) {
+          if (!imp.inScope || imp.inScope.names?.includes(name) === false) continue;
+          const file = resolveTarget(imp.inScope.module, from.filePath, filePathMap);
+          const lib = file ? byPath.get(file) : undefined;
+          if (!lib || seen.has(lib.filePath)) continue;
+          const span = spans(lib).find((sp) => sp.symbol === name);
+          if (span) {
+            if (!hits.some((h) => h.file === lib.filePath)) hits.push({ file: lib.filePath, span });
+          } else if (depth < 3) visit(lib, depth + 1, new Set([...seen, lib.filePath]));
+        }
+      };
+      visit(parent, 0, new Set([parent.filePath]));
       return hits.length === 1 ? hits[0]! : null;
     };
 
@@ -621,6 +628,8 @@ export class JsPropCallbackResolver implements DispatchResolver {
           const handler = cleanHandler(el.handler);
           if (!handler) return false;
           if (childFile.endsWith(".svelte")) return handler === prop;
+          // `x.run()` in a loop `v-for="x in extra"` over the prop: its `extra.run`.
+          if (member && el.scope?.some((sc) => sc.fromProp === head && el.handler!.replace(/\(.*$/s, "").trim() === `${sc.name}${member}`)) return true;
           const local = propLocalOf(child, head, el.line);
           if (local !== undefined) return !member && handler === local;
           // Markup names a prop of a component taking its props whole by the prop's name (`onClick={props.order}`).
@@ -1015,12 +1024,17 @@ export function innermostAt(spans: SymbolSpan[], line: number): SymbolSpan | nul
  */
 export function globalComponentFiles(analyses: FileAnalysis[], filePathMap: Map<string, string>): Map<string, string> {
   const out = new Map<string, string | null>();
+  let byFile: Map<string, FileAnalysis> | null = null;
   for (const a of analyses) {
     for (const sub of a.subComponents ?? []) {
       if (!sub.global || !sub.importSource) continue;
       const file = resolveTarget(sub.importSource, a.filePath, filePathMap);
       if (!file) continue;
-      const key = tagKey(sub.name);
+      // `Vue.component(c.name, c)`: the tag is the name the component declares itself; one declaring none is no tag.
+      byFile ??= new Map(analyses.map((x) => [x.filePath, x]));
+      const own = sub.registeredByName ? byFile.get(file.split("\u0000")[0]!)?.componentName : sub.name;
+      if (!own) continue;
+      const key = tagKey(own);
       out.set(key, out.has(key) && out.get(key) !== file ? null : file);
     }
   }

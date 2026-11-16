@@ -3,6 +3,7 @@ import type { FileAnalysis, Language, SubjectFlows, SymbolLink } from "../../../
 import type { DispatchResolver } from "../../dispatch/base.js";
 import { resolveTarget, buildFilePathMap } from "../../shared/link-scoring.js";
 import { inConstructor, injectedLocals, memberTypes, reactiveCellsOf } from "./reactive-cells.js";
+import { exposedMember } from "./subject-listens.js";
 
 const SUBJECT_CLASSES = /^(?:Subject|ReplaySubject|BehaviorSubject|AsyncSubject)$/;
 const CLASS_NODES: ReadonlySet<string> = new Set(["class_declaration", "class", "abstract_class_declaration"]);
@@ -24,28 +25,6 @@ function innermost(functions: ReadonlyArray<{ name: string; line: number; endLin
     if (!best || f.endLine - f.line < best.endLine - best.line || (f.endLine - f.line === best.endLine - best.line && f.line > best.line)) best = f;
   }
   return best?.name ?? null;
-}
-
-/**
- * What a member's value exposes of another member: `this.a`, `this.a.asObservable()`, `this.a.pipe(…)` (any chain of
- * the two), or the same on a service the class holds — `this.svc.a`, and in a constructor `svc.a`.
- */
-function exposedMember(value: Node, inCtor: boolean): { observes: string; via?: string } | null {
-  let n: Node | null = value;
-  while (n?.type === "call_expression") {
-    const c: Node | null = n.childForFieldName("function");
-    const prop = c?.type === "member_expression" ? c.childForFieldName("property")?.text : null;
-    if (prop !== "asObservable" && prop !== "pipe") return null;
-    n = c!.childForFieldName("object");
-  }
-  if (n?.type !== "member_expression") return null;
-  const observes = n.childForFieldName("property")?.text;
-  const holder = n.childForFieldName("object");
-  if (!observes) return null;
-  if (holder?.type === "this") return { observes };
-  if (holder?.type === "member_expression" && holder.childForFieldName("object")?.type === "this") return { observes, via: holder.childForFieldName("property")!.text };
-  if (holder?.type === "identifier" && inCtor) return { observes, via: holder.text };
-  return null;
 }
 
 /**
@@ -227,7 +206,7 @@ export class JsSubjectResolver implements DispatchResolver {
         const service = n.via ? serviceOf(a, n.class, n.via) : { file: a.filePath, type: n.class };
         const key = service && subjectKey(service.file, service.type, n.field);
         if (!key) continue;
-        for (const l of (listeners.get(key) ?? []).filter((x) => test || !x.test).slice(0, 8)) {
+        for (const l of (listeners.get(key) ?? []).filter((x) => test || !x.test)) {
           if (l.file === a.filePath && (l.symbol === n.function || (!n.via && l.cls === n.class))) continue;
           const id = `${a.filePath}\0${n.function}\0${l.file}\0${l.symbol}`;
           if (seen.has(id)) continue;

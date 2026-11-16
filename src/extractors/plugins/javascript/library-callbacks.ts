@@ -214,11 +214,146 @@ export function libraryObjectMembers(
   if (!name || !built) return null;
   const members: LibraryObjectMember[] = [];
   for (const s of statedCallbacks(built)) {
-    const fn = FUNCTION_VALUES.has(s.value.type) ? heldName(s.value) : (s.value.type === "identifier" || s.value.type === "shorthand_property_identifier") && namesFunction(s.value, s.value.text) ? s.value.text : null;
+    const fn = callbackName(s.value, heldName, namesFunction);
     if (!fn) continue;
     for (const method of new Set(s.methods)) members.push({ method, name: fn, node: s.value, option: `${built.factory}:${s.option}` });
   }
   return members.length > 0 ? { holder: name.text, members } : null;
+}
+
+/** The function an option value names: one written in place (held), or a name a function can be (`applySort`). */
+function callbackName(value: Node, heldName: (fn: Node) => string | null, namesFunction: (site: Node, name: string) => boolean): string | null {
+  if (FUNCTION_VALUES.has(value.type)) return heldName(value);
+  return (value.type === "identifier" || value.type === "shorthand_property_identifier") && namesFunction(value, value.text) ? value.text : null;
+}
+
+/** What an object pattern binds, by the member it reads: `{ mutate, mutateAsync: go }` → mutate←mutate, go←mutateAsync. */
+function patternMembers(pattern: Node): Array<{ local: string; key: string }> {
+  const out: Array<{ local: string; key: string }> = [];
+  for (const prop of pattern.namedChildren) {
+    if (prop?.type === "shorthand_property_identifier_pattern") out.push({ local: prop.text, key: prop.text });
+    else if (prop?.type === "object_assignment_pattern") {
+      const left = prop.childForFieldName("left");
+      if (left) out.push({ local: left.text, key: left.text });
+    } else if (prop?.type === "pair_pattern") {
+      const key = keyText(prop.childForFieldName("key"));
+      let local = prop.childForFieldName("value");
+      if (local?.type === "assignment_pattern") local = local.childForFieldName("left");
+      if (key && local?.type === "identifier") out.push({ local: local.text, key });
+    }
+  }
+  return out;
+}
+
+/**
+ * The callbacks a library object's methods run when its result is destructured into bare names:
+ * `const { mutate, mutateAsync: save } = useMutation({ mutationFn })` → `mutate` runs `mutationFn`, and so does
+ * `save`. Each binding is a holder of its own, one method long (`mutate.mutate`, `save.mutateAsync`), which
+ * `libraryBindingCallee` names the bare call by. Only a method a stated option runs counts, never a state flag.
+ */
+export function libraryDestructuredMembers(
+  declarator: Node,
+  heldName: (fn: Node) => string | null,
+  namesFunction: (site: Node, name: string) => boolean,
+): Array<LibraryObjectMember & { holder: string }> {
+  if (declarator.type !== "variable_declarator") return [];
+  const pattern = declarator.childForFieldName("name");
+  if (pattern?.type !== "object_pattern") return [];
+  const built = libraryObjectCall(unwrap(declarator.childForFieldName("value")));
+  if (!built) return [];
+  const out: Array<LibraryObjectMember & { holder: string }> = [];
+  const bound = patternMembers(pattern);
+  for (const s of statedCallbacks(built)) {
+    const fn = callbackName(s.value, heldName, namesFunction);
+    if (!fn) continue;
+    for (const { local, key } of bound) {
+      if (s.methods.includes(key)) out.push({ holder: local, method: key, name: fn, node: s.value, option: `${built.factory}:${s.option}` });
+    }
+  }
+  return out;
+}
+
+const SCOPE_FUNCTIONS: ReadonlySet<string> = new Set(["arrow_function", "function_expression", "function_declaration", "generator_function", "generator_function_declaration", "method_definition"]);
+/** Parents under which an identifier of a parameter list is a name it binds (a default value's expression is not). */
+const BINDING_PARENTS: ReadonlySet<string> = new Set(["formal_parameters", "required_parameter", "optional_parameter", "rest_pattern", "array_pattern", "object_pattern", "pair_pattern", "arrow_function", "assignment_pattern", "object_assignment_pattern"]);
+
+/** Whether a parameter list (or a single arrow parameter) binds `name`. */
+function bindsName(params: Node, name: string): boolean {
+  if (params.type === "identifier") return params.text === name;
+  return params.descendantsOfType(["identifier", "shorthand_property_identifier_pattern"]).some((n) => {
+    if (n?.text !== name || !n.parent) return false;
+    if (n.type === "shorthand_property_identifier_pattern") return true;
+    const parent = n.parent;
+    if (!BINDING_PARENTS.has(parent.type)) return false;
+    if ((parent.type === "assignment_pattern" || parent.type === "object_assignment_pattern") && parent.childForFieldName("right")?.id === n.id) return false;
+    // `{ key: local }` binds the value, not the key.
+    return !(parent.type === "pair_pattern" && parent.childForFieldName("key")?.id === n.id);
+  });
+}
+
+let usesTree: Tree | null = null;
+let boundNames = new Set<string>();
+
+/** The local names the file's library-result destructurings bind (read once per tree), the cheap gate for a bare call. */
+function libraryBoundNames(tree: Tree): ReadonlySet<string> {
+  if (usesTree === tree) return boundNames;
+  usesTree = tree;
+  boundNames = new Set();
+  const imports = [...importsOf(tree).values()];
+  if (!imports.some((i) => LIBRARY_OBJECTS.some((l) => l.factories.has(i.imported) && l.packages.test(i.source)))) return boundNames;
+  for (const d of tree.rootNode.descendantsOfType("variable_declarator")) {
+    const pattern = d?.childForFieldName("name");
+    if (pattern?.type !== "object_pattern" || !libraryObjectCall(unwrap(d?.childForFieldName("value")))) continue;
+    for (const m of patternMembers(pattern)) boundNames.add(m.local);
+  }
+  return boundNames;
+}
+
+/**
+ * The call name of a bare call whose callee a library result destructured (`mutate("a")` after
+ * `const { mutate } = useMutation({ mutationFn: saveClub })`): `mutate.mutate`, the name the holder's entry is
+ * recorded under — only for a method a stated option runs (a `refetch` or a `reset` keeps its name). The binding is
+ * the nearest declaration of the name in the enclosing scopes: a parameter, loop or catch binding, function, class
+ * or import of the same name nearer makes it that one's, and the call stays a plain call.
+ */
+export function libraryBindingCallee(call: Node): string | null {
+  const callee = call.childForFieldName("function");
+  if (callee?.type !== "identifier" || !libraryBoundNames(call.tree).has(callee.text)) return null;
+  const name = callee.text;
+  for (let p = call.parent; p; p = p.parent) {
+    if (SCOPE_FUNCTIONS.has(p.type)) {
+      const params = p.childForFieldName("parameters") ?? p.childForFieldName("parameter");
+      if (params && bindsName(params, name)) return null;
+    } else if (p.type === "for_in_statement") {
+      const left = p.childForFieldName("left");
+      if (left && bindsName(left, name)) return null;
+    } else if (p.type === "catch_clause") {
+      const param = p.childForFieldName("parameter");
+      if (param && bindsName(param, name)) return null;
+    }
+    if (p.type !== "statement_block" && p.type !== "program") continue;
+    for (const stmt of p.namedChildren) {
+      if (stmt?.type === "import_statement") {
+        if (importsOf(call.tree).has(name)) return null;
+        continue;
+      }
+      const decl = stmt?.type === "export_statement" ? stmt.childForFieldName("declaration") : stmt;
+      if ((decl?.type === "function_declaration" || decl?.type === "generator_function_declaration" || decl?.type === "class_declaration") && decl.childForFieldName("name")?.text === name) return null;
+      if (decl?.type !== "lexical_declaration" && decl?.type !== "variable_declaration") continue;
+      for (const d of decl.namedChildren) {
+        if (d?.type !== "variable_declarator") continue;
+        const target = d.childForFieldName("name");
+        if (!target) continue;
+        if (target.type === "object_pattern") {
+          const hit = patternMembers(target).find((m) => m.local === name);
+          const built = hit ? libraryObjectCall(unwrap(d.childForFieldName("value"))) : null;
+          if (hit && built) return statedCallbacks(built).some((s) => s.methods.includes(hit.key)) ? `${name}.${hit.key}` : null;
+        }
+        if (bindsName(target, name)) return null;
+      }
+    }
+  }
+  return null;
 }
 
 /**

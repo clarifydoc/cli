@@ -20,7 +20,7 @@ using league::Car;
       "Ride = Car",
       "Motor = Car",
       "CarPtr = std::shared_ptr<Car>",
-      "CarRef = const Car*",
+      "CarRef = Car",
       "Garage = std::map<int, Car>",
     ]);
   });

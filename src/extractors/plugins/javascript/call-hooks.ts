@@ -16,7 +16,7 @@ import { requiredSource } from "./imports-exports.js";
 import { arrayMapEntries, memberAssignment, namesFunction } from "./member-values.js";
 import { heldFunction } from "./held-functions.js";
 import { contractFunction } from "./contract-handlers.js";
-import { derivedLocalsIn, derivedMemberKeys, libraryObjectMembers } from "./library-callbacks.js";
+import { derivedLocalsIn, derivedMemberKeys, libraryBindingCallee, libraryDestructuredMembers, libraryObjectMembers } from "./library-callbacks.js";
 
 /** Vue 3 <script setup> compiler macros — auto-imported, not in imports array */
 const VUE_COMPILER_MACROS = new Set([
@@ -127,6 +127,8 @@ export const javascriptCallHooks: CallExtractionHooks = {
       // A library object: `const table = useVueTable({ onPaginationChange: … })` holds the callback under each method running it (`table.nextPage`).
       const lib = libraryObjectMembers(node, heldFunction, namesFunction);
       for (const { name, node: value, method, option } of lib?.members ?? []) addResult(name, value, "property", `${lib!.holder}.${method}`, { libraryOption: option });
+      // The same result destructured (`const { mutate } = useMutation({ mutationFn })`): each bare name holds the callback of its own method.
+      for (const { holder, name, node: value, method, option } of libraryDestructuredMembers(node, heldFunction, namesFunction)) addResult(name, value, "property", `${holder}.${method}`, { libraryOption: option });
       // Its columns' and rows' methods, read off a local the block derives by iterating what the holder hands out.
       if (lib?.members.some((m) => m.method.includes("."))) {
         const scope = node.parent?.parent;
@@ -161,7 +163,8 @@ export const javascriptCallHooks: CallExtractionHooks = {
       if (!callee) return null;
     }
     const record = callee?.type === "member_expression" && callee.text.includes("[") ? recordCallee(callee) : null;
-    return record ?? genericResolveCallName(node, {
+    // `mutate(x)` after `const { mutate } = useMutation({ mutationFn })`: `mutate.mutate`, the key the callback is held under.
+    return record ?? (callee?.type === "identifier" ? libraryBindingCallee(node) : null) ?? genericResolveCallName(node, {
       ...(awaitedGeneric ? { calleeOverride: callee } : {}),
       extraCallee: (c) => dispatchMapCallee(c) ?? mappedActionCallee(c),
     });

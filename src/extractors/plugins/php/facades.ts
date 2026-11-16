@@ -33,6 +33,27 @@ export function facadeProxyOf(
   return first && answers.every((a) => a && a.type === first.type && a.token === first.token) ? first : undefined;
 }
 
+function classConstants(classBody: Node | undefined): Node[] {
+  return (classBody?.children ?? [])
+    .filter((m) => m.type === "const_declaration")
+    .flatMap((m) => m.namedChildren.filter((e) => e.type === "const_element"));
+}
+
+/**
+ * The string constants a trait or a facade declares (`const TOKEN = 'ledger';`), by name: what a facade's
+ * `static::TOKEN` reads when a trait it uses supplies the constant (`ClassInfo.fieldValues`). Only for the
+ * two kinds of class a facade's accessor can borrow a constant from, so no other class's output changes.
+ */
+export function proxyConstantValues(classBody: Node | undefined): Record<string, string> | undefined {
+  const out: Record<string, string> = {};
+  for (const e of classConstants(classBody)) {
+    const name = e.namedChildren.find((c) => c.type === "name")?.text;
+    const value = proxyOfValue(e.namedChildren.filter((c) => c.type !== "name").at(-1), undefined, new Map());
+    if (name && value?.token) out[name] = value.token;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function proxyOfValue(value: Node | undefined, classBody: Node | undefined, aliases: ReadonlyMap<string, string>): ClassInfo["staticProxyOf"] | undefined {
   if (!value) return undefined;
   if (value.type === "class_constant_access_expression") {
@@ -42,11 +63,10 @@ function proxyOfValue(value: Node | undefined, classBody: Node | undefined, alia
     if (parts[1]!.text !== "class") {
       // `return self::TOKEN;` — the class constant of this very class.
       if (holder !== "self" && holder !== "static") return undefined;
-      const constant = classBody?.children
-        .filter((m) => m.type === "const_declaration")
-        .flatMap((m) => m.namedChildren.filter((e) => e.type === "const_element"))
-        .find((e) => e.namedChildren.find((c) => c.type === "name")?.text === parts[1]!.text);
-      const literal = constant?.namedChildren.filter((c) => c.type !== "name").at(-1);
+      const constant = classConstants(classBody).find((e) => e.namedChildren.find((c) => c.type === "name")?.text === parts[1]!.text);
+      // Not declared here: a trait the facade uses holds it — core reads it there (a parent's is not followed).
+      if (!constant) return { constant: parts[1]!.text };
+      const literal = constant.namedChildren.filter((c) => c.type !== "name").at(-1);
       return literal && literal.type !== "class_constant_access_expression" ? proxyOfValue(literal, undefined, aliases) : undefined;
     }
     const raw = simpleClassName(holder);

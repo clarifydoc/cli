@@ -1572,6 +1572,36 @@ describe("Angular httpResource", () => {
     expect(await rows(`import { httpResource } from './own-http';\nconst a = httpResource(() => '/api/clubs');`)).toEqual([]);
     expect(await rows(`${head}const a = httpResource(() => id() ? { url: '/api/clubs' } : undefined);`)).toEqual([]);
   });
+
+  it("follows an aliased import, and only the alias", async () => {
+    expect(await rows(`import { httpResource as hr, HttpClient } from '@angular/common/http';
+      const a = hr(() => '/api/clubs');
+      const b = hr.text({ url: '/api/report', method: 'POST' });
+      const c = httpResource(() => '/api/decoy');`)).toEqual(["get /api/clubs", "post /api/report"]);
+  });
+
+  it("reads a method held by a const, and none held by a parameter", async () => {
+    expect(await rows(`${head}
+      const verb = 'POST';
+      const a = httpResource(() => ({ url: '/api/transfers', method: verb }));
+      function mk(method: string) { return httpResource(() => ({ url: '/api/decoy', method })); }`)).toEqual(["post /api/transfers"]);
+  });
+});
+
+describe("an HTTP method held in a variable", () => {
+  const rows = async (src: string) => (await apiCallsOf(src)).map((d) => `${d.name} ${d.target}`);
+
+  it("is read through a const, shorthand included, never through a parameter or a let", async () => {
+    expect(await rows(`
+      const verb = 'DELETE';
+      fetch('/api/clubs', { method: verb });
+      function a() { const method = 'PUT'; return fetch('/api/players', { method }); }
+      function b(method: string) { return fetch('/api/decoy', { method }); }
+      function c() { let method = 'POST'; return fetch('/api/decoy-let', { method }); }
+      function d(verb: string) { return fetch('/api/decoy-shadow', { method: verb }); }`)).toEqual([
+      "delete /api/clubs", "put /api/players", "fetch /api/decoy", "fetch /api/decoy-let", "fetch /api/decoy-shadow",
+    ]);
+  });
 });
 
 describe("AdonisJS Lucid model statics", () => {

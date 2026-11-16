@@ -10,6 +10,8 @@ export interface VueDeclarations {
   emits?: string[];
   /** The Options API `mixins: [clubActions, squadActions]`: the names of the objects whose options the component takes on. */
   mixins?: string[];
+  /** The Options API `name: 'ClubBadge'` of the default-exported options object: what `Vue.component(c.name, c)` registers it under. */
+  name?: string;
 }
 
 const OPEN = "([{<";
@@ -136,5 +138,21 @@ export function readVueDeclarations(script: string): VueDeclarations {
   const mixins = optionsKey(script, "mixins");
   const named = mixins?.kind === "array" ? topLevel(mixins.body).filter((m) => /^[A-Za-z_$][\w$]*$/.test(m)) : [];
   if (named.length > 0) out.mixins = [...new Set(named)];
+  const name = optionsName(script);
+  if (name) out.name = name;
   return out;
+}
+
+/** The literal `name` of the default-exported options object (`export default { name: 'ClubBadge' }`, `defineComponent({ … })`, `Vue.extend({ … })`), at its top level only. */
+function optionsName(script: string): string | undefined {
+  const m = /export\s+default\s+(?:(?:defineComponent|Vue\.extend)\s*\(\s*)?\{/.exec(script);
+  if (!m) return undefined;
+  const open = m.index + m[0].length - 1;
+  const end = closeOf(script, open);
+  if (end < 0) return undefined;
+  for (const piece of topLevel(script.slice(open + 1, end - 1))) {
+    const hit = /^(?:\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)*name\s*:\s*(['"])([\w-]+)\1\s*$/.exec(piece);
+    if (hit) return hit[2];
+  }
+  return undefined;
 }

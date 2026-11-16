@@ -51,14 +51,30 @@ type Local =
 
 const STORE_FACTORY = /^use[A-Z][\w$]*Store$/;
 
+/** A composable: `useClubs`, imported from a project module (a relative path or an `@/`-style alias). */
+const COMPOSABLE = /^use[A-Z][\w$]*$/;
+const PROJECT_SOURCE = /^(?:\.|@\/|~\/|~~\/|@@\/|src\/)/;
+
+/**
+ * The factory every Vuex store read carries: `useStore()` from `vuex` (or `this.$store` / `mapState` in an Options API
+ * component). Not an identifier, so no project function of that name can be mistaken for it — the Vuex state resolver
+ * (`vuex-state.ts`) reads it, `JsStoreWatchResolver` finds no store for it. The path is from the root state (`clubs.list`).
+ */
+export const VUEX_FACTORY = "$vuex";
+
 export function withStoreWatchers(tree: Tree, facts: CellFacts, text: string, template: readonly TemplateStatement[] = []): CellFacts {
-  if (!/Store\b|storeToRefs/.test(text)) return facts;
+  // A project composable's refs are read only in a Vue component: a composable call beside a Vue reactive API.
+  const composables = /\buse[A-Z][\w$]*\s*\(/.test(text) && /\b(?:watch\w*|whenever|computed|ref|reactive|toRefs?)\s*[(<]/.test(text);
+  if (!composables && !/Store\b|storeToRefs/.test(text)) return facts;
   const watching = /\b(?:watch\w*|whenever|\w+Watch)\s*\(/.test(text);
   const sources = importSources(tree.rootNode);
   const fromVue = (name: string): boolean => {
     const src = sources.get(name);
     return src === undefined || VUE_SOURCES.test(src);
   };
+  /** A project composable called as `useClubs()`: imported from the project, never a library's hook. */
+  const composableOf = (callee: Node | null | undefined): string | null =>
+    callee?.type === "identifier" && COMPOSABLE.test(callee.text) && PROJECT_SOURCE.test(sources.get(callee.text) ?? "") ? callee.text : null;
   const byScope = new Map<number, Map<string, Local>>();
   const scopeOf = (n: Node): Node => {
     for (let p = n.parent; p; p = p.parent) if (SCOPES.has(p.type) || p.type === "program") return p;
@@ -85,7 +101,9 @@ export function withStoreWatchers(tree: Tree, facts: CellFacts, text: string, te
     }
     if (e.type === "call_expression") {
       const callee = e.childForFieldName("function");
-      return callee?.type === "identifier" && STORE_FACTORY.test(callee.text) && argumentsOf(e).length <= 1 ? callee.text : null;
+      if (callee?.type === "identifier" && callee.text === "useStore" && sources.get("useStore") === "vuex" && argumentsOf(e).length <= 1) return VUEX_FACTORY;
+      if (callee?.type === "identifier" && STORE_FACTORY.test(callee.text) && argumentsOf(e).length <= 1) return callee.text;
+      return composableOf(callee);
     }
     return null;
   };
@@ -94,7 +112,10 @@ export function withStoreWatchers(tree: Tree, facts: CellFacts, text: string, te
   const readsOf = (expr: Node | null): StoreRead[] => {
     const out: StoreRead[] = [];
     if (!expr) return out;
-    const add = (factory: string, path: readonly string[], deep: boolean): void => {
+    const add = (factory: string, rawPath: readonly string[], deep: boolean): void => {
+      // A Vuex store's state is `store.state.<module>.<member>`; its other members (`commit`, `getters`) hold none.
+      if (factory === VUEX_FACTORY && (rawPath[0] !== "state" || rawPath.length < 2)) return;
+      const path = factory === VUEX_FACTORY ? rawPath.slice(1) : rawPath;
       if (path.length === 0 || path[0]!.startsWith("$")) return;
       const read = { factory, path: path.join(".") + (deep ? "*" : "") };
       if (!out.some((r) => r.factory === read.factory && r.path === read.path)) out.push(read);
@@ -191,11 +212,13 @@ export function withStoreWatchers(tree: Tree, facts: CellFacts, text: string, te
         const f = factoryOf(args[0]);
         if (f) declare(d, name.text, { kind: "ref", factory: f, member: args[1]!.text.slice(1, -1) });
       }
-    } else if (name.type === "object_pattern" && hook === "storeToRefs" && args.length === 1) {
-      const factory = factoryOf(args[0]);
+    } else if (name.type === "object_pattern" && ((composableOf(callee) && !STORE_FACTORY.test(hook)) || (hook === "storeToRefs" && args.length === 1))) {
+      // `const { total, load } = useClubs()`: each name is a member the composable returns.
+      const factory = hook === "storeToRefs" ? factoryOf(args[0]) : hook;
       if (!factory) continue;
       for (const p of name.namedChildren) {
         if (p?.type === "shorthand_property_identifier_pattern") declare(d, p.text, { kind: "ref", factory, member: p.text });
+        else if (p?.type === "object_assignment_pattern" && p.childForFieldName("left")?.type === "shorthand_property_identifier_pattern") declare(d, p.childForFieldName("left")!.text, { kind: "ref", factory, member: p.childForFieldName("left")!.text });
         else if (p?.type === "pair_pattern" && p.childForFieldName("value")?.type === "identifier") {
           const member = p.childForFieldName("key")?.text;
           if (member) declare(d, p.childForFieldName("value")!.text, { kind: "ref", factory, member });

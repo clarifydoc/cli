@@ -3112,8 +3112,21 @@ function staticProxyLink(
   method: string,
   mkLink: MkLink,
 ): SymbolLink | null {
-  const proxy = ctx.classAt.get(memberKey(proxyFile, proxyClass))?.staticProxyOf;
+  const proxyDecl = ctx.classAt.get(memberKey(proxyFile, proxyClass));
+  let proxy = proxyDecl?.staticProxyOf;
   if (!proxy) return null;
+  // `return static::TOKEN;` with the constant declared by a trait the facade uses: its one value is the token.
+  if (proxy.constant) {
+    const values = new Set<string>();
+    for (const m of proxyDecl?.mixins ?? []) {
+      for (const file of ctx.classNameIndex.get(m.name) ?? []) {
+        const value = ctx.classAt.get(memberKey(file, m.name))?.fieldValues?.[proxy.constant];
+        if (value) values.add(value);
+      }
+    }
+    if (values.size !== 1) return null;
+    proxy = { token: [...values][0]! };
+  }
   let point: InjectionPoint;
   if (proxy.token) {
     if (!ctx.bindings.has(proxy.token)) return null;
@@ -4965,7 +4978,7 @@ function resolveCallToDefinitionBody(
   const parts = call.name.split(".");
   const isQualified = parts.length > 1;
   // `Shape::Kind::make()` names an associated item of a type, which no import or module path binds.
-  if (isQualified && !reference && isAssociatedTypePath(analysis, call)) return null;
+  if (isQualified && !reference && isAssociatedTypePath(ctx, analysis, call)) return null;
   const leafName = parts[parts.length - 1]!;
   // Where members need `this.`/`self.`/`$this->` (JS/TS, Python, PHP), a bare
   // call in a body is a function — `redirect()` in a PHP controller is the
@@ -5685,7 +5698,8 @@ function resolveCallToDefinitionBody(
   // PHP looks `money()` up in the file's own namespace, then the global one;
   // `\App\money()` is absolute and `Sub\money()` relative to the namespace.
   if (!def && !isQualified && call.kind === "internal" && (analysis.declaredNamespace || call.name.includes("\\"))) {
-    const ns = analysis.declaredNamespace;
+    // A free function of a later namespace in a file opening several states its own (`FunctionInfo.namespace`).
+    const ns = findEnclosingCallable(analysis, sourceSymbol)?.namespace ?? analysis.declaredNamespace;
     const name = call.name;
     const candidates = name.startsWith("\\")
       ? [name.slice(1)]
@@ -6454,6 +6468,7 @@ function inScopeMember(
     ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
     for (const imp of ctx.analysisByFile.get(lib)?.imports ?? []) if (imp.inScope) scopes.push({ scope: imp.inScope, from: lib });
   }
+  for (const module of projectStaticScopes(ctx, analysis)) scopes.push({ scope: { module }, from: analysis.filePath });
   if (scopes.length === 0) return null;
   for (const { scope, from, aliases } of scopes) {
     const exported = aliases?.[name] ?? name;
@@ -6465,6 +6480,40 @@ function inScopeMember(
   }
   return hits.size === 1 ? [...hits.values()][0]! : null;
 }
+
+/**
+ * The types whose static members every file of the analysis's sub-project has in scope without writing the import:
+ * a `global using static X;` of any of its files, and a build's implicit import that names a class of the project
+ * (`<Using Include="League.Tools.Parts" Static="true" />` — a type, whatever the namespace beside it is called).
+ */
+function projectStaticScopes(ctx: LinkContext, analysis: FileAnalysis): string[] {
+  if (!manifestFor(analysis.language as Language)?.nestedPackageLookup) return [];
+  let memo = projectStaticMemo.get(ctx);
+  if (!memo) projectStaticMemo.set(ctx, (memo = new Map()));
+  const forTests = packageTest(ctx, analysis.filePath);
+  const key = `${analysis.projectId}\0${analysis.language}\0${forTests}`;
+  const known = memo.get(key);
+  if (known) return known;
+  const out = new Set<string>();
+  const sameProject = ctx.analyses.filter((a) => a.projectId === analysis.projectId && a.language === analysis.language);
+  for (const a of sameProject) {
+    // A test file's `global using static` is the tests' own, never production code's.
+    if (!forTests && packageTest(ctx, a.filePath)) continue;
+    for (const imp of a.imports) if (imp.projectWide && imp.inScope) out.add(imp.inScope.module);
+  }
+  const implicit = ctx.implicitImports.get(analysis.projectId) ?? [];
+  if (implicit.length > 0) {
+    const classes = new Set<string>();
+    for (const a of sameProject) for (const c of a.classes) classes.add(normalizeQualifiedName(a.packageName ? `${a.packageName}.${c.name}` : c.name));
+    for (const n of implicit) if (classes.has(normalizeQualifiedName(n))) out.add(n);
+  }
+  const list = [...out];
+  memo.set(key, list);
+  return list;
+}
+
+/** `projectStaticScopes` per sub-project, language and test-ness, per link run. */
+const projectStaticMemo = new WeakMap<LinkContext, Map<string, string[]>>();
 
 /** The files whose `inScope.shared` import names `file` (a Dart library of its `part`), built on first use. */
 function scopeLibraries(ctx: LinkContext, file: string): string[] {
@@ -7131,7 +7180,24 @@ function importedFunctionLink(
   // A function an include or `require` puts in scope is called bare, as the file's own would be (`internal`):
   // it is imported when the file does not define it.
   const shared = importsShareScope(analysis.language) && !analysis.functions.some((f) => f.name === name);
-  const written = findEnclosingCallable(analysis, sourceSymbol)?.calls.find((c) => c.name === name && (c.kind === "cross-file" || (shared && c.kind === "internal")));
+  const writes = (fn: FunctionInfo | null | undefined): CallInfo | undefined =>
+    fn?.calls.find((c) => c.name === name && (c.kind === "cross-file" || (shared && c.kind === "internal")));
+  const own = findEnclosingCallable(analysis, sourceSymbol);
+  let written = writes(own);
+  // A function written in place (a held callback, `<watch@12>`) types a local it closes over by an initializer the
+  // function around it writes: the call is looked up there, innermost first, and resolved in that function's scope.
+  if (!written && own) {
+    const around = analysis.functions
+      .filter((f) => f !== own && f.line <= own.line && f.endLine >= own.endLine && (f.line < own.line || f.endLine > own.endLine))
+      .sort((a, b) => (a.endLine - a.line) - (b.endLine - b.line));
+    for (const f of around) {
+      written = writes(f);
+      if (written) {
+        sourceSymbol = f.name;
+        break;
+      }
+    }
+  }
   if (!written) return null;
   const guard = `${sourceFile}\0${sourceSymbol}\0${name}()`;
   if (resolvingPackageCalls.has(guard)) return null;
@@ -8341,12 +8407,37 @@ function forwardedClass(ctx: LinkContext, file: string, name: string, depth: num
   return found;
 }
 
-/** A path call through a type (`Shape::Kind::make()`, `typeSegment`): an associated item no import or module path binds. */
-function isAssociatedTypePath(analysis: FileAnalysis, call: CallInfo): boolean {
+/**
+ * A path call through a type (`Shape::Kind::make()`, `typeSegment`): an associated item no import or module path
+ * binds. A capitalized segment that names a module of the project (`mod Util;` in `Util.rs`) is a module, not a type.
+ */
+function isAssociatedTypePath(ctx: LinkContext, analysis: FileAnalysis, call: CallInfo): boolean {
   const rule = manifestFor(analysis.language as Language)?.pathCallTypesNeedScope;
   if (!call.receiverType || !rule?.typeSegment) return false;
   const segs = call.receiverType.trim().split(rule.separator);
-  return segs.length > 1 && call.name.startsWith(`${segs[segs.length - 1]}.`) && segs.slice(0, -1).some((s) => rule.typeSegment!.test(s));
+  return segs.length > 1 && call.name.startsWith(`${segs[segs.length - 1]}.`) &&
+    segs.slice(0, -1).some((s) => rule.typeSegment!.test(s) && !namesModuleFile(ctx, analysis, s));
+}
+
+const moduleStemMemo = new WeakMap<LinkContext, Map<string, Set<string>>>();
+/** Whether a file of the caller's sub-project (and language) is the module `name` (`Util.rs`, or `Util/mod.rs`'s directory). */
+function namesModuleFile(ctx: LinkContext, caller: FileAnalysis, name: string): boolean {
+  let memo = moduleStemMemo.get(ctx);
+  if (!memo) moduleStemMemo.set(ctx, (memo = new Map()));
+  const key = `${caller.projectId}\0${caller.language}`;
+  let stems = memo.get(key);
+  if (!stems) {
+    stems = new Set();
+    for (const a of ctx.analyses) {
+      if (a.language !== caller.language || a.projectId !== caller.projectId) continue;
+      const parts = a.filePath.split("/");
+      const stem = parts[parts.length - 1]!.replace(/\.[^.]+$/, "");
+      stems.add(stem);
+      if (parts.length > 1 && /^(?:mod|lib|main|index)$/.test(stem)) stems.add(parts[parts.length - 2]!);
+    }
+    memo.set(key, stems);
+  }
+  return stems.has(name);
 }
 
 /**

@@ -1,10 +1,11 @@
 import type { Node, Tree } from "web-tree-sitter";
-import type { FunctionPropBinding, PropBinding } from "../../../types/analysis.js";
+import type { FunctionPropBinding, InteractiveElementInfo, PropBinding } from "../../../types/analysis.js";
 import { expressionOrigin, templateValueOrigin } from "./arg-origins.js";
 import { derivedMemberKeys, derivedObjectAt, libraryObjectAt } from "./library-callbacks.js";
 import { dispatchMapAt } from "./dispatch-map-props.js";
 import { heldFunction } from "./held-functions.js";
 import { namesFunction } from "./member-values.js";
+import { inlineCallbacksOf, literalCallbacksOf } from "./interactive-elements.js";
 
 /**
  * Values a component's markup binds to its children's props, where the value's
@@ -79,6 +80,11 @@ export function jsxFunctionProps(tree: Tree, sourceText: string, declared: Reado
       // `order={orderKit}`, `order={this.orderKit}`, or an arrow passing it on: `order={(size) => orderKit(size)}`.
       const handler = expr ? handedFunction(expr.type === "arrow_function" || expr.type === "function_expression" ? firstCallee(expr) : expr) : null;
       if (handler && declared.has(handler.replace(/^this\./, ""))) out.push({ component: tag, prop: name.text, handler, line: attr.startPosition.row + 1 });
+      // `handleClose={() => setOpen(false)}`: an arrow that hands on no declared function is a function of its own (`heldFunction`).
+      else if (expr && (expr.type === "arrow_function" || expr.type === "function_expression")) {
+        const own = heldFunction(expr);
+        if (own) out.push({ component: tag, prop: name.text, handler: own, line: attr.startPosition.row + 1 });
+      }
     }
   }
   return out;
@@ -218,4 +224,37 @@ function declaredProps(root: Node): Set<string> {
   }
   out.delete("");
   return out;
+}
+
+/**
+ * `<Toolbar :extra="[{ label: 'Archive', run: archive }]" />` (or a literal array the script declares, `:extra="actions"`):
+ * the functions the array's objects hold under each key, handed to the child as `extra.run`, so the child's loop over its
+ * prop (`v-for="x in extra"` ... `x.run()`, `ScopeEntry.fromProp`) runs them. `handsOn` accepts the file's own functions.
+ */
+export function vueArrayFunctionProps(template: string, raw: string, script: string, handsOn: (name: string) => boolean): FunctionPropBinding[] {
+  if (!/(?:^|\s)(?::|v-bind:)[\w-]+="/.test(template)) return [];
+  const out: FunctionPropBinding[] = [];
+  const start = raw.indexOf(template);
+  for (const tag of template.matchAll(/<([A-Z][\w]*|[a-z][\w]*-[\w-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)\/?\s*>/g)) {
+    for (const bind of (tag[2] ?? "").matchAll(/(?:^|\s)(?::|v-bind:)([a-zA-Z][\w-]*)="([^"]*)"/g)) {
+      const value = bind[2]!.trim();
+      const found = value.startsWith("[") ? inlineCallbacksOf(value) : /^[A-Za-z_$][\w$]*$/.test(value) ? literalCallbacksOf(value, script) : undefined;
+      if (!found) continue;
+      const prop = bind[1]!.replace(/-([a-z\d])/g, (_m, c: string) => c.toUpperCase());
+      const line = raw.slice(0, start + tag.index!).split("\n").length;
+      for (const [key, names] of Object.entries(found)) {
+        for (const handler of names) {
+          if (!handler.endsWith("@") && handsOn(handler)) out.push({ component: tag[1]!, prop: `${prop}.${key}`, handler, line });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/** Drops the `fromProp` mark from a loop whose collection is no prop the component declares. */
+export function keepPropLoops(elements: InteractiveElementInfo[], props: readonly string[] | undefined): void {
+  for (const el of elements) {
+    for (const s of el.scope ?? []) if (s.fromProp && !props?.includes(s.fromProp)) delete s.fromProp;
+  }
 }

@@ -8,7 +8,7 @@ import { docblockAbove, parseDocblock, phpLocatorType, useAliases, type DocTypes
 import { extractPhpResponses } from "./responses.js";
 import { phpCollectionElement } from "./collection-element.js";
 import { extractPhpValueFlow } from "./value-flow.js";
-import { facadeProxyOf } from "./facades.js";
+import { facadeProxyOf, proxyConstantValues } from "./facades.js";
 
 /** A parameter that can receive a function value: untyped, or typed (also in a union) as one a callable travels as. */
 const CALLABLE_TYPE = /^\??(?:callable|Closure|array|string|iterable|mixed|object)$/i;
@@ -67,14 +67,34 @@ export class PhpExtractor extends FunctionClassExtractor {
     return super.extractClasses(tree, sourceText);
   }
 
+  /** The namespace the free functions being read sit in; see `classNamespace` (same rule: only a file opening several). */
+  private functionNamespace: string | undefined;
+  private functionsMultiNamespace = false;
+
   protected collectFunctions(node: Node, functions: FunctionInfo[]): void {
+    if (node.type === "program") {
+      this.functionNamespace = undefined;
+      this.functionsMultiNamespace = node.namedChildren.filter((c) => c.type === "namespace_definition").length > 1;
+    }
     for (const child of node.children) {
       if (child.type === "function_definition") {
-        functions.push(this.parseFunction(child));
+        const fn = this.parseFunction(child);
+        // An unnamed `namespace { … }` block is the global one: "" keeps it off the file's first namespace.
+        if (this.functionsMultiNamespace) fn.namespace = this.functionNamespace ?? "";
+        functions.push(fn);
       } else if (child.type === "namespace_definition") {
         // `namespace X { … }` — the braced form nests declarations one level down.
+        const name = child.childForFieldName("name")?.text ?? child.namedChildren.find((c) => c.type === "namespace_name")?.text ?? "";
         const block = child.childForFieldName("body") ?? this.findChildByType(child, "compound_statement");
-        if (block) this.collectFunctions(block, functions);
+        if (block) {
+          const outer = this.functionNamespace;
+          this.functionNamespace = name;
+          this.collectFunctions(block, functions);
+          this.functionNamespace = outer;
+        } else {
+          // `namespace A;` holds the declarations that follow, up to the next `namespace`.
+          this.functionNamespace = name;
+        }
       } else if (child.type === "if_statement") {
         for (const block of conditionalBlocks(child)) this.collectFunctions(block, functions);
       }
@@ -239,6 +259,8 @@ export class PhpExtractor extends FunctionClassExtractor {
     this.collectCiLoadedDeps(node, properties);
     this.collectFormRequestFields(extendsName, methods, body, properties);
     const staticProxyOf = kind === "class" ? facadeProxyOf(node, extendsName, this.fileAliases) : undefined;
+    // A trait's string constants: a facade using it may name its token through one (`static::TOKEN`).
+    const constantValues = node.type === "trait_declaration" ? proxyConstantValues(body ?? undefined) : undefined;
 
     return {
       name,
@@ -254,6 +276,7 @@ export class PhpExtractor extends FunctionClassExtractor {
       ...(node.children.some((c) => c.type === "abstract_modifier") ? { abstract: true as const } : {}),
       ...(mixins.length > 0 ? { mixins } : {}),
       ...(staticProxyOf ? { staticProxyOf } : {}),
+      ...(constantValues ? { fieldValues: constantValues } : {}),
     };
   }
 

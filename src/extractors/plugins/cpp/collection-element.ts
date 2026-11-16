@@ -40,6 +40,25 @@ export function cppMapTypes(type: string | null | undefined): { key: string | nu
   return { key: side(args[0]!), value: side(args[1]!) };
 }
 
+/**
+ * The classes a range-for's structured binding takes at each position: a map's key and value, or the members of the
+ * `pair` / `tuple` a container holds (`std::vector<std::pair<Club, Team>>` → `Club`, `Team`). A member that is no value
+ * class (`int`, a pointer, `std::string`) is null; null for any other type.
+ */
+export function cppRangeBindings(type: string | null | undefined): readonly (string | null)[] | null {
+  const map = cppMapTypes(type);
+  if (map) return [map.key, map.value];
+  const text = strip(type ?? "");
+  const m = /^([a-z_]+)\s*<([\s\S]+)>$/.exec(text);
+  if (!m || !CONTAINERS.has(m[1]!)) return null;
+  const args = splitTypeArgs(m[2]!);
+  if (args.length === 0 || (args.length > 1 && !WITH_SECOND_ARGUMENT.test(m[1]!))) return null;
+  const tuple = /^(?:pair|tuple)\s*<([\s\S]+)>$/.exec(strip(args[0]!));
+  if (!tuple) return null;
+  const members = splitTypeArgs(tuple[1]!);
+  return members.map((raw) => { const e = classElement(raw); return e && !e.pointer ? e.name : null; });
+}
+
 function strip(raw: string): string {
   return raw.replace(/\b(?:const|volatile|struct|class|typename)\b/g, " ").replace(/\bstd\s*::\s*/g, "").replace(/[&*\s]+$/, "").trim();
 }

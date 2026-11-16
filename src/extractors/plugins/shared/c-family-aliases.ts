@@ -9,6 +9,16 @@ const TYPEDEF = /^\s*typedef\s+((?:(?:const|volatile|struct|class|union|enum|typ
 const CLASS_HEAD = /^\s*(?:template\s*<[^>]*>\s*)?(typedef\s+)?(?:class|struct|union)\s+(?:[A-Z][A-Z0-9_]+\s+)?([A-Za-z_]\w*)?(?![\w:]*\s*;)/;
 const NAMESPACE_HEAD = /^\s*(?:inline\s+)?namespace\b|^\s*extern\s+"C(?:\+\+)?"\s*\{?\s*$/;
 
+/**
+ * A pointer or reference alias stands for what it points at: `using ClubRef = Club*;` types `ClubRef c; c->Play()`
+ * by `Club`, as `Club* c` is typed. One level only — `Club**` and a pointer to an array stay as written, untyped.
+ */
+function pointeeOf(type: string): string {
+  const m = /^((?:(?:const|volatile)\s+)*[A-Za-z_][\w:]*(?:\s*<.*>)?(?:\s*::\s*[A-Za-z_]\w*)*)\s*(?:(?:const|volatile)\s*)*(?:\*|&&?)\s*(?:(?:const|volatile)\s*)*$/.exec(type);
+  if (!m || /[*&]/.test(m[1]!.replace(/<.*>/, ""))) return type;
+  return m[1]!.replace(/^(?:(?:const|volatile)\s+)+/, "");
+}
+
 interface Scope {
   kind: "namespace" | "class" | "block";
   /** A class's name (empty for an anonymous one). */
@@ -57,7 +67,7 @@ export function extractCFamilyTypeAliases(lines: readonly string[]): TypeAliasIn
       const using = /^\s*template\b/.test(line) ? null : USING_ALIAS.exec(line);
       const typedef = using ? null : TYPEDEF.exec(line);
       const alias = using ? { name: using[1]!, type: using[2]! } : typedef ? { name: typedef[2]!, type: typedef[1]! } : null;
-      const type = alias?.type.replace(/\b(?:struct|class|union|enum|typename)\s+/g, "").replace(/\s+/g, " ").trim();
+      const type = alias ? pointeeOf(alias.type.replace(/\b(?:struct|class|union|enum|typename)\s+/g, "").replace(/\s+/g, " ").trim()) : undefined;
       const name = alias ? named(alias.name) : null;
       if (alias && name && type && type !== alias.name) out.push({ name, type, line: i + 1 });
       // `typedef struct car { int speed; } car_t;` on one line.

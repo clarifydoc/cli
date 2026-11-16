@@ -176,6 +176,7 @@ function read(text: string, also?: string): ParsedStructure {
 }
 
 function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (name: string) => boolean, bindings: Map<PatternCallName[], LocalBinding[]>): Found[] {
+  const hasSlot = text.includes("SLOT");
   // Per function: the parameters and locals declared as a class-typed value (not a pointer, an array or a primitive).
   const objects = new Map<PatternCallName[], Map<string, string>>();
   const scopes = new Map<PatternCallName[], Scope>();
@@ -226,7 +227,8 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
     } else if (calls && ctx instanceof PostfixExpressionContext) {
       // A chain is one nested context per step: read it once, from its outermost.
       if (!(ctx.parent instanceof PostfixExpressionContext && ctx.parent.children[0] === ctx)) {
-        postfixCalls(ctx, calls, text, stream, objects.get(calls), scopeOf(calls));
+        // `SLOT(saveClub())`: the signature names the slot, it calls nothing (`connectReferences` hands it on).
+        if (!(hasSlot && inSlotMacro(ctx))) postfixCalls(ctx, calls, text, stream, objects.get(calls), scopeOf(calls));
         connectReferences(ctx, calls);
       }
     } else if (calls && ctx instanceof BinaryExpressionContext) {
@@ -236,7 +238,10 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
       const head = ctx.MacroName()!.symbol;
       calls.push({ name: head.text ?? "", leafName: head.text ?? "", line: head.line, column: head.column });
       const args = ctx.macroArguments();
-      if (args) macroArgumentCalls(args, stream, calls);
+      // `SLOT(saveClub(int))`: a signature naming the slot the connection hands on, as `&Window::saveClub` does.
+      const slot = head.text === "SLOT" && args ? slotNamed(args, stream) : null;
+      if (slot) calls.push({ name: slot.text ?? "", leafName: slot.text ?? "", line: slot.line, column: slot.column, passed: "argument" });
+      else if (args) macroArgumentCalls(args, stream, calls);
       continue;
     } else if (calls && ctx instanceof TemplateArgumentContext && ctx.theTypeId()) {
       // `make_seq<laps()>`: without the headers a call reads as a function type; a name the file never uses as a type
@@ -641,6 +646,14 @@ function macroHead(ctx: TryBlockContext | HandlerContext): Token | null {
   return first instanceof TerminalNode && (first.symbol.type === CPP14Lexer.CatchMacro || (first.symbol.type === CPP14Lexer.Try && first.symbol.text !== "try")) ? first.symbol : null;
 }
 
+/** The slot a `SLOT(name(Type, …))` signature names: its first token when that is a plain identifier followed by `(`. */
+function slotNamed(args: MacroArgumentsContext, stream: readonly Token[]): Token | null {
+  if (!args.start || !args.stop) return null;
+  const tokens = stream.slice(args.start.tokenIndex, args.stop.tokenIndex + 1).filter((t) => t.channel === Token.DEFAULT_CHANNEL);
+  const at = tokens.findIndex((t) => t.type === CPP14Lexer.Identifier);
+  return at >= 0 && tokens[at + 1]?.type === CPP14Lexer.LeftParen && tokens.slice(0, at).every((t) => t.type === CPP14Lexer.LeftParen) ? tokens[at]! : null;
+}
+
 /** The calls in a macro's arguments, read off their tokens. */
 function macroArgumentCalls(args: MacroArgumentsContext, stream: readonly Token[], calls: PatternCallName[]): void {
   if (!args.start || !args.stop) return;
@@ -912,6 +925,15 @@ function derefHead(link: PostfixExpressionContext, scope: Scope): { cls: string;
   return cls ? { cls, pointer: true } : null;
 }
 
+/** Whether a postfix chain is the argument of Qt's `SLOT(…)` macro: a signature, not a call. */
+function inSlotMacro(ctx: PostfixExpressionContext): boolean {
+  for (let up: ParserRuleContext | null = ctx.parent, depth = 0; up && depth < 40; up = up.parent, depth++) {
+    if (up instanceof PostfixExpressionContext && up.LeftParen()) return up.children[0]?.getText() === "SLOT";
+    if (up instanceof CompoundStatementContext) return false;
+  }
+  return false;
+}
+
 /**
  * Qt's pointer-to-member `connect(button, &QPushButton::clicked, this, &ClubWindow::saveClub)`: the slot (any argument
  * after the signal) is handed on, so the connecting function references it — named as a static call of it would be
@@ -921,6 +943,13 @@ function derefHead(link: PostfixExpressionContext, scope: Scope): { cls: string;
 function connectReferences(ctx: PostfixExpressionContext, calls: PatternCallName[]): void {
   if (!ctx.LeftParen()) return;
   const callee = ctx.children[0]?.getText() ?? "";
+  // Qt's string form `connect(a, SIGNAL(x()), this, SLOT(saveClub(int)))`: the slot's name, handed on like `&Window::saveClub`.
+  if (callee === "SLOT") {
+    const slot = /^([A-Za-z_]\w*)\s*\(/.exec(ctx.expressionList()?.getText() ?? "")?.[1];
+    const at = ctx.expressionList()?.start ?? ctx.start;
+    if (slot && at) calls.push({ name: slot, leafName: slot, line: at.line, column: at.column, passed: "argument" });
+    return;
+  }
   if (callee !== "connect" && !callee.endsWith("::connect")) return;
   const args = ctx.expressionList()?.initializerList().initializerClause() ?? [];
   for (const arg of args.slice(2)) {

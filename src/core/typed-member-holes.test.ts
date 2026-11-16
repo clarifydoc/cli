@@ -272,3 +272,90 @@ describe("a URL hole over an inline type, a nested member, a field or a loop ele
     expect(reached(54)).toEqual([]);
   });
 });
+
+const CALLS: Record<string, string> = {
+  "web/package.json": JSON.stringify({ name: "league-web", dependencies: { axios: "^1.6.0" } }),
+  "web/src/api.ts": [
+    "import axios from 'axios';",
+    "export type Division = 'premier' | 'cup';",
+    "export interface Club { division: Division }",
+    "export interface Facility { division: 'stadium' | 'academy' }",
+    "export class ClubRepo { all(): Club[] { return []; } }",
+    "export class GroundRepo { all(): Facility[] { return []; } }",
+    "export function loopResult(repo: ClubRepo) {",
+    "  for (const c of repo.all()) {",
+    "    axios.get(`/api/${c.division}/table`);",
+    "  }",
+    "}",
+    "export function loopGround(repo: GroundRepo) {",
+    "  for (const g of repo.all()) {",
+    "    axios.get(`/api/${g.division}/table`);",
+    "  }",
+    "}",
+    "export function clubsNow(): Club[] { return []; }",
+    "export function loopFree() {",
+    "  for (const c of clubsNow()) {",
+    "    axios.get(`/api/${c.division}/table`);",
+    "  }",
+    "}",
+    "export class Registry {",
+    "  static club: Club;",
+    "  static pick() {",
+    "    return axios.get(`/api/${this.club.division}/table`);",
+    "  }",
+    "}",
+    "export class Instance {",
+    "  club!: Club;",
+    "  static decoy() {",
+    "    return axios.get(`/api/${this.club.division}/table`);",
+    "  }",
+    "  fine() {",
+    "    return axios.get(`/api/${this.club.division}/table`);",
+    "  }",
+    "}",
+  ].join("\n"),
+  "api/package.json": JSON.stringify({ name: "league-api", dependencies: { express: "^4.18.0" } }),
+  "api/src/server.js": [
+    "const express = require('express');",
+    "const app = express();",
+    ...["premier", "cup", "stadium", "academy"].map((d) => `app.get('/api/${d}/table', (req, res) => res.json([]));`),
+    "app.listen(3000);",
+  ].join("\n"),
+};
+
+describe("a URL hole over the result of a call, and over this in a static method", () => {
+  let dir: string;
+  let links: ApiRouteLink[] = [];
+  const reached = (line: number) =>
+    links.filter((l) => l.source === "web/src/api.ts" && l.sourceLine === line).map((l) => [l.routePath, l.confidence]).sort();
+  const premierCup = [["/api/cup/table", "AMBIGUOUS"], ["/api/premier/table", "AMBIGUOUS"]];
+  const venues = [["/api/academy/table", "AMBIGUOUS"], ["/api/stadium/table", "AMBIGUOUS"]];
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "typed-member-holes-calls-"));
+    for (const [rel, src] of Object.entries(CALLS)) {
+      await mkdir(join(dir, "src", dirname(rel)), { recursive: true });
+      await writeFile(join(dir, "src", rel), src);
+    }
+    await analyze({ projectRoot: join(dir, "src"), outputDir: join(dir, "out"), lsp: false, gitHistory: false } as never);
+    links = (await loadReportSummary(join(dir, "out"))).apiRouteLinks ?? [];
+  }, 120_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("types a loop element by the return type of the method it iterates, on the receiver's own class", () => {
+    expect(reached(9)).toEqual(premierCup);
+    expect(reached(14)).toEqual(venues);
+  });
+
+  it("types a loop element by the return type of a free function", () => {
+    expect(reached(20)).toEqual(premierCup);
+  });
+
+  it("reads this in a static method as the class, whose static fields are the only ones it has", () => {
+    expect(reached(26)).toEqual(premierCup);
+    expect(reached(32)).toEqual([]);
+    expect(reached(35)).toEqual(premierCup);
+  });
+});

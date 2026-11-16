@@ -2,6 +2,7 @@ import type { Node, Tree } from "web-tree-sitter";
 import type { ReactiveCells } from "../../../types/analysis.js";
 import { sameCell } from "../../../core/reactive-triggers.js";
 import { withStoreWatchers, type StoreTrigger, type StoreWrite } from "./store-reads.js";
+import { withVuexOptions } from "./vuex-state-reads.js";
 import { TEMPLATE_WRITE_MARK } from "./markup-expressions.js";
 import { decodeTargets, type TemplateTarget } from "./template-targets.js";
 
@@ -94,7 +95,7 @@ export function reactiveCellsOf(tree: Tree): CellFacts {
   memoTree = tree;
   const text = tree.rootNode.text;
   const template = templateWritesOf(tree, text);
-  memo = withStoreWatchers(tree, withSubjectListeners(tree, withPropWatchers(tree, withOptionsApi(tree, read(tree, text, template), text, template), text), text), text, template);
+  memo = withVuexOptions(tree, withStoreWatchers(tree, withSubjectListeners(tree, withPropWatchers(tree, withOptionsApi(tree, read(tree, text, template), text, template), text), text), text, template), text);
   return memo;
 }
 
@@ -755,7 +756,7 @@ export function isOption(options: Node | undefined, name: string): boolean {
   return options.namedChildren.some((p) => p?.type === "pair" && optionKey(p.childForFieldName("key")) === name && p.childForFieldName("value")?.text !== "false");
 }
 
-function optionKey(key: Node | null | undefined): string | null {
+export function optionKey(key: Node | null | undefined): string | null {
   if (!key) return null;
   if (key.type === "property_identifier" || key.type === "identifier") return key.text;
   return key.type === "string" ? key.text.slice(1, -1) : null;
@@ -854,7 +855,7 @@ export function optionsWatchers(options: Node): Watch[] {
 }
 
 /** An Options API component's object (`export default { … }`, `defineComponent({ … })`) with a `watch` group. */
-function optionsObjects(tree: Tree): Node[] {
+export function optionsObjects(tree: Tree): Node[] {
   const out: Node[] = [];
   for (const o of tree.rootNode.descendantsOfType("object")) {
     if (!o) continue;
@@ -871,7 +872,7 @@ function optionsObjects(tree: Tree): Node[] {
 }
 
 /** The bodies of an options object's `computed` group, by member name (a method, a function value, or `{ get() {…} }`). */
-function computedMembers(options: Node): Map<string, Node> {
+export function computedMembers(options: Node): Map<string, Node> {
   const out = new Map<string, Node>();
   for (const m of options.namedChildren) {
     if (m?.type !== "pair" || optionKey(m.childForFieldName("key")) !== "computed" || m.childForFieldName("value")?.type !== "object") continue;

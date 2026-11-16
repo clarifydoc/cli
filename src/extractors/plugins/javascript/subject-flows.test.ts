@@ -272,3 +272,31 @@ export class RouteWatchComponent {
     expect(analyses[1]!.subjectFlows?.listens).toBeUndefined();
   });
 });
+
+describe("the listeners of one subject", () => {
+  it("are all linked from a next, however many there are", async () => {
+    const files: Record<string, string> = {
+      "src/league.service.ts": `import { Injectable } from '@angular/core';
+import { Subject } from 'rxjs';
+@Injectable({ providedIn: 'root' })
+export class LeagueService {
+  readonly changes$ = new Subject<string>();
+  announce(c: string) { this.changes$.next(c); }
+}`,
+    };
+    for (let i = 0; i < 11; i++) {
+      files[`src/club-${i}.component.ts`] = `import { Component } from '@angular/core';
+import { switchMap } from 'rxjs/operators';
+import { HttpClient } from '@angular/common/http';
+import { LeagueService } from './league.service';
+@Component({ selector: 'app-c${i}', template: '' })
+export class Club${i}Component {
+  constructor(private http: HttpClient, private svc: LeagueService) {
+    this.svc.changes$.pipe(switchMap(() => this.http.get('/api/clubs/${i}'))).subscribe();
+  }
+}`;
+    }
+    const links = new JsSubjectResolver().resolve(await analyzeAll(files)).map(show);
+    expect(links).toHaveLength(11);
+  });
+});

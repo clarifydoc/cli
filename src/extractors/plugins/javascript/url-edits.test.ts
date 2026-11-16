@@ -119,3 +119,56 @@ describe("a getter URL edited by .replace, end to end", () => {
     expect(callAt(25)?.baseExpr).toBe("this.url.replace('teams', '')");
   });
 });
+
+/**
+ * A base-class method edits the getter its subclasses override: each subclass requests the edit of its
+ * own getter's URL, and a route only the base's value (or another subclass's) would reach is not linked.
+ */
+describe("a getter URL edited by .replace in a base method, per subclass", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-url-edits-sub-"));
+    const web = join(dir, "web", "src");
+    const server = join(dir, "server");
+    await mkdir(web, { recursive: true });
+    await mkdir(server, { recursive: true });
+    await writeFile(join(dir, "web", "package.json"), JSON.stringify({ name: "league-web", dependencies: { axios: "1.6.0" } }));
+    await writeFile(join(web, "api.ts"), [
+      "import axios from 'axios';",
+      "export abstract class BaseApi {",
+      "  get url(): string { return '/api/clubs'; }",
+      "  edited() { return axios.get(this.url.replace('clubs', 'kits')); }",
+      "  editedHole() { return axios.get(`${this.url.replace('clubs', 'kits')}/all`); }",
+      "}",
+      "export class ClubApi extends BaseApi {",
+      "  get url(): string { return '/api/clubs'; }",
+      "}",
+      "export class PlayerApi extends BaseApi {",
+      "  get url(): string { return '/api/clubs/players'; }",
+      "}",
+    ].join("\n"));
+    await writeFile(join(server, "package.json"), JSON.stringify({ name: "league-api", dependencies: { express: "4.18.0" } }));
+    await writeFile(join(server, "app.js"), [
+      "const express = require('express');",
+      "const app = express();",
+      ...["/api/kits", "/api/kits/players", "/api/kits/all", "/api/kits/players/all", "/api/clubs/all", "/api/clubs/players/all"].map(
+        (p) => `app.get('${p}', (req, res) => res.json([]));`,
+      ),
+      "app.listen(3000);",
+    ].join("\n"));
+    await analyze({ projectRoot: dir, outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
+    summary = await loadReportSummary(join(dir, "out"));
+  });
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const routesAt = (line: number): string[] =>
+    (summary.apiRouteLinks ?? []).filter((l) => l.source === "web/src/api.ts" && l.sourceLine === line).map((l) => l.routePath).sort();
+
+  it("applies the edit to each subclass's own getter", () => {
+    expect(routesAt(4)).toEqual(["/api/kits", "/api/kits/players"]);
+    expect(routesAt(5)).toEqual(["/api/kits/all", "/api/kits/players/all"]);
+  });
+});

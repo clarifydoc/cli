@@ -46,6 +46,15 @@ function globalRegistrations(tree: Tree, importMap: Map<string, string>): SubCom
       if (source) out.push({ name: nameArg.text.slice(1, -1), importSource: source, props: [], line, global: true });
       continue;
     }
+    // `components.forEach((c) => Vue.component(c.name, c))`: each of the array's imported components, under its own `name` option.
+    const bound = nameArg && valueArg ? registeredFromArray(tree, nameArg, valueArg) : null;
+    if (bound) {
+      for (const local of bound) {
+        const source = importMap.get(local);
+        if (source) out.push({ name: local, importSource: source, props: [], line, global: true, registeredByName: true });
+      }
+      continue;
+    }
     const named = nameArg ? registeredName(nameArg) : null;
     const object = named && valueArg ? registeredObject(valueArg, named.key) : null;
     if (!named || !object) continue;
@@ -55,6 +64,37 @@ function globalRegistrations(tree: Tree, importMap: Map<string, string>): SubCom
     }
   }
   return out;
+}
+
+/**
+ * The identifiers of the array a registration loop walks, when it registers each element under its own `name`
+ * (`Vue.component(c.name, c)` inside `components.forEach((c) => …)` or `for (const c of components)`; the array
+ * a literal or a `const` of the file). Null for any other shape.
+ */
+function registeredFromArray(tree: Tree, nameArg: Node, valueArg: Node): string[] | null {
+  if (nameArg.type !== "member_expression" || valueArg.type !== "identifier") return null;
+  if (nameArg.childForFieldName("property")?.text !== "name" || nameArg.childForFieldName("object")?.text !== valueArg.text) return null;
+  let source: Node | null = null;
+  for (let n: Node | null = valueArg.parent; n && !source; n = n.parent) {
+    if (n.type === "for_in_statement") {
+      const left = n.childForFieldName("left");
+      if (left?.text === valueArg.text || left?.descendantsOfType("identifier").some((id) => id?.text === valueArg.text)) source = n.childForFieldName("right");
+    } else if (n.type === "arrow_function" || n.type === "function_expression") {
+      const param = n.childForFieldName("parameters")?.namedChildren[0] ?? n.childForFieldName("parameter");
+      const call = n.parent?.parent;
+      const callee = call?.type === "call_expression" ? call.childForFieldName("function") : null;
+      if (param?.text === valueArg.text && callee?.type === "member_expression" && callee.childForFieldName("property")?.text === "forEach") source = callee.childForFieldName("object");
+    }
+  }
+  if (source?.type === "identifier") {
+    const name = source.text;
+    const decls = tree.rootNode.descendantsOfType("variable_declarator").filter((d) => d?.childForFieldName("name")?.text === name);
+    // One declaration only: a second one of the name is another collection.
+    source = decls.length === 1 ? decls[0]!.childForFieldName("value") : null;
+  }
+  if (source?.type !== "array") return null;
+  const names = source.namedChildren.filter((e): e is Node => !!e && e.type === "identifier").map((e) => e.text);
+  return names.length > 0 ? names : null;
 }
 
 /** The name a loop registers: `` `club${key}` `` → prefix `club` + the key expression; a bare `key` has no prefix. */

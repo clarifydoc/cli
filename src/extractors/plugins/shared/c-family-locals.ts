@@ -54,7 +54,7 @@ export function extractCFamilyLocalTypes(
   /** C++: the element a declared container type states (`vector<Club>` → `Club`); unset where there is no range-for. */
   elementOf?: (type: string, as?: "iterated" | "dereferenced") => string | null,
   /** C++: the key and value classes a declared map type states, each null when it is no class; null for a type that is no map. */
-  pairOf?: (type: string) => readonly [string | null, string | null] | null,
+  pairOf?: (type: string) => readonly (string | null)[] | null,
 ): LocalTypes {
   const seen = new Map<string, Set<string>>();
   const unknown = new Set<string>();

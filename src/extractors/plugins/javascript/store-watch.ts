@@ -3,8 +3,9 @@ import type { FileAnalysis, StoreWatch, SymbolLink } from "../../../types/analys
 import type { DispatchResolver } from "../../dispatch/base.js";
 import { buildFilePathMap, resolveTarget } from "../../shared/link-scoring.js";
 import { sameCell } from "../../../core/reactive-triggers.js";
+import { VUEX_FACTORY } from "./store-reads.js";
 import { piniaStoreOf, type PiniaStore } from "./functions-classes.js";
-import { FALSY, MUTATORS, argumentsOf, innermost, reactiveCellsOf } from "./reactive-cells.js";
+import { FALSY, MUTATORS, argumentsOf, getterOf, importSources, innermost, reactiveCellsOf, readPath } from "./reactive-cells.js";
 import { homeOf, type Files } from "./prop-flows.js";
 
 /**
@@ -26,16 +27,21 @@ export function storeWatch(tree: Tree, sourceText: string, functions: ReadonlyAr
     const declared = new Set(functions.map((f) => f.name));
     const watchers: NonNullable<StoreWatch["watchers"]> = [];
     for (const t of facts.storeTriggers) {
-      const name = t.callback ? facts.held.get(t.callback.id) : t.callee && declared.has(t.callee) ? t.callee : undefined;
+      const name = (t.callback ? facts.held.get(t.callback.id) ?? facts.optionNames.get(t.callback.id) : undefined) ?? (t.callee && declared.has(t.callee) ? t.callee : undefined);
       if (!name || !declared.has(name)) continue;
       const line = t.at.startPosition.row + 1;
       if (!watchers.some((w) => w.function === name && w.line === line)) watchers.push({ reads: t.reads, function: name, line, ...(t.immediate ? { immediate: true } : {}), ...(t.truthyOnly ? { truthyOnly: true } : {}) });
     }
     if (watchers.length > 0) out.watchers = watchers;
   }
-  const writes: Write[] = sourceText.includes("defineStore") ? storeWrites(tree, functions) : [];
+  const derived: Derived[] = [];
+  const writes: Write[] = sourceText.includes("defineStore") ? storeWrites(tree, functions, derived) : [];
+  // A composable keeps its state in refs it returns, as a setup store does.
+  if (/\buse[A-Z][\w$]*/.test(sourceText) && /\b(?:ref|reactive|shallowRef|shallowReactive)\s*\(/.test(sourceText)) composableWrites(tree, functions, writes, derived);
   // What a component writes in a store it holds, by the factory it asked for.
   for (const w of facts.storeWrites ?? []) {
+    // A Vuex store's state changes through its mutations (`stateWrites`), never through a write here.
+    if (w.factory === VUEX_FACTORY) continue;
     const line = w.line ?? w.node!.startPosition.row + 1;
     // A statement the template runs is the component's own, which its `<setup>` stands for.
     const fn = w.template ? "<setup>" : innermost(functions, line);
@@ -43,10 +49,76 @@ export function storeWatch(tree: Tree, sourceText: string, functions: ReadonlyAr
     writes.push({ store: w.factory, path: w.path, function: fn, line, spelling: w.path.split(".").find((p) => p !== "[]") ?? "", viaFactory: true, ...(w.falsy ? { falsy: true } : {}) });
   }
   if (writes.length > 0) out.writes = writes;
-  return out.watchers || out.writes ? out : null;
+  if (derived.length > 0) out.derived = derived;
+  const stateWrites = /mutations/i.test(sourceText) ? vuexStateWrites(tree, functions) : [];
+  if (stateWrites.length > 0) out.stateWrites = stateWrites;
+  return out.watchers || out.writes || out.stateWrites || out.derived ? out : null;
+}
+
+type StateWrite = NonNullable<StoreWatch["stateWrites"]>[number];
+
+/**
+ * The state a Vuex mutation writes, by the mutation function: in an object that is a `mutations` table — the member of a
+ * module or store definition, or a `const xMutations = {…}` another table spreads in — the function's first parameter is
+ * the module's state, and `state.list = v`, `state.list.push(c)`, `state.byId.set(k, c)`, `Object.assign(state.filters, p)`,
+ * `Vue.set(state.byId, k, c)` write below it (`Object.assign(state, p)` and a computed key write what the file cannot name: `""`).
+ * Paths are relative to the module; `vuex-state.ts` prefixes the namespace the root store registers the module under.
+ */
+export function vuexStateWrites(tree: Tree, functions: readonly Fn[]): StateWrite[] {
+  const out: StateWrite[] = [];
+  const tables: Node[] = [];
+  for (const p of tree.rootNode.descendantsOfType("pair")) {
+    const value = p?.childForFieldName("value");
+    if (p && value?.type === "object" && /^['"]?mutations['"]?$/.test(p.childForFieldName("key")?.text ?? "")) tables.push(value);
+  }
+  for (const d of tree.rootNode.descendantsOfType("variable_declarator")) {
+    const value = d?.childForFieldName("value");
+    if (d && value?.type === "object" && /(?:^|[a-z])[mM]utations$/.test(d.childForFieldName("name")?.text ?? "")) tables.push(value);
+  }
+  // Vue 2.7 exports `set` and `del`: a bare call counts only when the file imports it from Vue.
+  const vueNames = new Map<string, string>();
+  for (const [name, src] of importSources(tree.rootNode)) if (src === "vue" && (name === "set" || name === "del")) vueNames.set(name, src);
+  const seen = new Set<number>();
+  for (const table of tables) {
+    if (seen.has(table.id)) continue;
+    seen.add(table.id);
+    for (const m of table.namedChildren) {
+      const fn = m?.type === "method_definition" ? m : m?.type === "pair" && m.childForFieldName("value") && /^(?:arrow_function|function_expression|function)$/.test(m.childForFieldName("value")!.type) ? m.childForFieldName("value")! : null;
+      const body = fn?.childForFieldName("body");
+      if (!fn || !body) continue;
+      let param = fn.childForFieldName("parameters")?.namedChildren[0] ?? fn.childForFieldName("parameter");
+      if (param?.type === "required_parameter" || param?.type === "optional_parameter") param = param.childForFieldName("pattern");
+      // A Vuex mutation takes the module's state first, named `state` by every convention.
+      if (param?.type !== "identifier" || !/^_?state$/.test(param.text)) continue;
+      const name = param.text;
+      const rootOf: RootTest = (n) => (n.type === "identifier" && n.text === name ? name : null);
+      const emit = (node: Node, path: readonly string[], falsy: boolean): void => {
+        const line = node.startPosition.row + 1;
+        const owner = innermost(functions, line);
+        if (!owner) return;
+        // An element or a computed member of the state itself names no member the file can state.
+        const joined = path[0] === "[]" ? "" : path.join(".");
+        if (out.some((w) => w.path === joined && w.function === owner && w.line === line)) return;
+        out.push({ path: joined, function: owner, line, spelling: path.find((x) => x !== "[]") ?? "", ...(falsy ? { falsy: true } : {}) });
+      };
+      writesIn(body, rootOf, emit, () => {});
+      // `Object.assign(state.filters, p)` and `Vue.set(state.byId, k, c)` write members of the target, as a mutator does.
+      walk(body, (n) => {
+        if (n.type !== "call_expression") return;
+        const callee = n.childForFieldName("function")?.text ?? "";
+        if (!/^(?:Object\.assign|Vue\.set|Vue\.delete|Vue\.\$set|\$set)$/.test(callee) && !((callee === "set" || callee === "del") && vueNames.get(callee) !== undefined)) return;
+        const t = targetOf(argumentsOf(n)[0] ?? null, rootOf, true);
+        if (!t) return;
+        // `Object.assign(state, p)`: every member of the module's state may change.
+        emit(n, t.path.length === 1 && t.path[0] === "[]" ? [] : t.path, false);
+      });
+    }
+  }
+  return out;
 }
 
 type Write = NonNullable<StoreWatch["writes"]>[number];
+type Derived = NonNullable<StoreWatch["derived"]>[number];
 type Fn = { name: string; line: number; endLine: number };
 
 const FUNCTION_NODES: ReadonlySet<string> = new Set(["function_declaration", "generator_function_declaration", "function_expression", "function", "method_definition", "generator_function"]);
@@ -54,13 +126,13 @@ const REF_CELLS = new Set(["ref", "shallowRef", "customRef", "useStorage", "useL
 const REACTIVE_CELLS = new Set(["reactive", "shallowReactive"]);
 
 /** Writes to the state of each Pinia store a file defines. */
-function storeWrites(tree: Tree, functions: readonly Fn[]): Write[] {
+function storeWrites(tree: Tree, functions: readonly Fn[], derived: Derived[]): Write[] {
   const out: Write[] = [];
   for (const d of tree.rootNode.descendantsOfType("variable_declarator")) {
     const store = d ? piniaStoreOf(d) : null;
     if (!store) continue;
     if (store.options) optionStoreWrites(store, functions, out);
-    else if (store.setup) setupStoreWrites(store, functions, out);
+    else if (store.setup) setupStoreWrites(store, functions, out, derived, false);
   }
   return out;
 }
@@ -95,14 +167,14 @@ function walk(body: Node, visit: (n: Node) => void): void {
   go(body);
 }
 
-function pushWrite(out: Write[], functions: readonly Fn[], node: Node, store: string, path: readonly string[], falsy: boolean): void {
+function pushWrite(out: Write[], functions: readonly Fn[], node: Node, store: string, path: readonly string[], falsy: boolean, instance = false): void {
   const line = node.startPosition.row + 1;
   const fn = innermost(functions, line);
   if (!fn) return;
   const joined = path.join(".");
   const id = `${store}\0${joined}\0${fn}\0${line}`;
   if (out.some((w) => `${w.store}\0${w.path}\0${w.function}\0${w.line}` === id)) return;
-  out.push({ store, path: joined, function: fn, line, spelling: path.find((p) => p !== "[]") ?? "", ...(falsy ? { falsy: true } : {}) });
+  out.push({ store, path: joined, function: fn, line, spelling: (path.find((p) => p !== "[]") ?? "").replace(/^~/, ""), ...(falsy ? { falsy: true } : {}), ...(instance ? { instance: true } : {}) });
 }
 
 /** The writes of one function body, given what names the state there. */
@@ -139,6 +211,41 @@ function writesIn(body: Node, rootOf: RootTest, emit: (node: Node, path: string[
   });
 }
 
+/** The composables a file declares: `function useClubs() {…}`, `export const useClubs = () => {…}`. */
+function composableWrites(tree: Tree, functions: readonly Fn[], out: Write[], derived: Derived[]): void {
+  const found: Array<{ name: string; fn: Node }> = [];
+  const declare = (n: Node | null | undefined): void => {
+    if (!n) return;
+    if (n.type === "export_statement") return declare(n.childForFieldName("declaration"));
+    if (n.type === "function_declaration") {
+      const name = n.childForFieldName("name")?.text;
+      if (name && /^use[A-Z]/.test(name)) found.push({ name, fn: n });
+    } else if (n.type === "lexical_declaration" || n.type === "variable_declaration") {
+      for (const d of n.namedChildren) {
+        const name = d?.type === "variable_declarator" ? d.childForFieldName("name") : null;
+        const value = d?.childForFieldName("value");
+        if (name?.type === "identifier" && /^use[A-Z]/.test(name.text) && (value?.type === "arrow_function" || value?.type === "function_expression" || value?.type === "function")) found.push({ name: name.text, fn: value });
+      }
+    }
+  };
+  for (const st of tree.rootNode.namedChildren) declare(st);
+  // A ref declared outside the function is one every caller shares; one inside it belongs to each call.
+  const shared = new Map<string, { reactive: boolean; opaque: boolean; shared?: true }>();
+  for (const st of tree.rootNode.namedChildren) {
+    const decl = st?.type === "export_statement" ? st.childForFieldName("declaration") : st;
+    if (decl?.type !== "lexical_declaration" && decl?.type !== "variable_declaration") continue;
+    for (const d of decl.namedChildren) {
+      const value = d?.type === "variable_declarator" ? d.childForFieldName("value") : null;
+      const name = d?.childForFieldName("name");
+      if (value?.type !== "call_expression" || name?.type !== "identifier") continue;
+      const hook = value.childForFieldName("function")?.text ?? "";
+      if (REF_CELLS.has(hook)) shared.set(name.text, { reactive: false, opaque: hook === "shallowRef" || hook === "customRef", shared: true });
+      else if (REACTIVE_CELLS.has(hook)) shared.set(name.text, { reactive: true, opaque: hook === "shallowReactive", shared: true });
+    }
+  }
+  for (const c of found) setupStoreWrites({ binding: c.name, className: c.name, options: null, setup: c.fn }, functions, out, derived, true, shared);
+}
+
 function optionStoreWrites(store: PiniaStore, functions: readonly Fn[], out: Write[]): void {
   const actions: Node[] = [];
   for (const member of store.options!.namedChildren) {
@@ -168,12 +275,13 @@ function optionStoreWrites(store: PiniaStore, functions: readonly Fn[], out: Wri
   }
 }
 
-function setupStoreWrites(store: PiniaStore, functions: readonly Fn[], out: Write[]): void {
+function setupStoreWrites(store: PiniaStore, functions: readonly Fn[], out: Write[], derived: Derived[], composable: boolean, shared?: ReadonlyMap<string, { reactive: boolean; opaque: boolean; shared?: true }>): void {
   const body = store.setup!.childForFieldName("body");
   if (body?.type !== "statement_block") return;
   // The refs and reactive objects the setup declares, and the key the returned object gives each.
-  const cells = new Map<string, { reactive: boolean; opaque: boolean }>();
+  const cells = new Map<string, { reactive: boolean; opaque: boolean; shared?: true }>();
   const exposed = new Map<string, string>();
+  const computeds = new Map<string, Node>();
   for (const stmt of body.namedChildren) {
     if (stmt?.type === "lexical_declaration" || stmt?.type === "variable_declaration") {
       for (const d of stmt.namedChildren) {
@@ -183,6 +291,10 @@ function setupStoreWrites(store: PiniaStore, functions: readonly Fn[], out: Writ
         const hook = value.childForFieldName("function")?.text ?? "";
         if (REF_CELLS.has(hook)) cells.set(name.text, { reactive: false, opaque: hook === "shallowRef" || hook === "customRef" });
         else if (REACTIVE_CELLS.has(hook)) cells.set(name.text, { reactive: true, opaque: hook === "shallowReactive" });
+        else if (hook === "computed") {
+          const getter = getterOf(argumentsOf(value)[0]);
+          if (getter) computeds.set(name.text, getter);
+        }
       }
     } else if (stmt?.type === "return_statement") {
       let ret = stmt.namedChild(0);
@@ -196,8 +308,13 @@ function setupStoreWrites(store: PiniaStore, functions: readonly Fn[], out: Writ
       }
     }
   }
-  for (const local of [...cells.keys()]) if (!exposed.has(local)) cells.delete(local);
+  // The state a composable keeps at module level, unless the function declares one of that name itself.
+  for (const [name, cell] of shared ?? []) if (!cells.has(name)) cells.set(name, cell);
+  // A store's state is what it returns; a composable's private ref is still what its returned computeds read.
+  if (!composable) for (const local of [...cells.keys()]) if (!exposed.has(local)) cells.delete(local);
   if (cells.size === 0) return;
+  const keyOf = (local: string): string => exposed.get(local) ?? `~${local}`;
+  derivedMembers(store.className, cells, computeds, exposed, keyOf, derived);
   // The setup body writes through a ref's `.value`, and through a reactive object's members; nested functions are walked
   // too — the actions are functions of the setup.
   const visitAll = (root: Node): void => {
@@ -217,7 +334,7 @@ function setupStoreWrites(store: PiniaStore, functions: readonly Fn[], out: Writ
     } else if (path.length === 0 && !mutated) return;
     // A shallow ref changes only when its value is replaced, a shallow reactive object when one of its own members is.
     if (cell.opaque && (cell.reactive ? path.length > 1 || mutated : path.length > 0 || mutated)) return;
-    pushWrite(out, functions, node, store.className, [exposed.get(t.root)!, ...path], falsy);
+    pushWrite(out, functions, node, store.className, [keyOf(t.root), ...path], falsy, composable && !cell.shared);
   };
   const one = (n: Node): void => {
     if (n.type === "call_expression") {
@@ -232,6 +349,49 @@ function setupStoreWrites(store: PiniaStore, functions: readonly Fn[], out: Writ
     if (t) emitFor(n, t, false, n.type === "assignment_expression" && FALSY.test(n.childForFieldName("right")?.text.trim() ?? ""));
   };
   visitAll(body);
+}
+
+/**
+ * The returned computeds of a composable and the state each reads — `const total = computed(() => clubs.value.length)`
+ * is `total` → `clubs*` — through the computeds it reads in turn. A watcher on `total` in another file runs when
+ * something writes `clubs`. A ref read as stated (`() => clubs.value`) is shallow, one used (`.length`, a call) is read through.
+ */
+function derivedMembers(store: string, cells: ReadonlyMap<string, { reactive: boolean; opaque: boolean; shared?: true }>, computeds: ReadonlyMap<string, Node>, exposed: ReadonlyMap<string, string>, keyOf: (local: string) => string, out: Derived[]): void {
+  const readsOf = (name: string, seen: Set<string>): string[] => {
+    const body = computeds.get(name);
+    if (!body || seen.has(name)) return [];
+    seen.add(name);
+    const reads = new Set<string>();
+    const visit = (n: Node): void => {
+      if (n.type === "identifier" && !(n.parent?.type === "member_expression" && n.parent.childForFieldName("property")?.id === n.id)) {
+        const cell = cells.get(n.text);
+        if (cell) {
+          const { path, deep, returned } = readPath(n);
+          const rest = cell.reactive ? path : path[0] === "value" ? path.slice(1) : null;
+          if (rest) reads.add([keyOf(n.text), ...rest].join(".") + (deep || !returned ? "*" : ""));
+        } else if (computeds.has(n.text)) {
+          // `value` of another computed: what it reads (read through when this one uses it).
+          const { deep, returned } = readPath(n);
+          for (const r of readsOf(n.text, seen)) reads.add(deep || !returned ? r.replace(/\*?$/, "*") : r);
+        }
+        return;
+      }
+      for (const c of n.namedChildren) if (c) visit(c);
+    };
+    visit(body);
+    return [...reads];
+  };
+  for (const [local, member] of exposed) {
+    if (!computeds.has(local)) continue;
+    const reads = readsOf(local, new Set());
+    if (reads.length > 0) out.push({ store, member, reads });
+  }
+}
+
+/** Whether a function of `file` calls `name` — bare or through a local (`load()`, `clubs.load()`). */
+function callsFunction(file: FileAnalysis, name: string): boolean {
+  const fns = [...file.functions, ...file.classes.flatMap((c) => c.methods)];
+  return fns.some((f) => f.calls.some((c) => c.name === name || c.name.endsWith(`.${name}`)));
 }
 
 /**
@@ -285,7 +445,9 @@ export class JsStoreWatchResolver implements DispatchResolver {
       }
       const fn = home?.file.functions.find((f) => f.name === home!.name);
       const cls = fn?.returnType ? home!.file.classes.find((c) => c.name === fn.returnType) : undefined;
-      const key = home && cls ? `${home.file.filePath}#${cls.name}` : null;
+      // A composable names itself: its returned refs are the state, its own functions write them.
+      const composable = home && !cls && (home!.file.storeWatch?.writes?.some((w) => !w.viaFactory && w.store === home!.name) || home!.file.storeWatch?.derived?.some((d) => d.store === home!.name));
+      const key = home && cls ? `${home.file.filePath}#${cls.name}` : composable ? `${home!.file.filePath}#${home!.name}` : null;
       stores.set(memo, key);
       return key;
     };
@@ -297,6 +459,21 @@ export class JsStoreWatchResolver implements DispatchResolver {
         if (key) (writesByStore.get(key) ?? writesByStore.set(key, []).get(key)!).push({ file: a, write: w });
       }
     }
+    // The computeds a store or composable returns, by store: a watcher on one runs when what it reads is written.
+    const derivedByStore = new Map<string, Map<string, string[]>>();
+    for (const a of analyses) {
+      for (const d of a.storeWatch?.derived ?? []) {
+        const key = `${a.filePath}#${d.store}`;
+        (derivedByStore.get(key) ?? derivedByStore.set(key, new Map()).get(key)!).set(d.member, d.reads);
+      }
+    }
+    /** `total`, `total.value` or `total*` → what `total` reads, when it is a computed of the store. */
+    const expand = (key: string | null, path: string): string[] => {
+      const members = key ? derivedByStore.get(key) : undefined;
+      const head = path.replace(/\*$/, "").split(".")[0] ?? "";
+      const reads = members?.get(head);
+      return reads ? reads.map((r) => (path.endsWith("*") ? r.replace(/\*?$/, "*") : r)) : [path];
+    };
     const links: SymbolLink[] = [];
     const seen = new Set<string>();
     for (const a of analyses) {
@@ -315,10 +492,13 @@ export class JsStoreWatchResolver implements DispatchResolver {
         }
         for (const read of w.reads) {
           const key = storeOf(a, read.factory);
+          const readPaths = expand(key, read.path);
           for (const { file, write } of (key ? writesByStore.get(key) : undefined) ?? []) {
             if (file === a && write.function === w.function) continue;
             if (w.truthyOnly && write.falsy) continue;
-            if (write.path !== "" && read.path !== "*" && !sameCell(`s:${write.path}`, `s:${read.path}`)) continue;
+            if (write.path !== "" && read.path !== "*" && !readPaths.some((r) => sameCell(`s:${write.path}`, `s:${r}`))) continue;
+            // State each call of a composable creates is changed only by what the watching component itself calls.
+            if (write.instance && !callsFunction(a, write.function)) continue;
             const id = `${file.filePath}\0${write.function}\0${write.line}\0${a.filePath}\0${w.function}`;
             if (seen.has(id)) continue;
             seen.add(id);

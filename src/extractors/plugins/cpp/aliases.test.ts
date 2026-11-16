@@ -149,3 +149,54 @@ void race() {
     ]);
   });
 });
+
+describe.each(Object.entries(readers))("C++ pointer aliases (%s)", (_reader, read) => {
+  it("types a receiver declared with an alias of a pointer by the class it points at, never a namesake", () => {
+    expect(linksOf(read, {
+      "src/club.h": `#pragma once
+class Club {
+public:
+  void play();
+};
+using ClubRef = Club*;
+typedef const Club* ClubView;
+using ClubPair = Club**;
+`,
+      "src/club.cpp": `#include "club.h"
+void Club::play() {
+  kickoff();
+}
+`,
+      "src/team.h": `#pragma once
+class Team {
+public:
+  void play();
+};
+`,
+      "src/team.cpp": `#include "team.h"
+void Team::play() {
+  whistle();
+}
+`,
+      "src/season.cpp": `#include "club.h"
+void open(ClubRef c) {
+  c->play();
+}
+void watch(ClubView v) {
+  v->play();
+}
+void local() {
+  ClubRef c = nullptr;
+  c->play();
+}
+void pair(ClubPair p) {
+  (*p)->play();
+}
+`,
+    })).toEqual([
+      "local c.play -> src/club.cpp:Club.play",
+      "open c.play -> src/club.cpp:Club.play",
+      "watch v.play -> src/club.cpp:Club.play",
+    ]);
+  });
+});

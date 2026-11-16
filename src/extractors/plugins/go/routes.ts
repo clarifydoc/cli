@@ -363,7 +363,12 @@ function declaredValues(lines: readonly string[]): Set<string> {
       functions.add(fn[1]!);
       let open = line.indexOf("(");
       // A method's receiver group comes first; the parameters are the group after the name.
-      if (/^func\s*\(/.test(line)) open = line.indexOf("(", line.indexOf(")") + 1);
+      if (/^func\s*\(/.test(line)) {
+        const recv = /^func\s*\(\s*([A-Za-z_]\w*)\s+\*?[A-Za-z_]/.exec(line);
+        // Kept apart from the values: a receiver handed on bare may itself be the handler; only `x.field` reads it.
+        if (recv) found.add(`recv ${recv[1]!}`);
+        open = line.indexOf("(", line.indexOf(")") + 1);
+      }
       const params = open >= 0 ? parseArgs(line, open).args : [];
       const typed = params.some((a) => /\s/.test(a.trim()));
       for (const a of params) {
@@ -386,6 +391,41 @@ function declaredValues(lines: readonly string[]): Set<string> {
   }
   for (const name of [...functions, ...notValues]) found.delete(name);
   return found;
+}
+
+/**
+ * The names the file declares as struct fields (`db *sql.DB` inside `type Server struct {`), so `s.db` handed to a
+ * handler-building call can be told from a method value `s.Ping`.
+ */
+function structFieldNames(lines: readonly string[]): Set<string> {
+  const fields = new Set<string>();
+  let inStruct = false;
+  let depth = 0;
+  for (const line of lines) {
+    if (!inStruct) {
+      if (/^\s*type\s+\w+(?:\[[^\]]*\])?\s+struct\s*\{\s*$/.test(line)) inStruct = true;
+      continue;
+    }
+    if (depth === 0 && /^\s*\}/.test(line)) {
+      inStruct = false;
+      continue;
+    }
+    const m = /^\s+([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s+(\S.*)$/.exec(line);
+    // A field holding a function may be the handler itself.
+    if (m && depth === 0 && /^[*[\w(]/.test(m[2]!) && !FUNC_TYPE_RE.test(m[2]!)) for (const n of m[1]!.split(",")) fields.add(n.trim());
+    for (const ch of line) depth += ch === "{" ? 1 : ch === "}" ? -1 : 0;
+  }
+  return fields;
+}
+
+/** Method names the file declares (`func (s *Server) Ping(` → `Ping`). */
+function methodNames(lines: readonly string[]): Set<string> {
+  const out = new Set<string>();
+  for (const line of lines) {
+    const m = /^func\s*\([^)]*\)\s*([A-Za-z_]\w*)\s*[[(]/.exec(line);
+    if (m) out.add(m[1]!);
+  }
+  return out;
 }
 
 /** `h := &handler.WebHandler{` / `h = pkg.Handler{` — a local assigned a composite literal (match ends at its `{`). */
@@ -540,11 +580,50 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
   let returnsRouter = false;
 
   const constants = stringConstants(lines);
-  let declared: Set<string> | undefined;
-  const isValue = (name: string): boolean => {
-    if (!declared) declared = declaredValues(lines);
-    return declared.has(name);
+  /** The row of the line being read; a registration read after the loop takes its route's own line instead. */
+  let curRow = 0;
+  /** Rows where a top-level `func` starts: a function's locals and parameters are its own, never another function's. */
+  const fnRows = lines.flatMap((l, r) => (/^func\b/.test(l) ? [r] : []));
+  const segmentValues = new Map<number, Set<string>>();
+  const mergedValues = new Map<number, Set<string>>();
+  /** A name some `func` of the file declares is a function, never a value. */
+  const fileFunctions = new Set(lines.flatMap((l) => {
+    const m = /^func\s*(?:\([^)]*\)\s*)?([A-Za-z_]\w*)\s*[[(]/.exec(l);
+    return m ? [m[1]!] : [];
+  }));
+  let packageValues: Set<string> | undefined;
+  let fieldNames: Set<string> | undefined;
+  let methods: Set<string> | undefined;
+  const valuesAt = (row: number): Set<string> => {
+    if (!packageValues) packageValues = declaredValues(lines.filter((l) => /^var\s/.test(l)));
+    let start = -1;
+    for (const r of fnRows) if (r <= row) start = r;
+    if (start < 0) return packageValues;
+    let seg = segmentValues.get(start);
+    if (!seg) {
+      const end = fnRows.find((r) => r > start) ?? lines.length;
+      seg = declaredValues(lines.slice(start, end));
+      segmentValues.set(start, seg);
+    }
+    let merged = mergedValues.get(start);
+    if (!merged) {
+      merged = new Set([...packageValues, ...seg]);
+      for (const name of fileFunctions) merged.delete(name);
+      mergedValues.set(start, merged);
+    }
+    return merged;
   };
+  const isValueAt = (row: number) => (name: string): boolean => {
+    const values = valuesAt(row);
+    if (values.has(name)) return true;
+    // `s.db`: a field of a value in scope that the file declares as a field and no method of its name.
+    const dotted = /^([A-Za-z_]\w*)\.([A-Za-z_]\w*)$/.exec(name);
+    if (!dotted || !(values.has(dotted[1]!) || values.has(`recv ${dotted[1]!}`))) return false;
+    fieldNames ??= structFieldNames(lines);
+    methods ??= methodNames(lines);
+    return fieldNames.has(dotted[2]!) && !methods.has(dotted[2]!);
+  };
+  const isValue = (name: string): boolean => isValueAt(curRow)(name);
   /** Names the file's imports bind: `config` in `config.ApiUri` is a package. */
   const imports = extractGoImports(lines);
   const packages = new Set(imports.flatMap((i) => i.specifiers));
@@ -625,6 +704,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
     const lineNo = i + 1;
     lastInline = false;
     lastHandlerFirst = false;
+    curRow = i;
 
     const fnDecl = line.match(/^func\s+(?:\((?:\w+\s+)?\*?(\w+)(?:\[[^\]]*\])?\)\s*)?(\w+)\s*[[(]/); // `[` — a generic func's type parameters
     if (fnDecl) {
@@ -941,7 +1021,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
         if (auth) route.auth = auth;
       }
     }
-    const named = trailing.length > 0 && !handlerFirstRoutes.has(route) ? unwrapHandler(trailing[trailing.length - 1]!, isValue).handler : null;
+    const named = trailing.length > 0 && !handlerFirstRoutes.has(route) ? unwrapHandler(trailing[trailing.length - 1]!, isValueAt(Math.max(0, route.line - 1))).handler : null;
     if (named) {
       route.handler = named;
       spans.delete(route);

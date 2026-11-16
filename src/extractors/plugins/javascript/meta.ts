@@ -45,6 +45,7 @@ import { extractJsVariableAliases } from "./variable-aliases.js";
 import { extractJsDiBindings } from "./di-bindings.js";
 import { extractHttpClientBases, extractHttpClientRegistrations } from "./http-clients.js";
 import { extractStoreModules, extractStoreShapes, VuexDispatchResolver } from "./vuex.js";
+import { VuexStateWatchResolver } from "./vuex-state.js";
 import { extractDevProxyRules } from "./dev-proxies.js";
 import { extractKubbConfigs } from "./kubb.js";
 import { extractMockedModules } from "./test-mocks.js";
@@ -55,7 +56,7 @@ import { JobEventResolver } from "./job-events.js";
 import { extractInstantiations } from "./instantiations.js";
 import { extractModuleValues } from "./module-values.js";
 import { moduleValueFlowOf } from "./value-flow.js";
-import { vuePreprocess } from "./vue-hooks.js";
+import { vuePreprocess, withMixinScope } from "./vue-hooks.js";
 import { sveltePreprocess } from "./svelte-hooks.js";
 import { astroPreprocess } from "./astro-hooks.js";
 import { bundlePreprocess } from "./bundles.js";
@@ -309,7 +310,7 @@ const importsExports = new JavaScriptImportExportExtractor();
 const dataSources = new JavaScriptDataSourceExtractor();
 const dataMutations = new JavaScriptMutationExtractor();
 const entities = new JavaScriptEntityExtractor();
-const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new JsPropCallbackResolver(), new JsProvideInjectResolver(), new JsPropFlowResolver(), new JsStoreWatchResolver(), new JsContextTypeResolver(), new JsSlotScopeResolver(), new JsLoopItemCallbackResolver(), new JsEventBusResolver(), new JsSubjectResolver(), new JsTemplateRefResolver(), new DomBindingResolver(), new JobEventResolver()];
+const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new VuexStateWatchResolver(), new JsPropCallbackResolver(), new JsProvideInjectResolver(), new JsPropFlowResolver(), new JsStoreWatchResolver(), new JsContextTypeResolver(), new JsSlotScopeResolver(), new JsLoopItemCallbackResolver(), new JsEventBusResolver(), new JsSubjectResolver(), new JsTemplateRefResolver(), new DomBindingResolver(), new JobEventResolver()];
 const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, convexBuilderResolver, cdkRouteResolver, nestInheritedGuards, nextMiddlewareGuards, screenTableResolver, pathHelperResolver];
 
 export const typescriptMeta: LanguagePluginMeta = {
@@ -328,7 +329,7 @@ export const typescriptMeta: LanguagePluginMeta = {
   // <script> block (dispatched by extension).
   // A call's import-type argument the grammar misreads is rewritten over whichever text is parsed.
   preprocess: (raw, path) =>
-    withSubjectTriggers(withImportTypeArgs(vuePreprocess(raw, path) ?? sveltePreprocess(raw, path) ?? astroPreprocess(raw, path) ?? templateEscapePreprocess(raw, "typescript"), raw, "typescript"), raw, "typescript"),
+    withMixinScope(withSubjectTriggers(withImportTypeArgs(vuePreprocess(raw, path) ?? sveltePreprocess(raw, path) ?? astroPreprocess(raw, path) ?? templateEscapePreprocess(raw, "typescript"), raw, "typescript"), raw, "typescript"), raw, "typescript", path),
   builtinTypes: TS_BUILTINS,
   complexity: COMPLEXITY,
   controlFlow: CONTROL_FLOW,
@@ -360,7 +361,7 @@ export const javascriptMeta: LanguagePluginMeta = {
   autoImports: nuxtAutoImports,
   // A committed build (`public/js/app.js` from webpack) is skipped: its
   // modules are the project's own, bundled, and their facts come from the source.
-  preprocess: (raw) => bundlePreprocess(raw) ?? templateEscapePreprocess(raw, "javascript"),
+  preprocess: (raw, path) => withMixinScope(bundlePreprocess(raw) ?? templateEscapePreprocess(raw, "javascript"), raw, "javascript", path),
   builtinTypes: TS_BUILTINS,
   complexity: COMPLEXITY,
   controlFlow: CONTROL_FLOW,

@@ -110,7 +110,7 @@ TEST(Stadium, Opens) {
       errors: 0,
       functions: [
         ["TEST", 13, ["SECTION", "check", "admit", "QFETCH"]],
-        ["Stadium::open", 9, ["connect", "SIGNAL", "passed", "SLOT", "count", "opened"]],
+        ["Stadium::open", 9, ["connect", "SIGNAL", "passed", "SLOT", "opened", "count"]],
       ],
     });
   });
@@ -310,7 +310,7 @@ describe("C++: ANTLR and the patterns agree on the fixtures", () => {
 });
 
 describe("C++: Qt connect hands slots on", () => {
-  it("references the slot of a pointer-to-member connect, skipping the signal, and leaves the SLOT() macro form to its call", () => {
+  it("references the slot of a pointer-to-member connect, skipping the signal, and hands on a SLOT() macro's slot the same way", () => {
     const source = `void ClubWindow::build() {
   connect(saveButton, &QPushButton::clicked, this, &ClubWindow::saveClub);
   connect(cancelButton, SIGNAL(clicked()), this, SLOT(cancelClub(int)));
@@ -323,8 +323,8 @@ describe("C++: Qt connect hands slots on", () => {
     const build = [...analysis.functions, ...analysis.classes.flatMap((c) => c.methods)].find((f) => f.name === "build" || f.name === "ClubWindow::build")!;
     expect(build.calls.filter((c) => c.passed).map((c) => [c.name, c.receiverType, c.passed])).toEqual([
       ["ClubWindow.saveClub", "ClubWindow", "argument"],
+      ["cancelClub", undefined, "argument"],
       ["helper_slot", undefined, "argument"],
     ]);
-    expect(build.calls.map((c) => c.name)).toContain("cancelClub");
   });
 });

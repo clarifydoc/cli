@@ -781,9 +781,6 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     return false;
   }
 
-  /** Whether the file imports `httpResource` from Angular's HTTP package. */
-  private angularHttpResource?: boolean;
-
   /**
    * `httpResource(() => `/api/clubs/${id()}`)`, `httpResource<Club[]>(() => "/api/clubs")`,
    * `httpResource({ url, method: "POST" })`, `httpResource(() => ({ url, method }))`, `httpResource.text(…)`:
@@ -793,8 +790,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   private httpResourceCall(node: Node, fn: Node | null, sources: DataSourceInfo[]): boolean {
     if (!this.sourceText.includes("httpResource")) return false;
     const callee = fn?.type === "member_expression" && /^(?:text|json|blob|arrayBuffer)$/.test(fn.childForFieldName("property")?.text ?? "") ? fn.childForFieldName("object") : fn;
-    if (callee?.type !== "identifier" || callee.text !== "httpResource") return false;
-    if (!this.angularHttpResourceImported()) return false;
+    if (callee?.type !== "identifier" || !this.httpResourceNames().has(callee.text)) return false;
     let value: Node | null = node.childForFieldName("arguments")?.namedChildren.find((a) => a.type !== "comment") ?? null;
     if (value && (value.type === "arrow_function" || value.type === "function_expression" || value.type === "function")) {
       const body: Node | null = value.childForFieldName("body");
@@ -806,9 +802,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     while (value?.type === "parenthesized_expression") value = value.namedChild(0);
     let method = "get";
     if (value?.type === "object") {
-      const stated = objectPropValue(value, "method");
-      if (stated) {
-        const verb = literalString(stated)?.toLowerCase();
+      if (hasProp(value, "method")) {
+        const verb = heldLiteral(value, "method")?.toLowerCase();
         if (!verb || !HTTP_VERBS.has(verb)) return true;
         method = verb;
       }
@@ -836,11 +831,23 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     if (up?.type !== "arguments") return false;
     const callee = up.parent?.childForFieldName("function");
     const head = callee?.type === "member_expression" ? callee.childForFieldName("object") : callee;
-    return head?.type === "identifier" && head.text === "httpResource" && this.angularHttpResourceImported();
+    return head?.type === "identifier" && this.httpResourceNames().has(head.text);
   }
 
-  private angularHttpResourceImported(): boolean {
-    return (this.angularHttpResource ??= /\bimport\s*(?:type\s*)?\{[^}]*\bhttpResource\b[^}]*\}\s*from\s*['"]@angular\/common\/http['"]/.test(this.sourceText));
+  /** The local names `httpResource` is imported under (`import { httpResource as hr }` → `hr`). */
+  private httpResourceLocals?: Set<string>;
+
+  private httpResourceNames(): Set<string> {
+    if (this.httpResourceLocals) return this.httpResourceLocals;
+    const names = new Set<string>();
+    const clause = /\bimport\s*(?:type\s*)?\{([^}]*)\}\s*from\s*['"]@angular\/common\/http['"]/g;
+    for (let m = clause.exec(this.sourceText); m; m = clause.exec(this.sourceText)) {
+      for (const spec of m[1]!.split(",")) {
+        const alias = /^\s*httpResource(?:\s+as\s+([\w$]+))?\s*$/.exec(spec);
+        if (alias) names.add(alias[1] ?? "httpResource");
+      }
+    }
+    return (this.httpResourceLocals = names);
   }
 
   private rtkCall(node: Node, fn: Node | null, fnName: string, sources: DataSourceInfo[]): boolean {
@@ -934,7 +941,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     this.kyselyCtes = null;
     this.sqlTags = null;
     this.rtk = null;
-    this.angularHttpResource = undefined;
+    this.httpResourceLocals = undefined;
     this.rtkTriggers = null;
     this.collectionReceivers = null;
     this.routerReceivers = null;
@@ -2363,7 +2370,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     if (node.type === "object" && !this.isHttpResourceOptions(node)) {
       // `type` is jQuery's spelling of the method (`$.ajax({ type: 'POST', url })`);
       // either only counts when its value IS an HTTP verb.
-      const verb = literalString(objectPropValue(node, "method")) ?? literalString(objectPropValue(node, "type"));
+      const verb = heldLiteral(node, "method") ?? literalString(objectPropValue(node, "type"));
       // …or the verb is the call the descriptor is handed to: hey-api's
       // generated `(options.client ?? client).post({ url: '/x', ...options })`.
       const callee = node.parent?.type === "arguments" ? calleeLeaf(node.parent.parent?.childForFieldName("function") ?? null) : null;
@@ -2558,11 +2565,30 @@ function localInitializer(at: Node): Node | null {
   return null;
 }
 
+/**
+ * The literal string an object's `key` property holds: written inline (`method: "POST"`), or held by a
+ * `const` the file declares in an enclosing scope (`const verb = "POST"; { method: verb }`, `{ method }`).
+ * A parameter, a `let` or a computed value is not followed.
+ */
+function heldLiteral(obj: Node, key: string): string | null {
+  const value = objectPropValue(obj, key);
+  const inline = literalString(value);
+  if (inline !== null) return inline;
+  const ref = value?.type === "identifier" ? value : obj.namedChildren.find((c) => c.type === "shorthand_property_identifier" && c.text === key) ?? null;
+  if (!ref) return null;
+  // A parameter of the same name between the use and the declaration shadows it.
+  if (declaredParamInScope(ref.text, ref)) return null;
+  const init = localInitializer(ref);
+  const decl = init?.parent;
+  if (!init || decl?.type !== "variable_declarator" || !/^const\b/.test(decl.parent?.text ?? "")) return null;
+  return literalString(init);
+}
+
 function optionsMethod(arg: Node | undefined): string | null {
   let obj = arg ?? null;
   if (obj?.type === "call_expression") obj = obj.childForFieldName("arguments")?.namedChildren[0] ?? null;
   if (obj?.type !== "object") return null;
-  const verb = literalString(objectPropValue(obj, "method"));
+  const verb = heldLiteral(obj, "method");
   return verb && HTTP_VERBS.has(verb.toLowerCase()) ? verb.toLowerCase() : null;
 }
 

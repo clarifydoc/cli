@@ -482,6 +482,8 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
       if (child.type === "expression_statement") {
         const local = cjsDefaultName(child.namedChild(0));
         if (local) exports.push({ name: "default", kind: "default", line: child.startPosition.row + 1, sourceName: local });
+        // `module.exports = { build }`: a CommonJS barrel's names, each the `const { build } = require(...)` it forwards.
+        else cjsBarrelExports(child.namedChild(0), node, child.startPosition.row + 1, exports);
         continue;
       }
       if (child.type !== "export_statement") continue;
@@ -589,6 +591,40 @@ function cjsDefaultName(node: Node | null): string | null {
   if (right?.type === "identifier") return right.text;
   if (right?.type === "function_expression" || right?.type === "class") return right.childForFieldName("name")?.text ?? null;
   return null;
+}
+
+/**
+ * `module.exports = { build, make: maker }` where each value is a name the file binds from a
+ * `require` (`const { build } = require("./thing")`, `const maker = require("./maker")`): a
+ * `re-export` row without a source, which the linker follows through the import, as `export { build }`.
+ */
+function cjsBarrelExports(assign: Node | null, program: Node, line: number, exports: ExportInfo[]): void {
+  if (assign?.type !== "assignment_expression" || assign.childForFieldName("left")?.text.replace(/\s+/g, "") !== "module.exports") return;
+  const right = assign.childForFieldName("right");
+  if (right?.type !== "object") return;
+  const required = new Set<string>();
+  for (const stmt of program.children) {
+    if (stmt.type !== "lexical_declaration" && stmt.type !== "variable_declaration") continue;
+    for (const d of stmt.children) {
+      const init = d.type === "variable_declarator" ? d.childForFieldName("value") : null;
+      if (!init || !requiredSource(init)) continue;
+      const target = d.childForFieldName("name");
+      if (target?.type === "identifier") required.add(target.text);
+      else if (target?.type === "object_pattern") for (const n of patternBindings(target).specifiers) required.add(n);
+    }
+  }
+  if (required.size === 0) return;
+  for (const p of right.namedChildren) {
+    if (p.type === "shorthand_property_identifier") {
+      if (required.has(p.text)) exports.push({ name: p.text, kind: "re-export", line });
+    } else if (p.type === "pair") {
+      const key = p.childForFieldName("key");
+      const value = p.childForFieldName("value");
+      if (value?.type !== "identifier" || !required.has(value.text) || !key || (key.type !== "property_identifier" && key.type !== "string")) continue;
+      const name = stripQuotes(key.text);
+      exports.push({ name, kind: "re-export", line, ...(name !== value.text ? { sourceName: value.text } : {}) });
+    }
+  }
 }
 
 export function requiredSource(node: Node): string | null {

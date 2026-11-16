@@ -1,3 +1,4 @@
+import type { Language } from "../../../types/analysis.js";
 import type { PreprocessOutcome } from "../../../types/language-plugin.js";
 import { parseVueSfc, blankExceptScripts } from "../../../parsers/vue-sfc.js";
 import { extractSlotFunctions, extractVueFunctionProps, extractVueInteractiveElements } from "./interactive-elements.js";
@@ -12,6 +13,7 @@ import { readVueDeclarations } from "./vue-declarations.js";
 import { extractOptionCallbacks } from "./option-callbacks.js";
 import { addDerivedLibraryMembers, derivedTemplateLocals, libraryHoldersOf, libraryObjectProps } from "./library-callbacks.js";
 import { dispatchMapHoldersOf, dispatchMapProps } from "./dispatch-map-props.js";
+import { keepPropLoops, vueArrayFunctionProps } from "./prop-bindings.js";
 import { escapeRegex } from "../shared/path-utils.js";
 
 /**
@@ -58,11 +60,14 @@ export function vuePreprocess(
       const mixinImports = analysis.imports.filter((imp) => !imp.isType && imp.specifiers.some((n) => declared.mixins?.includes(n)));
       for (const imp of mixinImports) imp.inScope ??= { module: imp.source };
       if (sfc.template) {
-        analysis.interactiveElements.push(
+        const elements = [
           ...extractVueInteractiveElements(sfc.template, raw),
           // `<Dialog v-bind="bindings">`: the `onConfirm` keys of a literal object are `@confirm` bindings.
           ...boundListeners(sfc.template, raw, sfc.script ?? ""),
-        );
+        ];
+        // A loop over one of the component's own props (`v-for="x in extra"`) runs what the parent's array holds.
+        keepPropLoops(elements, declared.props);
+        analysis.interactiveElements.push(...elements);
         // `:on-confirm="confirmDeletion"`: one of the script's functions handed to a child, or an `on…` callback passed on —
         // or, in a component taking on mixins, a name it leaves to them (`:on-save="saveStadium"`, the mixin's method).
         const own = new Set([...analysis.functions, ...analysis.classes.flatMap((c) => c.methods)].map((f) => f.name.split(".").pop()!));
@@ -70,6 +75,8 @@ export function vuePreprocess(
         const leftToMixins = (name: string) =>
           mixinImports.length > 0 && !(declared.props ?? []).includes(name) && !new RegExp(`(?:^|[^\\w$.])${escapeRegex(name)}\\s*:`).test(sfc.script ?? "");
         const functionProps = extractVueFunctionProps(sfc.template, raw, (name) => own.has(name) || /^on[A-Z]\w*$/.test(name) || leftToMixins(name));
+        // `<Toolbar :extra="[{ run: archive }]" />`: the functions an array handed down holds, as `extra.run`.
+        functionProps.push(...vueArrayFunctionProps(sfc.template, raw, sfc.script ?? "", (name) => own.has(name)));
         if (functionProps.length > 0) analysis.functionProps = functionProps;
         // `<Pager :table="table" />` with `const table = useVueTable({ onPaginationChange })`: the child's `table.nextPage()` runs it.
         const scriptFunctions = [...analysis.functions, ...analysis.classes.flatMap((c) => c.methods)];
@@ -95,6 +102,7 @@ export function vuePreprocess(
         if (switches.length > 0) analysis.routeFacts = [...(analysis.routeFacts ?? []), ...switches];
       }
       if (declared.props) analysis.declaredProps = declared.props;
+      if (declared.name) analysis.componentName = declared.name;
       if (declared.emits) analysis.declaredEmits = declared.emits;
       // `$emit(btn.event)`: a child that emits by data, and the events a parent states for it.
       const dynamic = dynamicEmitFacts(raw);
@@ -128,6 +136,33 @@ export function vuePreprocess(
       }
       // `<ClubForm ref="formRef">`: the names the script calls the child's methods through.
       if (sfc.template) addTemplateRefs(analysis.subComponents, sfc.template, sfc.script ?? "");
+    },
+  };
+}
+
+/**
+ * A plain script that is itself a mixin taking on others (`export default { mixins: [baseActions] }`): the imports of
+ * the mixins it names put their methods in scope by bare name, as a component's do — so a name a component leaves to
+ * its mixin is found in the mixin's own mixins too.
+ */
+export function withMixinScope(
+  outcome: PreprocessOutcome | { skip: string } | null,
+  rawSource: string,
+  language: Language,
+  relativePath: string,
+): PreprocessOutcome | { skip: string } | null {
+  if (outcome && "skip" in outcome) return outcome;
+  if (/\.(?:vue|svelte|astro)$/.test(relativePath) || !/\bmixins\s*:/.test(rawSource)) return outcome;
+  const base: PreprocessOutcome = outcome ?? { sourceText: rawSource, language };
+  return {
+    ...base,
+    postExtract(analysis, raw) {
+      base.postExtract?.(analysis, raw);
+      const taken = readVueDeclarations(raw).mixins;
+      if (!taken) return;
+      for (const imp of analysis.imports) {
+        if (!imp.isType && imp.specifiers.some((n) => taken.includes(n))) imp.inScope ??= { module: imp.source };
+      }
     },
   };
 }

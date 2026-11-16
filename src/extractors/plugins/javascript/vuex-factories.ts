@@ -28,6 +28,10 @@ const MAX_SHAPES_SIZE = 24_000;
 /** Most function calls one evaluation follows. */
 const MAX_CALL_DEPTH = 8;
 
+/** The tables of a module a project builds out of other objects: its actions (`dispatch`) and its mutations (`commit`). */
+const SECTIONS = ["actions", "mutations"] as const;
+type Section = (typeof SECTIONS)[number];
+
 const FUNCTION_TYPES = new Set(["arrow_function", "function_expression", "function", "function_declaration", "generator_function", "generator_function_declaration", "method_definition"]);
 const WRAPPERS = new Set(["parenthesized_expression", "as_expression", "satisfies_expression", "await_expression", "non_null_expression"]);
 
@@ -38,7 +42,7 @@ export function extractStoreShapes(tree: Tree, sourceText: string, filePath: str
   const functions: Record<string, ShapeFunction> = {};
   const namespaced: string[] = [];
   const spreads: Record<string, string[]> = {};
-  const factoryFile = /actions/i.test(sourceText);
+  const factoryFile = /actions|mutations/i.test(sourceText);
   const declarator = (d: Node) => {
     const name = d.childForFieldName("name");
     const value = unwrap(d.childForFieldName("value"));
@@ -47,13 +51,13 @@ export function extractStoreShapes(tree: Tree, sourceText: string, filePath: str
       if (factoryFile) addFunction(functions, name.text, value);
     } else if (value.type === "object") {
       if (declaresNamespaced(value)) namespaced.push(name.text);
-      // `const actions = { load, ...readActions }`: actions another file defines.
-      const spread = name.text === "actions" ? value.namedChildren.filter((c) => c?.type === "spread_element").map((c) => unwrap(c!.namedChildren[0])).filter((v) => v?.type === "identifier").map((v) => v!.text) : [];
+      // `const actions = { load, ...readActions }`: actions another file defines (a `mutations` table the same).
+      const spread = isSection(name.text) ? value.namedChildren.filter((c) => c?.type === "spread_element").map((c) => unwrap(c!.namedChildren[0])).filter((v) => v?.type === "identifier").map((v) => v!.text) : [];
       if (spread.length > 0) spreads[name.text] = spread;
-    } else if (value.type === "call_expression" && name.text === "actions" && objectAssignArgs(value).length > 0) {
+    } else if (value.type === "call_expression" && isSection(name.text) && objectAssignArgs(value).length > 0) {
       // `const actions = Object.assign({}, baseActions, { save() {…} })`.
       const spread = mergedActionNames(value);
-      if (spread.length > 0) spreads.actions = [...new Set([...(spreads.actions ?? []), ...spread])];
+      if (spread.length > 0) spreads[name.text] = [...new Set([...(spreads[name.text] ?? []), ...spread])];
     } else if (value.type === "call_expression" && hasObjectArg(value)) {
       const s = shape(value, 0);
       if (s) values[name.text] = s;
@@ -78,17 +82,18 @@ export function extractStoreShapes(tree: Tree, sourceText: string, filePath: str
   };
   for (const st of tree.rootNode.namedChildren) if (st) statement(st);
   // `{ namespaced: true, state: {}, actions: { ...channelActions } }`: the module's own `actions` member.
-  if (sourceText.includes("actions") && (sourceText.includes("...") || sourceText.includes("Object.assign"))) {
+  if (/actions|mutations/.test(sourceText) && (sourceText.includes("...") || sourceText.includes("Object.assign"))) {
     for (const pair of tree.rootNode.descendantsOfType("pair")) {
       const holder = pair?.parent;
       const value = pair?.childForFieldName("value");
-      if (!pair || holder?.type !== "object" || !value || keyName(pair.childForFieldName("key")) !== "actions") continue;
+      const section = pair ? keyName(pair.childForFieldName("key")) : null;
+      if (!pair || holder?.type !== "object" || !value || !section || !isSection(section)) continue;
       if (value.type !== "object" && objectAssignArgs(value).length === 0) continue;
       if (!isModuleObject(holder)) continue;
       const names = value.type === "object"
         ? value.namedChildren.filter((c) => c?.type === "spread_element").map((c) => unwrap(c!.namedChildren[0])).filter((v) => v?.type === "identifier").map((v) => v!.text)
         : mergedActionNames(value);
-      if (names.length > 0) spreads.actions = [...new Set([...(spreads.actions ?? []), ...names])];
+      if (names.length > 0) spreads[section] = [...new Set([...(spreads[section] ?? []), ...names])];
     }
   }
   const out: StoreShapes = {};
@@ -98,6 +103,10 @@ export function extractStoreShapes(tree: Tree, sourceText: string, filePath: str
   if (Object.keys(spreads).length > 0) out.spreads = spreads;
   if (!out.values && !out.functions && !out.namespaced && !out.spreads) return undefined;
   return JSON.stringify(out).length > MAX_SHAPES_SIZE ? undefined : out;
+}
+
+function isSection(name: string): name is Section {
+  return (SECTIONS as readonly string[]).includes(name);
 }
 
 /** The names an `Object.assign({}, a, { …b }, …)` merges in: its identifier arguments and the spreads of its literals. */
@@ -289,9 +298,9 @@ export interface FactoryContext {
 /**
  * The actions of the module `value` builds in `file`: action name → what it
  * runs (several when branches of the factory disagree). Empty when the value is
- * not a factory call whose result has `actions`.
+ * not a factory call whose result has `actions` (or the `mutations` of `section`).
  */
-export function factoryActions(file: FileAnalysis, value: ShapeExpr, ctx: FactoryContext): Map<string, FactoryAction[]> {
+export function factoryActions(file: FileAnalysis, value: ShapeExpr, ctx: FactoryContext, section: Section = "actions"): Map<string, FactoryAction[]> {
   const table = new Map<string, FactoryAction[]>();
   const root: Scope = { file, env: new Map(), locals: {}, depth: 0 };
   for (const built of evaluate(value, root, ctx, new Set())) {
@@ -299,7 +308,7 @@ export function factoryActions(file: FileAnalysis, value: ShapeExpr, ctx: Factor
     // A branch building a module: its `actions` object, members in order, later ones overriding.
     const own = new Map<string, FactoryAction>();
     for (const entry of built.entries) {
-      if (!("key" in entry) || entry.key !== "actions") continue;
+      if (!("key" in entry) || entry.key !== section) continue;
       for (const actions of evaluate(entry.value, built.scope, ctx, new Set())) if (actions.k === "object") collect(actions, own, ctx, 0);
     }
     for (const [key, action] of own) (table.get(key) ?? table.set(key, []).get(key)!).push(action);

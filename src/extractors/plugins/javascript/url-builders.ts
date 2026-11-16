@@ -668,7 +668,7 @@ export function resolveUrlBuilders(apiCalls: ApiCall[], analyses: FileAnalysis[]
 function overridingClasses(ctx: ProjectContext, file: string, line: number, text: string): ClassRef[] {
   const cls = classAt(ctx, file, line);
   if (!cls) return [];
-  const names = [...text.matchAll(GETTER_READ_RE)].map((m) => m[1]!);
+  const names = [...text.matchAll(GETTER_READ_RE), ...text.matchAll(GETTER_EDIT_RE)].map((m) => (m[2] ?? m[1])!);
   const below = ctx.classes.descendants(cls);
   return names.length > 0 && below.some((d) => names.some((n) => d.cls.methods.some((x) => x.name === n) || d.cls.fieldValues?.[n] !== undefined)) ? below : [];
 }

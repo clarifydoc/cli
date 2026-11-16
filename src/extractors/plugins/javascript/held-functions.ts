@@ -14,6 +14,8 @@ import { libraryCallbackName } from "./library-callbacks.js";
  *     `modal.open(ConfirmBox, { onConfirm: () => removeClub() })` → `<ConfirmBox:onConfirm@14>`;
  *   - a member assigned a function inside a function: `toast.action = () => reload()` → `<toast.action@17>`;
  *   - a member of an object in a declared array: `const items = [{ run: () => sell() }]` → `<items[].run@3>`;
+ *   - an arrow handed to a component under a prop no `on…` name marks, that calls no function the file declares:
+ *     `<Closer handleClose={() => axios.post('/x')} />` → `<Closer:handleClose@9>` (`jsxPropFunction`);
  *   - a watcher or effect callback a write in the file re-runs (`reactive-cells.ts`):
  *     `watch(query, () => search())` with `query.value = q` in a handler → `<watch@21>`;
  *   - an option callback a library object runs from its methods (`library-callbacks.ts`):
@@ -81,6 +83,7 @@ function heldName(fn: Node, imported: () => ReadonlySet<string>): string | null 
     const sub = subscriptionOf(call);
     if (sub) return `<${sub.component.replace(/^this\./, "")}@${sub.event}@${line}>`;
   }
+  if (parent.type === "jsx_expression") return jsxPropFunction(fn, parent, line);
   if (parent.type === "pair") return libraryCallbackName(fn) ?? pairName(parent, line, imported);
   // `toast.action = () => …` inside a function: what runs when the holder's member is called.
   if (parent.type === "assignment_expression" && parent.childForFieldName("right")?.id === fn.id) {
@@ -90,6 +93,62 @@ function heldName(fn: Node, imported: () => ReadonlySet<string>): string | null 
     return insideFunction(parent) ? `<${path}@${line}>` : null;
   }
   return null;
+}
+
+/**
+ * `<Closer handleClose={() => setOpen(false)} />`: an arrow written under a prop of a component tag that no event name marks.
+ * One that hands on a function the file declares (`order={(s) => orderKit(s)}`) is that function's handoff already
+ * (`jsxFunctionProps`), so it stays unnamed.
+ */
+function jsxPropFunction(fn: Node, expression: Node, line: number): string | null {
+  const attr = expression.parent;
+  if (attr?.type !== "jsx_attribute" || expression.namedChild(0)?.id !== fn.id) return null;
+  const name = attr.namedChild(0);
+  const tag = attr.parent?.childForFieldName("name")?.text ?? "";
+  if (name?.type !== "property_identifier" || /^on[A-Z]/.test(name.text) || !/^[A-Z][\w$]*$/.test(tag)) return null;
+  // The project's own component (declared here, or imported from a relative / aliased path), never a library's (`<Select getLabel={…} />`).
+  if (!projectComponent(fn.tree, tag)) return null;
+  const body = fn.childForFieldName("body");
+  const call = body?.type === "call_expression" ? body : body?.descendantsOfType("call_expression")[0] ?? null;
+  const callee = call?.childForFieldName("function");
+  const handed = callee?.type === "identifier" ? callee.text : callee?.type === "member_expression" && /^this\.[A-Za-z_$][\w$]*$/.test(callee.text) ? callee.text.slice(5) : null;
+  if (handed && declaredFunctionNames(fn.tree).has(handed)) return null;
+  return `<${tag}:${name.text}@${line}>`;
+}
+
+/** Whether the file declares `tag` or imports it from a path of the project (`./x`, `../x`, `@/x`, `~/x`, `#x`). */
+function projectComponent(tree: Tree, tag: string): boolean {
+  for (const stmt of tree.rootNode.namedChildren) {
+    if (stmt?.type === "import_statement") {
+      const clause = stmt.namedChildren.find((c) => c?.type === "import_clause");
+      const source = stmt.childForFieldName("source")?.text.slice(1, -1) ?? "";
+      if (clause?.descendantsOfType("identifier").some((id) => id?.text === tag)) return /^(?:\.{1,2}\/|@\/|~\/|#)/.test(source);
+    }
+  }
+  return declaredFunctionNames(tree).has(tag) || tree.rootNode.descendantsOfType(["class_declaration"]).some((c) => c?.childForFieldName("name")?.text === tag);
+}
+
+let declaredTree: Tree | null = null;
+let declaredNames = new Set<string>();
+
+/** The functions and methods a file declares by name: declarations, `const f = () => …`, methods and function-valued fields. */
+function declaredFunctionNames(tree: Tree): ReadonlySet<string> {
+  if (tree === declaredTree) return declaredNames;
+  declaredTree = tree;
+  declaredNames = new Set();
+  const root = tree.rootNode;
+  for (const n of root.descendantsOfType(["function_declaration", "generator_function_declaration", "method_definition"])) {
+    const id = n?.childForFieldName("name");
+    if (id) declaredNames.add(id.text);
+  }
+  for (const n of root.descendantsOfType(["variable_declarator", "public_field_definition", "field_definition"])) {
+    const value = n?.childForFieldName("value");
+    if (value && FUNCTION_VALUES.has(value.type)) {
+      const id = n!.childForFieldName("name") ?? n!.childForFieldName("property");
+      if (id) declaredNames.add(id.text);
+    }
+  }
+  return declaredNames;
 }
 
 /** An option callback of a component the script opens, or a callback of an object in a declared array. */

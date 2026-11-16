@@ -803,6 +803,7 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
     const method = cls.cls.methods.find((m) => m.line <= call.line && call.line <= m.endLine);
     if (!method || (call.getterReads === undefined && ![call.target!, ...(call.targetAlternatives ?? [])].some((t) => t.includes("${this.") || THIS_METHOD.test(t)))) return [];
     const out: Array<{ target: string; alternatives?: string[]; subclass: string }> = [];
+    let differs = false;
     const below = ctx.classes.descendants(cls);
     for (const d of [...below, ...[cls, ...below].flatMap(instancesOf)]) {
       // The method `this.m()` dispatches to from `d`: the first definition up its chain.
@@ -819,7 +820,7 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
       if (replaced) continue;
       // A subclass that states the getter the base reads (`get url()`): the URL its own getter builds.
       const reads = call.getterReads;
-      const names = reads ? [...reads.text.matchAll(/\$\{\s*this\s*\.\s*([\w$]+)\s*\}/g)].map((g) => g[1]!) : [];
+      const names = reads ? [...reads.text.matchAll(/\$\{\s*this\s*\.\s*([\w$]+)\s*\}|\bthis\s*\.\s*([\w$]+)(?=\s*\.\s*replace(?:All)?\s*\()/g)].map((g) => (g[1] ?? g[2])!) : [];
       const owner = up.slice(0, reached).find(({ c }) => names.some((n) => c.cls.methods.some((m) => m.name === n) || c.cls.fieldValues?.[n] !== undefined));
       const stated = owner ? reads!.by[owner.c.cls.name] : undefined;
       const source = stated?.target ?? call.target!;
@@ -830,13 +831,15 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
       // wildcard fills; a class with subclasses may leave it to them.
       if (awaitsSubclass(t, d) || (t.includes("${this.") && ctx.classes.descendants(d).length > 0) || THIS_METHOD.test(t)) continue;
       const alternatives = (stated ? stated.alternatives : call.targetAlternatives)?.map((a) => collapseEmptySegments(resolveValue(a, call.filePath, d, 0)));
-      if (t === call.target && !alternatives?.some((a, i) => a !== call.targetAlternatives?.[i])) continue;
+      // A subclass whose URL is the written one still requests it: kept beside the ones that differ, so the row the
+      // others replace does not take its request with it. When none differs, the written row stands alone.
+      if (t !== call.target || alternatives?.some((a, i) => a !== call.targetAlternatives?.[i])) differs = true;
       // One row per subclass even when two request the same URL: each is its
       // own subclass's request (`DocumentService` and `DocumentNotesService`
       // both under `documents/`), and the trace starts at that subclass.
       out.push({ target: t, ...(alternatives ? { alternatives } : {}), subclass: d.cls.name });
     }
-    return out;
+    return differs ? out : [];
   };
 
   let changed = 0;

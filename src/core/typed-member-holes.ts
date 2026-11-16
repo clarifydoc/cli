@@ -85,6 +85,8 @@ interface Written {
   filePath: string;
   language: Language;
   type: string;
+  /** `this` of a static method: the class itself, whose static members are all it has. */
+  staticSide?: true;
 }
 
 /**
@@ -93,7 +95,7 @@ interface Written {
  * last is a declared property type; the last one is read for its values.
  */
 function memberValues(file: FileAnalysis, line: number, path: readonly string[], byFile: ReadonlyMap<string, FileAnalysis>, ctx: ProjectContext): string[] | null {
-  const held = typeOfPath(file, line, path.slice(0, -1), ctx, 0);
+  const held = typeOfPath(file, line, path.slice(0, -1), byFile, ctx, 0);
   const last = held ? memberType(held, path[path.length - 1]!, ctx) : null;
   return last ? typeValues(last.type, last, byFile, ctx, 0) : null;
 }
@@ -103,20 +105,20 @@ function memberValues(file: FileAnalysis, line: number, path: readonly string[],
  * enclosing class (`this`), a loop or callback element of a collection chain the source types, then one
  * declared property per further step.
  */
-function typeOfPath(file: FileAnalysis, line: number, path: readonly string[], ctx: ProjectContext, depth: number): Written | null {
+function typeOfPath(file: FileAnalysis, line: number, path: readonly string[], byFile: ReadonlyMap<string, FileAnalysis>, ctx: ProjectContext, depth: number): Written | null {
   if (path.length === 0 || depth > MAX_HOPS) return null;
   const [head, ...rest] = path;
   let held: Written | null;
   if (head === "this") {
     const owner = enclosingClass(file, line);
-    held = owner ? { filePath: file.filePath, language: file.language as Language, type: owner.name } : null;
+    held = owner ? { filePath: file.filePath, language: file.language as Language, type: owner.name, ...(enclosingMethod(owner, line)?.isStatic ? { staticSide: true as const } : {}) } : null;
   } else {
     const found = declaredTypeOf(file, line, head!);
     if (!found) return null;
     if (typeof found === "string") held = { filePath: file.filePath, language: file.language as Language, type: found };
     else {
       // A loop or callback element of a field or member chain: the element of the collection that chain declares.
-      const source = typeOfPath(file, line, found.from, ctx, depth + 1);
+      const source = found.call ? callResult(file, line, found.from, byFile, ctx, depth + 1) : typeOfPath(file, line, found.from, byFile, ctx, depth + 1);
       const element = source ? pluginFor(source.language)?.collectionElementOf?.(source.type.trim()) : null;
       held = source && element ? { ...source, type: element } : null;
     }
@@ -126,6 +128,42 @@ function typeOfPath(file: FileAnalysis, line: number, path: readonly string[], c
     held = memberType(held, member, ctx);
   }
   return held;
+}
+
+/** The method of `owner` whose body contains `line`. */
+function enclosingMethod(owner: ClassInfo, line: number): FunctionInfo | null {
+  return owner.methods.find((m) => m.line <= line && line <= m.endLine) ?? null;
+}
+
+/**
+ * What a call chain (`repo.all()`, `this.clubs.list()`, `clubsNow()`) returns, by the return type its one
+ * declaration states: a method of the class the receiver path is typed as (or of an ancestor), or a free
+ * function of this file or of the file it is imported from. Overloads, an undeclared type and an
+ * unresolved receiver give null.
+ */
+function callResult(file: FileAnalysis, line: number, chain: readonly string[], byFile: ReadonlyMap<string, FileAnalysis>, ctx: ProjectContext, depth: number): Written | null {
+  const name = chain[chain.length - 1]!;
+  if (chain.length === 1) {
+    // A parameter or local of that name is not the function.
+    if (declaredTypeOf(file, line, name)) return null;
+    const sourceFile = byFile.get(ctx.importIndex.localFor(file.filePath, name) ?? file.filePath);
+    const fns = sourceFile?.functions.filter((f) => f.name === name) ?? [];
+    const fn = fns.length === 1 ? fns[0]! : null;
+    return fn?.returnType ? { filePath: sourceFile!.filePath, language: sourceFile!.language as Language, type: fn.returnType } : null;
+  }
+  const held = typeOfPath(file, line, chain.slice(0, -1), byFile, ctx, depth);
+  if (!held) return null;
+  const hooks = pluginFor(held.language)?.requestSchema;
+  const typeName = receiverTypeName(hooks ? hooks.unwrapNullable(held.type).type.trim() : held.type.trim(), held.language);
+  if (!typeName || !/^[A-Za-z_$][\w$.]*$/.test(typeName)) return null;
+  const owner = ctx.classes.resolve(held.filePath, typeName);
+  if (!owner || owner.cls.kind === "enum") return null;
+  for (const c of [owner, ...ctx.classes.ancestors(owner).flatMap((s) => (s.ref ? [s.ref] : []))]) {
+    const methods = c.cls.methods.filter((m) => m.name === name && !!m.isStatic === !!held.staticSide);
+    if (methods.length === 0) continue;
+    return methods.length === 1 && methods[0]!.returnType ? { filePath: c.filePath, language: c.language, type: methods[0]!.returnType } : null;
+  }
+  return null;
 }
 
 /** The innermost class whose body contains `line`. */
@@ -144,14 +182,14 @@ function memberType(held: Written, member: string, ctx: ProjectContext): Written
   const bare = hooks ? hooks.unwrapNullable(held.type).type.trim() : held.type.trim();
   if (bare.startsWith("{")) {
     const type = inlineMembers(bare).get(member);
-    return type ? { ...held, type } : null;
+    return type ? { filePath: held.filePath, language: held.language, type } : null;
   }
   const typeName = receiverTypeName(bare, held.language);
   if (!typeName || !/^[A-Za-z_$][\w$.]*$/.test(typeName)) return null;
   const owner = ctx.classes.resolve(held.filePath, typeName);
   if (!owner || owner.cls.kind === "enum") return null;
   for (const c of [owner, ...ctx.classes.ancestors(owner).flatMap((s) => (s.ref ? [s.ref] : []))]) {
-    const prop = c.cls.properties.find((p) => p.name === member && !p.isStatic);
+    const prop = c.cls.properties.find((p) => p.name === member && !!p.isStatic === !!held.staticSide);
     if (!prop) continue;
     return prop.type ? { filePath: c.filePath, language: c.language, type: prop.type } : null;
   }
@@ -206,7 +244,7 @@ function inlineMembers(text: string): Map<string, string> {
  * around the line, or of a typed local (`localTypes`, a stated type only); or, for a loop or callback
  * variable over a field or member chain, that chain (`for (const c of this.clubs)`).
  */
-function declaredTypeOf(file: FileAnalysis, line: number, name: string): string | { from: string[] } | null {
+function declaredTypeOf(file: FileAnalysis, line: number, name: string): string | { from: string[]; call?: true } | null {
   const around: FunctionInfo[] = [];
   const visit = (fns: readonly FunctionInfo[]): void => {
     for (const fn of fns) if (fn.line <= line && line <= fn.endLine) around.push(fn);
@@ -222,6 +260,9 @@ function declaredTypeOf(file: FileAnalysis, line: number, name: string): string 
       // Only a loop element read off a plain chain; a call's result needs return types, which the linker reads.
       const only = named.every((t) => t.from === named[0]!.from && t.element === named[0]!.element) ? named[0]! : null;
       if (only?.element && only.from && !only.iterator && !only.awaited && /^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)+$/.test(only.from)) return { from: only.from.replace(/\?\./g, ".").split(".") };
+      // A loop over what a call returns (`for (const c of repo.all())`): the chain's own return type, read by `callResult`.
+      const call = only?.element && only.from && !only.iterator && !only.awaited ? /^([A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)*)\(\)$/.exec(only.from) : null;
+      if (call) return { from: call[1]!.replace(/\?\./g, ".").split("."), call: true };
       return null;
     }
     const param = fn.params.find((p) => p.name === name);

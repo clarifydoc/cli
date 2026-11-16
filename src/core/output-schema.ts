@@ -50,6 +50,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   reactiveCells: "optional",
   dynamicEmits: "optional",
   declaredProps: "optional",
+  componentName: "optional",
   declaredEmits: "optional",
   eventLiterals: "optional",
   eventLiteralsByTag: "optional",
