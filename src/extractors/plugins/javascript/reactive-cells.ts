@@ -100,7 +100,7 @@ export function reactiveCellsOf(tree: Tree): CellFacts {
   return memo;
 }
 
-function ownerClass(n: Node): Node | null {
+export function ownerClass(n: Node): Node | null {
   for (let p = n.parent; p; p = p.parent) if (CLASSES.has(p.type)) return p;
   return null;
 }
@@ -164,7 +164,7 @@ export function injectedLocals(cls: Node): Set<string> {
 }
 
 /** Imports a subject-holding service can hardly come from: the framework and the observable library. */
-const FRAMEWORK_SOURCE = /^(?:@angular\/|rxjs(?:\/|$))/;
+export const FRAMEWORK_SOURCE = /^(?:@angular\/|rxjs(?:\/|$))/;
 
 function withSubjectListeners(tree: Tree, facts: CellFacts, text: string): CellFacts {
   if (!text.includes(".subscribe(") || !/\b(?:Injectable|Component|Directive|Pipe|NgModule)\b|\binject\s*\(/.test(text)) return facts;
@@ -1022,18 +1022,28 @@ function routeCell(at: Node, byScope: Map<number, Map<string, Cell>>): Cell | un
 export function subscribeChain(subscribe: Node): { root: Node; operatorCallbacks: Node[] } | null {
   const callee = subscribe.childForFieldName("function");
   if (callee?.type !== "member_expression" || callee.childForFieldName("property")?.text !== "subscribe") return null;
-  let recv = callee.childForFieldName("object");
+  const recv = callee.childForFieldName("object");
+  if (!recv) return null;
+  const { source, operatorCallbacks } = pipeSource(recv);
+  return { root: source, operatorCallbacks };
+}
+
+/** An observable written as `<source>.pipe(op(() => …), …)`: the source and the operator callbacks written in place that make a call. */
+export function pipeSource(expr: Node): { source: Node; operatorCallbacks: Node[] } {
   const operatorCallbacks: Node[] = [];
-  while (recv?.type === "call_expression") {
+  let recv: Node = expr;
+  while (recv.type === "call_expression") {
     const c = recv.childForFieldName("function");
     if (c?.type !== "member_expression" || c.childForFieldName("property")?.text !== "pipe") break;
     for (const op of argumentsOf(recv)) {
       if (op.type !== "call_expression") continue;
       for (const a of argumentsOf(op)) if ((a.type === "arrow_function" || a.type === "function_expression") && a.descendantsOfType("call_expression").length > 0) operatorCallbacks.push(a);
     }
-    recv = c.childForFieldName("object");
+    const next = c.childForFieldName("object");
+    if (!next) break;
+    recv = next;
   }
-  return recv ? { root: recv, operatorCallbacks } : null;
+  return { source: recv, operatorCallbacks };
 }
 
 /**

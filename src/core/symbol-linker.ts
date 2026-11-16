@@ -7216,15 +7216,14 @@ function importedFunctionLink(
   // A function written in place (a held callback, `<watch@12>`) types a local it closes over by an initializer the
   // function around it writes: the call is looked up there, innermost first, and resolved in that function's scope.
   if (!written && own) {
-    const around = analysis.functions
-      .filter((f) => f !== own && f.line <= own.line && f.endLine >= own.endLine && (f.line < own.line || f.endLine > own.endLine))
-      .sort((a, b) => (a.endLine - a.line) - (b.endLine - b.line));
-    for (const f of around) {
-      written = writes(f);
-      if (written) {
-        sourceSymbol = f.name;
-        break;
-      }
+    const setup = analysis.functions.find((f) => f.name === "<setup>" && f !== own && f.line <= own.line && own.endLine <= f.endLine);
+    for (let s = nestedScopesOf(ctx, analysis)?.byFunction.get(own)?.parent; s && !written; s = s.parent) {
+      written = writes(s.fn);
+      if (written) sourceSymbol = s.name;
+    }
+    if (!written && setup) {
+      written = writes(setup);
+      if (written) sourceSymbol = setup.name;
     }
   }
   if (!written) return null;
