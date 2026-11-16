@@ -103,6 +103,14 @@ export function valueFlowInvokeSites(analyses: readonly FileAnalysis[]): Map<str
     if (to?.member !== undefined) writtenMembers.add(to.member);
   }
   for (const a of analyses) {
+    // A path through an imported name (`kit.Bench.label()`, `Garage.methods.park()`) names a declaration the
+    // name tiers resolve exactly; a member key written in some object literal elsewhere must not take it from them.
+    const imported = new Set<string>();
+    for (const i of a.imports ?? []) {
+      if (i.isType || i.executes) continue;
+      for (const n of i.specifiers) imported.add(n);
+      for (const n of Object.keys(i.aliases ?? {})) imported.add(n);
+    }
     const moduleWritten = new Set<string>();
     for (const s of scopesOf(a)) for (const f of s.facts) {
       const to = writes(f);
@@ -117,6 +125,8 @@ export function valueFlowInvokeSites(analyses: readonly FileAnalysis[]): Map<str
         const key = callSiteKey(s.file, s.symbol, f.line, f.call);
         const { name, member } = f.cell;
         if (member !== undefined) {
+          const dot = name.indexOf(".");
+          if (dot > 0 && imported.has(name.slice(0, dot))) continue;
           if (writtenMembers.has(member) || name === MODULE_CELL) out.set(key, "suppress");
           continue;
         }
@@ -174,9 +184,10 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
 
   // ── Cells ────────────────────────────────────────────────────────────────
   const cellIds = new Map<string, number>();
+  const cellKeys: string[] = [];
   const cellOfKey = (key: string): number => {
     let id = cellIds.get(key);
-    if (id === undefined) { id = cellIds.size; cellIds.set(key, id); }
+    if (id === undefined) { id = cellIds.size; cellIds.set(key, id); cellKeys.push(key); }
     return id;
   };
 
@@ -258,6 +269,12 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
     return l?.type ?? null;
   };
 
+  /** The declared type of a module-level name of `file` (a top-level `const board: Board = …`), from the file's `<setup>`. */
+  const moduleTypeOf = (file: string, name: string): string | null => {
+    const setup = analysisAt.get(file)?.functions.find((f) => f.name === "<setup>");
+    return setup?.localTypes?.find((x) => x.name === name && x.type && !x.aliasOf)?.type ?? null;
+  };
+
   const fieldCell = (file: string, cls: string, member: string): number => {
     // The class (own, then bases) that declares the member keeps it; else the named class.
     let cur: { file: string; name: string } | null = { file, name: cls };
@@ -294,13 +311,19 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
     return null;
   };
 
-  /** The class a root of a field path stands for: the receiver's, a typed local's or parameter's, or a class named as written. */
+  /** The class a root of a field path stands for: the receiver's, a typed local's or parameter's, a module name's declared type, or a class named as written. */
   const ownerOf = (s: Scope, root: string): { file: string; name: string } | null => {
     if (RECEIVER_NAMES.has(root)) return s.cls ? { file: s.file, name: s.cls.name } : null;
-    if (baseOf(s, root)) {
+    const base = baseOf(s, root);
+    if (base) {
       const type = typeOfName(s, root);
-      return type ? host.classOfType(s.file, type) : null;
+      if (type) return host.classOfType(s.file, type);
+      if (base.kind !== "module") return null;
+      const declared = moduleTypeOf(base.file, base.name);
+      return declared ? host.classOfType(base.file, declared) : null;
     }
+    const declared = moduleTypeOf(s.file, root);
+    if (declared) return host.classOfType(s.file, declared);
     return host.classOfType(s.file, root);
   };
   /** The class a property of `owner` (or its bases) is declared to hold. */
@@ -313,6 +336,32 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
     }
     return null;
   };
+
+  /**
+   * The cell of a member written as a path (`action.onClick`) of a value of class `owner`: each step is the declared
+   * type of the property before it, and a property typed inline (`action?: { onClick: () => void }`) keeps the rest of
+   * the path as one member of the class that declares it. Every reader and writer of a typed member lands on the same cell.
+   */
+  const typedMember = (owner: { file: string; name: string }, steps: readonly string[], member: string): number | null => {
+    let cur = owner;
+    for (let i = 0; i < steps.length; i++) {
+      const next = propertyOwner(cur, steps[i]!);
+      if (next) { cur = next; continue; }
+      return propertyTypeOf(cur.file, cur.name, steps[i]!) !== null ? fieldCell(cur.file, cur.name, [...steps.slice(i), member].join(".")) : null;
+    }
+    return fieldCell(cur.file, cur.name, member);
+  };
+  /** A member of a value typed `owner`: a plain name, or a dotted path through declared property types (an element `[]` stays as written). */
+  const memberCell = (owner: { file: string; name: string }, member: string): number => {
+    if (member.includes(".") && !member.includes("[")) {
+      const parts = member.split(".");
+      const cell = typedMember(owner, parts.slice(0, -1), parts[parts.length - 1]!);
+      if (cell !== null) return cell;
+    }
+    return fieldCell(owner.file, owner.name, member);
+  };
+  /** The members each untyped local object (`L…` base key) is given: an object literal handed to a typed formal passes them on. */
+  const membersOfBase = new Map<string, Array<{ member: string; cell: number }>>();
 
   const cellOf = (s: Scope, cell: ValueCell): number | null => {
     const { name, member } = cell;
@@ -334,12 +383,9 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
     // A field path (`c.ops` + member `sign`): each step is the declared type of the property before it.
     if (name.includes(".")) {
       const [root, ...path] = name.split(".");
-      let owner = ownerOf(s, root!);
-      for (const step of path) {
-        if (!owner) return null;
-        owner = propertyOwner(owner, step);
-      }
-      return owner ? fieldCell(owner.file, owner.name, member) : null;
+      const owner = ownerOf(s, root!);
+      if (!owner) return null;
+      return typedMember(owner, path, member);
     }
     const base = baseOf(s, name);
     if (!base) {
@@ -354,9 +400,14 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
     }
     const type = typeOfName(s, name);
     const owner = type ? host.classOfType(s.file, type) : null;
-    if (owner) return fieldCell(owner.file, owner.name, member);
+    if (owner) return memberCell(owner, member);
     // Untyped local: the member is this function's own.
-    return cellOfKey(`${base.key}.${member}`);
+    const own = cellOfKey(`${base.key}.${member}`);
+    if (base.kind === "local" && !member.includes("[")) {
+      const list = membersOfBase.get(base.key) ?? membersOfBase.set(base.key, []).get(base.key)!;
+      if (!list.some((m) => m.cell === own)) list.push({ member, cell: own });
+    }
+    return own;
   };
 
   const resultCellOf = (file: string, symbol: string): number => cellOfKey(`R\0${file}\0${symbol}`);
@@ -453,6 +504,10 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
       const formal = a.name !== undefined ? scope.fn!.params.find((x) => x.name === a.name) : scope.fn!.params[a.index + offset];
       if (!formal || formal.variadic) continue;
       addEdge(a.cell, cellOfKey(`L\0${scope.file}\0${scope.symbol}\0${formal.name}`));
+      // An object handed to a formal declared as a class or interface: its members are the members of that type, for every reader of it.
+      const members = membersOfBase.get(cellKeys[a.cell] ?? "");
+      const owner = members && formal.type ? host.classOfType(scope.file, formal.type) : null;
+      if (owner) for (const m of members!) addEdge(m.cell, memberCell(owner, m.member));
     }
     for (const r of results ?? []) addEdge(resultCellOf(scope.file, scope.symbol), r);
   };
@@ -586,6 +641,10 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
       for (const t of held) {
         const target = targets[t]!;
         if (productionSource && host.isTest(target.file)) continue;
+        // The solver ignores order, so a wrapper written in place that reads a member and then replaces it
+        // (`const old = x.f; x.f = () => old()`) would call itself. A named function handing itself on
+        // (`array_map($this->walk(...), $nodes)` inside `walk`) is real recursion and keeps its link.
+        if (target.file === inv.scope.file && target.symbol === inv.scope.symbol && target.symbol.startsWith("<")) continue;
         const key = `${inv.key}\0${target.file}\0${target.symbol}`;
         if (emitted.has(key)) continue;
         emitted.add(key);

@@ -12,7 +12,7 @@ import { addDynamicComponents } from "./dynamic-components.js";
 import { readVueDeclarations } from "./vue-declarations.js";
 import { extractOptionCallbacks } from "./option-callbacks.js";
 import { addDerivedLibraryMembers, derivedTemplateLocals, libraryHoldersOf, libraryObjectProps } from "./library-callbacks.js";
-import { dispatchMapHoldersOf, dispatchMapProps } from "./dispatch-map-props.js";
+import { dispatchMapHoldersOf, dispatchMapProps, importedBindings, importedMapProps } from "./dispatch-map-props.js";
 import { keepPropLoops, vueArrayFunctionProps } from "./prop-bindings.js";
 import { escapeRegex } from "../shared/path-utils.js";
 
@@ -58,7 +58,7 @@ export function vuePreprocess(
       // `mixins: [stadiumActions]`: the mixin's methods are the component's own (`this.saveStadium()`, `@click="saveStadium"`),
       // so its import puts them in scope by bare name.
       const mixinImports = analysis.imports.filter((imp) => !imp.isType && imp.specifiers.some((n) => declared.mixins?.includes(n)));
-      for (const imp of mixinImports) imp.inScope ??= { module: imp.source };
+      for (const imp of mixinImports) imp.inScope ??= { module: imp.source, transitive: true };
       if (sfc.template) {
         const elements = [
           ...extractVueInteractiveElements(sfc.template, raw),
@@ -76,7 +76,7 @@ export function vuePreprocess(
           mixinImports.length > 0 && !(declared.props ?? []).includes(name) && !new RegExp(`(?:^|[^\\w$.])${escapeRegex(name)}\\s*:`).test(sfc.script ?? "");
         const functionProps = extractVueFunctionProps(sfc.template, raw, (name) => own.has(name) || /^on[A-Z]\w*$/.test(name) || leftToMixins(name));
         // `<Toolbar :extra="[{ run: archive }]" />`: the functions an array handed down holds, as `extra.run`.
-        functionProps.push(...vueArrayFunctionProps(sfc.template, raw, sfc.script ?? "", (name) => own.has(name)));
+        functionProps.push(...vueArrayFunctionProps(sfc.template, raw, sfc.script ?? "", (name) => own.has(name), analysis.functions.map((f) => f.name)));
         if (functionProps.length > 0) analysis.functionProps = functionProps;
         // `<Pager :table="table" />` with `const table = useVueTable({ onPaginationChange })`: the child's `table.nextPage()` runs it.
         const scriptFunctions = [...analysis.functions, ...analysis.classes.flatMap((c) => c.methods)];
@@ -91,6 +91,12 @@ export function vuePreprocess(
         const maps = dispatchMapHoldersOf(scriptFunctions, analysis.imports);
         if (maps.size > 0) {
           const handed = dispatchMapProps(extractVueFunctionProps(sfc.template, raw, (name) => maps.has(name)), (holder) => maps.get(holder));
+          if (handed.length > 0) analysis.functionProps = [...(analysis.functionProps ?? []), ...handed];
+        }
+        // `<ClubTable :actions="clubActions" />` with `clubActions` imported: a dispatch map there, which the resolver reads.
+        if (analysis.imports.length > 0) {
+          const imported = importedBindings(analysis.imports);
+          const handed = importedMapProps(extractVueFunctionProps(sfc.template, raw, (name) => imported.has(name) && !own.has(name) && !maps.has(name)), analysis.imports);
           if (handed.length > 0) analysis.functionProps = [...(analysis.functionProps ?? []), ...handed];
         }
         // `<slot :save="saveAll" />`: what a parent's scoped slot calls.
@@ -161,7 +167,7 @@ export function withMixinScope(
       const taken = readVueDeclarations(raw).mixins;
       if (!taken) return;
       for (const imp of analysis.imports) {
-        if (!imp.isType && imp.specifiers.some((n) => taken.includes(n))) imp.inScope ??= { module: imp.source };
+        if (!imp.isType && imp.specifiers.some((n) => taken.includes(n))) imp.inScope ??= { module: imp.source, transitive: true };
       }
     },
   };

@@ -14,9 +14,10 @@ export function facadeProxyOf(
   extendsName: string | null,
   aliases: ReadonlyMap<string, string>,
 ): ClassInfo["staticProxyOf"] | undefined {
-  if (extendsName !== "Facade") return undefined;
   const body = classNode.childForFieldName("body") ?? classNode.children.find((c) => c.type === "declaration_list");
   const accessor = body?.children.find((m) => m.type === "method_declaration" && m.childForFieldName("name")?.text === "getFacadeAccessor");
+  // `extends Facade`, or a project's own facade base whose child states the accessor.
+  if (extendsName !== "Facade" && !(accessor && extendsName)) return undefined;
   const fnBody = accessor?.childForFieldName("body");
   if (!fnBody) return undefined;
   const returns: Node[] = [];

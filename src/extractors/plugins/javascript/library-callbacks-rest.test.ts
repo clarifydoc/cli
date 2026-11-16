@@ -219,6 +219,98 @@ const add = useAddNote(route.params.clubId);
   <button class="note" @click="add.mutate('hello')">Add</button>
 </template>
 `,
+  // A dispatch map another module declares, re-exported through a barrel, handed down by name.
+  "src/maps/clubActions.js": `import { saveClub, removeClub } from '../api/clubs';
+export const clubActions = { save: saveClub, remove: removeClub };
+export const LABELS = { save: 'Save' };
+`,
+  "src/maps/index.js": `export * from './clubActions';
+`,
+  "src/components/ImportedTable.vue": `<script setup>
+const props = defineProps(['actions']);
+function onRow(club) {
+  props.actions.save(club);
+}
+</script>
+
+<template>
+  <button class="row" @click="onRow({})">Save</button>
+</template>
+`,
+  "src/components/ImportedPage.vue": `<script setup>
+import { clubActions } from '../maps';
+import ImportedTable from './ImportedTable.vue';
+</script>
+
+<template>
+  <ImportedTable :actions="clubActions" />
+</template>
+`,
+  // The same child handed an imported object that holds no function.
+  "src/components/LabelPage.vue": `<script setup>
+import { LABELS } from '../maps';
+import ImportedTable from './ImportedTable.vue';
+</script>
+
+<template>
+  <ImportedTable :actions="LABELS" />
+</template>
+`,
+  "src/react/ImportedRow.jsx": `export function ImportedRow({ actions }) {
+  return <button onClick={() => actions.remove(1)}>Remove</button>;
+}
+`,
+  "src/react/ImportedBoard.jsx": `import { clubActions } from '../maps';
+import { ImportedRow } from './ImportedRow';
+
+export function ImportedBoard() {
+  return <ImportedRow actions={clubActions} />;
+}
+`,
+  // The same hook, destructured: the methods are bare names, one of them renamed.
+  "src/components/SplitForm.vue": `<script setup>
+import { useRoute } from 'vue-router';
+import { useMutation } from '@tanstack/vue-query';
+import { saveClub, removeClub } from '../api/clubs';
+
+const route = useRoute();
+const { mutate, mutateAsync: dropClub } = useMutation({ mutationFn: (id) => removeClub(id) });
+const { mutate: keep } = useMutation({ mutationFn: (club) => saveClub(club) });
+
+function onRemove() {
+  mutate(route.params.clubId);
+}
+async function onDrop() {
+  await dropClub(route.params.clubId);
+}
+function onKeep(club) {
+  keep(club);
+}
+function other(mutate) {
+  mutate(1);
+}
+</script>
+
+<template>
+  <button class="remove" @click="onRemove">Remove</button>
+</template>
+`,
+  // Another library's hook, destructured the same way: its \`mutate\` runs nothing of the project's.
+  "src/components/SplitDecoy.vue": `<script setup>
+import { useMutation } from '../local/query';
+import { removeClub } from '../api/clubs';
+
+const { mutate } = useMutation({ mutationFn: (id) => removeClub(id) });
+
+function onRemove(id) {
+  mutate(id);
+}
+</script>
+
+<template>
+  <button class="decoy" @click="onRemove(1)">Remove</button>
+</template>
+`,
   "src/components/DecoyForm.vue": `<script setup>
 import { useMutation } from '../local/query';
 import { removeClub } from '../api/clubs';
@@ -364,6 +456,27 @@ describe("library option callbacks: column methods, mutations and handed-down di
     expect(linkRows(summary, "src/components/DecoyForm.vue").filter((r) => r.includes("mutationFn"))).toEqual([]);
   });
 
+  it("joins a destructured mutate, renamed or not, to the mutationFn of its own hook call", () => {
+    const rows = linkRows(summary, "src/components/SplitForm.vue");
+    expect(rows).toEqual(expect.arrayContaining([
+      "onRemove -mutate.mutate-> src/components/SplitForm.vue#<useMutation:mutationFn@7> INFERRED",
+      "onDrop -dropClub.mutateAsync-> src/components/SplitForm.vue#<useMutation:mutationFn@7> INFERRED",
+      "onKeep -keep.mutate-> src/components/SplitForm.vue#<useMutation:mutationFn@8> INFERRED",
+    ]));
+    expect(rows).not.toContain("onKeep -keep.mutate-> src/components/SplitForm.vue#<useMutation:mutationFn@7> INFERRED");
+    // A parameter named like the method is its own: no hook behind it.
+    expect(rows.filter((r) => r.startsWith("other "))).toEqual([]);
+    expect(linkRows(summary, "src/components/SplitDecoy.vue").filter((r) => r.includes("mutationFn"))).toEqual([]);
+  });
+
+  it("keeps a destructured mutate call as the origin of the callback's parameter", () => {
+    const origins = (summary.paramOrigins ?? []).filter((o) => o.sink.file === "src/api/clubs.js" && o.sink.url.includes("/clubs/") && o.hops.some((h) => h.file === "src/components/SplitForm.vue"));
+    const known = origins.filter((o) => o.origin.kind === "route-param");
+    expect(known.length).toBeGreaterThan(0);
+    expect(known[0]!.origin).toMatchObject({ kind: "route-param", name: "clubId" });
+    expect(known[0]!.hops.map((h) => h.symbol)).toEqual(expect.arrayContaining(["<useMutation:mutationFn@7>"]));
+  });
+
   it("keeps the mutate call as the origin of the callback's parameter", () => {
     const origins = (summary.paramOrigins ?? []).filter((o) => o.sink.file === "src/api/clubs.js" && o.sink.url.includes("/clubs/"));
     const fromForm = origins.filter((o) => o.hops.some((h) => h.file === "src/components/ClubForm.vue"));
@@ -390,6 +503,16 @@ describe("library option callbacks: column methods, mutations and handed-down di
     expect(rows).toContain("onRow -props.actions.save-> src/api/clubs.js#standings INFERRED");
     // The page that holds a map but hands it to no child binds nothing.
     expect(rows.filter((r) => r.includes("sortPlayers"))).toEqual([]);
+  });
+
+  it("joins a child's call on a dispatch map another module declares, through its barrel", () => {
+    expect(linkRows(summary, "src/components/ImportedTable.vue")).toContain("onRow -props.actions.save-> src/api/clubs.js#saveClub INFERRED");
+    expect(linkRows(summary, "src/react/ImportedRow.jsx")).toContain("ImportedRow -actions.remove-> src/api/clubs.js#removeClub INFERRED");
+    // The binding site is the page that hands the map down, not the module declaring it.
+    const link = (summary.symbolLinks ?? []).find((l) => l.sourceFile === "src/components/ImportedTable.vue" && l.callName === "props.actions.save");
+    expect(link?.strategy).toBe("dispatch:prop-callback");
+    // An imported object holding no function binds nothing, and the other keys of the map stay unlinked from `save`.
+    expect(linkRows(summary, "src/components/ImportedTable.vue").filter((r) => r.includes("removeClub"))).toEqual([]);
   });
 
   it("joins a React child's call on a dispatch map handed down as a prop", () => {

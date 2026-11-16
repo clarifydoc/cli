@@ -80,6 +80,13 @@ describe("resolveUrlBuilders", () => {
     expect(calls.map((c) => c.target)).toEqual(["/api/clubs/${7}/seats/${3}", "/api/clubs/${club.id}/seats/${3}"]);
   });
 
+  it("fills the placeholders a nested destructuring pattern binds, by the keys the call's nested literal states", () => {
+    const seatUrl = fn("seatUrl", "/api/clubs/{id}/seats/{n}", [{ name: "{ club: { id }, seat: { row: n } }", type: null, defaultValue: null }]);
+    const calls = [apiCall("seatUrl({ club: { id: 7 }, seat: { row: 3 } })"), apiCall("seatUrl({ club: { id: club.id, name: 'x' }, seat: { row: 3 } })")];
+    resolveUrlBuilders(calls, [analysis([seatUrl])]);
+    expect(calls.map((c) => c.target)).toEqual(["/api/clubs/${7}/seats/${3}", "/api/clubs/${club.id}/seats/${3}"]);
+  });
+
   it("substitutes literal args, dropping the env base and runtime refs to {}", () => {
     const calls = [apiCall("requestUri('teamtalk', 'v4')")];
     const n = resolveUrlBuilders(calls, [analysis([requestUri])]);

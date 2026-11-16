@@ -190,6 +190,32 @@ function extractGemRoutedControllers(lines: readonly string[], facts?: RouteFact
   }
 }
 
+/** A statement that answers the request itself, so the action renders no template of its own. */
+const ACTION_EXIT_RE = /(?<![.\w@:])(?:render|redirect_to|redirect_back|redirect_back_or_to|head|send_data|send_file|respond_to|respond_with)\b/;
+
+/**
+ * The controller actions whose body answers the request itself (`render`, `redirect_to`, `head`, `send_*`,
+ * `respond_to`): a `rails-action-exits` fact per action, `data` `{ controller, action }` with the class
+ * name as written. An action absent from the facts renders its own template when the view exists (the
+ * ERB plugin's own-page pass reads this).
+ */
+function extractActionExits(lines: readonly string[], classes: readonly ClassInfo[], facts?: RouteFact[]): void {
+  if (!facts) return;
+  const controllers = classes.filter((c) => c.name.endsWith("Controller"));
+  if (controllers.length === 0) return;
+  const code = rubyCodeLinesOf(lines);
+  for (const cls of controllers) {
+    for (const m of cls.methods) {
+      for (let i = m.line; i <= m.endLine && i <= code.length; i++) {
+        if (ACTION_EXIT_RE.test(code[i - 1] ?? "")) {
+          facts.push({ kind: "rails-action-exits", line: m.line, data: { controller: cls.name, action: m.name } });
+          break;
+        }
+      }
+    }
+  }
+}
+
 /**
  * A `controller` token → its Rails class name: `session` → `SessionController`,
  * `admin/users` → `Admin::UsersController` (a directory is a module). The
@@ -1533,6 +1559,7 @@ export const rubySpec: RegexLangSpec = {
     if (isGrapeFile(lines)) routes.push(...extractGrapeRoutes(lines, classes, (start, end) => extractCallsFromBody(lines, start, end, ["#"], rubySpec.callPatterns), routeFacts));
     extractRackMounts(lines, routeFacts);
     extractGemRoutedControllers(lines, routeFacts);
+    extractActionExits(lines, classes, routeFacts);
     // A model's `devise :…` modules and the Devise initializer, for the `devise_for` routes (devise-routes.ts).
     extractDeviseFacts(lines, classes, routeFacts);
 

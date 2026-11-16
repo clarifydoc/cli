@@ -46,6 +46,38 @@ describe("Rust HTTP calls through a client getter", () => {
   });
 });
 
+describe("Rust HTTP calls through a URL helper", () => {
+  it("read `client.get(club_url(&self.base, id))` as the helper's format! with the arguments in place", () => {
+    const src = `fn club_url(base: &str, id: u32) -> String {
+    format!("{}/api/clubs/{}", base, id)
+}
+fn player_url(f: impl Fn(u32) -> u32, id: u32) -> String {
+    format!("/api/players/{}", id)
+}
+fn plain_url(id: u32) -> String {
+    let n = id + 1;
+    format!("/api/players/{}", n)
+}
+impl Api {
+  async fn load(&self, id: u32) {
+    let r = self.client.get(club_url(&self.base, id)).send().await;
+    let s = self.client.get(club_url("http://x.example.com", 3)).send().await;
+    let t = self.client.get(unknown_url(id)).send().await;
+    let u = self.client.get(plain_url(id)).send().await;
+    let v = self.client.get(player_url(|n| n + 1, 7)).send().await;
+  }
+}`;
+    const calls = extractRustDataSources(src.split("\n")).filter((d) => d.kind === "api-call");
+    expect(calls.map((c) => `${c.name} ${c.target}`)).toEqual([
+      "GET ${self.base}/api/clubs/${id}",
+      "GET http://x.example.com/api/clubs/3",
+      "GET null",
+      "GET null",
+      "GET /api/players/7",
+    ]);
+  });
+});
+
 describe("Rust Diesel tables", () => {
   it("read a table a dsl import names, and mark inserts, updates and deletes as writes (real-repo FP)", () => {
     const src = `use league_schema::{

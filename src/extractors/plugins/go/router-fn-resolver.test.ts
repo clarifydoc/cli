@@ -240,3 +240,40 @@ func GetClubs(router *gin.RouterGroup) {
     expect(clubs.routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /clubs"]);
   });
 });
+
+describe("middleware a router function inherits from its mount site", () => {
+  it("names the mount's guard functions, with the file of the mount, on the routes registered in the other package", () => {
+    const file = (filePath: string, src: string, imports: Array<[string, string]> = []): FileAnalysis => {
+      const facts: RouteFact[] = [];
+      const routes = extractGoRoutes(src.split("\n"), facts);
+      return {
+        ...createEmptyAnalysis(filePath, "go"),
+        routes,
+        routeFacts: facts,
+        imports: imports.map(([alias, source]) => ({ source, specifiers: [alias], isDefault: false, isNamespace: false, isType: false, line: 1 })),
+      };
+    };
+    const main = file("main.go", `package main
+
+func main() {
+\tr := gin.Default()
+\tapi := r.Group("/api", auth.Required(), gin.Logger())
+\tclubs.Register(api)
+\tgarages.Register(r.Group("/open"))
+}`, [["clubs", "example.com/league/clubs"], ["garages", "example.com/league/garages"]]);
+    const clubs = file("clubs/clubs.go", `package clubs
+
+func Register(r *gin.RouterGroup) {
+\tr.GET("/clubs", List)
+}`);
+    const garages = file("garages/garages.go", `package garages
+
+func Register(r *gin.RouterGroup) {
+\tr.GET("/garages", List)
+}`);
+    goRouterFnResolver.resolve([main, clubs, garages], {} as ProjectContext);
+    const row = (a: FileAnalysis) => a.routes.map((r) => `${r.path} [${r.middleware.join(", ")}] calls=${(r.middlewareCalls ?? []).join(",")} inherited=${(r.inheritedMiddleware ?? []).map((m) => `${m.file}:${m.calls.join(",")}`).join(";")}`);
+    expect(row(clubs)).toEqual(["/api/clubs [auth.Required(), gin.Logger()] calls= inherited=main.go:auth.Required,gin.Logger"]);
+    expect(row(garages)).toEqual(["/open/garages [] calls= inherited="]);
+  });
+});

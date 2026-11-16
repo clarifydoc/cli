@@ -68,6 +68,16 @@ const FILES: Record<string, string> = {
   // one implementation registered twice under the token
   "app/Support/Facades/Turf.php": facade("League\\Support\\Facades", "Turf", "'turf'"),
   "app/Support/Turf.php": php("League\\Support", "class Turf { public function roll(): int { return 1; } }"),
+  // the accessor's constant is declared on a parent facade, or in a trait the facade uses
+  "app/Support/Facades/RinkFacade.php": php("League\\Support\\Facades", "abstract class RinkFacade extends Facade { const TOKEN = 'rink'; }", ["Illuminate\\Support\\Facades\\Facade"]),
+  "app/Support/Facades/Rink.php": php("League\\Support\\Facades", "class Rink extends RinkFacade { protected static function getFacadeAccessor() { return static::TOKEN; } }"),
+  "app/Support/Rink.php": php("League\\Support", "class Rink { public function skate(): int { return 1; } }"),
+  "app/Support/Facades/Names.php": php("League\\Support\\Facades", "trait Names { const TOKEN = 'gym'; }"),
+  "app/Support/Facades/Gym.php": php("League\\Support\\Facades", "class Gym extends Facade { use Names; protected static function getFacadeAccessor() { return static::TOKEN; } }", ["Illuminate\\Support\\Facades\\Facade"]),
+  "app/Support/Gym.php": php("League\\Support", "class Gym { public function lift(): int { return 1; } }"),
+  // a constant no class in the chain declares
+  "app/Support/Facades/Lane.php": php("League\\Support\\Facades", "class Lane extends Facade { protected static function getFacadeAccessor() { return static::TOKEN; } }", ["Illuminate\\Support\\Facades\\Facade"]),
+  "app/Support/Lane.php": php("League\\Support", "class Lane { public function swim(): int { return 1; } }"),
   "config/app.php": [
     "<?php",
     "use League\\Support\\Umpire;",
@@ -89,10 +99,13 @@ const FILES: Record<string, string> = {
       "    $this->app->bind('booth', Booth::class);",
       "    $this->app->bind('turf', Turf::class);",
       "    $this->app->singleton('turf', Turf::class);",
+      "    $this->app->bind('rink', Rink::class);",
+      "    $this->app->bind('gym', Gym::class);",
+      "    $this->app->bind('lane', Lane::class);",
       "  }",
       "}",
     ].join("\n"),
-    ["League\\Support\\Ledger", "League\\Support\\Referee", "League\\Support\\Scout", "League\\Support\\SponsorBook", "League\\Support\\PaidSponsorBook", "League\\Support\\Dugout", "League\\Support\\Bench", "League\\Support\\Booth", "League\\Support\\Turf"],
+    ["League\\Support\\Ledger", "League\\Support\\Referee", "League\\Support\\Scout", "League\\Support\\SponsorBook", "League\\Support\\PaidSponsorBook", "League\\Support\\Dugout", "League\\Support\\Bench", "League\\Support\\Booth", "League\\Support\\Turf", "League\\Support\\Rink", "League\\Support\\Gym", "League\\Support\\Lane"],
   ),
   "app/Http/Run.php": php(
     "League\\Http",
@@ -109,6 +122,9 @@ const FILES: Record<string, string> = {
       "  public function rest() { return Bench::rest(); }",
       "  public function talk() { return Booth::talk(); }",
       "  public function roll() { return Turf::roll(); }",
+      "  public function skate() { return Rink::skate(); }",
+      "  public function lift() { return Gym::lift(); }",
+      "  public function swim() { return Lane::swim(); }",
       "}",
     ].join("\n"),
     [
@@ -123,6 +139,9 @@ const FILES: Record<string, string> = {
       "League\\Support\\Facades\\Bench",
       "League\\Support\\Facades\\Booth",
       "League\\Support\\Facades\\Turf",
+      "League\\Support\\Facades\\Rink",
+      "League\\Support\\Facades\\Gym",
+      "League\\Support\\Facades\\Lane",
     ],
   ),
 };
@@ -176,5 +195,11 @@ describe("Laravel facades resolve to the class the container yields", () => {
 
   it("one implementation registered twice under a token is still one", () => {
     expect(links("roll")).toEqual(["Turf.roll -> app/Support/Turf.php::Turf.roll INFERRED di-binding"]);
+  });
+
+  it("an accessor's `static::TOKEN` declared on a parent facade or in a trait names its token; one nobody declares links nothing", () => {
+    expect(links("skate")).toEqual(["Rink.skate -> app/Support/Rink.php::Rink.skate INFERRED di-binding"]);
+    expect(links("lift")).toEqual(["Gym.lift -> app/Support/Gym.php::Gym.lift INFERRED di-binding"]);
+    expect(links("swim")).toEqual([]);
   });
 });

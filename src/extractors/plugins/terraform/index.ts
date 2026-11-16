@@ -21,6 +21,7 @@ const READ: Record<string, readonly string[]> = {
   aws_api_gateway_method: ["rest_api_id", "resource_id", "http_method", "authorization", "authorizer_id"],
   aws_api_gateway_integration: ["rest_api_id", "resource_id", "http_method", "uri", "type"],
   aws_lambda_function: ["function_name", "handler", "filename", "s3_key", "source_code_hash", "image_uri", "runtime"],
+  aws_dynamodb_table: ["name"],
   aws_s3_object: ["source"],
   aws_s3_bucket_object: ["source"],
   "data.archive_file": ["source_dir", "source_file", "output_path"],
@@ -31,10 +32,12 @@ export interface TerraformBlockFact {
   name: string;
   line: number;
   attrs: Record<string, string>;
+  /** A function's `environment { variables = { NAME = expr } }`, each expression as written. */
+  env?: Record<string, string>;
 }
 
 export function collectTerraformFacts(text: string, facts: RouteFact[] | undefined): void {
-  if (!facts || !/\b(?:aws_apigatewayv2_|aws_api_gateway_|aws_lambda_function|archive_file|aws_s3_(?:bucket_)?object)/.test(text)) return;
+  if (!facts || !/\b(?:aws_apigatewayv2_|aws_api_gateway_|aws_lambda_function|aws_dynamodb_table|archive_file|aws_s3_(?:bucket_)?object)/.test(text)) return;
   for (const b of parseHcl(text)) {
     if (b.type !== "resource" && b.type !== "data") continue;
     const type = (b.type === "data" ? "data." : "") + (b.labels[0] ?? "");
@@ -46,6 +49,13 @@ export function collectTerraformFacts(text: string, facts: RouteFact[] | undefin
       if (v !== undefined) attrs[k] = v;
     }
     const data: TerraformBlockFact = { type, name: b.labels[1], line: b.line, attrs };
+    if (type === "aws_lambda_function") {
+      const vars = b.blocks.find((x) => x.type === "environment")?.attrs.get("variables");
+      const env: Record<string, string> = {};
+      // `NAME = expr` per line, or several in one line (`{ A = "x", B = "y" }`); a key may be quoted.
+      for (const m of (vars ?? "").matchAll(/(?:^|[\n,{])\s*"?([A-Za-z_]\w*)"?\s*=\s*("(?:[^"\\]|\\.)*"|[^\n,}]+?)\s*(?=[\n,}]|$)/g)) env[m[1]!] = m[2]!;
+      if (Object.keys(env).length > 0) data.env = env;
+    }
     facts.push({ kind: TERRAFORM_BLOCK, line: b.line, data });
   }
 }

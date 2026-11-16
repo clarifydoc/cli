@@ -25,11 +25,11 @@ const FILES: Record<string, string> = {
   "src/module.rs": `use crate::garage;\n\npub fn through_module() {\n    garage::Garage::park();\n}\n`,
   "src/barrel.rs": `use crate::pre::*;\n\npub fn through_barrel() {\n    Garage::park();\n}\n`,
   "src/nest/mod.rs": `use super::garage::Garage;\n\npub fn through_super() {\n    Garage::park();\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    fn inline_glob() {\n        Garage::new();\n    }\n}\n`,
-  "src/league.rs": `#[path = "league/squad.rs"]\npub mod squad;\n#[path = "league/staff.rs"]\npub mod staff;\npub type Roster = squad::Squad;\npub type Squad = squad::Squad;\npub type Team = crate::league::squad::Squad;\npub type Backup = squad::inner::Keeper;\npub struct Coach;\n`,
+  "src/league.rs": `#[path = "league/squad.rs"]\npub mod squad;\n#[path = "league/staff.rs"]\npub mod staff;\npub type Roster = squad::Squad;\npub type Squad = squad::Squad;\npub type Team = crate::league::squad::Squad;\npub type Backup = squad::inner::Keeper;\npub type Keep = squad::Keeper;\npub struct Coach;\n`,
   "src/league/staff.rs": `pub struct Physio;\n`,
   "src/league/inner.rs": `pub struct Keeper;\n\nimpl Keeper {\n    pub fn pick() {}\n}\n`,
-  "src/league/squad.rs": `pub mod inner;\npub struct Squad;\n\nimpl Squad {\n    pub fn sign() {}\n}\n`,
-  "src/bench.rs": `use crate::{\n    league,\n    league::Coach,\n};\n\npub fn by_alias_name() {\n    league::Squad::sign();\n}\n\npub fn by_other_name() {\n    league::Roster::sign();\n}\n\npub fn by_full_path_alias() {\n    league::Team::sign();\n}\n\npub fn through_path_module() {\n    league::Backup::pick();\n}\n\npub fn unknown_name() {\n    league::Reserve::sign();\n}\n`,
+  "src/league/squad.rs": `pub mod inner;\npub use inner::Keeper;\npub struct Squad;\n\nimpl Squad {\n    pub fn sign() {}\n}\n`,
+  "src/bench.rs": `use crate::{\n    league,\n    league::Coach,\n};\n\npub fn by_alias_name() {\n    league::Squad::sign();\n}\n\npub fn by_other_name() {\n    league::Roster::sign();\n}\n\npub fn by_full_path_alias() {\n    league::Team::sign();\n}\n\npub fn through_path_module() {\n    league::Backup::pick();\n}\n\npub fn through_reexport() {\n    league::Keep::pick();\n}\n\npub fn unknown_name() {\n    league::Reserve::sign();\n}\n`,
   // `Shape::Kind::make()` is an associated-type path: no scope binds it, in either front end.
   "src/shape.rs": `pub struct Shape;\n\npub struct Kind;\n\nimpl Kind {\n    pub fn make() {}\n}\n`,
   "src/assoc.rs": `use crate::shape::{Kind, Shape};\n\npub fn through_assoc() {\n    Shape::Kind::make();\n}\n\npub fn plain() {\n    Kind::make();\n}\n`,
@@ -102,6 +102,7 @@ describe.each([
 
   it("follows a #[path] module with further segments, and leaves an associated-type path unlinked", () => {
     expect(linkOf("through_path_module", "Backup.pick")).toBe("src/league/inner.rs Keeper.pick class-name");
+    expect(linkOf("through_reexport", "Keep.pick")).toBe("src/league/inner.rs Keeper.pick class-name");
     expect(linkOf("through_assoc", "Shape::Kind.make")).toBeNull();
     expect(linkOf("through_assoc", "Kind.make")).toBeNull();
     expect(linkOf("plain", "Kind.make")).toBe("src/shape.rs Kind.make class-name");

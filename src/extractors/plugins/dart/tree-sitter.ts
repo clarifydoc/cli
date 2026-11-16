@@ -37,6 +37,10 @@ interface Walk {
   callRefs: CallRefs;
   file: FileScope;
   root: TSNode;
+  /** The names a getter of the file is declared under: a bare read of one is a call of it. */
+  getters: ReadonlySet<string>;
+  /** Each function's local names (parameters, variables, loop and catch variables, its enclosing functions' too), which hide a getter. */
+  locals: Map<PatternCallName[], ReadonlySet<string>>;
 }
 
 /**
@@ -53,7 +57,7 @@ interface Walk {
  */
 export function readDartTree(root: TSNode, text: string): ParsedStructure {
   const topLevel: PatternCallName[] = [];
-  const walk: Walk = { text, topLevel, functions: [], callRefs: new Map(), file: fileScopeOf(root, text), root };
+  const walk: Walk = { text, topLevel, functions: [], callRefs: new Map(), file: fileScopeOf(root, text), root, getters: getterNames(root), locals: new Map() };
   visit(root, topLevel, walk, null);
   walk.functions.sort((a, b) => a.span.line - b.span.line);
   const classNodes = new Map<string, TSNode>();
@@ -129,6 +133,7 @@ function visit(node: TSNode, owner: PatternCallName[] | null, walk: Walk, cls: C
       let calls = owner;
       if (name) {
         calls = [];
+        if (walk.getters.size > 0) walk.locals.set(calls, new Set([...(owner ? walk.locals.get(owner) ?? [] : []), ...localNames(child, body)]));
         const end = (body ?? child).endPosition.row + 1;
         const isConstructor = sig.type !== "function_signature" && sig.type !== "getter_signature";
         walk.functions.push({
@@ -159,6 +164,7 @@ function visit(node: TSNode, owner: PatternCallName[] | null, walk: Walk, cls: C
       owner.push({ name: child.type, leafName: child.type, line: child.startPosition.row + 1, column: child.startPosition.column });
     }
     if (owner && child.type === "cascade_section") cascadeCall(child, owner);
+    if (child.type === "identifier" && isReadPosition(node, child)) getterRead(child, owner, walk, cls);
     if (owner && (child.type === "const_object_expression" || child.type === "new_expression")) {
       const named = constructionName(child);
       if (named) owner.push(named);
@@ -203,6 +209,8 @@ function readRun(children: TSNode[], start: number, owner: PatternCallName[] | n
     if (type) steps = [idStep(type, primary), { kind: "call", constructs: type }];
   }
   if (steps[0]!.kind === "other" || steps.length > 1) visit(primary, owner, walk, cls);
+  // `squadSize.toString()`: the name is read before the member, as a bare `squadSize` is.
+  else if (primary.type === "identifier" && children[start + 1]!.namedChild(0)?.type !== "argument_part") getterRead(primary, owner, walk, cls);
   let i = start + 1;
   for (; i < children.length && isSelector(children[i]!); i++) {
     const selector = children[i]!;
@@ -277,4 +285,65 @@ function indexRun(children: TSNode[], from: number, at: number): boolean {
 function registerCall(walk: Walk, owner: PatternCallName[] | null, args: TSNode, named: PatternCallName): void {
   const first = owner?.find((c) => c.name === named.name);
   walk.callRefs.set(args.id, { name: named.name, line: first?.line ?? named.line });
+}
+
+/** The names the file's getters (top-level, class, mixin and extension ones) are declared under. */
+function getterNames(root: TSNode): Set<string> {
+  const out = new Set<string>();
+  const stack = [root];
+  for (let node = stack.pop(); node; node = stack.pop()) {
+    if (node.type === "getter_signature") {
+      const name = functionName(node);
+      if (name) out.add(name.text);
+      continue;
+    }
+    for (const c of namedChildren(node)) if (c.type !== "function_body" && c.type !== "block") stack.push(c);
+  }
+  return out;
+}
+
+/** The names one function declares in its own parameters and body, wherever they are scoped (a read of one is not the getter's). */
+function localNames(decl: TSNode, body: TSNode | null): Set<string> {
+  const out = new Set<string>();
+  const stack = [decl, ...(body ? [body] : [])];
+  for (let node = stack.pop(); node; node = stack.pop()) {
+    const kids = namedChildren(node);
+    const idents = kids.filter((c) => c.type === "identifier");
+    if (node.type === "formal_parameter" || node.type === "catch_parameters") for (const id of idents) out.add(id.text);
+    else if ((node.type === "initialized_variable_definition" || node.type === "initialized_identifier") && idents[0]) out.add(idents[0].text);
+    else if (node.type === "for_loop_parts" && !kids.some((c) => c.type === "local_variable_declaration") && idents[0]) out.add(idents[0].text);
+    stack.push(...kids);
+  }
+  return out;
+}
+
+/** Parents under which an identifier is a name being declared, a label, a member or an assignment target, never a read. */
+const NOT_READ_PARENTS: ReadonlySet<string> = new Set([
+  "label", "formal_parameter", "catch_parameters", "assignable_expression", "function_signature", "getter_signature", "setter_signature",
+  "constructor_signature", "factory_constructor_signature", "type_identifier", "scoped_identifier", "annotation", "import_specification",
+  "initialized_identifier", "unconditional_assignable_selector", "conditional_assignable_selector", "cascade_selector", "dot_shorthand",
+  "constructor_param", "configurable_uri", "uri", "library_name", "part_directive",
+]);
+
+/** Whether an `identifier` child of `parent` reads a value, not a declaration's name. */
+function isReadPosition(parent: TSNode, id: TSNode): boolean {
+  if (NOT_READ_PARENTS.has(parent.type)) return false;
+  if (parent.type === "initialized_variable_definition" || parent.type === "for_loop_parts") {
+    // The first identifier names the variable (a `for (final x in xs)` loop's, when no declaration is its init).
+    const kids = namedChildren(parent);
+    const first = kids.find((c) => c.type === "identifier");
+    if (first && first.id === id.id && !kids.some((c) => c.type === "local_variable_declaration")) return false;
+  }
+  return true;
+}
+
+/**
+ * A bare read of a getter the file declares (`squadSize`, `final n = endpoint`) inside a function is a call of it: the
+ * linker binds it to the getter of the reading class or its bases, so the getter's own calls join the reader's chain.
+ * Never a name the function declares itself (parameter, variable), nor a field of the class.
+ */
+function getterRead(id: TSNode, owner: PatternCallName[] | null, walk: Walk, cls: ClassScope | null): void {
+  if (!owner || owner === walk.topLevel || !walk.getters.has(id.text)) return;
+  if (walk.locals.get(owner)?.has(id.text) || cls?.fields.has(id.text)) return;
+  owner.push({ name: id.text, leafName: id.text, line: id.startPosition.row + 1, column: id.startPosition.column });
 }

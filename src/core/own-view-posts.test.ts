@@ -61,6 +61,7 @@ def second():
 describe("a POST form with no action", () => {
   let dir: string;
   let links: string[];
+  let flow: string[];
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), "clarifydoc-ownview-"));
     const root = join(dir, "app");
@@ -71,6 +72,7 @@ describe("a POST form with no action", () => {
     const out = join(dir, "out");
     await analyze({ projectRoot: root, outputDir: out, lsp: false, gitHistory: false, stableOutput: true });
     const s = await loadReportSummary(out);
+    flow = (s.screenFlow?.edges ?? []).filter((e) => e.kind === "submit").map((e) => `${e.from} > ${e.to} ${e.via}`).sort();
     links = (s.apiRouteLinks ?? []).map((l) => `${l.source} ${l.method ?? ""} ${(s.routeMap ?? []).find((r) => r.filePath === l.target)?.path ?? ""}`).sort();
   });
   afterAll(async () => {
@@ -85,5 +87,12 @@ describe("a POST form with no action", () => {
   it("leaves a GET form, an explicit action's form and a template served at two URLs alone", () => {
     expect(links.filter((l) => l.startsWith("templates/search.html"))).toHaveLength(1); // only the explicit action
     expect(links.some((l) => l.startsWith("templates/shared_form.html"))).toBe(false);
+  });
+
+  it("shows the own-page post in the navigation map as a submit edge on the page itself", () => {
+    expect(flow).toContain("templates/club_form.html > templates/club_form.html POST /clubs/new");
+    expect(flow).toContain("templates/player_form.html > templates/player_form.html POST /players/new");
+    expect(flow.some((f) => f.startsWith("templates/shared_form.html"))).toBe(false);
+    expect(flow.some((f) => f.startsWith("templates/search.html"))).toBe(true); // the explicit action still leads to the club form
   });
 });

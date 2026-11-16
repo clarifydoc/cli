@@ -163,3 +163,46 @@ describe("Go Huma registrars declaring the same templated path", () => {
     ]);
   });
 });
+
+const MOUNT_MAIN = `package main
+
+import (
+\t"example.com/league/auth"
+\t"example.com/league/clubs"
+\t"github.com/gin-gonic/gin"
+\t"gorm.io/gorm"
+)
+
+func main() {
+\tvar db *gorm.DB
+\tr := gin.Default()
+\tapi := r.Group("/api", auth.SessionRequired(db))
+\tclubs.Register(api)
+}
+`;
+
+// The registering package imports no auth of its own: only a namesake in a package it never imports exists beside it.
+const MOUNT_CLUBS = `package clubs
+
+import "github.com/gin-gonic/gin"
+
+func Register(r *gin.RouterGroup) {
+\tr.GET("/clubs", ListClubs)
+}
+
+func ListClubs(c *gin.Context) { c.JSON(200, "x") }
+`;
+
+describe("Go middleware inherited from the mount site in another package", () => {
+  it("joins what the mounted middleware reads to the route, resolved in the mount's file", async () => {
+    const { analysis } = await runCarets({
+      "go.mod": GO_MOD,
+      "main.go": MOUNT_MAIN,
+      "clubs/clubs.go": MOUNT_CLUBS,
+      "auth/auth.go": AUTH,
+      "decoy/decoy.go": DECOY_AUTH,
+    });
+    const flows = (analysis.dataFlows ?? []).map((f) => `${f.entryLabel} ${f.effect} ${f.resource}${f.viaMiddleware ? " (middleware)" : ""}`).sort();
+    expect(flows).toEqual(["GET /api/clubs db-read sessions (middleware)"]);
+  });
+});

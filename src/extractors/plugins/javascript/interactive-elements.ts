@@ -249,6 +249,12 @@ export function extractVueInteractiveElements(
         if (VUE_RESERVED_ATTRS.has(bindMatch[1]!)) continue;
         if (INLINE_FUNCTION.test(value)) {
           elements.push({ element: "custom", event: `:${bindMatch[1]}`, handler: value, line, component: tagName });
+        } else if (value.startsWith("[")) {
+          // `:extra="[{ run: () => sellPlayer() }]"`: the arrows of the array's objects, one function per key (`extra.run`),
+          // which the child's loop calls as `x.run()`. Several objects holding one key are one function holding their calls.
+          for (const [key, arrows] of arrayArrows(value)) {
+            elements.push({ element: "custom", event: `:${bindMatch[1]}.${key}`, handler: arrows.join("; "), line, component: tagName });
+          }
         } else {
           // `:options="{ onClick: () => remove(id) }"`: each arrow of the object is a function of its own.
           for (const [key, arrow] of objectArrows(value)) {
@@ -281,6 +287,16 @@ export function extractVueInteractiveElements(
   }
 
   return elements;
+}
+
+/** The arrow entries of the objects of an array literal written in markup, by key: `[{ run: () => a() }, { run: () => b() }]` → `run`: both. */
+function arrayArrows(value: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  if (!value.endsWith("]") || (!value.includes("=>") && !value.includes("function"))) return out;
+  for (const element of splitTopLevel(value.slice(1, -1))) {
+    for (const [key, arrow] of objectArrows(element.trim())) out.set(key, [...(out.get(key) ?? []), arrow]);
+  }
+  return out;
 }
 
 /**
@@ -330,7 +346,7 @@ function scopeOf(handler: string | null, scopes: TemplateScope[] | undefined, fu
         const callbacks = name === scope.names[0] && !type ? literalCallbacksOf(scope.source!, fullSource) ?? inlineCallbacksOf(scope.source!) : undefined;
         const elementOf = name === scope.names[0] && !type && !callbacks ? importedCollection(scope.source!, fullSource) : undefined;
         // A loop over a bare name no literal declares: possibly a prop the parent hands the array in (judged by the Vue hooks).
-        const fromProp = name === scope.names[0] && !callbacks && !elementOf && /^[A-Za-z_$][\w$]*$/.test(scope.source!.trim()) ? scope.source!.trim() : undefined;
+        const fromProp = name === scope.names[0] && !callbacks && !elementOf && /^(?:props\.|\$props\.|this\.)?[A-Za-z_$][\w$]*$/.test(scope.source!.trim()) ? scope.source!.trim().replace(/^(?:props|\$props|this)\./, "") : undefined;
         if (type) found.push({ name, type, ...(fromProp ? { fromProp } : {}) });
         else found.push({ name, ...(callbacks ? { callbacks } : {}), ...(elementOf ? { elementOf } : {}), ...(fromProp ? { fromProp } : {}) });
       }

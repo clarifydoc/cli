@@ -713,6 +713,11 @@ export interface AstExtractorHooks {
    */
   propBindings?(tree: Tree, sourceText: string, rawSource: string, filePath: string): import("./analysis.js").PropBinding[];
   /**
+   * The prop bindings of the same file `propBindings` just read whose value it could not read
+   * (`FileAnalysis.unreadPropBindings`); called right after it, with the same tree.
+   */
+  unreadPropBindings?(tree: Tree): NonNullable<import("./analysis.js").FileAnalysis["unreadPropBindings"]>;
+  /**
    * The file's own functions its markup hands a child by name as a prop, where no event binding says so
    * (`<KitRow order={orderKit} />`): `FileAnalysis.functionProps`. `declared` names the file's functions and methods.
    */

@@ -5,7 +5,7 @@ import { dirname, join } from "path";
 import { analyze } from "../../../core/analyzer.js";
 import { loadReportSummary } from "../../../core/report-payload.js";
 import type { ProjectAnalysis } from "../../../types/analysis.js";
-import { objectTypeMembers, patternBindings } from "./destructured-params.js";
+import { objectTypeMembers, patternBindings, patternPaths } from "./destructured-params.js";
 
 /**
  * A component whose props arrive as one destructured object: `table.nextPage()` is a call on the `Table` the
@@ -38,6 +38,48 @@ export function Renamed({ table: grid }: { table: Table }) {
 interface Props { table: Table; onDone?: () => void }
 export function Named({ table }: Props) {
   table.nextPage();
+  return null;
+}
+`,
+  "src/shared.ts": `import { Table } from './table';
+import { Grid } from './grid';
+export interface BaseProps { table: Table }
+export interface SharedProps { table: Table; onDone?: () => void }
+export interface League { table: Table }
+export interface Decoy { table: Grid }
+`,
+  // A member that comes from \`extends\`, the base declared in another file.
+  "src/Extended.tsx": `import { BaseProps } from './shared';
+interface Props extends BaseProps { onDone?: () => void }
+export function Extended({ table }: Props) {
+  table.nextPage();
+  return null;
+}
+`,
+  // The whole type declared in another file.
+  "src/Imported.tsx": `import { SharedProps } from './shared';
+export function Imported({ table: grid }: SharedProps) {
+  grid.nextPage();
+  return null;
+}
+`,
+  // The other file's type holds a Grid under the same member name: the annotation decides.
+  "src/ImportedDecoy.tsx": `import { Decoy } from './shared';
+export function ImportedDecoy({ table }: Decoy) {
+  table.nextPage();
+  return null;
+}
+`,
+  "src/NestedInline.tsx": `import { Table } from './table';
+export function NestedInline({ league: { table } }: { league: { table: Table } }) {
+  table.nextPage();
+  return null;
+}
+`,
+  "src/NestedNamed.tsx": `import { League } from './shared';
+interface Props { league: League }
+export function NestedNamed({ league: { table: t } }: Props) {
+  t.nextPage();
   return null;
 }
 `,
@@ -75,6 +117,18 @@ describe("destructured parameters", () => {
     expect(linksFrom(summary, "src/Named.tsx")).toContain("Named -table.nextPage-> src/table.ts#Table.nextPage");
   });
 
+  it("types a binding whose member comes from extends or from another file", () => {
+    expect(linksFrom(summary, "src/Extended.tsx")).toContain("Extended -table.nextPage-> src/table.ts#Table.nextPage");
+    expect(linksFrom(summary, "src/Imported.tsx")).toContain("Imported -grid.nextPage-> src/table.ts#Table.nextPage");
+    expect(linksFrom(summary, "src/ImportedDecoy.tsx")).toContain("ImportedDecoy -table.nextPage-> src/grid.ts#Grid.nextPage");
+    expect(linksFrom(summary, "src/ImportedDecoy.tsx")).not.toContain("ImportedDecoy -table.nextPage-> src/table.ts#Table.nextPage");
+  });
+
+  it("types a binding read through a nested pattern", () => {
+    expect(linksFrom(summary, "src/NestedInline.tsx")).toContain("NestedInline -table.nextPage-> src/table.ts#Table.nextPage");
+    expect(linksFrom(summary, "src/NestedNamed.tsx")).toContain("NestedNamed -t.nextPage-> src/table.ts#Table.nextPage");
+  });
+
   it("links nothing for a prop whose type is not stated", () => {
     expect(linksFrom(summary, "src/Untyped.tsx").filter((r) => r.includes("nextPage"))).toEqual([]);
   });
@@ -86,6 +140,11 @@ describe("destructured parameters", () => {
       { binding: "c", key: "b" },
       { binding: "d", key: "d" },
       { binding: "f", key: "e" },
+    ]);
+    expect(patternPaths("{ club: { id, crest: badge } = {}, n = 1, ...rest }")).toEqual([
+      { binding: "id", path: ["club", "id"] },
+      { binding: "badge", path: ["club", "crest"] },
+      { binding: "n", path: ["n"] },
     ]);
     expect([...objectTypeMembers("{ kind:\n | 'a'\n | 'b'; // note\n table: Table }")]).toEqual([["kind", "'a' | 'b'"], ["table", "Table"]]);
     expect([...objectTypeMembers("{ a: Map<string, X>; b?: Y | null, c: () => void, readonly d: Z }")]).toEqual([

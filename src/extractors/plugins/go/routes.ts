@@ -269,7 +269,7 @@ function classifyGuard(raw: string): GuardAttr {
  * The functions a route's middleware texts name: `auth.SessionRequired(db)` → `auth.SessionRequired`, a bare
  * `authRequired` → itself. An inline closure, a conversion and a value that is no name are left out.
  */
-function middlewareCallees(texts: readonly string[]): string[] {
+export function middlewareCallees(texts: readonly string[]): string[] {
   const out: string[] = [];
   for (const text of texts) {
     const m = /^([A-Za-z_][\w.]*)\s*(\(|$)/.exec(text.trim());

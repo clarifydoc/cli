@@ -103,8 +103,20 @@ const BINDING_ATTRIBUTE = /^(?:wasm_bindgen|uniffi::export)(?:\s*\(.*\))?$/s;
 /** The binding attributes written on the lines above the `impl` at line index `i`, as decorators read them (no `#[…]`). */
 function implBindingAttributes(lines: string[], i: number): string[] {
   const out: string[] = [];
-  for (let j = i - 1; j >= 0 && j >= i - 6; j--) {
-    const attr = /^\s*#\[(.*)\]\s*$/.exec(lines[j]!)?.[1]?.trim();
+  for (let j = i - 1; j >= 0 && j >= i - 12; j--) {
+    let attr = /^\s*#\[(.*)\]\s*$/.exec(lines[j]!)?.[1]?.trim();
+    if (attr === undefined && /\)\]\s*$/.test(lines[j]!)) {
+      // the closing `)]` of an attribute spread over lines: walk up to its `#[`, through argument lines only
+      let k = j;
+      while (k > 0 && k > j - 8 && !/^\s*#\[/.test(lines[k]!) && !/[;{}]/.test(lines[k]!)) k--;
+      if (/^\s*#\[\w[\w:]*\s*\(/.test(lines[k]!)) {
+        const joined = lines.slice(k, j + 1).join(" ").replace(/\s+/g, " ").replace(/,\s*\)\]/, ")]");
+        const opens = (joined.match(/\(/g) ?? []).length;
+        const closes = (joined.match(/\)/g) ?? []).length;
+        if (opens === closes) attr = /^\s*#\[(.*)\]\s*$/.exec(joined)?.[1]?.trim();
+        if (attr !== undefined) j = k;
+      }
+    }
     if (attr !== undefined) {
       if (BINDING_ATTRIBUTE.test(attr)) out.push(attr);
     } else if (lines[j]!.trim() !== "" && !/^\s*\/\//.test(lines[j]!)) break;

@@ -584,11 +584,11 @@ export function computeDataFlows(
   // Route symbols that link to something: the handler the linker resolved, the calls of an inline body.
   const linkedRoutes = new Set<string>();
   const linksFrom = new Map<string, SymbolLink[]>();
-  // The middleware a route names (`RouteInfo.middlewareCalls`): a link to one says nothing about the route's handler.
+  // The middleware a route names (`RouteInfo.middlewareCalls`, `inheritedMiddleware`): a link to one says nothing about the route's handler.
   const middlewareOf = new Map<string, Set<string>>();
   for (const r of routes) {
-    const names = r.middlewareCalls?.filter((n) => n !== r.handler);
-    if (r.kind === "api" && names?.length) middlewareOf.set(keyOf(r.filePath, `route:${r.httpMethod ?? "USE"} ${r.path}`), new Set(names));
+    const names = [...(r.middlewareCalls ?? []), ...(r.inheritedMiddleware ?? []).flatMap((m) => m.calls)].filter((n) => n !== r.handler);
+    if (r.kind === "api" && names.length) middlewareOf.set(keyOf(r.filePath, `route:${r.httpMethod ?? "USE"} ${r.path}`), new Set(names));
   }
   for (const l of symbolLinks) {
     if (l.sourceSymbol.startsWith("route:") && l.relation !== "reference" && !l.navigational) {

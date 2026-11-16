@@ -1452,11 +1452,6 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
     ),
     (r) => isApiContractLanguage(languageByPath.get(r.filePath) ?? ""),
   );
-  // A test (or a component story, which the plugins' test patterns name) renders a
-  // component with stubs: its buttons are no click of the app.
-  const allInteractiveElements = allAnalyses.flatMap((a) =>
-    a.interactiveElements.length && isTestFile(a.filePath, a.language) ? [] : a.interactiveElements.map((el) => ({ ...el, filePath: a.filePath })),
-  );
   const allEvents = allAnalyses.flatMap((a) =>
     a.events.map((ev) => ({ ...ev, filePath: a.filePath })),
   );
@@ -1582,6 +1577,12 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   if (renderedViews > 0) progress.detail(`  Routes rendering a template: ${renderedViews}`);
   // A POST form with no action posts to the page's own URL: the route rendering the page.
   allApiCalls.push(...linkOwnViewPosts(allScreens, allAnalyses));
+  // Copied after the own-page posts are stated on their elements, so the navigation map sees them.
+  // A test (or a component story, which the plugins' test patterns name) renders a
+  // component with stubs: its buttons are no click of the app.
+  const allInteractiveElements = allAnalyses.flatMap((a) =>
+    a.interactiveElements.length && isTestFile(a.filePath, a.language) ? [] : a.interactiveElements.map((el) => ({ ...el, filePath: a.filePath })),
+  );
   // Where a server route sends the browser on to, and the navigation map that follows it.
   const serverRedirects = attachServerRedirects(allRoutes, allAnalyses, symbolLinks, (f) => rawSources.get(f));
   if (serverRedirects > 0) progress.detail(`  Routes redirecting: ${serverRedirects}`);

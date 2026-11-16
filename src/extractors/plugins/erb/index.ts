@@ -94,6 +94,22 @@ function modelFormRequest(model: string, view: { key: string } | null): Request 
   return { method: "POST", target: `${pluralize(model)}_path` };
 }
 
+/**
+ * A form helper that names no URL and no model posts to the page it is on: `form_with scope: :club`,
+ * a bare `form_with do |f|`, `form_tag do`. Any argument that could name a target (`url:`, `model:`,
+ * `action:`, `controller:`, a positional one) leaves it unmarked, and so does a verb other than POST.
+ */
+function postsToOwnPage(helper: string, args: string, urlArg: string | undefined, model: string | undefined): boolean {
+  if (urlArg !== undefined || model !== undefined || helper === "form_for") return false;
+  // What is written before the block: `scope: :club, local: true do |f|`.
+  const written = args.replace(/\s*(?:do\b|\{)\s*(?:\|[^|]*\|)?[\s\S]*$/, "").replace(/^\s*\(|\)\s*$/g, "").trim();
+  if (/\b(?:url|model|action|controller|builder):/.test(written)) return false;
+  // Only keyword options: a positional argument, a splat (`**opts`) or a variable may name the target.
+  if (written !== "" && (written.includes("**") || !/^(?:[a-z_]+:\s*[^,]+,?\s*)+$/.test(written))) return false;
+  const verb = METHOD_OPTION_RE.exec(written)?.[1];
+  return verb === undefined || verb.toLowerCase() === "post";
+}
+
 /** Handler name for a request: the helper for a GET, `<verb>_<helper>` otherwise. */
 function handlerOf(request: Request): string {
   const base = request.target.replace(/^\//, "").replace(/[^\w]+/g, "_") || "root";
@@ -147,6 +163,11 @@ export function extractErbView(analysis: FileAnalysis, source: string): void {
         : model ? { ...modelFormRequest(model, view), ...(METHOD_OPTION_RE.test(args) ? { method: METHOD_OPTION_RE.exec(args)![1]!.toUpperCase() } : {}) }
         : null;
       if (request) element("form", "submit", request, line, h[1]!);
+      else if (postsToOwnPage(h[1]!, args, urlArg, model)) {
+        // No URL and no model: the form posts to the page it is on (core joins it to the route rendering the page).
+        elements.push({ element: "form", event: "submit", handler: null, line, ownViewPost: true });
+        component("form", h[1]!, "container", line, []);
+      }
     } else if ((h = /^button_to\b\s*\(?([\s\S]*)$/.exec(code))) {
       const request = requestOf(h[1]!, "POST");
       if (request) element("button", "click", request, line, "button_to");

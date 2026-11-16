@@ -231,16 +231,25 @@ export function destructuredParamTypes(params: readonly ParamInfo[], namedTypes:
       // Walk the path through the object types the annotation states.
       let level: ReadonlyMap<string, string> | undefined = members;
       let memberType: string | undefined;
+      // A nested level whose type is another file's: the rest of the path is that type's to say.
+      let handedOn: { type: string; rest: string[]; depth: number } | undefined;
       for (let i = 0; i < path.length; i++) {
         memberType = level?.get(path[i]!);
         if (memberType === undefined) break;
         if (i < path.length - 1) {
           level = memberType.startsWith("{") ? objectTypeMembers(memberType) : namedTypes?.get(memberType);
           if (!level) {
+            if (/^[A-Za-z_$][\w$.]*$/.test(memberType) && !GENERIC_PARAMETER.test(memberType)) handedOn = { type: memberType, rest: path.slice(i + 1), depth: i + 1 };
             memberType = undefined;
             break;
           }
         }
+      }
+      if (handedOn) {
+        const local = `${paramLocal(index)}_${path.slice(0, handedOn.depth).join("_")}`;
+        if (!out.some((l) => l.name === local)) out.push({ name: local, type: handedOn.type });
+        out.push({ name: binding, type: "", from: `${local}.${handedOn.rest.join(".")}`, member: true });
+        continue;
       }
       if (memberType) {
         if (!memberType.startsWith("{")) out.push({ name: binding, type: memberType });

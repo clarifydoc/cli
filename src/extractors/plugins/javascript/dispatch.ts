@@ -3,6 +3,7 @@ import type { DispatchResolver } from "../../dispatch/base.js";
 import { resolveTarget, buildFilePathMap } from "../../shared/link-scoring.js";
 import { propFunctionName } from "./markup-calls.js";
 import { WHOLE_SLOT_PROPS } from "./template-scopes.js";
+import { dispatchMapHoldersOf, type MapHeld } from "./dispatch-map-props.js";
 import { escapeRegex } from "../shared/path-utils.js";
 import { destructuredProps } from "../../shared/destructuring.js";
 
@@ -465,7 +466,27 @@ export class JsPropCallbackResolver implements DispatchResolver {
     const autoImported = autoImportedComponents(analyses);
     // child file → prop → bindings in parents.
     // `bound`: the function a Vue template's inline prop function is extracted as.
-    const bindings = new Map<string, Map<string, Array<{ parent: FileAnalysis; handler: string; bound?: string; creator?: string; handlerImport?: { source: string; name: string }; line: number }>>>();
+    // `site`: the file whose markup binds it, when `parent` is the module that declares the handed dispatch map.
+    const bindings = new Map<string, Map<string, Array<{ parent: FileAnalysis; handler: string; bound?: string; creator?: string; handlerImport?: { source: string; name: string }; site?: string; line: number }>>>();
+    /** The functions an imported dispatch map holds, from the module that declares it (re-exports followed). */
+    const importedMap = (from: FileAnalysis, imp: { source: string; name: string }): { owner: FileAnalysis; held: MapHeld[] } | null => {
+      // The walk is depth-bounded, which also ends a cycle of barrels.
+      const walk = (source: string, importer: string, name: string, hop: number): { owner: FileAnalysis; held: MapHeld[] } | null => {
+        const file = resolveTarget(source, importer, filePathMap);
+        const owner = file && hop < 4 ? byPath.get(file.split("\u0000")[0]!) : undefined;
+        if (!owner) return null;
+        const held = dispatchMapHoldersOf([owner.functions.find((f) => f.name === "<setup>") ?? { calls: [] }], owner.imports).get(name);
+        if (held) return { owner, held };
+        // Re-exports: the named one first, then each `export *` (the map is in whichever declares it).
+        const named = owner.exports.filter((e) => e.kind === "re-export" && e.source && e.name === name);
+        for (const e of named.length > 0 ? named : owner.exports.filter((e) => e.kind === "re-export" && e.source && e.name === "*")) {
+          const found = walk(e.source!, owner.filePath, e.sourceName && e.name === name ? e.sourceName : name, hop + 1);
+          if (found) return found;
+        }
+        return null;
+      };
+      return walk(imp.source, from.filePath, imp.name, 0);
+    };
     for (const parent of analyses) {
       const els = (parent.interactiveElements ?? []).filter(
         (el) => el.element === "custom" && el.component && el.handler && (PROP_CALLBACK.test(el.event) || VUE_PROP.test(el.event) || VUE_LISTENER.test(el.event)),
@@ -475,7 +496,7 @@ export class JsPropCallbackResolver implements DispatchResolver {
       if (els.length === 0 && !parent.functionProps?.length && renamed.length === 0) continue;
       const subByKey = new Map<string, string>([...(autoImported.get(parent.projectId ?? "") ?? []), ...globals]);
       for (const sub of parent.subComponents ?? []) if (sub.importSource && !sub.global) subByKey.set(tagKey(sub.name), sub.importSource);
-      const bind = (line: number, component: string, prop: string, handler: string, bound?: string, importSource?: string, creator?: string, handlerImport?: { source: string; name: string }) => {
+      const bind = (line: number, component: string, prop: string, handler: string, bound?: string, importSource?: string, creator?: string, handlerImport?: { source: string; name: string }, owner?: FileAnalysis) => {
         const src = importSource ?? subByKey.get(tagKey(component));
         let childFile = src ? resolveTarget(src, parent.filePath, filePathMap) : null;
         // A component the parent's own file declares (`const FollowButton = props => …`, beside its user): keyed by the pair.
@@ -483,7 +504,7 @@ export class JsPropCallbackResolver implements DispatchResolver {
         if (!childFile || !byPath.has(childFile.split("\u0000")[0]!)) return;
         const byProp = bindings.get(childFile) ?? bindings.set(childFile, new Map()).get(childFile)!;
         const list = byProp.get(prop) ?? byProp.set(prop, []).get(prop)!;
-        list.push({ parent, handler, ...(bound ? { bound } : {}), ...(creator ? { creator } : {}), ...(handlerImport ? { handlerImport } : {}), line });
+        list.push({ parent: owner ?? parent, handler, ...(bound ? { bound } : {}), ...(creator ? { creator } : {}), ...(handlerImport ? { handlerImport } : {}), ...(owner ? { site: parent.filePath } : {}), line });
       };
       for (const el of els) {
         const bound = propFunctionName(el.component!, el.event, el.line);
@@ -508,7 +529,15 @@ export class JsPropCallbackResolver implements DispatchResolver {
         bind(pb.line, pb.component, pb.prop, propName, undefined, undefined, creators.length === 1 ? creators[0]!.name : undefined);
       }
       // `:on-confirm="confirmDeletion"`: one of the parent's functions handed down by name.
-      for (const fp of parent.functionProps ?? []) bind(fp.line, fp.component, fp.prop, fp.handler, undefined, fp.importSource, undefined, fp.handlerImport);
+      for (const fp of parent.functionProps ?? []) {
+        // A dispatch map another module declares (`:actions="clubActions"`): one function prop per held function.
+        const map = fp.mapImport ? importedMap(parent, fp.mapImport) : null;
+        if (fp.mapImport) {
+          for (const h of map?.held ?? []) bind(fp.line, fp.component, `${fp.prop}.${h.key}`, h.name, undefined, fp.importSource, undefined, h.handlerImport, map!.owner);
+          continue;
+        }
+        bind(fp.line, fp.component, fp.prop, fp.handler, undefined, fp.importSource, undefined, fp.handlerImport);
+      }
     }
     if (bindings.size === 0) return [];
 
@@ -549,7 +578,7 @@ export class JsPropCallbackResolver implements DispatchResolver {
       seen.add(key);
       const out: Array<{ file: string; span: SymbolSpan; usage: Usage[] }> = [];
       for (const b of bindings.get(file)?.get(prop) ?? []) {
-        const usage = [via ?? { file: b.parent.filePath, line: b.line }];
+        const usage = [via ?? { file: b.site ?? b.parent.filePath, line: b.line }];
         const inline = b.bound ? spans(b.parent).find((sp) => sp.symbol === b.bound) : undefined;
         if (inline) {
           out.push({ file: b.parent.filePath, span: inline, usage });

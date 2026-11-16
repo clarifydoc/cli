@@ -29,7 +29,7 @@ import type { ClassRef, ProjectContext } from "../../../types/project.js";
 // The quote/bracket-aware splitter and unquoter are shared with the symbolic
 // value resolver (one copy instead of the three that used to exist).
 import { splitTopLevel, unquote } from "../../shared/value-resolver.js";
-import { patternBindings } from "./destructured-params.js";
+import { patternPaths } from "./destructured-params.js";
 import { escapeRegex } from "../shared/path-utils.js";
 import { buildWrapperIndex } from "../../../core/wrapper-index.js";
 
@@ -521,8 +521,16 @@ function rewriteWith(builder: UrlBuilder, args: string[]): string[] | null {
   const named = destructures && args.length === 1 ? objectArgument(args[0]!) : null;
   // `({ id: clubId }) => …`: the body's name is the binding, the call states the key.
   if (named && builder.params.length === 1) {
-    for (const { binding, key } of patternBindings(builder.params[0]!.name)) {
-      if (binding !== key && named.has(key) && !named.has(binding)) named.set(binding, named.get(key)!);
+    for (const { binding, path } of patternPaths(builder.params[0]!.name)) {
+      if (named.has(binding)) continue;
+      // `({ club: { id } })`: the value is read down the nested literals the call writes.
+      let at: Map<string, string> | null | undefined = named;
+      let value: string | undefined;
+      for (const [i, key] of path.entries()) {
+        value = at?.get(key);
+        at = i < path.length - 1 && value !== undefined ? objectArgument(value) : null;
+      }
+      if (value !== undefined && (path.length > 1 || binding !== path[0])) named.set(binding, value);
     }
   }
   const rewrites = named

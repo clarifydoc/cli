@@ -259,8 +259,11 @@ export class PhpExtractor extends FunctionClassExtractor {
     this.collectCiLoadedDeps(node, properties);
     this.collectFormRequestFields(extendsName, methods, body, properties);
     const staticProxyOf = kind === "class" ? facadeProxyOf(node, extendsName, this.fileAliases) : undefined;
-    // A trait's string constants: a facade using it may name its token through one (`static::TOKEN`).
-    const constantValues = node.type === "trait_declaration" ? proxyConstantValues(body ?? undefined) : undefined;
+    // A trait's, or a facade base's (`abstract class BaseFacade extends Facade`), string constants: a facade below it
+    // may name its token through one (`static::TOKEN`).
+    const constantValues = node.type === "trait_declaration" || (extendsName && /(?:^|\\)\w*Facade$/.test(extendsName))
+      ? proxyConstantValues(body ?? undefined)
+      : undefined;
 
     return {
       name,

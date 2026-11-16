@@ -808,6 +808,8 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     }
     const propBindings = hooks?.propBindings?.(tree, sourceText, rawSource, file.relativePath);
     if (propBindings && propBindings.length > 0) analysis.propBindings = propBindings;
+    const unreadBindings = hooks?.unreadPropBindings?.(tree);
+    if (unreadBindings && unreadBindings.length > 0) analysis.unreadPropBindings = unreadBindings;
     const functionProps = hooks?.functionProps?.(tree, sourceText, declared);
     if (functionProps && functionProps.length > 0) analysis.functionProps = [...(analysis.functionProps ?? []), ...functionProps];
     const subscriptions = hooks?.componentSubscriptions?.(tree, sourceText);

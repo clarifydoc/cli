@@ -24,12 +24,34 @@ const SINGLE_KEY = /^([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)$/;
 const PLAIN_NAME = /^[A-Za-z_$][\w$]*$/;
 
 /** The module a named import of `name` comes from, in the file's import list. */
-function importOfName(imports: readonly ImportInfo[], name: string): { source: string; name: string } | undefined {
+export function importOfName(imports: readonly ImportInfo[], name: string): { source: string; name: string } | undefined {
   for (const imp of imports) {
     if (imp.isType || imp.executes || imp.isDefault || imp.isNamespace || !imp.specifiers.includes(name)) continue;
     return { source: imp.source, name: imp.aliases?.[name] ?? name };
   }
   return undefined;
+}
+
+/** A module the project may own: written relative to the file, or by a source-root alias (`@/`, `~/`, `#`), never a package name. */
+export const PROJECT_SOURCE = /^(?:\.{1,2}(?:\/|$)|\/|@\/|~\/?|#)/;
+
+/** The names a file imports by name from a project module (`import { clubActions } from './actions'`), local → where from; type-only and run imports out. */
+export function importedBindings(imports: readonly ImportInfo[]): Map<string, { source: string; name: string }> {
+  const out = new Map<string, { source: string; name: string }>();
+  for (const imp of imports) {
+    if (imp.isType || imp.executes || imp.isDefault || imp.isNamespace || !PROJECT_SOURCE.test(imp.source)) continue;
+    for (const local of imp.specifiers) if (!out.has(local)) out.set(local, { source: imp.source, name: imp.aliases?.[local] ?? local });
+  }
+  return out;
+}
+
+/** A name a template hands a child that the file imports: a dispatch map there, for the resolver to read (`FunctionPropBinding.mapImport`). */
+export function importedMapProps(bindings: readonly FunctionPropBinding[], imports: readonly ImportInfo[]): FunctionPropBinding[] {
+  const bound = importedBindings(imports);
+  return bindings.flatMap((b) => {
+    const from = bound.get(b.handler);
+    return from ? [{ ...b, mapImport: from }] : [];
+  });
 }
 
 /**

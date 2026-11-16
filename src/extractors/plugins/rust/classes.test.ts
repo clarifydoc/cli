@@ -270,4 +270,28 @@ impl SquadIndex {
     expect(methods["local_only"]!.decorators ?? []).toEqual([]);
     expect(methods["rank"]!.decorators).toEqual(["uniffi::export"]);
   });
+
+  it("reads an exporting impl's attribute spread over several lines", () => {
+    const a = analyze(`
+#[wasm_bindgen(
+    js_name = Squad,
+)]
+impl SquadIndex {
+    #[wasm_bindgen(
+        js_name = openPayload,
+    )]
+    pub fn open_payload_js(&self) {}
+    pub fn search(&self) {}
+}
+
+#[derive(Debug)]
+impl Other {
+    pub fn plain(&self) {}
+}
+`);
+    const methods = byName(a.classes.find((c) => c.name === "SquadIndex")!.methods);
+    expect(methods["search"]!.decorators).toEqual(["wasm_bindgen"]);
+    expect(methods["open_payload_js"]!.decorators?.[0]).toMatch(/^wasm_bindgen/);
+    expect(byName(a.classes.find((c) => c.name === "Other")!.methods)["plain"]!.decorators ?? []).toEqual([]);
+  });
 });

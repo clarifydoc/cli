@@ -595,44 +595,86 @@ function propNamedAction(call: CallInfo): string | null {
  * child file + prop → name → the binding sites. A user handing on a prop of its own (`:fetch-key="fetchKey"`)
  * hands on what its own users bind, four levels up, kept to the binding on the child's tag.
  */
-export function propLiterals(analyses: FileAnalysis[], filePathMap: Map<string, string>, byPath: Map<string, FileAnalysis>, ctx: FactoryContext): (child: string, prop: string) => Map<string, Usage[]> {
+export function propLiterals(analyses: FileAnalysis[], filePathMap: Map<string, string>, byPath: Map<string, FileAnalysis>, ctx: FactoryContext): PropLiterals {
   const globals = globalComponentFiles(analyses, filePathMap);
   const autoImported = autoImportedComponents(analyses);
   const bound = new Map<string, Array<{ parent: string; binding: PropBinding }>>();
+  /** Child + prop keys some user binds to a value that is no name: the set a binding reads is then not the whole set. */
+  const unreadBy = new Set<string>();
   for (const parent of analyses) {
     if (!parent.propBindings?.length) continue;
     const subByKey = new Map<string, string>([...(autoImported.get(parent.projectId ?? "") ?? []), ...globals]);
     for (const sub of parent.subComponents ?? []) if (sub.importSource && !sub.global) subByKey.set(tagKey(sub.name), sub.importSource);
     for (const b of parent.propBindings) {
-      if (b.origin.kind !== "literal" && b.origin.kind !== "prop" && b.origin.kind !== "constant") continue;
       const src = subByKey.get(tagKey(b.component));
       const child = src ? resolveTarget(src, parent.filePath, filePathMap) : null;
       if (!child || !byPath.has(child)) continue;
       const k = `${child}\0${b.prop}`;
+      // A value of another origin (a route parameter, a parameter of the user's own) is bound, and is no literal.
+      if (b.origin.kind !== "literal" && b.origin.kind !== "prop" && b.origin.kind !== "constant") {
+        unreadBy.add(k);
+        continue;
+      }
       (bound.get(k) ?? bound.set(k, []).get(k)!).push({ parent: parent.filePath, binding: b });
     }
   }
-  const walk = (child: string, prop: string, depth: number, seen: Set<string>, out: Map<string, Usage[]>, via?: Usage): void => {
+  // Bindings whose value the user's file did not show at all (`:kind="row.kind"`).
+  for (const parent of analyses) {
+    if (!parent.unreadPropBindings?.length) continue;
+    const subByKey = new Map<string, string>([...(autoImported.get(parent.projectId ?? "") ?? []), ...globals]);
+    for (const sub of parent.subComponents ?? []) if (sub.importSource && !sub.global) subByKey.set(tagKey(sub.name), sub.importSource);
+    for (const u of parent.unreadPropBindings) {
+      const src = subByKey.get(tagKey(u.component));
+      const child = src ? resolveTarget(src, parent.filePath, filePathMap) : null;
+      if (child && byPath.has(child)) unreadBy.add(`${child}\0${u.prop}`);
+    }
+  }
+  const walk = (child: string, prop: string, depth: number, seen: Set<string>, out: Map<string, Usage[]>, state: { unread: boolean }, via?: Usage): void => {
     const k = `${child}\0${prop}`;
-    if (depth > 4 || seen.has(k)) return;
+    if (seen.has(k)) return;
+    // Beyond the levels followed, what the users bind is unknown.
+    if (depth > 4) {
+      state.unread = true;
+      return;
+    }
     seen.add(k);
+    if (unreadBy.has(k)) state.unread = true;
     for (const { parent, binding } of bound.get(k) ?? []) {
       const usage = via ?? { file: parent, line: binding.line };
-      if (binding.origin.kind === "prop") walk(parent, binding.origin.name, depth + 1, seen, out, usage);
+      if (binding.origin.kind === "prop") walk(parent, binding.origin.name, depth + 1, seen, out, state, usage);
       else if (binding.origin.kind === "literal" || binding.origin.kind === "constant") {
         // A constant (`:kind="Kind.Club"`) is the value the module declaring it gives.
         const value = binding.origin.kind === "literal" ? binding.origin.value : constantValue(byPath.get(parent)!, binding.origin.ref, ctx);
-        if (value === null) continue;
+        if (value === null) {
+          state.unread = true;
+          continue;
+        }
         const list = out.get(value) ?? out.set(value, []).get(value)!;
         if (!list.some((u) => u.file === usage.file && u.line === usage.line)) list.push(usage);
       }
     }
   };
-  return (child, prop) => {
+  const lookup = ((child, prop) => {
     const out = new Map<string, Usage[]>();
-    walk(child, prop, 0, new Set(), out);
+    walk(child, prop, 0, new Set(), out, { unread: false });
     return out;
+  }) as PropLiterals;
+  lookup.complete = (child, prop) => {
+    const state = { unread: false };
+    walk(child, prop, 0, new Set(), new Map(), state);
+    return !state.unread;
   };
+  return lookup;
+}
+
+/**
+ * What a component's users bind a prop to: the names (a literal, a constant, or what the user's own users bind) with the
+ * binding sites; `complete` says whether every binding was read — a user binding a value that is no name (`:kind="row.kind"`,
+ * a route parameter) could pick what no read name says, so a choice made from the names alone must not exclude the rest.
+ */
+export interface PropLiterals {
+  (child: string, prop: string): Map<string, Usage[]>;
+  complete(child: string, prop: string): boolean;
 }
 
 function distinct(hits: Array<Hit | null>): Hit[] {

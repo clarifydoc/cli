@@ -30,6 +30,17 @@ interface Block extends TerraformBlockFact {
 
 const key = (type: string, name: string) => `${type}.${name}`;
 
+/**
+ * The value an environment variable expression states: a string literal, or the name / id of a DynamoDB table
+ * resource whose `name` is literal. A variable, a local or an interpolation is unknown — never a guess.
+ */
+function envValue(expr: string, ref: (expr: string | undefined, type: string) => Block | undefined): string | null {
+  const literal = hclString(expr);
+  if (literal !== null) return literal.length > 0 ? literal : null;
+  const only = /^\s*aws_dynamodb_table\.[A-Za-z_][\w-]*\.(?:name|id)\s*$/.test(expr);
+  return only ? hclString(ref(expr, "aws_dynamodb_table")?.attrs.name) : null;
+}
+
 export const terraformRoutes: RouteResolver = {
   id: "terraform-api-gateway",
   languages: ["terraform", "typescript", "javascript", "python", "ruby"],
@@ -91,6 +102,31 @@ export const terraformRoutes: RouteResolver = {
           const fn = ref(integration?.attrs.uri, "aws_lambda_function");
           const auth = hclString(b.attrs.authorization);
           emit(b, verb === "ANY" ? null : verb.toUpperCase(), "/" + parts.join("/").replace(/\{([^}+]+)\+\}/g, "*"), fn, auth && auth !== "NONE" ? { middleware: [auth], auth: { policies: [], roles: [], schemes: [auth], anonymous: false, inherited: false } } : {});
+        }
+      }
+      // A table a data source reads from an environment variable takes the value the function that runs the module sets.
+      const values = new Map<FileAnalysis, Map<string, Set<string>>>();
+      for (const fn of blocks.values()) {
+        if (fn.type !== "aws_lambda_function" || !fn.env) continue;
+        const spec = handlerOf(fn);
+        const hit = spec ? lambdaModuleHandler(spec, dir, ctx) : null;
+        if (!hit) continue;
+        const names = values.get(hit.file) ?? values.set(hit.file, new Map()).get(hit.file)!;
+        for (const [name, expr] of Object.entries(fn.env)) {
+          const value = envValue(expr, ref);
+          if (value === null) continue;
+          (names.get(name) ?? names.set(name, new Set()).get(name)!).add(value);
+        }
+      }
+      for (const [file, names] of values) {
+        for (const ds of file.dataSources) {
+          if (!ds.envRef || ds.target) continue;
+          const set = names.get(ds.envRef);
+          if (set?.size !== 1) continue;
+          const [table] = set;
+          ds.target = table!;
+          ds.entity = table!;
+          delete ds.envRef;
         }
       }
     }

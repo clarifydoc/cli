@@ -51,7 +51,14 @@ export function resolveRustImport(importingFile: string, source: string, specifi
   if (base === null) {
     base = selfDirOf(importingFile, ctx);
     rest = segs;
-    if (!ctx.files.has(join(base, `${segs[0]}.rs`)) && !ctx.files.has(join(base, `${segs[0]}/mod.rs`))) return null;
+    if (!ctx.files.has(join(base, `${segs[0]}.rs`)) && !ctx.files.has(join(base, `${segs[0]}/mod.rs`))) {
+      // A file loaded by `#[path]` holds its children as a `mod.rs` does: the `mod inner;` it declares itself,
+      // which no `foo/inner.rs` answers, is `inner.rs` beside it.
+      const beside = importingFile.includes("/") ? importingFile.slice(0, importingFile.lastIndexOf("/")) : "";
+      const declared = ctx.namedImportOf?.(importingFile, segs[0]!)?.source === "self";
+      if (!declared || (!ctx.files.has(join(beside, `${segs[0]}.rs`)) && !ctx.files.has(join(beside, `${segs[0]}/mod.rs`)))) return null;
+      base = beside;
+    }
   }
   // `super::super::x`: each `super` one module — one directory — up.
   const up = (d: string) => (d.includes("/") ? d.slice(0, d.lastIndexOf("/")) : "");

@@ -38,6 +38,11 @@ export interface RouterFunctionRules {
   unitOf(filePath: string): string;
   /** The `${unit}#${fn}` key a callee names from the caller, among the known router functions of that name. */
   target(callee: string, caller: FileAnalysis, keysNamed: (fn: string) => string[]): string | null;
+  /**
+   * The functions a list of guard texts names (`RouteInfo.middlewareCalls`), for the guards a mount adds to a route:
+   * the symbol linker joins what they read to the route's flows. Absent: a mount's guards name no calls.
+   */
+  guardCalls?(guards: readonly string[]): string[];
 }
 
 export const joinRoutePrefix = (prefix: string, path: string): string => "/" + (prefix + "/" + path).split("/").filter(Boolean).join("/");
@@ -45,6 +50,8 @@ export const joinRoutePrefix = (prefix: string, path: string): string => "/" + (
 interface Mount {
   prefix: string;
   guards: GuardAttr[];
+  /** The file each guard is written in (parallel to `guards`): its callee names resolve there. */
+  files: string[];
 }
 
 export function resolveRouterFunctions(analyses: FileAnalysis[], rules: RouterFunctionRules): void {
@@ -73,7 +80,7 @@ export function resolveRouterFunctions(analyses: FileAnalysis[], rules: RouterFu
   }
   const keysNamed = (fn: string) => [...(byName.get(fn) ?? [])];
 
-  const incoming = new Map<string, Array<{ from: string | null } & Mount>>();
+  const incoming = new Map<string, Array<{ from: string | null; file: string; prefix: string; guards: GuardAttr[] }>>();
   for (const a of analyses) {
     for (const f of a.routeFacts ?? []) {
       if (f.kind !== ROUTER_CALL) continue;
@@ -81,7 +88,7 @@ export function resolveRouterFunctions(analyses: FileAnalysis[], rules: RouterFu
       const target = rules.target(call.callee, a, keysNamed);
       if (!target) continue;
       const from = call.relative && f.owner ? `${rules.unitOf(a.filePath)}#${f.owner}` : null;
-      (incoming.get(target) ?? incoming.set(target, []).get(target)!).push({ from, prefix: call.prefix, guards: call.guards });
+      (incoming.get(target) ?? incoming.set(target, []).get(target)!).push({ from, file: a.filePath, prefix: call.prefix, guards: call.guards });
     }
   }
   if (incoming.size === 0) return;
@@ -92,12 +99,12 @@ export function resolveRouterFunctions(analyses: FileAnalysis[], rules: RouterFu
     const cached = memo.get(key);
     if (cached) return cached;
     const edges = incoming.get(key);
-    if (!edges || onStack.has(key)) return [{ prefix: "", guards: [] }];
+    if (!edges || onStack.has(key)) return [{ prefix: "", guards: [], files: [] }];
     onStack.add(key);
     const out: Mount[] = [];
     for (const e of edges) {
-      for (const b of e.from ? mounts(e.from) : [{ prefix: "", guards: [] }]) {
-        out.push({ prefix: joinRoutePrefix(b.prefix, e.prefix), guards: [...b.guards, ...e.guards] });
+      for (const b of e.from ? mounts(e.from) : [{ prefix: "", guards: [], files: [] }]) {
+        out.push({ prefix: joinRoutePrefix(b.prefix, e.prefix), guards: [...b.guards, ...e.guards], files: [...b.files, ...e.guards.map(() => e.file)] });
       }
     }
     onStack.delete(key);
@@ -112,15 +119,22 @@ export function resolveRouterFunctions(analyses: FileAnalysis[], rules: RouterFu
     const owner = `fn:${key.slice(key.indexOf("#") + 1)}`;
     const at = mounts(key);
     for (const a of files) {
-      a.routes = a.routes.flatMap((r): RouteInfo[] => (r.owner === owner ? at.map((m) => withMount(r, m)) : [r]));
+      a.routes = a.routes.flatMap((r): RouteInfo[] => (r.owner === owner ? at.map((m) => withMount(r, m, rules)) : [r]));
     }
   }
 }
 
-function withMount(r: RouteInfo, m: Mount): RouteInfo {
+function withMount(r: RouteInfo, m: Mount, rules: RouterFunctionRules): RouteInfo {
   const row: RouteInfo = { ...r, path: joinRoutePrefix(m.prefix, r.path) };
   if (m.guards.length === 0) return row;
   row.middleware = [...m.guards.map((g) => g.text), ...r.middleware];
+  // What the mount's guards name is resolved where the mount is written, not in the route's own file.
+  const named: Array<{ file: string; calls: string[] }> = [];
+  for (const file of new Set(m.files)) {
+    const calls = rules.guardCalls?.(m.guards.filter((_, i) => m.files[i] === file).map((g) => g.text)) ?? [];
+    if (calls.length > 0) named.push({ file, calls });
+  }
+  if (named.length > 0) row.inheritedMiddleware = [...named, ...(r.inheritedMiddleware ?? [])];
   const authGuards = m.guards.filter((g) => (g.policies?.length ?? 0) + (g.roles?.length ?? 0) + (g.schemes?.length ?? 0) > 0);
   const inherited = buildAuth(authGuards, []);
   if (inherited) {

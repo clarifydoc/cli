@@ -13,7 +13,8 @@ import { constantValue, propLiterals, type Usage } from "./vuex.js";
  * The values the component's users bind its prop to (`propLiterals`: a literal, a constant, or a prop of their own
  * handed on) are matched with the value each entry's key has (`'club'` as written, `Kind.Club` read in the module
  * declaring the enum); an entry no binding names is left out, and the ones kept carry the binding sites. Null when
- * an entry's key cannot be read, or no binding names any entry: the read then reaches every entry.
+ * an entry's key cannot be read, no binding names any entry, or a user binds a value that is no name (`:kind="row.kind"`,
+ * `FileAnalysis.unreadPropBindings`): the read then reaches every entry.
  */
 export function recordChoice(analyses: readonly FileAnalysis[]): RecordChoice {
   const all = [...analyses];
@@ -35,6 +36,8 @@ export function recordChoice(analyses: readonly FileAnalysis[]): RecordChoice {
       values.set(key, v);
     }
     bound ??= propLiterals(all, ctx.filePathMap, byPath, ctx);
+    // A user binding a value no name is read for may pick any entry: the read reaches every entry (the decision for an unreadable binding).
+    if (!bound.complete(file, index.name)) return null;
     const usages = bound(file, index.name);
     const out = new Map<string, Usage[]>();
     for (const [key, value] of values) {

@@ -1,8 +1,8 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { FunctionPropBinding, InteractiveElementInfo, PropBinding } from "../../../types/analysis.js";
 import { expressionOrigin, templateValueOrigin } from "./arg-origins.js";
-import { derivedMemberKeys, derivedObjectAt, libraryObjectAt } from "./library-callbacks.js";
-import { dispatchMapAt } from "./dispatch-map-props.js";
+import { derivedMemberKeys, derivedObjectAt, importedBinding, libraryObjectAt } from "./library-callbacks.js";
+import { dispatchMapAt, PROJECT_SOURCE } from "./dispatch-map-props.js";
 import { heldFunction } from "./held-functions.js";
 import { namesFunction } from "./member-values.js";
 import { inlineCallbacksOf, literalCallbacksOf } from "./interactive-elements.js";
@@ -14,7 +14,9 @@ import { inlineCallbacksOf, literalCallbacksOf } from "./interactive-elements.js
  * pass follows a child's `props.clubId` up through them to a route parameter.
  */
 export function propBindings(tree: Tree, sourceText: string, rawSource: string, filePath: string): PropBinding[] {
-  if (filePath.endsWith(".vue")) return vueBindings(tree, rawSource);
+  const unread: Unread[] = [];
+  unreadOf.set(tree, unread);
+  if (filePath.endsWith(".vue")) return vueBindings(tree, rawSource, unread);
   if (!/<[A-Z][\w.]*[\s/>]/.test(sourceText)) return [];
   const out: PropBinding[] = [];
   const visit = (n: Node): void => {
@@ -25,15 +27,34 @@ export function propBindings(tree: Tree, sourceText: string, rawSource: string, 
           if (attr?.type !== "jsx_attribute") continue;
           const name = attr.namedChild(0);
           const value = attr.namedChild(1);
-          if (name?.type !== "property_identifier" || value?.type !== "jsx_expression") continue;
+          if (name?.type !== "property_identifier") continue;
+          // What React itself takes (`key`, `ref`, `className`, `children`) is no prop to choose by.
+          const reserved = JSX_RESERVED.has(name.text);
+          // `kind="club"`: a literal is no binding of ours (`propBindings` keeps none in JSX), but a name a choice by the bound values would miss.
+          if (value?.type === "string") {
+            if (!reserved && NAME_LITERAL.test(value.text.slice(1, -1))) unread.push({ component: tag, prop: name.text, line: attr.startPosition.row + 1 });
+            continue;
+          }
+          if (value?.type !== "jsx_expression") continue;
           const expr = value.namedChild(0);
           const found = expr ? expressionOrigin(expr) : null;
+          // A value no origin is read for, never a function written in place: a pass choosing by the bound values must not rule it out.
+          const noteUnread = () => {
+            if (expr && !reserved && !NOT_A_NAME.has(expr.type)) unread.push({ component: tag, prop: name.text, line: attr.startPosition.row + 1 });
+          };
           // `kind={Kind.Club}`: a constant another module declares.
           if (!found && expr && /^[A-Za-z_$][\w$]*(?:\.[\w$]+)*$/.test(expr.text) && importsName(tree, expr.text)) {
             out.push({ component: tag, prop: name.text, line: attr.startPosition.row + 1, origin: { kind: "constant", ref: expr.text } });
             continue;
           }
-          if (!found || found.origin.kind === "literal") continue;
+          if (!found) {
+            noteUnread();
+            continue;
+          }
+          if (found.origin.kind === "literal") {
+            if (!reserved && NAME_LITERAL.test(found.origin.value)) unread.push({ component: tag, prop: name.text, line: attr.startPosition.row + 1 });
+            continue;
+          }
           out.push({ component: tag, prop: name.text, line: attr.startPosition.row + 1, origin: found.origin, ...(found.transform ? { transform: found.transform } : {}), ...(found.derivation ? { derivation: found.derivation } : {}) });
         }
       }
@@ -42,6 +63,21 @@ export function propBindings(tree: Tree, sourceText: string, rawSource: string, 
   };
   visit(tree.rootNode);
   return out;
+}
+
+/** Expressions that are no name a choice could be made by: a function written in place, a number, a boolean, null. */
+const NOT_A_NAME: ReadonlySet<string> = new Set(["arrow_function", "function_expression", "number", "true", "false", "null"]);
+
+const JSX_RESERVED: ReadonlySet<string> = new Set(["key", "ref", "className", "children"]);
+
+type Unread = { component: string; prop: string; line: number };
+/** The unread bindings of the tree `propBindings` last read, for `unreadPropBindings`. */
+const unreadOf = new WeakMap<Tree, Unread[]>();
+
+/** The prop bindings of the file `propBindings` just read whose value could not be read, once per component and prop. */
+export function unreadPropBindings(tree: Tree): Unread[] {
+  const seen = new Set<string>();
+  return (unreadOf.get(tree) ?? []).filter((u) => !seen.has(`${u.component}\0${u.prop}`) && !!seen.add(`${u.component}\0${u.prop}`));
 }
 
 /**
@@ -77,6 +113,9 @@ export function jsxFunctionProps(tree: Tree, sourceText: string, declared: Reado
         out.push({ component: tag, prop: `${name.text}.${h.key}`, handler: h.name, line: attr.startPosition.row + 1, ...(h.handlerImport ? { handlerImport: h.handlerImport } : {}) });
       }
       if (held) continue;
+      // `<ClubTable actions={clubActions} />` with `clubActions` imported: a dispatch map there, which the resolver reads.
+      const imported = expr?.type === "identifier" && !declared.has(expr.text) ? importedBinding(expr.tree, expr.text) : null;
+      if (imported && imported.imported !== "default" && PROJECT_SOURCE.test(imported.source)) out.push({ component: tag, prop: name.text, handler: expr!.text, line: attr.startPosition.row + 1, mapImport: { source: imported.source, name: imported.imported } });
       // `order={orderKit}`, `order={this.orderKit}`, or an arrow passing it on: `order={(size) => orderKit(size)}`.
       const handler = expr ? handedFunction(expr.type === "arrow_function" || expr.type === "function_expression" ? firstCallee(expr) : expr) : null;
       if (handler && declared.has(handler.replace(/^this\./, ""))) out.push({ component: tag, prop: name.text, handler, line: attr.startPosition.row + 1 });
@@ -111,6 +150,8 @@ function firstCallee(fn: Node): Node | null {
  * kind to pick (`player`) —, never prose, a CSS value or a number: what a literal binding is kept for.
  */
 const NAME_LITERAL = /^(?!(?:true|false|null|undefined)$)[A-Za-z_$][\w$]*(?:\/[A-Za-z_$][\w$]*)*$/;
+/** An arrow or function expression written in markup: a function handed down, no value to choose by. */
+const INLINE_FN = /^(?:async\s+)?(?:\([^()]*\)|[A-Za-z_$][\w$]*)\s*=>|^(?:async\s+)?function\b/;
 /** Attributes every tag takes, never a prop the component declares. */
 const NOT_PROPS: ReadonlySet<string> = new Set(["key", "ref", "class", "style", "is", "id", "slot"]);
 
@@ -118,7 +159,7 @@ const NOT_PROPS: ReadonlySet<string> = new Set(["key", "ref", "class", "style", 
  * `:club-id="clubId"` / `v-bind:club-id="…"` on a component tag (PascalCase or kebab-case with a hyphen), and a
  * name handed as a literal — `fetch-key="squad/fetchPlayers"`, `:action-name="'clubs/update'"` (`NAME_LITERAL`).
  */
-function vueBindings(tree: Tree, raw: string): PropBinding[] {
+function vueBindings(tree: Tree, raw: string, unread: Unread[]): PropBinding[] {
   const start = raw.search(/<template\b/i);
   const end = raw.lastIndexOf("</template>");
   if (start < 0 || end < start) return [];
@@ -148,18 +189,35 @@ function vueBindings(tree: Tree, raw: string): PropBinding[] {
         if (NAME_LITERAL.test(quoted[2]!)) out.push({ component: tag[1]!, prop, line: lineAt(a.offset), origin: { kind: "literal", value: quoted[2]! } });
         continue;
       }
-      if (!anchor) continue;
+      // A value no origin is read for: a pass choosing by the bound values must not rule it out.
+      const noteUnread = () => {
+        if (!INLINE_FN.test(value) && !/^(?:-?\d[\d.]*|true|false|null|undefined)$/.test(value)) unread.push({ component: tag[1]!, prop, line: lineAt(a.offset) });
+      };
+      if (!anchor) {
+        noteUnread();
+        continue;
+      }
       declared ??= declaredProps(tree.rootNode);
       const wrapped = /^(Number|String|parseInt|encodeURIComponent)\(\s*(.*?)\s*\)$/.exec(value);
       const chain = wrapped ? wrapped[2]! : value;
-      if (!/^[A-Za-z_$][\w$]*(?:\.[\w$]+)*$/.test(chain)) continue;
+      if (!/^[A-Za-z_$][\w$]*(?:\.[\w$]+)*$/.test(chain)) {
+        noteUnread();
+        continue;
+      }
       const found = templateValueOrigin(anchor, chain.split("."), declared);
       // `:kind="Kind.Club"`: a constant (an enum member) the script imports.
       if (!found && !wrapped && importsName(tree, chain)) {
         out.push({ component: tag[1]!, prop, line: lineAt(a.offset), origin: { kind: "constant", ref: chain } });
         continue;
       }
-      if (!found || found.origin.kind === "literal") continue;
+      if (!found) {
+        noteUnread();
+        continue;
+      }
+      if (found.origin.kind === "literal") {
+        if (NAME_LITERAL.test(found.origin.value)) noteUnread();
+        continue;
+      }
       out.push({ component: tag[1]!, prop, line: lineAt(a.offset), origin: found.origin, ...(wrapped ? { transform: wrapped[1]! } : {}), ...(found.derivation ? { derivation: found.derivation } : {}) });
     }
   }
@@ -231,7 +289,7 @@ function declaredProps(root: Node): Set<string> {
  * the functions the array's objects hold under each key, handed to the child as `extra.run`, so the child's loop over its
  * prop (`v-for="x in extra"` ... `x.run()`, `ScopeEntry.fromProp`) runs them. `handsOn` accepts the file's own functions.
  */
-export function vueArrayFunctionProps(template: string, raw: string, script: string, handsOn: (name: string) => boolean): FunctionPropBinding[] {
+export function vueArrayFunctionProps(template: string, raw: string, script: string, handsOn: (name: string) => boolean, heldNames: readonly string[] = []): FunctionPropBinding[] {
   if (!/(?:^|\s)(?::|v-bind:)[\w-]+="/.test(template)) return [];
   const out: FunctionPropBinding[] = [];
   const start = raw.indexOf(template);
@@ -244,6 +302,8 @@ export function vueArrayFunctionProps(template: string, raw: string, script: str
       const line = raw.slice(0, start + tag.index!).split("\n").length;
       for (const [key, names] of Object.entries(found)) {
         for (const handler of names) {
+          // A callback written in place in a declared array is named up to its line (`<rows[].run@`): each of them, by its held name.
+          if (handler.endsWith("@")) for (const held of heldNames) if (held.startsWith(handler)) out.push({ component: tag[1]!, prop: `${prop}.${key}`, handler: held, line });
           if (!handler.endsWith("@") && handsOn(handler)) out.push({ component: tag[1]!, prop: `${prop}.${key}`, handler, line });
         }
       }

@@ -2,7 +2,7 @@ import type { FileAnalysis } from "../../../types/analysis.js";
 import type { RouteResolver } from "../../route-resolvers/base.js";
 import type { ProjectContext } from "../../../types/project.js";
 import { ROUTER_CALL, joinRoutePrefix, resolveRouterFunctions, type RouterCall } from "../shared/router-functions.js";
-import { ROUTER_VAR, type RouterVar } from "./routes.js";
+import { ROUTER_VAR, middlewareCallees, type RouterVar } from "./routes.js";
 
 /**
  * Go routes registered by a function on the router it is handed.
@@ -150,6 +150,6 @@ export const goRouterFnResolver: RouteResolver = {
       a.routes = a.routes.map((r) => (r.path.includes("${") ? { ...r, path: fillHoles(r.path, a.filePath, ctx) } : r));
     }
     applyPackageRouters(analyses);
-    resolveRouterFunctions(analyses, { unitOf: dirOf, target: targetOf });
+    resolveRouterFunctions(analyses, { unitOf: dirOf, target: targetOf, guardCalls: middlewareCallees });
   },
 };

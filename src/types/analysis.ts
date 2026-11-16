@@ -466,6 +466,12 @@ export interface FileAnalysis {
    */
   contextValues?: ContextValue[];
   propBindings?: PropBinding[];
+  /**
+   * Props a tag of this file binds to a value no origin could be read for (`:kind="row.kind"`, `kind={pick(x)}`): the
+   * child's name, the prop and the tag's line. A pass that narrows what a component's users choose by the values they
+   * bind (`recordChoice`) must not exclude what such a user could pick.
+   */
+  unreadPropBindings?: Array<{ component: string; prop: string; line: number }>;
   /** Props a component's watchers re-run on, and the locals a Vue parent binds them to (`prop-flows.ts`). */
   propFlows?: PropFlows;
   /**
@@ -916,8 +922,10 @@ export interface ImportInfo {
    * (Elixir `except: [kick: 1]`, by name).
    * `shared`: the module is part of this file's own scope, and this file of
    * its (a Dart `part`) — each sees the other's declarations and imports.
+   * `transitive`: what the module itself brings in by such an import is in scope here too (a Vue mixin's own
+   * `mixins: [base]`), followed through the chain, cycles cut.
    */
-  inScope?: { module: string; names?: string[]; except?: string[]; shared?: true };
+  inScope?: { module: string; names?: string[]; except?: string[]; shared?: true; transitive?: true };
 }
 
 /**
@@ -2108,6 +2116,13 @@ export interface RouteInfo {
    * flows (`DataFlowPath.viaMiddleware`). Router-level ones (`Use`, a group's) are listed on every route they guard.
    */
   middlewareCalls?: string[];
+  /**
+   * The functions the guards a route inherits from where its router function is MOUNTED name (Go
+   * `api := r.Group("/api", auth.Required()); clubs.Register(api)`), with the file each mount is written in: the names
+   * resolve there — its imports — not in the file declaring the route. Linked and joined to the route's flows as
+   * `middlewareCalls` are.
+   */
+  inheritedMiddleware?: Array<{ file: string; calls: string[] }>;
   /**
    * API routes, with a coverage report: the lines the tests ran in the handler and the functions it calls
    * (three calls deep), over the functions the report counts. `covered: 0` is a route no test runs.
@@ -3446,7 +3461,20 @@ export interface PropFlows {
     line: number;
     local: string;
     writes: Array<{ function: string; line: number; spelling: string }>;
+    /**
+     * What a React parent's `useState` holds under `local` (`const [api] = useState(new ClubApi())`,
+     * `useState<ClubApi>()`, `useState(() => useClubApi())`): the class, or the factory whose result it is.
+     */
+    state?: { type?: string; factory?: string };
+    /** The function around a React tag, whose own typed locals `local` is read from. */
+    function?: string;
   }>;
+  /**
+   * Calls of a function the file declares or imports, by plain name (`refresh(api)`): per argument position the local's
+   * name, null where the argument is anything else. The callee's `any` or untyped parameter takes the type every such
+   * call agrees on. A React tag's use is a binding with prop `*`, a spread on it prop `...`.
+   */
+  argLocals?: Array<{ callee: string; line: number; function: string; args: Array<string | null>; reference?: true }>;
 }
 
 /** A function a component's markup hands a child by name as a prop (`FileAnalysis.functionProps`). */
@@ -3465,6 +3493,12 @@ export interface FunctionPropBinding {
    * handed down as a prop, `{ save: saveClub }` with `saveClub` imported): the function is the module's export of `name`.
    */
   handlerImport?: { source: string; name: string };
+  /**
+   * `handler` names a binding the file imports (`<ClubTable :actions="clubActions" />`, `clubActions` from another
+   * module): when that module's export is a dispatch map (`{ save: saveClub }`, a re-export followed), each of its
+   * functions is a function prop of its own (`actions.save`); otherwise the binding means nothing.
+   */
+  mapImport?: { source: string; name: string };
 }
 
 /** A function a component's `<slot>` outlet hands its content (`FileAnalysis.slotFunctions`). */

@@ -2,6 +2,7 @@ import type { LanguagePluginMeta } from "../../../types/language-plugin.js";
 import { erbSpec, extractErbView } from "./index.js";
 import { erbManifest } from "./manifest.js";
 import { RailsViewResolver } from "./rails-view-resolver.js";
+import { railsOwnView } from "./own-view.js";
 
 /**
  * Rails ERB views: the screens of a server-rendered Rails app — its forms,
@@ -14,4 +15,5 @@ export const erbMeta: LanguagePluginMeta = {
   regexSpec: erbSpec,
   preprocess: (rawSource) => ({ sourceText: rawSource, language: "erb", postExtract: (analysis, raw) => extractErbView(analysis, raw) }),
   dispatchResolvers: [new RailsViewResolver()],
+  routeResolvers: [railsOwnView],
 };

@@ -171,6 +171,65 @@ function urlOfLocal(lines: string[], i: number, name: string | undefined): strin
   return null;
 }
 
+/**
+ * `club_url(&self.base, id)` handed to a client verb, the helper `fn club_url(base: &str, id: u32) -> String`
+ * this file declares with a lone `format!` as its body: its template with the arguments in place (a literal as
+ * written, any other a `${…}` hole). `undefined` when the verb's argument is no call; null when it is one this
+ * file cannot read (another file's helper, a body that does more than format).
+ */
+function urlOfHelperCall(lines: string[], line: string, verbAt: number): string | null | undefined {
+  const call = /^\s*&?\s*([A-Za-z_]\w*)\s*\(/.exec(line.slice(line.indexOf("(", verbAt) + 1));
+  if (!call) return undefined;
+  const rest = line.slice(line.indexOf("(", verbAt) + 1 + call[0].length);
+  let depth = 1;
+  let end = -1;
+  for (let k = 0; k < rest.length && end < 0; k++) {
+    if (rest[k] === "(") depth++;
+    else if (rest[k] === ")" && --depth === 0) end = k;
+  }
+  if (end < 0) return null;
+  const args = splitTopLevel(rest.slice(0, end)).map((a) => a.trim().replace(/^&\s*(?:mut\s+)?/, ""));
+  const name = call[1]!;
+  const text = lines.join("\n");
+  const head = new RegExp(`(?:^|\\n)[ \\t]*(?:pub(?:\\([^)]*\\))?\\s+)?(?:async\\s+)?fn\\s+${name}\\s*(?:<[^>]*>)?\\s*\\(`).exec(text);
+  // One declaration of the name only: a namesake in an `impl` or another module is no telling which one a call means.
+  if (!head || text.slice(head.index + head[0].length).search(new RegExp(`\\bfn\\s+${name}\\s*[(<]`)) >= 0) return null;
+  const paramsEnd = closingAt(text, head.index + head[0].length - 1);
+  const bodyStart = paramsEnd < 0 ? -1 : /^[^{;]*\{/.exec(text.slice(paramsEnd + 1))?.[0].length ?? -1;
+  if (bodyStart < 0) return null;
+  const params = splitTopLevel(text.slice(head.index + head[0].length, paramsEnd)).map((p) => p.trim().split(":")[0]!.trim().replace(/^mut\s+/, "")).filter((p) => p && p !== "self" && !/^&?\s*(?:mut\s+)?self$/.test(p));
+  if (params.length !== args.length) return null;
+  // The body: exactly one `format!(…)`, as the tail expression or a `return`.
+  const open = paramsEnd + bodyStart;
+  const close = closingAt(text, open);
+  if (close < 0) return null;
+  const body = text.slice(open + 1, close);
+  const fmt = /^\s*(?:return\s+)?format!\s*\(\s*"([^"]*)"\s*,?([\s\S]*)\)\s*;?\s*$/.exec(body);
+  if (!fmt) return null;
+  const rendered = renderFormat(fmt[1]!, splitTopLevel(fmt[2]!));
+  if (rendered === null) return null;
+  return rendered.replace(/\$\{([A-Za-z_]\w*)\}/g, (hole, v: string) => {
+    const at = params.indexOf(v);
+    if (at < 0) return hole;
+    const a = args[at]!;
+    const lit = /^"([^"]*)"$/.exec(a);
+    return lit ? lit[1]! : /^\d+$/.test(a) ? a : `\${${a.replace(/\s+/g, "")}}`;
+  });
+}
+
+/** The index of the bracket closing the one at `open` (`(`, `{` or `[`), string literals skipped; -1 when none. */
+function closingAt(text: string, open: number): number {
+  let depth = 0;
+  for (let k = open; k < text.length; k++) {
+    const c = text[k]!;
+    if (c === '"') {
+      for (k++; k < text.length && text[k] !== '"'; k++) if (text[k] === "\\") k++;
+    } else if (c === "(" || c === "{" || c === "[") depth++;
+    else if ((c === ")" || c === "}" || c === "]") && --depth === 0) return k;
+  }
+  return -1;
+}
+
 function renderFormat(template: string, args: string[]): string | null {
   let n = 0;
   let literal = /[^{}]/.test(template.replace(/\{[^}]*\}/g, ""));
@@ -267,7 +326,8 @@ export function extractRustDataSources(lines: string[]): DataSourceInfo[] {
     if (req) {
       const name = /\(\s*&?([a-z_]\w*)\s*[),]/.exec(line.slice(req.index ?? 0))?.[1];
       // A local's URL, else the wrapper's own parameter (`client.get(url)` in `fn fetch(url: &str)`) as a hole its callers fill.
-      const target = req[2] ?? urlOfLocal(lines, i, name) ?? (name && paramsAt(i)?.has(name) ? `\${${name}}` : null);
+      const viaHelper = req[2] === undefined ? urlOfHelperCall(lines, line, req.index ?? 0) : undefined;
+      const target = req[2] ?? (viaHelper !== undefined ? viaHelper : urlOfLocal(lines, i, name) ?? (name && paramsAt(i)?.has(name) ? `\${${name}}` : null));
       sources.push({ kind: "api-call", name: req[1]!.toUpperCase(), target, calls: [], line: lineNo });
       continue;
     }

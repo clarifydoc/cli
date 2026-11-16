@@ -37,6 +37,21 @@ describe("ERB views", () => {
     expect(view("app/views/layouts/application.html.erb", `<%= yield %>`).screens).toEqual([]);
   });
 
+  it("marks a POST form helper that names no URL and no model as posting to its own page", () => {
+    const own = (src: string) => view("app/views/clubs/join.html.erb", src).interactiveElements.filter((e) => e.ownViewPost).length;
+    expect(own(`<%= form_with scope: :club, local: true do |f| %><% end %>`)).toBe(1);
+    expect(own(`<%= form_with do |f| %><% end %>`)).toBe(1);
+    expect(own(`<%= form_tag do %><% end %>`)).toBe(1);
+    expect(own(`<%= form_tag(class: "join") do %><% end %>`)).toBe(1);
+    // Decoys: a model, a URL, a route helper, a variable or another verb is not the page's own post.
+    expect(own(`<%= form_with model: @club do |f| %><% end %>`)).toBe(0);
+    expect(own(`<%= form_with url: clubs_path do |f| %><% end %>`)).toBe(0);
+    expect(own(`<%= form_tag club_path(@club) do %><% end %>`)).toBe(0);
+    expect(own(`<%= form_tag target do %><% end %>`)).toBe(0);
+    expect(own(`<%= form_with scope: :club, method: :get do |f| %><% end %>`)).toBe(0);
+    expect(own(`<form method="post"><button type="submit">Join</button></form>`)).toBe(1);
+  });
+
   it("names a route helper the way Rails does", () => {
     expect(railsRouteHelper("/players/:id/edit", "edit")).toBe("edit_player");
     expect(railsRouteHelper("/players/new", "new")).toBe("new_player");

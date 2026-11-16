@@ -107,7 +107,8 @@ export function buildScreenFlow(input: {
 
   const edges = new Map<string, ScreenFlowEdge>();
   const addEdge = (from: string, to: string, kind: ScreenFlowKind, via?: string) => {
-    if (from === to) return;
+    // A page is no link to itself, except a form's own-page post (`POST /clubs/new` served by the page's own route).
+    if (from === to && !(kind === "submit" && /^(?:POST|PUT|PATCH|DELETE) \//i.test(via ?? ""))) return;
     const key = `${from}\0${to}\0${kind}`;
     if (!edges.has(key)) edges.set(key, { from, to, kind, ...(via ? { via } : {}) });
   };

@@ -427,6 +427,16 @@ export function buildSymbolLinks(
         const mw = resolveCallToDefinition(sourceFile, sourceSymbol, { name, kind: "internal", target: null, line: route.line }, analysis, ctx, true);
         if (mw) links.push(mw);
       }
+      // The guards a route inherits from its mount site are named in the mount's file: they resolve there.
+      for (const { file, calls } of route.inheritedMiddleware ?? []) {
+        const mounted = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(file);
+        if (!mounted) continue;
+        for (const name of calls) {
+          if (name === route.handler) continue;
+          const mw = resolveCallToDefinition(file, sourceSymbol, { name, kind: "internal", target: null, line: route.line }, mounted, ctx, true);
+          if (mw) links.push({ ...mw, sourceFile });
+        }
+      }
 
       // Link route → functions it calls. Its body (a lambda or closure written
       // inside a method) sees that method's fields, parameters and typed locals,
@@ -3118,9 +3128,16 @@ function staticProxyLink(
   // `return static::TOKEN;` with the constant declared by a trait the facade uses: its one value is the token.
   if (proxy.constant) {
     const values = new Set<string>();
-    for (const m of proxyDecl?.mixins ?? []) {
-      for (const file of ctx.classNameIndex.get(m.name) ?? []) {
-        const value = ctx.classAt.get(memberKey(file, m.name))?.fieldValues?.[proxy.constant];
+    // The traits the facade uses, and the facade bases above it (a bounded walk up `extends`).
+    const holders = (proxyDecl?.mixins ?? []).map((m) => m.name);
+    for (let up: string | null | undefined = proxyDecl?.extends, depth = 0; up && depth < 4; depth++) {
+      const name = up.replace(/^\\/, "").split("\\").pop()!;
+      holders.push(name);
+      up = (ctx.classNameIndex.get(name) ?? []).map((f) => ctx.classAt.get(memberKey(f, name))?.extends).find((e) => !!e);
+    }
+    for (const holder of holders) {
+      for (const file of ctx.classNameIndex.get(holder) ?? []) {
+        const value = ctx.classAt.get(memberKey(file, holder))?.fieldValues?.[proxy.constant];
         if (value) values.add(value);
       }
     }
@@ -6276,9 +6293,11 @@ function namespacedFunction(
         if (!def) continue;
         const ns = fn.namespace ?? a.declaredNamespace;
         const key = `${a.language}\0${namespaceKey(ns ? `${ns}\\${fn.name}` : fn.name)}`;
+        // The symbol index holds one definition per name: a namesake in another namespace of the same file is this one's own lines.
+        const own = fn.namespace && def.line !== fn.line ? { ...def, line: fn.line, endLine: fn.endLine } : def;
         const list = index.get(key);
-        if (list) list.push({ file: a.filePath, def });
-        else index.set(key, [{ file: a.filePath, def }]);
+        if (list) list.push({ file: a.filePath, def: own });
+        else index.set(key, [{ file: a.filePath, def: own }]);
       }
     }
     ctx.namespacedFunctions = index;
@@ -6470,7 +6489,17 @@ function inScopeMember(
   }
   for (const module of projectStaticScopes(ctx, analysis)) scopes.push({ scope: { module }, from: analysis.filePath });
   if (scopes.length === 0) return null;
+  // `transitive`: the module's own such imports are in scope here too, followed down the chain, each file once.
+  const chained = new Set<string>([analysis.filePath]);
   for (const { scope, from, aliases } of scopes) {
+    if (scope.transitive) {
+      const file = importPath(ctx, scope.module, from);
+      if (file && !chained.has(file)) {
+        chained.add(file);
+        ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+        for (const imp of ctx.analysisByFile.get(file)?.imports ?? []) if (imp.inScope?.transitive) scopes.push({ scope: imp.inScope, from: file });
+      }
+    }
     const exported = aliases?.[name] ?? name;
     if (scope.names && !scope.names.includes(exported)) continue;
     if (scope.except?.includes(exported)) continue;

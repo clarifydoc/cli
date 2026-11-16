@@ -115,6 +115,8 @@ function finishBody(
   calls.push(...scan.extraCalls);
   const flow = valueFlowOf(body, params, skip);
   if (flow) calls.push(...flow.extraCalls);
+  // An object literal handed to `useState<Substitution>(…)` is a value of that type: its one-use cell carries it.
+  for (const t of flow?.typedTemps ?? []) if (!scan.localTypes.some((l) => l.name === t.name)) scan.localTypes.push({ name: t.name, type: t.type });
   return {
     calls,
     ...(flow?.facts.length ? { valueFlow: flow.facts } : {}),

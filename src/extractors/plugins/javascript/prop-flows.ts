@@ -1,9 +1,10 @@
-import type { Tree } from "web-tree-sitter";
+import type { Node, Tree } from "web-tree-sitter";
 import type { ClassInfo, FileAnalysis, FunctionInfo, PropFlows, SymbolLink } from "../../../types/analysis.js";
 import type { DispatchResolver } from "../../dispatch/base.js";
 import { buildFilePathMap, resolveTarget } from "../../shared/link-scoring.js";
 import { attributesAfter } from "./prop-bindings.js";
 import { reactiveCellsOf } from "./reactive-cells.js";
+import { destructuredProps } from "../../shared/destructuring.js";
 import { autoImportedComponents, globalComponentFiles, spansOf, tagKey, type SymbolSpan } from "./dispatch.js";
 
 /**
@@ -35,7 +36,169 @@ export function propFlows(tree: Tree, _sourceText: string, rawSource: string, fi
     const bindings = vueValueBindings(tree, rawSource, functions);
     if (bindings.length > 0) out.bindings = bindings;
   }
-  return out.watchers || out.bindings ? out : null;
+  const known = knownNames(tree, functions);
+  if (!filePath.endsWith(".vue") && rawSource.includes("<")) {
+    const bindings = jsxValueBindings(tree, functions, known);
+    if (bindings.length > 0) out.bindings = bindings;
+  }
+  const argLocals = typedLocalArguments(tree, functions, known);
+  if (argLocals.length > 0) out.argLocals = argLocals;
+  return out.watchers || out.bindings || out.argLocals ? out : null;
+}
+
+const FUNCTION_NODES = ["function_declaration", "function_expression", "arrow_function", "method_definition", "generator_function_declaration", "function"];
+
+function enclosingFunction(n: Node): Node | null {
+  for (let p = n.parent; p; p = p.parent) if (FUNCTION_NODES.includes(p.type)) return p;
+  return null;
+}
+
+/** `Club`, `Club | null | undefined` → `Club`; anything else (a union of classes, a generic, an object type) is none. */
+function singleTypeName(text: string): string | undefined {
+  const parts = text.split("|").map((t) => t.trim()).filter((t) => t && t !== "null" && t !== "undefined");
+  return parts.length === 1 && /^[A-Za-z_$][\w$]*$/.test(parts[0]!) ? parts[0] : undefined;
+}
+
+/** What `useState(init)` holds: the type argument, else the class an initializer constructs or the factory it calls (also inside a lazy `() => …`). */
+function useStateValue(call: Node): { type?: string; factory?: string } | null {
+  const typeArgs = call.childForFieldName("type_arguments");
+  if (typeArgs) {
+    const inner = typeArgs.namedChildren.filter((c): c is Node => !!c);
+    const named = inner.length === 1 ? singleTypeName(inner[0]!.text) : undefined;
+    return named ? { type: named } : null;
+  }
+  let init = call.childForFieldName("arguments")?.namedChild(0) ?? null;
+  if (init && (init.type === "arrow_function" || init.type === "function_expression")) {
+    const body = init.childForFieldName("body");
+    init = body?.type === "statement_block" ? null : body ?? null;
+  }
+  while (init?.type === "parenthesized_expression") init = init.namedChild(0);
+  if (!init) return null;
+  if (init.type === "new_expression") {
+    const ctor = init.childForFieldName("constructor");
+    return ctor?.type === "identifier" ? { type: ctor.text } : null;
+  }
+  if (init.type === "call_expression") {
+    const callee = init.childForFieldName("function");
+    return callee?.type === "identifier" ? { factory: callee.text } : null;
+  }
+  return null;
+}
+
+/**
+ * React: `<ClubPanel api={api} />` binds a prop to a local of the parent. A local from `const [api] = useState(…)` states
+ * what it holds (`state`); any other local is typed by the importing pass from the parent's own typed locals.
+ */
+function jsxValueBindings(tree: Tree, functions: ReadonlyArray<{ name: string; line: number; endLine: number }>, known: ReadonlySet<string>): NonNullable<PropFlows["bindings"]> {
+  const out: NonNullable<PropFlows["bindings"]> = [];
+  for (const el of tree.rootNode.descendantsOfType(["jsx_opening_element", "jsx_self_closing_element"])) {
+    const tag = el?.childForFieldName("name")?.text ?? "";
+    // Only a component the file declares or imports: a library's `<Fragment>` or a DOM-ish tag is no project component.
+    if (!el || !/^[A-Z][\w$]*$/.test(tag) || !known.has(tag)) continue;
+    const useLine = el.startPosition.row + 1;
+    const fn = innermost(functions, useLine) ?? undefined;
+    // One marker per use of the tag, so a parent that leaves a prop out counts against its type; a spread (`{...rest}`) states none.
+    out.push({ component: tag, prop: "*", line: useLine, local: "", writes: [] });
+    for (const attr of el.namedChildren) {
+      if (attr?.type === "jsx_expression" || attr?.type === "jsx_spread_attribute") {
+        out.push({ component: tag, prop: "...", line: attr.startPosition.row + 1, local: "", writes: [] });
+        continue;
+      }
+      if (attr?.type !== "jsx_attribute") continue;
+      const name = attr.namedChild(0);
+      const value = attr.namedChild(1);
+      if (name?.type !== "property_identifier" || NOT_PROPS.has(name.text) || /^on[A-Z]/.test(name.text)) continue;
+      const expr = value?.type === "jsx_expression" ? value.namedChild(0) : null;
+      const line = attr.startPosition.row + 1;
+      if (expr?.type !== "identifier") {
+        out.push({ component: tag, prop: name.text, line, local: "", writes: [] });
+        continue;
+      }
+      const state = useStateOf(expr);
+      out.push({ component: tag, prop: name.text, line, local: expr.text, writes: [], ...(state ? { state } : {}), ...(fn ? { function: fn } : {}) });
+    }
+  }
+  return out;
+}
+
+/** The names a file imports (a default, a named or renamed import — never a namespace) and the functions it declares. */
+function knownNames(tree: Tree, functions: ReadonlyArray<{ name: string }>): Set<string> {
+  const out = new Set<string>(functions.map((f) => f.name));
+  for (const spec of tree.rootNode.descendantsOfType("import_specifier")) {
+    const local = spec?.childForFieldName("alias") ?? spec?.childForFieldName("name");
+    if (local) out.add(local.text);
+  }
+  for (const clause of tree.rootNode.descendantsOfType("import_clause")) {
+    for (const c of clause?.namedChildren ?? []) if (c?.type === "identifier") out.add(c.text);
+  }
+  return out;
+}
+
+/**
+ * The `useState` that declares `ident` (first element of its pair) in the nearest function around the use that declares
+ * the name — a render helper or a `.map` callback reads its component's state — when exactly one does.
+ */
+function useStateOf(ident: Node): { type?: string; factory?: string } | null {
+  for (let scope = enclosingFunction(ident); scope; scope = enclosingFunction(scope)) {
+    const found: Node[] = [];
+    for (const d of scope.descendantsOfType("variable_declarator")) {
+      const target = d?.childForFieldName("name");
+      if (!d || target?.type !== "array_pattern") continue;
+      if (target.namedChild(0)?.text !== ident.text) continue;
+      found.push(d);
+    }
+    if (found.length === 0) continue;
+    if (found.length !== 1) return null;
+    const value = found[0]!.childForFieldName("value");
+    const callee = value?.type === "call_expression" ? value.childForFieldName("function") : null;
+    if (!value || !callee || !/^(?:React\.)?useState$/.test(callee.text)) return null;
+    return useStateValue(value);
+  }
+  return null;
+}
+
+/**
+ * `refresh(api)`: a call of a function the file declares or imports, by plain name, with its arguments by position — a
+ * local's name, null for anything else (a literal, a member, a call result, a missing argument). The callee's `any`
+ * parameter is typed from them when every call agrees (`JsParamTypeResolver`), so a call passing something no fact types
+ * counts against the type like one passing another class.
+ */
+function typedLocalArguments(tree: Tree, functions: ReadonlyArray<{ name: string; line: number; endLine: number }>, known: ReadonlySet<string>): NonNullable<PropFlows["argLocals"]> {
+  const out: NonNullable<PropFlows["argLocals"]> = [];
+  const seen = new Set<string>();
+  for (const call of tree.rootNode.descendantsOfType("call_expression")) {
+    const callee = call?.childForFieldName("function");
+    if (!call || callee?.type !== "identifier" || !known.has(callee.text)) continue;
+    const list = call.childForFieldName("arguments");
+    if (!list) continue;
+    const args = list.namedChildren.filter((a): a is Node => !!a).map((a) => (a.type === "identifier" && a.text !== "undefined" ? a.text : null));
+    const line = call.startPosition.row + 1;
+    const fn = innermost(functions, line) ?? "<setup>";
+    // A function states its own call once per callee and arguments: the same site twice adds no fact.
+    const id = `${fn}\0${callee.text}\0${args.join(",")}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({ callee: callee.text, line, function: fn, args });
+  }
+  // A name read as a value — an argument, an array element, a property, an assigned or returned value, `onClick={refresh}` —
+  // is called by whatever receives it, with arguments no call site here states.
+  const byReference = (n: Node | null | undefined) => {
+    if (!n || (n.type !== "identifier" && n.type !== "shorthand_property_identifier") || !known.has(n.text)) return;
+    const line = n.startPosition.row + 1;
+    const fn = innermost(functions, line) ?? "<setup>";
+    const id = `${fn}\0${n.text}\0ref`;
+    if (seen.has(id)) return;
+    seen.add(id);
+    out.push({ callee: n.text, line, function: fn, args: [], reference: true });
+  };
+  for (const n of tree.rootNode.descendantsOfType(["arguments", "array", "jsx_expression", "return_statement", "object", "pair", "variable_declarator", "assignment_expression"])) {
+    if (!n) continue;
+    if (n.type === "pair") byReference(n.childForFieldName("value"));
+    else if (n.type === "variable_declarator") byReference(n.childForFieldName("value"));
+    else if (n.type === "assignment_expression") byReference(n.childForFieldName("right"));
+    else for (const c of n.namedChildren) byReference(c);
+  }
+  return out;
 }
 
 const NOT_PROPS: ReadonlySet<string> = new Set(["key", "ref", "class", "style", "is", "id", "slot"]);
@@ -133,11 +296,12 @@ export function homeOf(file: FileAnalysis, name: string, kind: "class" | "functi
 }
 
 /** The typed value a factory call or a local stands for, or null when it is not one a single fact settles. */
-export function typedValueOf(file: FileAnalysis, ref: { factory?: string; local?: string }, files: Files): TypedValue | null {
+export function typedValueOf(file: FileAnalysis, ref: { factory?: string; local?: string; type?: string; in?: string }, files: Files): TypedValue | null {
   let factory = ref.factory;
-  let type: string | undefined;
+  let type: string | undefined = ref.type;
   if (ref.local) {
-    const entries = file.functions.flatMap((f) => (f.localTypes ?? []).filter((l) => l.name === ref.local));
+    // `in`: the function the name is read in — a namesake local of another function is no evidence.
+    const entries = file.functions.filter((f) => ref.in === undefined || f.name === ref.in).flatMap((f) => (f.localTypes ?? []).filter((l) => l.name === ref.local));
     if (entries.length !== 1) return null;
     const e = entries[0]!;
     if (e.destructured || e.element || e.iterator || e.member || e.field || e.aliasOf) return null;
@@ -228,12 +392,77 @@ export class JsPropFlowResolver implements DispatchResolver {
     const ctx = { globals: globalComponentFiles(analyses, files.filePathMap), autoImported: autoImportedComponents(analyses), files };
     // child file → prop → the parents' bindings of it.
     const bound = new Map<string, Map<string, Array<{ parent: FileAnalysis; binding: Binding }>>>();
+    // A React component: `<file>#<function>` → prop → the parents' bindings of it.
+    // `uses`: how many tags rendered it (a prop is typed only when every one binds it); `spread`: a tag handed props it does not name.
+    const reactBound = new Map<string, { file: FileAnalysis; fn: FunctionInfo; uses: number; spread: boolean; byProp: Map<string, Array<{ parent: FileAnalysis; binding: Binding }>> }>();
     for (const parent of analyses) {
       for (const b of parent.propFlows?.bindings ?? []) {
+        if (!parent.filePath.endsWith(".vue")) {
+          const home = homeOf(parent, b.component, "function", files);
+          const fns = home?.file.functions.filter((f) => f.name === home.name) ?? [];
+          if (home && fns.length === 1) {
+            const key = `${home.file.filePath}#${home.name}`;
+            const entry = reactBound.get(key) ?? reactBound.set(key, { file: home.file, fn: fns[0]!, uses: 0, spread: false, byProp: new Map() }).get(key)!;
+            if (b.prop === "*") entry.uses++;
+            else if (b.prop === "...") entry.spread = true;
+            else (entry.byProp.get(b.prop) ?? entry.byProp.set(b.prop, []).get(b.prop)!).push({ parent, binding: b });
+          }
+          continue;
+        }
         const child = childFileOf(parent, b.component, ctx);
         if (!child || child === parent) continue;
         const byProp = bound.get(child.filePath) ?? bound.set(child.filePath, new Map()).get(child.filePath)!;
         (byProp.get(b.prop) ?? byProp.set(b.prop, []).get(b.prop)!).push({ parent, binding: b });
+      }
+    }
+    // The type of a prop: the value every parent binds to it, when they all agree.
+    const typeOfBindings = (entries: Array<{ parent: FileAnalysis; binding: Binding }> | undefined): TypedValue | null => {
+      const values = (entries ?? []).map(({ parent, binding }) =>
+        binding.state ? typedValueOf(parent, binding.state, files) : binding.local ? typedValueOf(parent, { local: binding.local, ...(binding.function ? { in: binding.function } : {}) }, files) : null,
+      );
+      return values.length > 0 && values.every((v) => v && v.id === values[0]!.id) ? values[0]! : null;
+    };
+    const linkMember = (file: FileAnalysis, fnName: string, call: { name: string; line: number }, value: TypedValue | null, member: string) => {
+      const hit = value ? memberOf(value, member) : null;
+      if (!hit) return;
+      push({
+        sourceFile: file.filePath,
+        sourceSymbol: fnName,
+        sourceLine: call.line,
+        callName: call.name,
+        targetFile: hit.file.filePath,
+        targetSymbol: hit.span.symbol,
+        targetLine: hit.span.line,
+        confidence: "INFERRED",
+        strategy: "dispatch:prop-type",
+        relation: "dispatch",
+      });
+    };
+    // A React component takes its props as a parameter: `{ api }` / `{ api: client }`, or `props` read as `props.api.load()`.
+    for (const { file: child, fn: component, byProp, uses, spread } of reactBound.values()) {
+      if (spread) continue;
+      const pattern = component.params[0]?.name ?? "";
+      const locals = new Map<string, string>(); // local name → prop
+      for (const [prop, local] of destructuredProps(pattern)) if (local) locals.set(local, prop);
+      const propsName = /^[A-Za-z_$][\w$]*$/.test(pattern) ? pattern : null;
+      if (locals.size === 0 && !propsName) continue;
+      const typed = new Map<string, TypedValue | null>();
+      const valueOf = (prop: string) => {
+        if (!typed.has(prop)) {
+          const entries = byProp.get(prop);
+          typed.set(prop, entries && entries.length === uses ? typeOfBindings(entries) : null);
+        }
+        return typed.get(prop)!;
+      };
+      for (const fn of child.functions) {
+        if (fn.line < component.line || fn.endLine > component.endLine) continue;
+        const own = fn !== component ? new Set(fn.params.map((p) => p.name)) : new Set<string>();
+        for (const call of fn.calls) {
+          if (call.boundLocally) continue;
+          const parts = call.name.split(".");
+          if (parts.length === 2 && locals.has(parts[0]!) && !own.has(parts[0]!)) linkMember(child, fn.name, call, valueOf(locals.get(parts[0]!)!), parts[1]!);
+          else if (parts.length === 3 && propsName && parts[0] === propsName && !own.has(propsName)) linkMember(child, fn.name, call, valueOf(parts[1]!), parts[2]!);
+        }
       }
     }
     for (const child of analyses) {
@@ -262,35 +491,105 @@ export class JsPropFlowResolver implements DispatchResolver {
       }
       // `props.api.load()` where `const props = defineProps<…>()`.
       const aliases = new Set(child.functions.flatMap((f) => (f.localTypes ?? []).filter((l) => /^(?:withDefaults\(\s*)?defineProps\b/.test(l.from ?? "")).map((l) => l.name)));
-      if (aliases.size === 0) continue;
+      // A prop called by its bare name — only the template can (`@click="api.load()"`), unless the script declares a name of its own.
+      const bare = child.filePath.endsWith(".vue") ? new Set((child.declaredProps ?? []).filter((p) => !child.functions.some((f) => f.name === p || (f.localTypes ?? []).some((l) => l.name === p)))) : new Set<string>();
+      if (aliases.size === 0 && bare.size === 0) continue;
       const fns: FunctionInfo[] = [...child.functions, ...child.classes.flatMap((c) => c.methods.map((m) => ({ ...m, name: `${c.name}.${m.name}` })))];
       const typedProp = new Map<string, TypedValue | null>();
+      const valueOf = (prop: string) => (typedProp.has(prop) ? typedProp.get(prop)! : (typedProp.set(prop, typeOfBindings(byProp.get(prop))), typedProp.get(prop)!));
       for (const fn of fns) {
         for (const call of fn.calls) {
+          if (call.boundLocally) continue;
           const m = /^([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)$/.exec(call.name);
-          if (!m || !aliases.has(m[1]!) || call.boundLocally) continue;
-          const prop = m[2]!;
-          if (!typedProp.has(prop)) {
-            const values = (byProp.get(prop) ?? []).map(({ parent, binding }) => (binding.local ? typedValueOf(parent, { local: binding.local }, files) : null));
-            typedProp.set(prop, values.length > 0 && values.every((v) => v && v.id === values[0]!.id) ? values[0]! : null);
+          if (m && aliases.has(m[1]!)) {
+            linkMember(child, fn.name, call, valueOf(m[2]!), m[3]!);
+            continue;
           }
-          const value = typedProp.get(prop);
-          const member = value ? memberOf(value, m[3]!) : null;
-          if (!member) continue;
-          push({
-            sourceFile: child.filePath,
-            sourceSymbol: fn.name,
-            sourceLine: call.line,
-            callName: call.name,
-            targetFile: member.file.filePath,
-            targetSymbol: member.span.symbol,
-            targetLine: member.span.line,
-            confidence: "INFERRED",
-            strategy: "dispatch:prop-type",
-            relation: "dispatch",
-          });
+          const b = /^([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)$/.exec(call.name);
+          if (b && bare.has(b[1]!)) linkMember(child, fn.name, call, valueOf(b[1]!), b[2]!);
         }
       }
+    }
+    return links;
+  }
+}
+
+const UNTYPED = new Set(["", "any", "unknown"]);
+
+/**
+ * A parameter declared `any`, `unknown` or not at all, typed from what its callers pass (`refresh(api: any)` ←
+ * `refresh(clubApi)` with `const clubApi = new ClubApi()`): a call on the parameter (`api.load()`) is a call on the value
+ * every call site hands it — the same type from all of them, each argument a local the caller's file types. One call site that
+ * passes anything else (an argument no fact types, another class, no argument) gives the parameter no type; so does a
+ * function the project never calls by its plain name. A callee's own `const api = …` rebinding or a nested function taking
+ * the same name as its parameter leaves the call alone.
+ */
+export class JsParamTypeResolver implements DispatchResolver {
+  readonly id = "param-type";
+  readonly languages = ["typescript", "javascript"] as FileAnalysis["language"][];
+  readonly priority = 36;
+
+  resolve(analyses: FileAnalysis[]): SymbolLink[] {
+    if (!analyses.some((a) => a.propFlows?.argLocals?.length)) return [];
+    const files: Files = { byPath: new Map(analyses.map((a) => [a.filePath, a])), filePathMap: buildFilePathMap(analyses) };
+    // `<file>#<function>` → every call site naming it: the caller's file and the identifier arguments by position.
+    const sites = new Map<string, Array<{ file: FileAnalysis; args: Array<string | null>; function: string; reference?: true }>>();
+    for (const caller of analyses) {
+      for (const c of caller.propFlows?.argLocals ?? []) {
+        const home = homeOf(caller, c.callee, "function", files);
+        if (!home) continue;
+        const key = `${home.file.filePath}#${home.name}`;
+        (sites.get(key) ?? sites.set(key, []).get(key)!).push({ file: caller, args: c.args, function: c.function, ...(c.reference ? { reference: true } : {}) });
+      }
+    }
+    // A function handed on by name (`onClick={refresh}`, `items.map(refresh)`) is called by whatever receives it.
+    const handedOn = new Set<string>();
+    for (const [key, calls] of sites) if (calls.some((c) => c.reference)) handedOn.add(key);
+    const links: SymbolLink[] = [];
+    const seen = new Set<string>();
+    for (const [key, calls] of sites) {
+      const hash = key.lastIndexOf("#");
+      const file = files.byPath.get(key.slice(0, hash));
+      const fns = file?.functions.filter((f) => f.name === key.slice(hash + 1)) ?? [];
+      if (!file || fns.length !== 1 || handedOn.has(key)) continue;
+      const callee = fns[0]!;
+      callee.params.forEach((param, index) => {
+        if (!/^[A-Za-z_$][\w$]*$/.test(param.name) || !UNTYPED.has((param.type ?? "").trim())) return;
+        // Rebinding the name in the body (`api = other`) or a typed local of that name is another value.
+        if ((callee.localTypes ?? []).some((l) => l.name === param.name && !UNTYPED.has(l.type.trim()))) return;
+        const values = calls.map((c) => {
+          const name = c.args[index];
+          return name ? typedValueOf(c.file, { local: name, in: c.function }, files) : null;
+        });
+        const first = values[0];
+        if (!first || values.some((v) => !v || v.id !== first.id)) return;
+        for (const fn of file.functions) {
+          if (fn.line < callee.line || fn.endLine > callee.endLine) continue;
+          if (fn !== callee && fn.params.some((p) => p.name === param.name)) continue;
+          for (const call of fn.calls) {
+            if (call.boundLocally) continue;
+            const m = /^([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)$/.exec(call.name);
+            if (!m || m[1] !== param.name) continue;
+            const hit = memberOf(first, m[2]!);
+            if (!hit) continue;
+            const id = `${fn.name}\0${call.line}\0${call.name}`;
+            if (seen.has(`${file.filePath}\0${id}`)) continue;
+            seen.add(`${file.filePath}\0${id}`);
+            links.push({
+              sourceFile: file.filePath,
+              sourceSymbol: fn.name,
+              sourceLine: call.line,
+              callName: call.name,
+              targetFile: hit.file.filePath,
+              targetSymbol: hit.span.symbol,
+              targetLine: hit.span.line,
+              confidence: "INFERRED",
+              strategy: "dispatch:param-type",
+              relation: "dispatch",
+            });
+          }
+        }
+      });
     }
     return links;
   }
