@@ -3,6 +3,7 @@ import { inlineScriptRequests } from "../shared/inline-script-requests.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractHtmlInteractiveElements, thymeleafUrl } from "../html/index.js";
 import { literalPath, handlerOf, materializeElementRequests } from "../shared/element-requests.js";
+import { lineAt } from "../shared/text-scan.js";
 
 /**
  * Server templates — Handlebars, Liquid, Velocity, Razor — read by one
@@ -78,12 +79,6 @@ const HTMX_RE = /<([a-zA-Z][\w-]*)\b[^>]*?\bhx-(get|post|put|patch|delete)\s*=\s
 const ejsExpressions = (source: string): string =>
   source.replace(/<%([-=_#]?)([\s\S]*?)[-_]?%>/g, (m, mark: string, body: string) =>
     (mark === "=" || mark === "-") && !/^\s*include\b/.test(body) && !body.includes("\n") ? `{{${body.trim().replace(/[^\w.$]+/g, "_")}}}` : m.replace(/[^\n]/g, " "));
-
-const lineAt = (text: string, index: number): number => {
-  let line = 1;
-  for (let i = 0; i < index; i++) if (text.charCodeAt(i) === 10) line++;
-  return line;
-};
 
 const attr = (attrs: string, name: string): string | undefined =>
   new RegExp(`(?:^|\\s)${name}\\s*=\\s*["']([^"']*)["']`, "i").exec(attrs)?.[1];

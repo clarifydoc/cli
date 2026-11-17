@@ -1,6 +1,7 @@
 import type { ParamInfo, PropertyInfo, RouteParamInfo } from "../../../types/analysis.js";
 import type { RequestSchemaHooks, TypeShape } from "../../../types/language-plugin.js";
 import type { GuardAttr } from "../../shared/route-metadata.js";
+import { splitGeneric } from "../../shared/type-parser.js";
 
 /**
  * How Dart types and fields look on the wire under `json_serializable` /
@@ -25,27 +26,6 @@ const SCALARS: Record<string, { type: "string" | "integer" | "number" | "boolean
 const ANY_TYPES = new Set(["dynamic", "Object", "Map", "List"]);
 const ARRAY_GENERICS = new Set(["List", "Set", "Iterable", "BuiltList", "IList"]);
 const MAP_GENERICS = new Set(["Map", "BuiltMap", "IMap"]);
-
-/** `Foo<A, B<C>>` → `{ name: "Foo", args: ["A", "B<C>"] }`; a non-generic → `{ name, args: [] }`. */
-function splitGeneric(type: string): { name: string; args: string[] } {
-  const lt = type.indexOf("<");
-  if (lt < 0 || !type.endsWith(">")) return { name: type, args: [] };
-  const inner = type.slice(lt + 1, -1);
-  const args: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < inner.length; i++) {
-    const ch = inner[i];
-    if (ch === "<") depth++;
-    else if (ch === ">") depth--;
-    else if (ch === "," && depth === 0) {
-      args.push(inner.slice(start, i).trim());
-      start = i + 1;
-    }
-  }
-  args.push(inner.slice(start).trim());
-  return { name: type.slice(0, lt), args };
-}
 
 /** Named argument of a decorator: `JsonKey(name: 'x', ignore: true)` → `name` → `'x'`. */
 function decoratorArg(decorators: readonly string[] | undefined, decorator: string, arg: string): string | null {

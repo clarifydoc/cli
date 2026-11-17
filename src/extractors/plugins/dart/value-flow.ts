@@ -10,6 +10,7 @@
  */
 import type { TSNode } from "../../../parsers/parser-manager.js";
 import type { ValueCell, ValueFlowFact } from "../../../types/analysis.js";
+import { namedChildren, descendants } from "../shared/ts-nodes.js";
 
 /** The call a node's argument list belongs to, as the call list names it. */
 export type CallRefs = Map<number, { name: string; line: number }>;
@@ -31,12 +32,6 @@ type Kind = "fn" | "coll" | "other" | "may" | "call" | "named";
 
 const PRIMITIVES = /^(?:int|double|num|String|bool|BigInt|DateTime|Duration|Uri|Object|void|BuildContext|Widget|Key|Color|Text|Icon|Future|Stream|Iterable|List|Map|Set|Type|RegExp|Offset|Size|Rect|Locale|TextStyle|EdgeInsets|Navigator|Exception|Error)\b/;
 const FUNCTION_TYPE = /\bFunction\b|(?:Callback|Handler|Listener|Builder|Action|Fn|Func|Predicate|Comparator|Setter|Getter|Validator)(?:<.*)?\??$|^Value(?:Changed|Setter|Getter)\b/;
-
-const namedChildren = (node: TSNode): TSNode[] => {
-  const out: TSNode[] = [];
-  for (let i = 0; i < node.namedChildCount; i++) out.push(node.namedChild(i)!);
-  return out;
-};
 
 const isSelector = (node: TSNode): boolean =>
   node.type === "selector" || node.type === "unconditional_assignable_selector" || node.type === "conditional_assignable_selector";
@@ -174,17 +169,6 @@ export function classScopeOf(cls: TSNode, file: { classes: ReadonlySet<string>; 
     }
   }
   return scope;
-}
-
-function descendants(node: TSNode, type: string): TSNode[] {
-  const out: TSNode[] = [];
-  const stack = [node];
-  while (stack.length) {
-    const n = stack.pop()!;
-    if (n.type === type) out.push(n);
-    for (const c of namedChildren(n)) stack.push(c);
-  }
-  return out;
 }
 
 /** What the facts of one function need to know. */

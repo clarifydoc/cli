@@ -6,6 +6,7 @@
  */
 import type { PatternCallName } from "./antlr-calls.js";
 import type { CallPattern } from "./regex-base.js";
+import type { TSNode } from "../../../parsers/parser-manager.js";
 
 export type CalleeStep =
   | { kind: "id"; name: string; line: number; column: number }
@@ -162,3 +163,5 @@ export function patternNamedCall(source: string, patterns: readonly CallPattern[
   }
   return undefined;
 }
+
+export const idStep = (name: string, node: TSNode): CalleeStep => ({ kind: "id", name, line: node.startPosition.row + 1, column: node.startPosition.column });

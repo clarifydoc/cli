@@ -3,6 +3,8 @@ import type { TSNode } from "../../../parsers/parser-manager.js";
 import { recordPatternCalls, type PatternCallName } from "../shared/antlr-calls.js";
 import { callStep, nameCall, type CalleeStep } from "../shared/callee-names.js";
 import { countSyntaxErrors, treeSitterReader } from "../shared/tree-sitter-front-end.js";
+import { namedChildren } from "../shared/ts-nodes.js";
+import { idStep } from "../shared/callee-names.js";
 
 /** How many calls deep a chain is named. */
 const CHAIN_DEPTH = 8;
@@ -54,12 +56,6 @@ export function readElixirTree(root: TSNode): ParsedStructure {
     topLevelCalls: recordPatternCalls(topLevel),
     syntaxErrors: countSyntaxErrors(root),
   };
-}
-
-function namedChildren(node: TSNode): TSNode[] {
-  const out: TSNode[] = [];
-  for (let i = 0; i < node.namedChildCount; i++) out.push(node.namedChild(i)!);
-  return out;
 }
 
 /** `def`, `defmodule`, `alias`: the macro a call with a bare target invokes. */
@@ -250,8 +246,6 @@ function templateCalls(content: TSNode, owner: PatternCallName[]): void {
     }
   });
 }
-
-const idStep = (name: string, node: TSNode): CalleeStep => ({ kind: "id", name, line: node.startPosition.row + 1, column: node.startPosition.column });
 
 /** A callee as steps: `Repo` and `MyApp.Repo` by their last name, `:crypto` by its atom, a call's result as a call. */
 function stepsOf(node: TSNode): CalleeStep[] {

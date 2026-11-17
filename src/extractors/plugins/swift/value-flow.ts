@@ -6,6 +6,7 @@
  */
 import type { TSNode } from "../../../parsers/parser-manager.js";
 import type { ValueCell, ValueFlowFact } from "../../../types/analysis.js";
+import { namedChildren, descendants } from "../shared/ts-nodes.js";
 
 export type CallRefs = Map<number, { name: string; line: number }>;
 
@@ -28,12 +29,6 @@ export interface FileScope {
   src: string;
 }
 
-const namedChildren = (node: TSNode): TSNode[] => {
-  const out: TSNode[] = [];
-  for (let i = 0; i < node.namedChildCount; i++) out.push(node.namedChild(i)!);
-  return out;
-};
-
 const PRIMITIVES = /^(?:Int|Int\d+|UInt\d*|Double|Float|CGFloat|String|Bool|Date|URL|Data|UUID|Character|Void|Any|AnyObject|View|Color|Text|Image|Error|Result|Array|Dictionary|Set|Optional)\b/;
 
 /** The kind a declared type gives: a function type (possibly optional) is `fn`; a collection `coll`. */
@@ -47,17 +42,6 @@ function kindOfTypeNode(type: TSNode | undefined, typeNames: ReadonlySet<string>
   if (PRIMITIVES.test(base) || typeNames.has(base)) return "other";
   // A stated type nothing here says is a function (a callable object, or a typealias from another file).
   return "named";
-}
-
-function descendants(node: TSNode, type: string): TSNode[] {
-  const out: TSNode[] = [];
-  const stack = [node];
-  while (stack.length) {
-    const n = stack.pop()!;
-    if (n.type === type) out.push(n);
-    for (const c of namedChildren(n)) stack.push(c);
-  }
-  return out;
 }
 
 function kindOfInit(node: TSNode | undefined): Kind {

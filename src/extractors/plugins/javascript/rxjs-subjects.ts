@@ -3,6 +3,7 @@ import type { PreprocessOutcome } from "../../../types/language-plugin.js";
 import { addDescriptorCalls } from "./descriptor-values.js";
 import { escapeRegex } from "../shared/path-utils.js";
 import { isHandedOnName } from "../../shared/call-graph.js";
+import { lineStarts as lineIndex, lineOfOffset as lineNo } from "../shared/text-scan.js";
 
 /**
  * An RxJS subject a class feeds and listens to itself: a handler's `this.reload$.next(v)` runs what the same
@@ -68,23 +69,6 @@ function isProjectCall(c: CallInfo, rxjsNames: Set<string>): boolean {
   const leaf = c.name.split(".").pop()!;
   if (/^(?:pipe|subscribe|asObservable|next|error|complete|unsubscribe)$/.test(leaf) || rxjsNames.has(c.name)) return false;
   return c.name.startsWith("this.") || !c.name.includes(".");
-}
-
-function lineIndex(source: string): number[] {
-  const starts = [0];
-  for (let i = source.indexOf("\n"); i >= 0; i = source.indexOf("\n", i + 1)) starts.push(i + 1);
-  return starts;
-}
-
-function lineNo(starts: number[], offset: number): number {
-  let lo = 0;
-  let hi = starts.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    if (starts[mid]! <= offset) lo = mid;
-    else hi = mid - 1;
-  }
-  return lo + 1;
 }
 
 /** The offset a chained statement ends at: a `;`, or a line break outside every bracket not followed by `.`. */

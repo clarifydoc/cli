@@ -1,6 +1,7 @@
 import type { FunctionInfo, ParamInfo } from "../../../types/analysis.js";
 import { blankStringLiterals } from "./regex-base.js";
 import { AliasFlow } from "./alias-flow.js";
+import { splitTopLevelCommas as topLevelCommas } from "./text-scan.js";
 
 type LocalTypes = NonNullable<FunctionInfo["localTypes"]>;
 
@@ -468,20 +469,3 @@ function closingAngle(text: string, open: number): number {
   return -1;
 }
 
-/** `a, *b = f(x, y), c{1, 2}` → its declarators, commas inside brackets kept. */
-function topLevelCommas(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i]!;
-    if (c === "(" || c === "[" || c === "{") depth++;
-    else if (c === ")" || c === "]" || c === "}") depth--;
-    else if (c === "," && depth === 0) {
-      out.push(text.slice(start, i));
-      start = i + 1;
-    }
-  }
-  out.push(text.slice(start));
-  return out;
-}

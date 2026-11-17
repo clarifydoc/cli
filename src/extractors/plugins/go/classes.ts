@@ -7,6 +7,7 @@ import { stripTypeModifiers } from "../../shared/type-parser.js";
 import { boundFromTags } from "./bound-tags.js";
 import { withHeadPathNames } from "./head-paths.js";
 import { bracketDelta, goContainerResult, goResultTextAt, goResultTypes, splitGoStatements, splitGoTopLevel, stripGoComment } from "./syntax.js";
+import { matchingParen } from "../shared/text-scan.js";
 
 /**
  * Go types as the linker needs them. Go declares methods OUTSIDE the type, in
@@ -346,16 +347,6 @@ function methodSpec(name: string, seg: Segment, parseParam: ParamParser): Functi
     endLine: seg.endLine,
   };
 }
-
-function matchingParen(text: string, open: number): number {
-  let depth = 0;
-  for (let i = open; i < text.length; i++) {
-    if (text[i] === "(") depth++;
-    else if (text[i] === ")" && --depth === 0) return i;
-  }
-  return -1;
-}
-
 
 /**
  * One struct member → its fields:

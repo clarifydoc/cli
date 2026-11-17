@@ -3,6 +3,7 @@ import type { RouteInfo } from "../../../types/analysis.js";
 import type { RouteExtractor } from "../../routes/base.js";
 import { extractCalls } from "../../shared/call-graph.js";
 import { callArgs, calleeName, declValue, isPub, memberName, stringValue } from "./syntax.js";
+import { initFields } from "./syntax.js";
 
 const VERBS: Record<string, string> = { get: "GET", post: "POST", put: "PUT", patch: "PATCH", delete: "DELETE", head: "HEAD", options: "OPTIONS" };
 
@@ -34,20 +35,6 @@ function handlerName(node: Node | undefined): string | null {
   if (!node) return null;
   if (node.type === "unary_expression") return handlerName(node.childForFieldName("argument") ?? node.namedChildren[0]);
   return calleeName(node);
-}
-
-/** `.name = value` entries of an anonymous struct initializer. */
-function initFields(init: Node): Map<string, Node> {
-  const out = new Map<string, Node>();
-  const list = init.namedChildren.find((c) => c.type === "initializer_list");
-  for (const assign of list?.namedChildren ?? []) {
-    if (assign.type !== "assignment_expression") continue;
-    const left = assign.childForFieldName("left");
-    const right = assign.childForFieldName("right");
-    const name = left?.type === "field_expression" ? left.childForFieldName("member")?.text : null;
-    if (name && right) out.set(name, right);
-  }
-  return out;
 }
 
 /**

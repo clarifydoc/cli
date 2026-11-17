@@ -6,6 +6,8 @@ import { callStep, nameCall, patternNamedCall, type CalleeStep } from "../shared
 import { countSyntaxErrors, treeSitterReader } from "../shared/tree-sitter-front-end.js";
 import { dartDiCallPatterns } from "./di.js";
 import { fieldInitFacts, fileScopeOf, functionFacts, moduleFacts, type CallRefs, type ClassScope, type FileScope } from "./value-flow.js";
+import { namedChildren } from "../shared/ts-nodes.js";
+import { idStep } from "../shared/callee-names.js";
 
 /** How many calls deep a chain is named (the linker types each step through declared return types). */
 const CHAIN_DEPTH = 8;
@@ -93,12 +95,6 @@ export function readDartTree(root: TSNode, text: string): ParsedStructure {
   };
 }
 
-function namedChildren(node: TSNode): TSNode[] {
-  const out: TSNode[] = [];
-  for (let i = 0; i < node.namedChildCount; i++) out.push(node.namedChild(i)!);
-  return out;
-}
-
 /** The signature a declaration carries: itself, or the one a `method_signature` / `declaration` wraps. */
 function signatureOf(node: TSNode): TSNode | null {
   if (SIGNATURES.has(node.type)) return node;
@@ -178,8 +174,6 @@ function visit(node: TSNode, owner: PatternCallName[] | null, walk: Walk, cls: C
 /** A step after a primary; after `super` the grammar leaves the member unwrapped (`super.initState()`). */
 const isSelector = (node: TSNode): boolean =>
   node.type === "selector" || node.type === "unconditional_assignable_selector" || node.type === "conditional_assignable_selector";
-
-const idStep = (name: string, node: TSNode): CalleeStep => ({ kind: "id", name, line: node.startPosition.row + 1, column: node.startPosition.column });
 
 /** The first steps of a run: a name, `this`/`super`, or a receiver no name spells (a string's methods read bare). */
 function primarySteps(node: TSNode): CalleeStep[] {

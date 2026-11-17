@@ -484,3 +484,24 @@ function dedup(refs: ParsedTypeRef[]): ParsedTypeRef[] {
   }
   return out;
 }
+
+/** `Foo<A, B<C>>` → `{ name: "Foo", args: ["A", "B<C>"] }`; a non-generic → `{ name, args: [] }`. */
+export function splitGeneric(type: string): { name: string; args: string[] } {
+  const lt = type.indexOf("<");
+  if (lt < 0 || !type.endsWith(">")) return { name: type, args: [] };
+  const inner = type.slice(lt + 1, -1);
+  const args: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch === "<") depth++;
+    else if (ch === ">") depth--;
+    else if (ch === "," && depth === 0) {
+      args.push(inner.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  args.push(inner.slice(start).trim());
+  return { name: type.slice(0, lt), args };
+}

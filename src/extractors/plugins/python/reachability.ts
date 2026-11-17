@@ -1,4 +1,3 @@
-import { readFile } from "fs/promises";
 import { findShebangScripts, SCRIPT_DIRS } from "../shared/shebang-scripts.js";
 import { join } from "path";
 import type { FileAnalysis } from "../../../types/analysis.js";
@@ -7,6 +6,7 @@ import type {
   ReachabilityLoadContext,
   ReachabilityModel,
 } from "../../../types/language-plugin.js";
+import { normalize, dirOf, readText } from "../shared/reachability-kit.js";
 
 /**
  * How Python finds modules — the model dead-code analysis walks.
@@ -276,25 +276,3 @@ export function extractPythonPathReferences(sourceText: string): string[] {
   return [...out];
 }
 
-function dirOf(p: string): string {
-  const i = p.lastIndexOf("/");
-  return i >= 0 ? p.slice(0, i) : "";
-}
-
-function normalize(p: string): string {
-  const out: string[] = [];
-  for (const part of p.replace(/\\/g, "/").split("/")) {
-    if (part === "" || part === ".") continue;
-    if (part === "..") out.pop();
-    else out.push(part);
-  }
-  return out.join("/");
-}
-
-async function readText(path: string): Promise<string | null> {
-  try {
-    return await readFile(path, "utf-8");
-  } catch {
-    return null;
-  }
-}

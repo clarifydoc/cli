@@ -1,6 +1,7 @@
 import type { ClassInfo, RouteInfo } from "../../../types/analysis.js";
 import { extractCallsFromBody, findEndLine } from "../shared/regex-base.js";
 import { CRYSTAL_CALL_PATTERNS, extractCrystalLocalTypes } from "./calls.js";
+import { singularize } from "../shared/inflection.js";
 
 const VERBS = "get|post|put|patch|delete|options|head";
 
@@ -46,12 +47,6 @@ function joinPath(prefix: string, path: string): string {
 
 function underscore(name: string): string {
   return name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2").toLowerCase();
-}
-
-function singularize(word: string): string {
-  if (/ies$/.test(word)) return word.replace(/ies$/, "y");
-  if (/(ss|x|z|ch|sh)es$/.test(word)) return word.replace(/es$/, "");
-  return /[^s]s$/.test(word) ? word.slice(0, -1) : word;
 }
 
 /** 1-based spans of every top-level block that runs after load (see `RegexLangSpec.deferredBlocks`). */

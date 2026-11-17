@@ -6,7 +6,7 @@ import { receiverTypeOfCall } from "./di.js";
 import { signalReceiverTypeOfCall } from "./signal-receivers.js";
 import { boundHandler, boundThroughWrapper } from "./wrapped-functions.js";
 import { dispatchMapCallee, dispatchMapEntries, dispatchMapMember, importedMapMember, recordCallee } from "./dispatch-maps.js";
-import { enclosingFunctionNode, FUNCTION_NODE, paramNames } from "../../shared/node-helpers.js";
+import { enclosingFunctionNode, paramNames } from "../../shared/node-helpers.js";
 import { genericResolveCallName } from "../../shared/call-graph.js";
 import { TEST_REGISTRATION } from "./test-cases.js";
 import { dispatchKeyOfArgs, MUTATION_KEY_PREFIX, STORE_COMMIT } from "./vuex.js";

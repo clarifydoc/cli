@@ -41,7 +41,6 @@ const blankStrings = (text: string): string => text.replace(/"(?:[^"\\]|\\.)*"|'
 const MAX_CLOSURE_NAMES = 16;
 interface Values { cells: ValueCell[]; seeds: string[]; results: Array<{ call: string; line: number }>; lambda?: Map<string, string> }
 
-const IDENT = "[a-z_]\\w*";
 const stripSigil = (name: string): string => name.replace(/^[&*]+/, "");
 
 /** Statements of the lines `from..to` (0-based, exclusive end): a bracket left open, a trailing comma or a `\` continues one. */

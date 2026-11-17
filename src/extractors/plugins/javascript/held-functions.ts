@@ -2,6 +2,7 @@ import type { Node, Tree } from "web-tree-sitter";
 import { subscriptionOf } from "./component-subscriptions.js";
 import { reactiveCallbackName } from "./reactive-cells.js";
 import { libraryCallbackName } from "./library-callbacks.js";
+import { keyText } from "./node-utils.js";
 
 /**
  * Function values written in place and handed on to run later — each a function of its own
@@ -216,16 +217,6 @@ function arrayHolder(array: Node): string | null {
 
 function firstArgument(call: Node): Node | null {
   return call.childForFieldName("arguments")?.namedChildren.find((a) => a?.type !== "comment") ?? null;
-}
-
-function keyText(key: Node | null | undefined): string | null {
-  if (!key) return null;
-  if (key.type === "property_identifier") return key.text;
-  if (key.type === "string") {
-    const t = key.text.slice(1, -1);
-    return /^[A-Za-z_$][\w$]*$/.test(t) ? t : null;
-  }
-  return null;
 }
 
 function identifierText(n: Node | null | undefined): string | null {

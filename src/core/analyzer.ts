@@ -183,7 +183,6 @@ import { denormalizeFileAnalysis, denormalizeProject } from "./element-registry.
 import { collectMockedModules, collectTestFunctions } from "./test-functions.js";
 import {
   UNUSED_IMPORTS_LIMIT,
-  type ArchLayer,
   type FileAnalysis,
   type Language,
   type ProjectAnalysis,
@@ -4256,129 +4255,6 @@ import { readSourceRevision } from "./source-revision.js";
 import { importSarif } from "./sarif-import.js";
 import { assessCoverage } from "./coverage.js";
 import { applyExtractPatterns } from "./config-patterns.js";
-
-/** Import source patterns → framework id */
-const IMPORT_FRAMEWORK_MAP: Record<string, string> = {
-  "react": "react",
-  "react-dom": "react",
-  "react-router": "react-router",
-  "react-router-dom": "react-router",
-  "next": "nextjs",
-  "next/router": "nextjs",
-  "next/navigation": "nextjs",
-  "vue": "vue",
-  "vue-router": "vue-router",
-  "nuxt": "nuxt",
-  "pinia": "pinia",
-  "vuex": "vuex",
-  "express": "express",
-  "@nestjs/common": "nestjs",
-  "@nestjs/core": "nestjs",
-  "fastify": "fastify",
-  "@angular/core": "angular",
-  "@angular/router": "angular",
-  "react-redux": "react-redux",
-  "@reduxjs/toolkit": "redux",
-  "@tanstack/react-query": "react-query",
-  "io.ktor.server.routing": "ktor",
-  "org.springframework.web.bind.annotation": "spring-web",
-  // ORM imports
-  "@prisma/client": "prisma",
-  "prisma": "prisma",
-  "typeorm": "typeorm",
-  "sequelize": "sequelize",
-  "sequelize-typescript": "sequelize",
-  "drizzle-orm": "drizzle",
-  "@mikro-orm/core": "mikro-orm",
-  "mongoose": "mongoose",
-  "knex": "knex",
-  "objection": "objection",
-  "sqlalchemy": "sqlalchemy",
-  "django.db.models": "django-orm",
-  "tortoise": "tortoise-orm",
-  "peewee": "peewee",
-  "Microsoft.EntityFrameworkCore": "ef-core",
-  "System.Data.Entity": "ef6",
-  "Dapper": "dapper",
-  "NHibernate": "nhibernate",
-  "org.hibernate": "hibernate",
-  "javax.persistence": "hibernate",
-  "jakarta.persistence": "hibernate",
-  "org.springframework.data.jpa": "spring-data-jpa",
-  "org.mybatis": "mybatis",
-  "org.jooq": "jooq",
-  "org.jetbrains.exposed": "exposed",
-  "active_record": "active-record",
-  "sequel": "sequel",
-  "Doctrine\\ORM": "doctrine",
-  "Illuminate\\Database": "eloquent",
-  "gorm.io/gorm": "gorm",
-  "github.com/jmoiron/sqlx": "sqlx",
-  "entgo.io/ent": "ent",
-  "diesel": "diesel",
-  "sea_orm": "sea-orm",
-  "sqlx": "rust-sqlx",
-};
-
-/**
- * Infer which frameworks a specific file uses, based on its imports.
- * Only includes project-level frameworks that the file actually references.
- */
-function inferFileFrameworks(
-  imports: ImportInfo[],
-  filePath: string,
-  projectFrameworkIds: string[],
-): string[] {
-  const fileFrameworks = new Set<string>();
-
-  for (const imp of imports) {
-    // Check exact match
-    const exact = IMPORT_FRAMEWORK_MAP[imp.source];
-    if (exact) {
-      fileFrameworks.add(exact);
-      continue;
-    }
-    // Check prefix match (e.g., "react-router-dom/..." or "org.springframework.web.bind.annotation.*")
-    for (const [pattern, fwId] of Object.entries(IMPORT_FRAMEWORK_MAP)) {
-      if (imp.source.startsWith(pattern + "/") || imp.source.startsWith(pattern + ".")) {
-        fileFrameworks.add(fwId);
-      }
-    }
-  }
-
-  // .vue files are implicitly Vue
-  if (filePath.endsWith(".vue")) {
-    fileFrameworks.add("vue");
-  }
-
-  return [...fileFrameworks];
-}
-
-/** Detect 'use client' / 'use server' directives (React Server Components) */
-function detectDirectives(
-  sourceText: string,
-  analysis: FileAnalysis,
-) {
-  const firstLine = sourceText.trimStart().split("\n")[0];
-  if (firstLine.includes("'use client'") || firstLine.includes('"use client"')) {
-    analysis.dataSources.push({
-      kind: "prop",
-      name: "use client",
-      target: "React Server Component: client boundary",
-      calls: [],
-      line: 1,
-    });
-  }
-  if (firstLine.includes("'use server'") || firstLine.includes('"use server"')) {
-    analysis.dataSources.push({
-      kind: "prop",
-      name: "use server",
-      target: "React Server Component: server action",
-      calls: [],
-      line: 1,
-    });
-  }
-}
 
 /**
  * The source texts of the analyzed files: what per-file analysis read, else

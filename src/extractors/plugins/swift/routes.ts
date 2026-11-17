@@ -2,6 +2,7 @@ import type { RouteInfo, RouteParamInfo } from "../../../types/analysis.js";
 import { applyRouteMeta, inferredParam, pathParamNames, type GuardAttr } from "../../shared/route-metadata.js";
 import { splitTopLevel } from "../shared/regex-base.js";
 import { extractSwiftRequestAccess } from "./request-schema.js";
+import { balancedArgs } from "../shared/text-scan.js";
 
 /**
  * Vapor (Swift server) routes — Swift produced zero routes before:
@@ -62,20 +63,6 @@ function segmentsOf(argText: string): string[] {
 function joinPath(prefix: string, segments: string[]): string {
   const parts = [prefix, ...segments].join("/").split("/").filter(Boolean);
   return "/" + parts.join("/");
-}
-
-/** The balanced argument text of the call whose `(` is at `open`, and the index after its `)`. */
-function balancedArgs(text: string, open: number): { args: string; end: number } | null {
-  let depth = 0;
-  for (let i = open; i < text.length; i++) {
-    const ch = text[i];
-    if (ch === "(") depth++;
-    else if (ch === ")") {
-      depth--;
-      if (depth === 0) return { args: text.slice(open + 1, i), end: i + 1 };
-    }
-  }
-  return null;
 }
 
 /** One middleware expression → what it contributes to the route. */

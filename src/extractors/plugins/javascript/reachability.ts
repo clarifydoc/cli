@@ -1,4 +1,3 @@
-import { readFile } from "fs/promises";
 import { join } from "path";
 import type { FileAnalysis } from "../../../types/analysis.js";
 import type {
@@ -10,6 +9,7 @@ import { stripJsonc } from "../../shared/tsconfig-aliases.js";
 import { JS_PLATFORM_SUFFIXES } from "./manifest.js";
 import { NODE_BUILTINS } from "./node-builtins.js";
 import { findShebangScripts, SCRIPT_DIRS } from "../shared/shebang-scripts.js";
+import { normalize, dirOf, readText } from "../shared/reachability-kit.js";
 
 /**
  * How the JS/TS toolchain finds files — the model dead-code analysis
@@ -529,21 +529,6 @@ function push<K>(map: Map<K, string[]>, key: K, value: string): void {
   } else map.set(key, [value]);
 }
 
-function dirOf(p: string): string {
-  const i = p.lastIndexOf("/");
-  return i >= 0 ? p.slice(0, i) : "";
-}
-
-function normalize(p: string): string {
-  const out: string[] = [];
-  for (const part of p.replace(/\\/g, "/").split("/")) {
-    if (part === "" || part === ".") continue;
-    if (part === "..") out.pop();
-    else out.push(part);
-  }
-  return out.join("/");
-}
-
 /** Every string inside a manifest field (string, array, nested condition map). */
 function stringLeaves(v: unknown): string[] {
   if (typeof v === "string") return [v];
@@ -578,14 +563,6 @@ export function globToRegExp(glob: string): RegExp {
     } else re += /[.+^$()|\\]/.test(c) ? `\\${c}` : c;
   }
   return new RegExp(`^${re}$`);
-}
-
-async function readText(path: string): Promise<string | null> {
-  try {
-    return await readFile(path, "utf-8");
-  } catch {
-    return null;
-  }
 }
 
 async function readJson(path: string): Promise<Record<string, unknown> | null> {

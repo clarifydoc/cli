@@ -1,5 +1,6 @@
 import type { CallInfo, FunctionInfo } from "../../../types/analysis.js";
 import { GO_TYPE_KEYWORDS, matchingClose, stripGoComment } from "./syntax.js";
+import { splitTopLevelCommas as splitTop } from "../shared/text-scan.js";
 
 /**
  * What a Go function's body can say about the type of a name it does not declare with one: the element a collection
@@ -84,23 +85,6 @@ function literalOpen(text: string): number {
     else if (c === "(" || c === ")" || c === "=") return -1;
   }
   return -1;
-}
-
-function splitTop(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i]!;
-    if (c === "(" || c === "[" || c === "{") depth++;
-    else if (c === ")" || c === "]" || c === "}") depth--;
-    else if (c === "," && depth === 0) {
-      out.push(text.slice(start, i));
-      start = i + 1;
-    }
-  }
-  out.push(text.slice(start));
-  return out;
 }
 
 /** The type a `T{…}` / `&T{…}` composite literal of a named type builds, or null. */

@@ -3,6 +3,7 @@ import { buildAuth, inferredParam, pathParamNames, type GuardAttr } from "../../
 import { extractParamsFromDeclaration } from "../shared/regex-base.js";
 import { parseRustParam } from "./params.js";
 import { classifyRustParamType } from "./request-schema.js";
+import { isAuthGuard } from "../../shared/route-metadata.js";
 
 /**
  * Rust server routes — the three dominant frameworks, none of which produced
@@ -157,10 +158,6 @@ function classifyGuard(raw: string): GuardAttr {
     else g.policies = [callee];
   }
   return g;
-}
-
-function isAuthGuard(g: GuardAttr): boolean {
-  return (g.policies?.length ?? 0) + (g.roles?.length ?? 0) + (g.schemes?.length ?? 0) > 0;
 }
 
 /**

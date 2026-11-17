@@ -1,6 +1,7 @@
 import type { DataSourceInfo, PathArgCall } from "../../../types/analysis.js";
 import { callArgs } from "./mq-destinations.js";
 import { extractGoImports } from "./imports.js";
+import { terms as plusTerms } from "./module-values.js";
 
 /**
  * Go request factories and the calls that name their endpoint.
@@ -146,34 +147,6 @@ export function servedInProcess(lines: readonly string[], at: number, fns: reado
   const served = new RegExp(String.raw`\.ServeHTTP\s*\(\s*(?:[^,()]|\([^()]*\))+,\s*${name}\s*\)`);
   for (let k = at + 1; k <= fn.end; k++) if (served.test(lines[k]!)) return true;
   return false;
-}
-
-/** Split at top-level `+`, quotes and parentheses honoured. */
-function plusTerms(expr: string): string[] {
-  const out: string[] = [];
-  let cur = "";
-  let quote: string | null = null;
-  let depth = 0;
-  for (let i = 0; i < expr.length; i++) {
-    const ch = expr[i]!;
-    if (quote) {
-      cur += ch;
-      if (ch === "\\" && quote === '"') cur += expr[++i] ?? "";
-      else if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === '"' || ch === "`") quote = ch;
-    else if (ch === "(") depth++;
-    else if (ch === ")") depth--;
-    else if (ch === "+" && depth === 0) {
-      out.push(cur.trim());
-      cur = "";
-      continue;
-    }
-    cur += ch;
-  }
-  out.push(cur.trim());
-  return out;
 }
 
 /**

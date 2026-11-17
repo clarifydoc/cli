@@ -1,5 +1,6 @@
 import type { EventInfo, ParamInfo, Language } from "../../../types/analysis.js";
 import { escapeRegex } from "../shared/path-utils.js";
+import { lineStarts as lineIndex, lineOfOffset as lineOf } from "../shared/text-scan.js";
 
 /**
  * Extract component events from Vue defineEmits declarations and emit() calls.
@@ -208,25 +209,6 @@ function parseCallSignatureParams(raw: string): ParamInfo[] {
   }
 
   return params;
-}
-
-/** The offset each line starts at. */
-function lineIndex(source: string): number[] {
-  const starts = [0];
-  for (let i = source.indexOf("\n"); i >= 0; i = source.indexOf("\n", i + 1)) starts.push(i + 1);
-  return starts;
-}
-
-/** The 1-based line of an offset, by binary search over `lineIndex`. */
-function lineOf(starts: number[], offset: number): number {
-  let lo = 0;
-  let hi = starts.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    if (starts[mid]! <= offset) lo = mid;
-    else hi = mid - 1;
-  }
-  return lo + 1;
 }
 
 /** Get 1-based line number for a character offset */

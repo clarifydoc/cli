@@ -36,7 +36,7 @@ function braceDelta(line: string): number {
 }
 
 /** Split `a + "b" + c` at top-level `+`, quotes honoured. */
-function terms(expr: string): string[] {
+export function terms(expr: string): string[] {
   const out: string[] = [];
   let cur = "";
   let quote: string | null = null;

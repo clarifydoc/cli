@@ -50,7 +50,6 @@ import {
   type Language,
   type ComplexityInfo,
   type SecurityIssue,
-  type RouteInfo,
   type TaintFacts,
 } from "../types/analysis.js";
 

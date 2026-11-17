@@ -2,6 +2,7 @@ import type { CallInfo, RouteFact, RouteInfo } from "../../../types/analysis.js"
 import { buildAuth, type GuardAttr } from "../../shared/route-metadata.js";
 import { ROUTER_CALL, type RouterCall } from "../shared/router-functions.js";
 import { extractGoImports } from "./imports.js";
+import { isAuthGuard } from "../../shared/route-metadata.js";
 
 /**
  * Go server routes across the ecosystem's router families:
@@ -278,10 +279,6 @@ export function middlewareCallees(texts: readonly string[]): string[] {
     out.push(name);
   }
   return out;
-}
-
-function isAuthGuard(g: GuardAttr): boolean {
-  return (g.policies?.length ?? 0) + (g.roles?.length ?? 0) + (g.schemes?.length ?? 0) > 0;
 }
 
 /** A call that says its argument IS the handler: gin-contrib/timeout's `timeout.WithHandler(h)`, `http.HandlerFunc(h)`. */

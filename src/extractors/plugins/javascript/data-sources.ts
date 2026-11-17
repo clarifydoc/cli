@@ -23,6 +23,7 @@ import { joinedTableRows, tableFrom } from "../shared/sql-string-sources.js";
 import { sqlVerbAccess } from "../shared/db-access.js";
 import { filterOrigins } from "./arg-origins.js";
 import { DAPR_TOPIC_RE, daprRow } from "../shared/dapr-pubsub.js";
+import { awaitedCall } from "./node-utils.js";
 
 /** A resolved api-call URL: the app-relative path plus recovered provenance. */
 interface ResolvedUrl {
@@ -646,14 +647,6 @@ export function phoenixTopicPattern(written: string): string | null {
   if (!m) return null;
   return `${m[1] ?? m[2]}*`;
 }
-
-/** Method names that are chaining noise, not meaningful calls */
-const NOISE_METHODS = new Set([
-  "then", "catch", "finally", "json", "text", "blob", "arrayBuffer", "formData",
-  "send", "status", "end", "log", "warn", "error", "info",
-  "toString", "valueOf", "toJSON",
-]);
-
 
 export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["typescript", "javascript"];
@@ -2819,13 +2812,6 @@ function isParamHole(url: string, at: Node): boolean {
     if (FUNCTION_SCOPES.has(p.type) && declaresParam(p, m[1]!)) return true;
   }
   return false;
-}
-
-/** A call, also awaited or parenthesized (`await apiUrl("/clubs")`); null for anything else. */
-function awaitedCall(node: Node | null): Node | null {
-  let n = node;
-  while (n?.type === "parenthesized_expression" || n?.type === "await_expression") n = n.namedChild(0);
-  return n?.type === "call_expression" ? n : null;
 }
 
 /** Whether a function node declares a parameter of this name. */

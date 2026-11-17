@@ -4,6 +4,7 @@ import { recordPatternCalls, type PatternCallName } from "../shared/antlr-calls.
 import { callStep, nameCall, patternNamedCall, type CalleeStep } from "../shared/callee-names.js";
 import { countSyntaxErrors, treeSitterReader } from "../shared/tree-sitter-front-end.js";
 import { scalaDiCallPatterns } from "./di.js";
+import { idStep } from "../shared/callee-names.js";
 
 /** How many calls deep a chain is named (the linker types each step through declared return types). */
 const CHAIN_DEPTH = 8;
@@ -98,8 +99,6 @@ function visitNode(node: TSNode, owner: PatternCallName[] | null, walk: Walk, le
   }
   visit(node, owner, walk, node.type === "template_body" ? lend : null);
 }
-
-const idStep = (name: string, node: TSNode): CalleeStep => ({ kind: "id", name, line: node.startPosition.row + 1, column: node.startPosition.column });
 
 /** A callee as steps: names and members, a call's result as a call, a string's methods read bare. */
 function stepsOf(node: TSNode): CalleeStep[] {

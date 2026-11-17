@@ -181,3 +181,7 @@ export function withInheritedGuards(route: RouteInfo, guards: readonly GuardAttr
     : added;
   return { ...route, middleware: [...texts, ...route.middleware], auth };
 }
+
+export function isAuthGuard(g: GuardAttr): boolean {
+  return (g.policies?.length ?? 0) + (g.roles?.length ?? 0) + (g.schemes?.length ?? 0) > 0;
+}

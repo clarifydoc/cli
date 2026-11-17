@@ -2,7 +2,7 @@ import type { Node } from "web-tree-sitter";
 import type { FileAnalysis, RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import type { ProjectContext } from "../../../../types/project.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";
-import { literalString, stripQuotes } from "../../../shared/node-helpers.js";
+import { literalString } from "../../../shared/node-helpers.js";
 import { joinRelPath, lambdaModuleHandler } from "../../shared/lambda-handlers.js";
 
 /**

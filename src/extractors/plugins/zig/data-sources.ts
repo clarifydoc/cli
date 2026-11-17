@@ -3,6 +3,7 @@ import { DataSourceExtractor } from "../../data-sources/base.js";
 import type { DataSourceInfo, Language } from "../../../types/analysis.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { callArgs, calleeName, declValue, memberName, stringValue } from "./syntax.js";
+import { initFields } from "./syntax.js";
 
 /**
  * Zig data access:
@@ -76,16 +77,3 @@ function parsedUris(root: Node): Map<string, string> {
   return out;
 }
 
-/** `.name = value` entries of an anonymous struct initializer. */
-function initFields(init: Node): Map<string, Node> {
-  const out = new Map<string, Node>();
-  const list = init.namedChildren.find((c) => c.type === "initializer_list");
-  for (const assign of list?.namedChildren ?? []) {
-    if (assign.type !== "assignment_expression") continue;
-    const left = assign.childForFieldName("left");
-    const right = assign.childForFieldName("right");
-    const name = left?.type === "field_expression" ? left.childForFieldName("member")?.text : null;
-    if (name && right) out.set(name, right);
-  }
-  return out;
-}

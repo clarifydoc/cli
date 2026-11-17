@@ -18,22 +18,6 @@ import {
   type LspDockerConfig,
 } from "./lsp-configs.js";
 
-/** Map from ClarifyDoc Language to LSP languageId string */
-const LANGUAGE_ID_MAP: Record<string, string> = {
-  typescript: "typescript",
-  javascript: "javascript",
-  python: "python",
-  java: "java",
-  kotlin: "kotlin",
-  csharp: "csharp",
-  go: "go",
-  rust: "rust",
-  ruby: "ruby",
-  php: "php",
-  vb: "vb",
-  pascal: "pascal",
-};
-
 /** Map file extension to LSP languageId */
 function extensionToLanguageId(filePath: string): string {
   if (filePath.endsWith(".tsx")) return "typescriptreact";

@@ -1,5 +1,7 @@
 import type { PropertyInfo } from "../../../types/analysis.js";
 import type { RequestSchemaHooks, TypeShape } from "../../../types/language-plugin.js";
+import { camelCase } from "../shared/inflection.js";
+export { camelCase };
 
 /**
  * How C# types and properties look on the wire under System.Text.Json (the
@@ -64,23 +66,6 @@ function splitGeneric(type: string): { name: string; args: string[] } {
 /** Drop namespace qualification (`System.Collections.Generic.List` → `List`) on the outer name only. */
 function simpleName(name: string): string {
   return name.replace(/^global::/, "").replace(/^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*\./, "");
-}
-
-/**
- * System.Text.Json's CamelCase policy: lower-case the leading run of upper-case
- * letters, but leave the last of the run when it starts the next word —
- * `Name` → `name`, `ID` → `id`, `URLValue` → `urlValue`.
- */
-export function camelCase(name: string): string {
-  if (!name || name[0]! < "A" || name[0]! > "Z") return name;
-  let run = 0;
-  while (run < name.length && name[run]! >= "A" && name[run]! <= "Z") run++;
-  if (run === name.length) return name.toLowerCase();
-  if (run === 1) return name[0]!.toLowerCase() + name.slice(1);
-  const next = name[run]!;
-  const isLower = next >= "a" && next <= "z";
-  const cut = isLower ? run - 1 : run;
-  return name.slice(0, cut).toLowerCase() + name.slice(cut);
 }
 
 /** First string argument of a decorator whose name matches: `JsonPropertyName("x")` → `x`. */

@@ -9,7 +9,7 @@ import {
 import { readFile } from "fs/promises";
 import { existsSync } from "fs";
 import v8 from "v8";
-import { resolve, dirname, join } from "path";
+import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
 import type { Language } from "../types/analysis.js";

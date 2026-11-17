@@ -3,6 +3,7 @@ import type { TSNode } from "../../../parsers/parser-manager.js";
 import { recordPatternCalls, type PatternCallName } from "../shared/antlr-calls.js";
 import { nameCall, type CalleeStep } from "../shared/callee-names.js";
 import { countSyntaxErrors, treeSitterReader } from "../shared/tree-sitter-front-end.js";
+import { idStep } from "../shared/callee-names.js";
 
 /** How many calls deep a chain is named (the linker types each step through declared return types). */
 const CHAIN_DEPTH = 8;
@@ -93,8 +94,6 @@ function functionName(node: TSNode): TSNode | null {
   while (declarator && declarator.type !== "identifier") declarator = declarator.childForFieldName("declarator");
   return declarator;
 }
-
-const idStep = (name: string, node: TSNode): CalleeStep => ({ kind: "id", name, line: node.startPosition.row + 1, column: node.startPosition.column });
 
 /** A send's callee as steps: its receiver's, then its selector's first piece. */
 function sendSteps(node: TSNode): CalleeStep[] {

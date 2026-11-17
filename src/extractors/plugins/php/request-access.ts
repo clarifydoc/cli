@@ -29,8 +29,6 @@ const SERVICE_TYPES: ReadonlySet<string> = new Set([
   "Application", "Guard", "Gate", "Auth", "Authenticatable", "Factory", "Redirector", "ResponseFactory",
 ]);
 
-const SCALAR_TYPES: ReadonlySet<string> = new Set(["int", "float", "string", "bool", "array", "mixed", "iterable", "object", "callable"]);
-
 function bareType(type: string | null): string | null {
   if (!type) return null;
   return type.replace(/^\?/, "").replace(/^\\/, "").replace(/.*\\/, "").replace(/\|null$/i, "").trim() || null;

@@ -1,4 +1,5 @@
 import type { InteractiveElementInfo, ScreenComponentInfo, SubComponentInfo } from "../../../types/analysis.js";
+import { lineAt } from "../shared/text-scan.js";
 
 /**
  * HEEx / EEx markup — Phoenix templates (`.html.heex`) and LiveView `~H"""`
@@ -53,12 +54,6 @@ export interface HeexRead {
   components: ScreenComponentInfo[];
   caption: string | null;
 }
-
-const lineAt = (text: string, index: number): number => {
-  let line = 1;
-  for (let i = 0; i < index; i++) if (text.charCodeAt(i) === 10) line++;
-  return line;
-};
 
 /** `{~p"/sites/#{@site.domain}/settings"}`, `"/x"`, `{"/#{x}/settings"}` → `/sites/:param/settings`; null when not an app path. */
 function pathOf(value: string | undefined): string | null {

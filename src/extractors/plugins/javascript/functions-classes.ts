@@ -31,6 +31,7 @@ import { isMemberLoaderBody, loadedDefaultSource, loadedMemberCall } from "./loa
 import { recordEntries, recordIndexOrigin, recordMemberChain, switchRecordEntries } from "./dispatch-maps.js";
 import { ELEMENT_CALLBACKS, KEEPS_ELEMENTS, collectionElement } from "./element-types.js";
 import { destructuredParamTypes, objectTypesOf, paramNameSet, type ObjectTypes } from "./destructured-params.js";
+import { awaitedCall } from "./node-utils.js";
 
 /** A local variable whose type the body states (see `FunctionInfo.localTypes`). */
 type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
@@ -1250,13 +1251,6 @@ function leadingBaseText(node: Node): string | null {
     return leadingBaseText(left) ?? awaitedCall(left)?.text ?? null;
   }
   return null;
-}
-
-/** A call, also parenthesized or awaited (`(await garageOrigin())`); null for anything else. */
-function awaitedCall(node: Node | null): Node | null {
-  let n = node;
-  while (n?.type === "parenthesized_expression" || n?.type === "await_expression") n = n.namedChild(0);
-  return n?.type === "call_expression" ? n : null;
 }
 
 /**

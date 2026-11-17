@@ -1761,29 +1761,6 @@ function buildLeafCatalog(
 }
 
 /**
- * Clean a declared type name and resolve it in a name-keyed map: tries the
- * full cleaned name, then the last dot-segment for package-qualified names
- * (`*service.UserService` → `UserService`, Go fields and Java FQNs).
- */
-function resolveTypeIn<T>(
-  map: Map<string, T>,
-  rawType: string,
-): { name: string; value: T } | null {
-  // Strip generic args so a DI field typed `IRepository<Account>` /
-  // `IReadOnlyList<Foo>` resolves to its class (`IRepository`) — otherwise the
-  // injection map never binds the receiver and `_repository.X` stays unresolved.
-  const cleaned = rawType.replace(/<.*$/, "").replace(/[?*&]/g, "").trim();
-  const direct = map.get(cleaned);
-  if (direct !== undefined) return { name: cleaned, value: direct };
-  if (cleaned.includes(".")) {
-    const short = cleaned.split(".").pop()!;
-    const byShort = map.get(short);
-    if (byShort !== undefined) return { name: short, value: byShort };
-  }
-  return null;
-}
-
-/**
  * Pick the candidate whose file shares the longest leading directory path with
  * `sourceFile` — used to disambiguate a duplicated type name across packages
  * (`app/IAppService` vs `mobileapp/IAppService`) by caller proximity. Returns

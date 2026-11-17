@@ -3,6 +3,7 @@ import type { ProxyRule } from "../../../types/analysis.js";
 import { literalString } from "../../shared/node-helpers.js";
 import { jsBaseRefOf } from "./service-config.js";
 import { isHttpTarget, prefixOfPattern, rewritePrefix } from "../shared/proxy-kit.js";
+import { keyOf, pairsOf } from "./node-utils.js";
 
 /**
  * Dev-server proxies a frontend declares in code:
@@ -15,26 +16,7 @@ import { isHttpTarget, prefixOfPattern, rewritePrefix } from "../shared/proxy-ki
  */
 const CONFIG_FILE = /(?:^|\/)(?:(vite|vitest|vue|nuxt|webpack[\w.-]*)\.config|setupProxy)\.[cm]?[jt]s$/;
 
-function keyOf(pair: Node): string | null {
-  const key = pair.childForFieldName("key");
-  if (!key) return null;
-  if (key.type === "string") return key.text.slice(1, -1);
-  if (key.type === "property_identifier" || key.type === "identifier") return key.text;
-  return null;
-}
-
 const stringValue = (node: Node | null | undefined): string | null => literalString(node);
-
-function pairsOf(obj: Node): Map<string, Node> {
-  const out = new Map<string, Node>();
-  for (const p of obj.namedChildren) {
-    if (p?.type !== "pair") continue;
-    const k = keyOf(p);
-    const v = p.childForFieldName("value");
-    if (k && v) out.set(k, v);
-  }
-  return out;
-}
 
 /** A target as stated: a literal address, or an env variable's literal fallback. */
 function targetOf(node: Node | undefined): string | null {

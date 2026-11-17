@@ -261,3 +261,9 @@ export function hasChildType(node: Node, type: string): boolean {
   }
   return false;
 }
+
+export function unwrapParenthesized(node: Node | null | undefined): Node | null {
+  let n = node ?? null;
+  while (n?.type === "parenthesized_expression") n = n.namedChild(0);
+  return n;
+}

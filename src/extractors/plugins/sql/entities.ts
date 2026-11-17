@@ -2,6 +2,7 @@ import type { FileAnalysis, SchemaOp } from "../../../types/analysis.js";
 import { fkRelation, replaySchema } from "../shared/schema-replay.js";
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 import { GO_LINE } from "./index.js";
+import { matchingParen } from "../shared/text-scan.js";
 
 /**
  * SQL migrations replayed into one schema.
@@ -138,15 +139,6 @@ function statements(lines: string[]): Array<{ text: string; line: number }> {
   });
   if (buf.trim()) out.push({ text: buf.trim(), line: start });
   return out;
-}
-
-function matchingParen(text: string, open: number): number {
-  let depth = 0;
-  for (let i = open; i < text.length; i++) {
-    if (text[i] === "(") depth++;
-    else if (text[i] === ")" && --depth === 0) return i;
-  }
-  return -1;
 }
 
 /** Split an ALTER TABLE's actions (or a CREATE's columns) at top-level commas. */

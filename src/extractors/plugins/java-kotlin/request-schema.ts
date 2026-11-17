@@ -1,5 +1,6 @@
 import type { PropertyInfo } from "../../../types/analysis.js";
 import type { RequestSchemaHooks, TypeShape } from "../../../types/language-plugin.js";
+import { splitGeneric } from "../../shared/type-parser.js";
 
 /**
  * How Java and Kotlin types serialize under Jackson (Spring's default, and
@@ -39,26 +40,6 @@ const ARRAY_GENERICS = new Set([
 ]);
 const MAP_GENERICS = new Set(["Map", "HashMap", "LinkedHashMap", "TreeMap", "MutableMap", "SortedMap"]);
 const WRAPPERS = new Set(["Optional", "Mono", "ResponseEntity", "HttpEntity", "Valid"]);
-
-function splitGeneric(type: string): { name: string; args: string[] } {
-  const lt = type.indexOf("<");
-  if (lt < 0 || !type.endsWith(">")) return { name: type, args: [] };
-  const inner = type.slice(lt + 1, -1);
-  const args: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < inner.length; i++) {
-    const ch = inner[i];
-    if (ch === "<") depth++;
-    else if (ch === ">") depth--;
-    else if (ch === "," && depth === 0) {
-      args.push(inner.slice(start, i).trim());
-      start = i + 1;
-    }
-  }
-  args.push(inner.slice(start).trim());
-  return { name: type.slice(0, lt), args };
-}
 
 function simpleName(name: string): string {
   return name.replace(/^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*\./, "").replace(/^(in|out)\s+/, "");

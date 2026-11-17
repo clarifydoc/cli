@@ -42,7 +42,7 @@ function noteName(text: string): string {
 const link = (path: string, shown: string) => `[[${path}|${shown.replace(/[|\]]/g, "¦")}]]`;
 
 /** YAML frontmatter: every value a JSON string, which YAML reads as a double-quoted scalar. */
-function frontmatter(fields: Record<string, unknown>): string[] {
+export function frontmatter(fields: Record<string, unknown>): string[] {
   const lines = ["---"];
   for (const [key, value] of Object.entries(fields)) {
     if (value === undefined || value === null || value === "") continue;

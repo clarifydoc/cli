@@ -4,6 +4,7 @@ import type { FileAnalysis, FunctionInfo, GeneratedClientConfig, RouteInfo } fro
 import { literalString } from "../../shared/node-helpers.js";
 import type { ProjectContext } from "../../../types/project.js";
 import type { ProjectApiCall } from "../../data-sources/base.js";
+import { pairsOf } from "./node-utils.js";
 
 /**
  * Kubb-generated API clients.
@@ -38,25 +39,6 @@ const OUTPUT_PLUGINS: Record<string, { kind: "client" | "hook"; dir: string }> =
   pluginSolidQuery: { kind: "hook", dir: "hooks" },
   pluginSwr: { kind: "hook", dir: "hooks" },
 };
-
-function keyOf(pair: Node): string | null {
-  const key = pair.childForFieldName("key");
-  if (!key) return null;
-  if (key.type === "string") return key.text.slice(1, -1);
-  if (key.type === "property_identifier" || key.type === "identifier") return key.text;
-  return null;
-}
-
-function pairsOf(obj: Node): Map<string, Node> {
-  const out = new Map<string, Node>();
-  for (const p of obj.namedChildren) {
-    if (p?.type !== "pair") continue;
-    const k = keyOf(p);
-    const v = p.childForFieldName("value");
-    if (k && v) out.set(k, v);
-  }
-  return out;
-}
 
 const stringOf = (node: Node | null | undefined): string | null => literalString(node);
 

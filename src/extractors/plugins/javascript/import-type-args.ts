@@ -1,5 +1,6 @@
 import type { ImportInfo, Language } from "../../../types/analysis.js";
 import type { PreprocessOutcome } from "../../../types/language-plugin.js";
+import { lineAt } from "../shared/text-scan.js";
 
 /**
  * tree-sitter-typescript 0.23 reads a call whose FIRST type argument is an
@@ -94,8 +95,3 @@ function closingAngle(text: string, open: number): number {
   return -1;
 }
 
-function lineAt(text: string, index: number): number {
-  let line = 1;
-  for (let i = 0; i < index; i++) if (text.charCodeAt(i) === 10) line++;
-  return line;
-}

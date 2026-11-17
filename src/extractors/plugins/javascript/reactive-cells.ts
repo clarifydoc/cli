@@ -6,6 +6,8 @@ import { withVuexCalls, withVuexOptions } from "./vuex-state-reads.js";
 import { withAngularListeners } from "./subject-listens.js";
 import { TEMPLATE_WRITE_MARK } from "./markup-expressions.js";
 import { decodeTargets, type TemplateTarget } from "./template-targets.js";
+import { innermost } from "./node-utils.js";
+export { innermost };
 
 /**
  * Reactive cells a component writes and the callbacks a write re-runs — the trigger a click
@@ -361,16 +363,6 @@ export function reactiveCells(tree: Tree, _sourceText: string, functions: Readon
   // The file's `<setup>` takes the template's writes and, in an Options API component, its `immediate` watchers.
   if (out.writes.some((w) => w.function === "<setup>") || out.triggers.some((t, i) => t.immediate && optionsImmediate.has(i))) out.component = true;
   return out.writes.length > 0 || atSetup ? out : null;
-}
-
-/** The innermost declared function holding a line: the narrowest, then the last to start. */
-export function innermost(functions: ReadonlyArray<{ name: string; line: number; endLine: number }>, line: number): string | null {
-  let best: { name: string; line: number; endLine: number } | null = null;
-  for (const f of functions) {
-    if (f.line > line || f.endLine < line) continue;
-    if (!best || f.endLine - f.line < best.endLine - best.line || (f.endLine - f.line === best.endLine - best.line && f.line > best.line)) best = f;
-  }
-  return best?.name ?? null;
 }
 
 /** What a statement the template runs writes (`@click="page = 2"`, `v-model="query"`), left in the parsed text as a comment by `withMarkupExpressions`. */

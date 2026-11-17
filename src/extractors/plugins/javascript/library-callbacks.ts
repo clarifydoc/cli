@@ -1,5 +1,6 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { CallInfo, FunctionPropBinding } from "../../../types/analysis.js";
+import { keyText } from "./node-utils.js";
 
 /**
  * Option callbacks a library object runs when one of its methods is called — knowledge of the library, kept as
@@ -529,12 +530,3 @@ export function addDerivedLibraryMembers(functions: ReadonlyArray<{ calls: CallI
   }
 }
 
-function keyText(key: Node | null | undefined): string | null {
-  if (!key) return null;
-  if (key.type === "property_identifier") return key.text;
-  if (key.type === "string") {
-    const t = key.text.slice(1, -1);
-    return /^[A-Za-z_$][\w$]*$/.test(t) ? t : null;
-  }
-  return null;
-}

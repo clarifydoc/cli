@@ -425,12 +425,6 @@ function routeAttrRaw(openingEl: Node, name: string): string | null {
   return routeAttrValue(openingEl, name)?.text ?? null;
 }
 
-/** The string value of a named attribute on a JSX opening element, unquoted. */
-function routeAttr(openingEl: Node, name: string): string | null {
-  const raw = routeAttrRaw(openingEl, name);
-  return raw != null ? stripQuotes(raw) : null;
-}
-
 /**
  * Accumulated path of every ancestor `<Route path=…>` wrapping this one,
  * outermost first (`/seller` for a route nested under <Route path="/seller">).

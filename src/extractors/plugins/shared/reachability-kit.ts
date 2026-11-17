@@ -307,12 +307,12 @@ function stemOf(filePath: string): string {
   return base.replace(/\..*$/, "");
 }
 
-function dirOf(p: string): string {
+export function dirOf(p: string): string {
   const i = p.lastIndexOf("/");
   return i >= 0 ? p.slice(0, i) : "";
 }
 
-function normalize(p: string): string {
+export function normalize(p: string): string {
   const out: string[] = [];
   for (const part of p.replace(/\\/g, "/").split("/")) {
     if (part === "" || part === ".") continue;
@@ -381,4 +381,12 @@ function listProjectFiles(ctx: ReachabilityLoadContext): Promise<string[]> {
     listings.set(ctx, p);
   }
   return p;
+}
+
+export async function readText(path: string): Promise<string | null> {
+  try {
+    return await readFile(path, "utf-8");
+  } catch {
+    return null;
+  }
 }

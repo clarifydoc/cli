@@ -32,6 +32,7 @@ import { extractDartImports, extractDartReExports } from "./imports.js";
 import { applyDartExtensionReceivers } from "./extensions.js";
 import { dartModuleBindings } from "./module-bindings.js";
 import { dartFieldValues, dartUrlArg, dartVerbArg, extractDartPathArgCalls, isDartHttpReceiver } from "./request-wrappers.js";
+import { balancedArgs } from "../shared/text-scan.js";
 
 /**
  * Dart (and therefore Flutter) regex extraction.
@@ -453,20 +454,6 @@ interface Pipeline {
   targets: Set<string>;
   middleware: string[];
   guards: GuardAttr[];
-}
-
-/** The balanced argument text of the call whose `(` is at `open`, and the index after its `)`. */
-function balancedArgs(text: string, open: number): { args: string; end: number } | null {
-  let depth = 0;
-  for (let i = open; i < text.length; i++) {
-    const ch = text[i];
-    if (ch === "(") depth++;
-    else if (ch === ")") {
-      depth--;
-      if (depth === 0) return { args: text.slice(open + 1, i), end: i + 1 };
-    }
-  }
-  return null;
 }
 
 function extractPipelines(lines: string[]): Pipeline[] {

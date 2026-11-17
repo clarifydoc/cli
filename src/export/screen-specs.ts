@@ -3,6 +3,7 @@ import type { BundleFile } from "./obsidian.js";
 import type { InteractiveElement, Route, Screen, Summary } from "./types.js";
 import { cell, idFactory, mermaidLabel, plural } from "./text.js";
 import { stateNode, usageGate } from "../core/symbol-graph.js";
+import { frontmatter } from "./obsidian.js";
 
 /**
  * A spec per screen, and the user flows through them, as Markdown files that
@@ -174,16 +175,6 @@ const linkText = (text: string) => text.replace(/[[\]]/g, (c) => `\\${c}`);
 function list(items: string[], more = "more"): string[] {
   const lines = items.slice(0, LIST_CAP).map((i) => `- ${i}`);
   if (items.length > LIST_CAP) lines.push(`- … ${items.length - LIST_CAP} ${more}`);
-  return lines;
-}
-
-function frontmatter(fields: Record<string, unknown>): string[] {
-  const lines = ["---"];
-  for (const [key, value] of Object.entries(fields)) {
-    if (value === undefined || value === null || value === "") continue;
-    lines.push(`${key}: ${typeof value === "number" ? value : JSON.stringify(String(value))}`);
-  }
-  lines.push("---", "");
   return lines;
 }
 

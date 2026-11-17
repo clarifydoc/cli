@@ -9,6 +9,7 @@ import type {
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { pluralize } from "../shared/inflection.js";
 import { extractHtmlInteractiveElements } from "../html/index.js";
+import { lineAt } from "../shared/text-scan.js";
 
 /**
  * Rails ERB views. The Ruby inside `<% %>` / `<%= %>` is what makes a view a
@@ -47,12 +48,6 @@ const ROUTE_HELPER_RE = /(?<![.\w])([a-z_][a-z0-9_]*_(?:path|url))\b/;
 const LITERAL_PATH_RE = /["'](\/[^"'\s#?]*)[^"']*["']/;
 /** `method: :delete`, `method: "patch"`, `data: { turbo_method: :delete }`, `"data-turbo-method": "delete"`. */
 const METHOD_OPTION_RE = /\b(?:method|turbo_method|"data-turbo-method"|'data-turbo-method')\s*(?::|=>)\s*:?["']?(get|post|put|patch|delete)\b/i;
-
-const lineAt = (text: string, index: number): number => {
-  let line = 1;
-  for (let i = 0; i < index; i++) if (text.charCodeAt(i) === 10) line++;
-  return line;
-};
 
 /** Path of the view relative to its `views/` root (`users/edit.html.erb` → `users/edit`), or null outside one. */
 function viewKey(filePath: string): { root: string; key: string } | null {

@@ -4,6 +4,7 @@ import type { DispatchResolver } from "../../dispatch/base.js";
 import { resolveTarget, buildFilePathMap } from "../../shared/link-scoring.js";
 import { inConstructor, injectedLocals, memberTypes, reactiveCellsOf } from "./reactive-cells.js";
 import { exposedMember } from "./subject-listens.js";
+import { innermost } from "./node-utils.js";
 
 const SUBJECT_CLASSES = /^(?:Subject|ReplaySubject|BehaviorSubject|AsyncSubject)$/;
 const CLASS_NODES: ReadonlySet<string> = new Set(["class_declaration", "class", "abstract_class_declaration"]);
@@ -15,16 +16,6 @@ function classOf(n: Node): Node | null {
 
 function nameOfClass(cls: Node): string | null {
   return cls.childForFieldName("name")?.text ?? null;
-}
-
-/** The innermost named function holding a line: the narrowest, then the last to start. */
-function innermost(functions: ReadonlyArray<{ name: string; line: number; endLine: number }>, line: number): string | null {
-  let best: { name: string; line: number; endLine: number } | null = null;
-  for (const f of functions) {
-    if (f.line > line || f.endLine < line) continue;
-    if (!best || f.endLine - f.line < best.endLine - best.line || (f.endLine - f.line === best.endLine - best.line && f.line > best.line)) best = f;
-  }
-  return best?.name ?? null;
 }
 
 /**

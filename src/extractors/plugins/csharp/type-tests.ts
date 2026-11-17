@@ -1,4 +1,5 @@
 import type { Node } from "web-tree-sitter";
+import { unwrapParenthesized as unwrap } from "../../shared/node-helpers.js";
 
 /** Where a member's own scope ends: a narrowing never reaches into a lambda (it may run after the name changed). */
 const SCOPE_BOUNDARIES: ReadonlySet<string> = new Set([
@@ -10,12 +11,6 @@ const SCOPE_BOUNDARIES: ReadonlySet<string> = new Set([
 const TERMINATORS: ReadonlySet<string> = new Set(["return_statement", "throw_statement", "continue_statement", "break_statement"]);
 
 const mentionsIs = new WeakMap<object, boolean>();
-
-function unwrap(node: Node | null | undefined): Node | null {
-  let n = node ?? null;
-  while (n?.type === "parenthesized_expression") n = n.namedChild(0);
-  return n;
-}
 
 /** The class a type-test pattern names: `Club` (a constant pattern the grammar cannot tell from a type), `Club c`, `Club { … }`. */
 function patternClass(pattern: Node | null | undefined): string | null {

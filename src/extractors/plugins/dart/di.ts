@@ -2,6 +2,8 @@ import type { CallInfo, DiBinding, FunctionInfo } from "../../../types/analysis.
 import type { CallPattern } from "../shared/regex-base.js";
 import { blankStringLiterals } from "../shared/regex-base.js";
 import { escapeRegex } from "../shared/path-utils.js";
+import { codeOf, closeOf, window, splitArgs } from "../shared/code-lines.js";
+export { codeOf, closeOf };
 
 /**
  * Dependency injection as Dart/Flutter code spells it — get_it (and kiwi,
@@ -12,52 +14,6 @@ import { escapeRegex } from "../shared/path-utils.js";
  */
 
 // ─── Text helpers ──────────────────────────────────────────────────────────
-
-/** A line with string contents and the trailing `//` comment blanked, same length. */
-export function codeOf(line: string): string {
-  const code = blankStringLiterals(line);
-  const comment = code.indexOf("//");
-  return comment < 0 ? code : code.slice(0, comment) + " ".repeat(code.length - comment);
-}
-
-/** Index just past the bracket that closes the one at `open`, or -1. */
-export function closeOf(code: string, open: number): number {
-  const pairs: Record<string, string> = { "(": ")", "{": "}", "[": "]" };
-  if (!pairs[code[open]!]) return -1;
-  const stack: string[] = [];
-  for (let i = open; i < code.length; i++) {
-    const c = code[i]!;
-    if (c === "(" || c === "{" || c === "[") stack.push(pairs[c]!);
-    else if (c === ")" || c === "}" || c === "]") {
-      if (stack.pop() !== c) return -1;
-      if (stack.length === 0) return i + 1;
-    }
-  }
-  return -1;
-}
-
-/** Up to `span` lines from `i`, raw and code-only, joined so their columns align. */
-function window(lines: string[], i: number, span = 30): { raw: string; code: string } {
-  const slice = lines.slice(i, Math.min(lines.length, i + span));
-  return { raw: slice.join("\n"), code: slice.map(codeOf).join("\n") };
-}
-
-/** Split argument text at depth-0 commas, raw and code copies aligned. */
-function splitArgs(code: string, raw: string): Array<{ code: string; raw: string }> {
-  const out: Array<{ code: string; raw: string }> = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i <= code.length; i++) {
-    const c = code[i];
-    if (c === "(" || c === "[" || c === "{" || c === "<") depth++;
-    else if (c === ")" || c === "]" || c === "}" || c === ">") depth = Math.max(0, depth - 1);
-    if (i === code.length || (c === "," && depth === 0)) {
-      if (code.slice(start, i).trim()) out.push({ code: code.slice(start, i), raw: raw.slice(start, i) });
-      start = i + 1;
-    }
-  }
-  return out;
-}
 
 interface Args {
   positional: Array<{ code: string; raw: string }>;

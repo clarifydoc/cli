@@ -24,7 +24,6 @@ import {
   numberArg,
   requiredStringArg,
   routeLabel,
-  section,
   stringArg,
   stringArrayArg,
   tally,
@@ -33,15 +32,11 @@ import {
   plural, routeGuardNote,
   OFFSET_SCHEMA,
   offsetArg,
-  page,
-  pageFooter,
 } from "../format.js";
 import { isTestPath, projectName, requireAnalysis, stalenessHint, statusReport, type ToolContext } from "./context.js";
 import { latencySection } from "../usage.js";
 import { requestedWorktree, resolveImpactWorktree } from "../impact-worktree.js";
 import { filterToDrop, missHeadline, noResults, termDiagnosis } from "../empty.js";
-
-const NO_ARGS = { type: "object", properties: {}, additionalProperties: false } as const;
 
 export function statusTool(ctx: ToolContext): McpTool {
   return {

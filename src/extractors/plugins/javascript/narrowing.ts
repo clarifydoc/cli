@@ -1,5 +1,6 @@
 import type { Node } from "web-tree-sitter";
 import { namesReceiverType } from "./di.js";
+import { unwrapParenthesized as unwrap } from "../../shared/node-helpers.js";
 
 /** Where a function's own scope ends: a narrowing never reaches across one (a callback may run after the name changed). */
 const SCOPE_BOUNDARIES: ReadonlySet<string> = new Set([
@@ -11,12 +12,6 @@ const mentionsInstanceof = new WeakMap<object, boolean>();
 
 /** Statements after which control never reaches the next one in the block. */
 const TERMINATORS: ReadonlySet<string> = new Set(["return_statement", "throw_statement", "continue_statement", "break_statement"]);
-
-function unwrap(node: Node | null | undefined): Node | null {
-  let n = node ?? null;
-  while (n?.type === "parenthesized_expression") n = n.namedChild(0);
-  return n;
-}
 
 function operatorOf(node: Node): string | null {
   return node.childForFieldName("operator")?.text ?? null;

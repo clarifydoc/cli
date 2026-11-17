@@ -6,6 +6,7 @@ import { callStep, nameCall, patternNamedCall, type CalleeStep } from "../shared
 import { swiftDiCallPatterns } from "./di.js";
 import { fileScopeOf, functionFacts, moduleFacts, propertyInitFacts, type CallRefs, type TypeScope } from "./value-flow.js";
 import type { ValueFlowFact } from "../../../types/analysis.js";
+import { idStep } from "../shared/callee-names.js";
 
 /**
  * How many calls deep a chain is named. The Swift spec has no chain patterns — the baseline skips a method on a
@@ -174,8 +175,6 @@ const call = (name: string, leafName: string, at: TSNode): PatternCallName => ({
   line: at.startPosition.row + 1,
   column: at.startPosition.column,
 });
-
-const idStep = (name: string, node: TSNode): CalleeStep => ({ kind: "id", name, line: node.startPosition.row + 1, column: node.startPosition.column });
 
 /** A call's argument list: `value_arguments` in `(…)` (a `[…]` one is a subscript), and whether a closure trails. */
 function suffixOf(node: TSNode): { args: TSNode | null; subscript: boolean; trailing: boolean } | null {

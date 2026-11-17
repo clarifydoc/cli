@@ -1,5 +1,6 @@
 import type { CallInfo, FileAnalysis, FunctionInfo } from "../../../types/analysis.js";
 import { escapeRegex } from "../shared/path-utils.js";
+import { lineStarts, lineOfOffset as lineNo } from "../shared/text-scan.js";
 
 /**
  * A function or Observable kept as a property of a descriptor a class declares as a literal, then called through an
@@ -146,19 +147,3 @@ function balanced(raw: string, open: number): number {
   return -1;
 }
 
-function lineStarts(source: string): number[] {
-  const starts = [0];
-  for (let i = source.indexOf("\n"); i >= 0; i = source.indexOf("\n", i + 1)) starts.push(i + 1);
-  return starts;
-}
-
-function lineNo(starts: number[], offset: number): number {
-  let lo = 0;
-  let hi = starts.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    if (starts[mid]! <= offset) lo = mid;
-    else hi = mid - 1;
-  }
-  return lo + 1;
-}
