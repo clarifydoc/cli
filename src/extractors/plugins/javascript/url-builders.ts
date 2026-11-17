@@ -32,6 +32,7 @@ import { splitTopLevel, unquote } from "../../shared/value-resolver.js";
 import { patternPaths } from "./destructured-params.js";
 import { escapeRegex } from "../shared/path-utils.js";
 import { buildWrapperIndex } from "../../../core/wrapper-index.js";
+import { resolveImportSource } from "../../../core/import-index.js";
 
 interface UrlBuilder {
   /** Every distinct template the helper may return, primary first. */
@@ -190,6 +191,12 @@ interface HelperLookup {
   declared?: Map<string, Set<string>>;
   /** The project file an import in `file` binds `name` from, and the name that file declares; null when none resolves. */
   imported?: (file: string, name: string) => { file: string; exported: string } | null;
+  /**
+   * A namespace import's module (`import * as url from './util/url'` → `url`): the
+   * project file it opens. A free helper called as `url.apiPath(…)` is that
+   * module's only — never a same-named free helper elsewhere.
+   */
+  namespaceOf?: (file: string, recv: string) => string | null;
   /** `this.m(…)`: the method of that name along the calling class's chain. */
   method?: (file: string, line: number, name: string, getterOnly?: boolean) => UrlBuilder | null;
   /** `endPoints('profile').url`, `messages.update(id).url`: the URL a helper's descriptor or table entry states under that key. */
@@ -289,9 +296,10 @@ interface CallSite {
 /**
  * The helper a call names: a dotted helper of the call's own file
  * (`routes.tagsSlug(…)`), then — for `this.m(…)` — the method along the
- * calling class's chain, then — for a receiver call — a class-method helper of
- * that bare name (never a free function: `other.club_url(id)` must not take a
- * project `club_url` template), else a bare call's free helper.
+ * calling class's chain, then a namespace import's free helper (`url.apiPath`),
+ * then — for any other receiver — a class-method helper of that bare name
+ * (never a free function: `other.club_url(id)` must not take a project
+ * `club_url` template), else a bare call's free helper.
  */
 function lookupHelper(lookup: HelperLookup, site: CallSite, receiver: string, name: string): UrlBuilder | null {
   const recv = receiver.replace(/\s+/g, "").replace(/\.$/, "");
@@ -317,6 +325,12 @@ function lookupHelper(lookup: HelperLookup, site: CallSite, receiver: string, na
     if (here === undefined && lookup.declared?.get(site.file)?.has(name)) return null; // declared here, states no URL
     const from = lookup.imported?.(site.file, name);
     if (from) return lookup.byFile.get(from.file)?.get(from.exported) ?? null;
+  }
+  // `import * as url from './util/url'; url.apiPath(…)` — the free helper of that module only
+  // (real-repo FP: refusing every receiver call dropped six route links on one corpus repository).
+  if (recv && lookup.namespaceOf && lookup.byFile) {
+    const mod = lookup.namespaceOf(site.file, recv);
+    if (mod) return lookup.byFile.get(mod)?.get(name) ?? null;
   }
   // A receiver call only takes a class-method helper by bare name (`configService.APIUrl`),
   // never a free `club_url` filling `api.club_url(id)` / `other.club_url(id)`.
@@ -654,6 +668,7 @@ export function resolveUrlBuilders(apiCalls: ApiCall[], analyses: FileAnalysis[]
     }
   }
   lookup.byFile = buildFileIndex(analyses);
+  lookup.namespaceOf = namespaceResolver(analyses, ctx);
   if (ctx) {
     const wrappers = buildWrapperIndex(analyses, ctx.importIndex);
     lookup.imported = (file, name) => wrappers.importedFrom(file, name);
@@ -795,6 +810,23 @@ function fieldMethodResolver(ctx: ProjectContext): (file: string, line: number, 
       return target ? methodResolver(ctx, target)(target.filePath, target.cls.line, name) : null;
     }
     return null;
+  };
+}
+
+/**
+ * The project file a namespace import opens (`import * as url from './util/url'`).
+ * Prefer the import index when present; otherwise resolve the relative source
+ * against the analysis set (unit tests with no ProjectContext).
+ */
+function namespaceResolver(analyses: FileAnalysis[], ctx?: ProjectContext): (file: string, recv: string) => string | null {
+  const byFile = new Map(analyses.map((a) => [a.filePath, a]));
+  const known = new Set(byFile.keys());
+  return (file, recv) => {
+    const a = byFile.get(file);
+    const imp = a?.imports.find((i) => i.isNamespace && i.specifiers.includes(recv));
+    if (!imp) return null;
+    if (ctx) return ctx.importIndex.localFor(file, recv) ?? ctx.importIndex.fileForSource?.(file, imp.source) ?? null;
+    return resolveImportSource(file, imp.source, known);
   };
 }
 

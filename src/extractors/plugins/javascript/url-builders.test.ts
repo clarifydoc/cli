@@ -196,6 +196,36 @@ describe("resolveUrlBuilders", () => {
     expect(calls[2]!.target).toBe("/api/clubs/{}");
   });
 
+  it("fills a free helper called through a namespace import (real-repo FP)", () => {
+    // `import * as url from './util/url'; url.apiPath(site, '/query')` — the
+    // free helper of that module, not a same-named decoy elsewhere.
+    const apiPath = fn("apiPath", "/api/stats/{}{path}/", [
+      { name: "site", type: "object", defaultValue: null },
+      { name: "path", type: "string", defaultValue: "''" },
+    ]);
+    const decoy = fn("apiPath", "/api/decoy/{path}", [
+      { name: "site", type: "object", defaultValue: null },
+      { name: "path", type: "string", defaultValue: "''" },
+    ]);
+    const helpers: FileAnalysis = {
+      ...analysis([apiPath]),
+      filePath: "util/url.ts",
+    };
+    const decoyFile: FileAnalysis = {
+      ...analysis([decoy]),
+      filePath: "util/decoy.ts",
+    };
+    const caller: FileAnalysis = {
+      ...analysis([]),
+      filePath: "svc.ts",
+      imports: [{ source: "./util/url", specifiers: ["url"], isDefault: false, isNamespace: true, isType: false, line: 1 }],
+    };
+    const calls = [apiCall("url.apiPath(site, '/query')"), apiCall("other.apiPath(site, '/query')")];
+    expect(resolveUrlBuilders(calls, [helpers, decoyFile, caller])).toBe(1);
+    expect(calls[0]!.target).toBe("/api/stats/{}/query/");
+    expect(calls[1]!.target).toBe("other.apiPath(site, '/query')");
+  });
+
   it("leaves a call whose path argument is a bare variable unresolved", () => {
     // `APIUrl(url)` — nothing is known about the path; `/api/{}` would join
     // whatever `/api/:id` route exists. A version arg still takes its default.
