@@ -1,5 +1,5 @@
 import type { Node, Tree } from "web-tree-sitter";
-import type { FileAnalysis, FunctionPropBinding, InteractiveElementInfo, PropBinding } from "../../../types/analysis.js";
+import type { CallInfo, FileAnalysis, FunctionPropBinding, InteractiveElementInfo, PropBinding } from "../../../types/analysis.js";
 import { expressionOrigin, templateValueOrigin } from "./arg-origins.js";
 import { ITERATORS, derivedMemberKeys, derivedObjectAt, importedBinding, libraryObjectAt } from "./library-callbacks.js";
 import { dispatchMapAt, PROJECT_SOURCE } from "./dispatch-map-props.js";
@@ -378,4 +378,26 @@ export function keepPropLoops(elements: InteractiveElementInfo[], props: readonl
   for (const el of elements) {
     for (const s of el.scope ?? []) if (s.fromProp && !props?.includes(s.fromProp)) delete s.fromProp;
   }
+}
+
+/**
+ * A Vue template's `:on-confirm="saveClub"` (and any other bare function prop) hands the page's own
+ * function down the way JSX's `onConfirm={saveClub}` does: a `passed: "attribute"` call on `<setup>`,
+ * so the page links to `saveClub` as `passes`. A map/array member (`actions.save`), an imported map,
+ * a script-mounted dialog (`importSource`) and a non-identifier handler are never one — the child's
+ * `props.onConfirm()` join stays the prop-callback resolver's.
+ */
+export function vuePassedFunctionProps(bindings: readonly FunctionPropBinding[]): CallInfo[] {
+  const out: CallInfo[] = [];
+  const seen = new Set<string>();
+  for (const b of bindings) {
+    if (b.prop.includes(".") || b.mapImport || b.handlerImport || b.importSource) continue;
+    const name = b.handler.replace(/^this\./, "");
+    if (!/^[A-Za-z_$][\w$]*$/.test(name)) continue;
+    const key = `${b.line}\0${name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ name, kind: "internal", target: null, line: b.line, column: 0, passed: "attribute" });
+  }
+  return out;
 }

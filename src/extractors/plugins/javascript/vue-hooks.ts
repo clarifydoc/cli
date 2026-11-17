@@ -14,7 +14,7 @@ import { readVueDeclarations } from "./vue-declarations.js";
 import { extractOptionCallbacks } from "./option-callbacks.js";
 import { addDerivedLibraryMembers, derivedTemplateLocals, libraryHoldersOf, libraryObjectProps } from "./library-callbacks.js";
 import { dispatchMapHoldersOf, dispatchMapProps, importedBindings, importedMapProps } from "./dispatch-map-props.js";
-import { keepPropLoops, vueArrayFunctionProps } from "./prop-bindings.js";
+import { keepPropLoops, vueArrayFunctionProps, vuePassedFunctionProps } from "./prop-bindings.js";
 import { escapeRegex } from "../shared/path-utils.js";
 
 /**
@@ -131,6 +131,18 @@ export function vuePreprocess(
       // `modal.open(ConfirmBox, { onConfirm: saveClub })`: callbacks the script hands a component it opens.
       const optionCallbacks = extractOptionCallbacks(blankExceptScripts(raw), analysis);
       if (optionCallbacks.length > 0) analysis.functionProps = [...(analysis.functionProps ?? []), ...optionCallbacks];
+      // `:on-confirm="saveClub"`: the page passes its own function (JSX's `onConfirm={saveClub}`), onto `<setup>`.
+      const passed = vuePassedFunctionProps(analysis.functionProps ?? []);
+      if (passed.length > 0) {
+        let setup = analysis.functions.find((f) => f.name === "<setup>");
+        if (!setup) {
+          setup = { name: "<setup>", params: [], returnType: null, isAsync: false, isExported: false, decorators: [], calls: [], line: 1, endLine: 1 };
+          analysis.functions.unshift(setup);
+        }
+        for (const c of passed) {
+          if (!setup.calls.some((x) => x.line === c.line && x.name === c.name)) setup.calls.push(c);
+        }
+      }
       for (const comp of sfc.templateComponents) {
         const importSource =
           analysis.imports.find((imp) =>

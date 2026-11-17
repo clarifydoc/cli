@@ -494,3 +494,69 @@ describe("plain-JS components that destructure their props", () => {
     expect(linksFrom("src/ShinPad.jsx")).toEqual(["<template>:4 -order-> src/BootList.jsx:orderBoots"]);
   });
 });
+
+/**
+ * A Vue page binds its own function as a callback prop (`:on-confirm="saveClub"`) and the child
+ * calls `props.onConfirm()`. The page must link to its `saveClub` as `passes` (as JSX's
+ * `onConfirm={saveClub}` does); a same-named decoy on another page must not appear on that link.
+ */
+const PAGE_PASS_FILES: Record<string, string> = {
+  "package.json": JSON.stringify({ name: "league-web", dependencies: { vue: "^3.4.0", axios: "^1.6.0" } }),
+  "src/components/ClubDialog.vue": `<script setup>
+const props = defineProps({ onConfirm: { type: Function, default: () => {} } });
+function confirm() { props.onConfirm(); }
+</script>
+<template><button @click="confirm">Confirm</button></template>
+`,
+  "src/views/ClubPage.vue": `<script setup>
+import axios from 'axios';
+import ClubDialog from '../components/ClubDialog.vue';
+async function saveClub() { await axios.post('/api/clubs', { name: 'Rovers' }); }
+</script>
+<template><ClubDialog :on-confirm="saveClub" /></template>
+`,
+  "src/views/GaragePage.vue": `<script setup>
+import axios from 'axios';
+import ClubDialog from '../components/ClubDialog.vue';
+async function saveClub() { await axios.post('/api/garages', { name: 'Depot' }); }
+</script>
+<template><ClubDialog :on-confirm="saveClub" /></template>
+`,
+};
+
+describe("Vue page passes its callback prop handler", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-vue-page-pass-"));
+    for (const [path, text] of Object.entries(PAGE_PASS_FILES)) {
+      await mkdir(dirname(join(dir, "app", path)), { recursive: true });
+      await writeFile(join(dir, "app", path), text);
+    }
+    await analyze({ projectRoot: join(dir, "app"), outputDir: join(dir, "out"), lsp: false, gitHistory: false });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 120_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("links the page to saveClub only, never the decoy page's same-named handler", () => {
+    const fromClub = summary.symbolLinks
+      .filter((l) => l.sourceFile === "src/views/ClubPage.vue" && l.callName === "saveClub")
+      .map((l) => `${l.sourceSymbol} -${l.callName}-> ${l.targetFile}::${l.targetSymbol} (${l.relation})`);
+    expect(fromClub).toEqual(["<setup> -saveClub-> src/views/ClubPage.vue::saveClub (passes)"]);
+    expect(
+      summary.symbolLinks.some(
+        (l) => l.sourceFile === "src/views/ClubPage.vue" && l.targetFile === "src/views/GaragePage.vue",
+      ),
+    ).toBe(false);
+  });
+
+  it("still joins the child's props.onConfirm() to each page's own saveClub", () => {
+    const fromDialog = summary.symbolLinks
+      .filter((l) => l.sourceFile === "src/components/ClubDialog.vue" && l.callName === "props.onConfirm")
+      .map((l) => `${l.targetFile}::${l.targetSymbol}`)
+      .sort();
+    expect(fromDialog).toEqual(["src/views/ClubPage.vue::saveClub", "src/views/GaragePage.vue::saveClub"]);
+  });
+});
