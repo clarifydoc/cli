@@ -168,8 +168,9 @@ export const HALTS_CALLER = "halts-caller";
 /**
  * Whether a filter method's body stops the request for a caller it cannot identify or permit: a 401/403,
  * a `raise` of a NotAuthorized-named error or a redirect, governed by a condition that tests who the
- * caller is, with the polarity that halts when the check fails ([caller-halts.ts](caller-halts.ts)).
- * A loader, a 404, a switch, a parameter check or an account-state check does not.
+ * caller is (including an ivar this method set from a token lookup), with the polarity that halts when
+ * the check fails ([caller-halts.ts](caller-halts.ts)). A loader, a 404, a switch, a parameter check
+ * or an account-state check does not.
  */
 export function haltsCaller(bodyLines: string[]): boolean {
   return callerHalts(bodyLines.map((l) => stripComment(l).trim()).filter(Boolean));

@@ -4,7 +4,8 @@
  * permission/role/ownership predicate on it — and the halt happens when that test fails. A condition on
  * a parameter, a feature switch, another record's state, or an account-state predicate on a caller
  * already identified (`active?`, `confirmed?`) never qualifies; neither does an unconditional halt.
- * When in doubt: not a guard.
+ * An instance variable this method set from a token/credential lookup (`@kit_app = KitApp.find_by(access_token: …)`)
+ * is the caller for a later presence test (`render … status: 401 if @kit_app.blank?`). When in doubt: not a guard.
  */
 
 const USER = String.raw`@?current_(?:user|account|member|player|admin|staff|api_user|principal)`;
@@ -12,6 +13,9 @@ const USER = String.raw`@?current_(?:user|account|member|player|admin|staff|api_
 const STATE_WORD =
   /^(?:active|inactive|confirmed|unconfirmed|suspended|locked|onboarded|onboarding|subscribed|banned|blocked|verified|deleted|disabled|enabled|activated|expired|trial|trialing|premium|paid|archived|approved|complete|completed|new|persisted|valid|accepted|pending|registered|invited|eligible|email|phone|terms|agreed|accepted)$/;
 const CREDENTIAL_KEY = /(?:user|account|member|player|admin|staff|auth|token|login|uid|driver)/i;
+/** Keyword args / finder names that look up the caller by a shared secret, not by a public attribute. */
+const TOKEN_ARG = /\b(?:access_token|api_key|auth_token|token|secret)\s*:/;
+const TOKEN_FINDER = /\.(?:find_by_(?:access_)?token|authenticate(?:_by_token|_with_token)?|from_token)\b/;
 
 type Verdict = "ok" | "absent" | null;
 
@@ -53,14 +57,28 @@ function splitOperands(cond: string): string[] {
   return out.map((s) => s.trim()).filter(Boolean);
 }
 
+/** Whether the RHS looks up a record by a credential the caller presents. */
+function isTokenLookup(rhs: string): boolean {
+  if (TOKEN_FINDER.test(rhs)) return true;
+  // `Model.find_by(access_token: …)` / `find_by!(…)` — only when a token-ish keyword is present.
+  if (/\.find_by!?\s*\(/.test(rhs) && TOKEN_ARG.test(rhs)) return true;
+  return false;
+}
+
 /** What an atom's truth says: the caller is identified/permitted (`ok`), or absent/refused (`absent`); null when it says neither. */
-function coreVerdict(core: string): Verdict {
+function coreVerdict(core: string, tokenIvars: ReadonlySet<string>): Verdict {
   const t = core.trim();
   let m: RegExpExecArray | null;
   const user = new RegExp(`^${USER}$`);
   if (user.test(t)) return "ok";
   if (new RegExp(`^${USER}(?:&?\\.)present\\?$`).test(t)) return "ok";
   if (new RegExp(`^${USER}(?:&?\\.)(?:nil|blank)\\?$`).test(t)) return "absent";
+  // An ivar this filter set from a token lookup stands for the identified caller.
+  if ((m = /^(@\w+)$/.exec(t))) return tokenIvars.has(m[1]!) ? "ok" : null;
+  if ((m = /^(@\w+)(?:&?\.)(present|nil|blank)\?$/.exec(t))) {
+    if (!tokenIvars.has(m[1]!)) return null;
+    return m[2] === "present" ? "ok" : "absent";
+  }
   if (/^(?:\w+_)?(?:logged_in|signed_in|authenticated|authorized|user_signed_in|admin_signed_in)\?(?:\(\))?$/.test(t)) return "ok";
   if (/^(?:current_ability\.|ability\.)?(?:can|authorized|allowed|has_permission|permitted)\?\(.*\)$/.test(t)) return "ok";
   if (/^(?:current_ability\.|ability\.)?cannot\?\(.*\)$/.test(t)) return "absent";
@@ -96,7 +114,7 @@ function coreVerdict(core: string): Verdict {
 }
 
 /** True when truth of the atom means the caller is ok; false when it means absent; null when unrecognized. */
-function truthMeansOk(atom: string): boolean | null {
+function truthMeansOk(atom: string, tokenIvars: ReadonlySet<string>): boolean | null {
   let t = stripParens(atom);
   let flip = false;
   for (;;) {
@@ -105,17 +123,17 @@ function truthMeansOk(atom: string): boolean | null {
     flip = !flip;
     t = stripParens(n[1]!);
   }
-  const v = coreVerdict(t);
+  const v = coreVerdict(t, tokenIvars);
   if (v === null) return null;
   return (v === "ok") !== flip;
 }
 
 /** Whether `if|unless <cond>` is true exactly when the caller is absent or refused (`halt: true`), or exactly when ok. */
-function failsCallerTest(kind: "if" | "unless", cond: string, wantHaltOnFail = true): boolean {
+function failsCallerTest(kind: "if" | "unless", cond: string, tokenIvars: ReadonlySet<string>, wantHaltOnFail = true): boolean {
   const operands = splitOperands(stripParens(cond));
   if (operands.length === 0) return false;
   for (const op of operands) {
-    const ok = truthMeansOk(op);
+    const ok = truthMeansOk(op, tokenIvars);
     if (ok === null) return false;
     // The branch runs when the condition is true (`if`) or false (`unless`): it must be when the caller fails.
     const branchOnOk = kind === "unless" ? !ok : ok;
@@ -142,6 +160,7 @@ interface Block {
 /** The lines are the method body, comments stripped, trimmed and non-blank. */
 export function callerHalts(lines: string[]): boolean {
   const stack: Block[] = [];
+  const tokenIvars = new Set<string>();
   let seenReturnGuard = false;
   let guardsBefore = true; // every depth-0 line so far is a `return` that leaves only a refused caller
   for (const line of lines) {
@@ -149,9 +168,9 @@ export function callerHalts(lines: string[]): boolean {
     if (HALT.test(line)) {
       const mod = /\s(if|unless)\s+(.+)$/.exec(line);
       if (mod) {
-        if (stack.length === 0 && failsCallerTest(mod[1] as "if" | "unless", mod[2]!)) return true;
+        if (stack.length === 0 && failsCallerTest(mod[1] as "if" | "unless", mod[2]!, tokenIvars)) return true;
       } else if (stack.length === 1 && stack[0]!.kind !== "other") {
-        if (failsCallerTest(stack[0]!.kind, stack[0]!.cond)) return true;
+        if (failsCallerTest(stack[0]!.kind, stack[0]!.cond, tokenIvars)) return true;
       } else if (stack.length === 0 && guardsBefore && seenReturnGuard) {
         return true;
       }
@@ -171,9 +190,14 @@ export function callerHalts(lines: string[]): boolean {
       guardsBefore = false;
     } else if (/^end\b/.test(line)) {
       stack.pop();
+    } else if (stack.length === 0 && (m = /^(@\w+)\s*(?:\|\|=|=)\s*(.+)$/.exec(line))) {
+      // `@kit_app = KitApp.find_by(access_token: …)` — later `@kit_app.blank?` tests the caller.
+      if (isTokenLookup(m[2]!)) tokenIvars.add(m[1]!);
+      else tokenIvars.delete(m[1]!);
+      guardsBefore = false;
     } else if (stack.length === 0 && (m = /^return(?:\s+true)?\s+(if|unless)\s+(.+)$/.exec(line))) {
       // `return if current_user&.admin?` leaves the filter for an ok caller; what follows is for the rest.
-      if (failsCallerTest(m[1] as "if" | "unless", m[2]!, false)) seenReturnGuard = true;
+      if (failsCallerTest(m[1] as "if" | "unless", m[2]!, tokenIvars, false)) seenReturnGuard = true;
       else guardsBefore = false;
     } else if (stack.length === 0) {
       guardsBefore = false;

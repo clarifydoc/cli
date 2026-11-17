@@ -58,6 +58,33 @@ describe("haltsCaller — the condition must test who the caller is", () => {
     expect(haltsCaller(["  @club = Club.first", "  return if current_user&.admin?", "  head :forbidden"])).toBe(false);
     expect(haltsCaller(["  if current_user.admin?", "    head :forbidden", "  end"])).toBe(false);
   });
+  it("reads a halt on an instance variable a token lookup set", () => {
+    expect(
+      haltsCaller([
+        '  @kit_app = KitApp.find_by(access_token: request.headers["X-Api-Token"])',
+        "  render json: {}, status: :unauthorized if @kit_app.blank?",
+      ]),
+    ).toBe(true);
+    expect(
+      haltsCaller([
+        "  @kit_app = KitApp.find_by_token(params[:token])",
+        "  unless @kit_app",
+        "    head :unauthorized",
+        "  end",
+      ]),
+    ).toBe(true);
+    expect(haltsCaller(["  return if can?(:manage, Garage)", "  head :forbidden"])).toBe(true);
+  });
+  it("rejects a blank-check on an ivar no token lookup set, a guest-only redirect and a feature switch", () => {
+    expect(
+      haltsCaller([
+        "  @kit_app = KitApp.find_by(name: params[:name])",
+        "  render json: {}, status: :unauthorized if @kit_app.blank?",
+      ]),
+    ).toBe(false);
+    expect(haltsCaller(["  redirect_to root_path if current_user.present?"])).toBe(false);
+    expect(haltsCaller(["  head :unauthorized unless PitFeature.on?"])).toBe(false);
+  });
 });
 
 describe("a before_action whose body halts is a guard whatever its name", () => {
@@ -67,7 +94,8 @@ describe("a before_action whose body halts is a guard whatever its name", () => 
     dir = await mkdtemp(join(tmpdir(), "cd-ruby-halt-"));
     const files: Record<string, string> = {
       Gemfile: 'source "https://rubygems.org"\n',
-      "config/routes.rb": "Rails.application.routes.draw do\n  resources :cars, only: [:index]\n  resources :garages, only: [:index]\n  resources :pits, only: [:index]\n  resources :switch, only: [:index]\n  resources :clubs, only: [:index]\nend\n",
+      "config/routes.rb":
+        "Rails.application.routes.draw do\n  resources :cars, only: [:index]\n  resources :garages, only: [:index]\n  resources :pits, only: [:index]\n  resources :switch, only: [:index]\n  resources :clubs, only: [:index]\n  resources :kits, only: [:index]\n  resources :guests, only: [:index]\n  resources :loaders, only: [:index]\n  resources :crews, only: [:index]\nend\n",
       "app/controllers/application_controller.rb":
         "class ApplicationController < ActionController::Base\n  before_action :club_gate\n\n  private\n\n  def club_gate\n    head :forbidden unless current_user&.member?\n  end\nend\n",
       "app/controllers/clubs_controller.rb": "class ClubsController < ApplicationController\n  def index; end\nend\n",
@@ -76,12 +104,24 @@ describe("a before_action whose body halts is a guard whatever its name", () => 
       "app/controllers/garages_controller.rb": "class GaragesController < ActionController::Base\n  include Pitwall\n  before_action :check_pit\n\n  def index; end\nend\n",
       "app/controllers/concerns/pitwall.rb":
         "module Pitwall\n  extend ActiveSupport::Concern\n\n  def check_pit\n    raise Pundit::NotAuthorizedError unless current_user.crew?\n  end\nend\n",
+      // Opaque name: token-set @ivar then halt if blank — a guard from the body alone.
+      "app/controllers/kits_controller.rb":
+        'class KitsController < ActionController::Base\n  before_action :kit_gate\n\n  def index; end\n\n  private\n\n  def kit_gate\n    @kit_app = KitApp.find_by(access_token: request.headers["X-Api-Token"])\n    render json: {}, status: :unauthorized if @kit_app.blank?\n  end\nend\n',
+      // Opaque name: early return when a permission lookup permits, then halt.
+      "app/controllers/crews_controller.rb":
+        "class CrewsController < ActionController::Base\n  before_action :crew_gate\n\n  def index; end\n\n  private\n\n  def crew_gate\n    return if can?(:manage, Garage)\n    head :forbidden\n  end\nend\n",
       // The decoy: the same filter names, bodies that never halt a caller.
       // A switched-off feature answers 401 yet checks no caller: its name says so.
       "app/controllers/switch_controller.rb":
         "class SwitchController < ActionController::Base\n  before_action :ensure_pits_enabled!\n\n  def index; end\n\n  private\n\n  def ensure_pits_enabled!\n    head :unauthorized unless Pit.on?\n  end\nend\n",
       "app/controllers/pits_controller.rb":
         "class PitsController < ApplicationController\n  before_action :check_pit\n  before_action :club_gate\n\n  def index; end\n\n  private\n\n  def check_pit\n    @pit = Pit.first\n  end\n\n  def club_gate\n    @gate = params[:gate]\n  end\nend\n",
+      // Guest-only redirect (wrong polarity) under the same opaque name — stay unguarded.
+      "app/controllers/guests_controller.rb":
+        "class GuestsController < ActionController::Base\n  before_action :kit_gate\n\n  def index; end\n\n  private\n\n  def kit_gate\n    redirect_to root_path if current_user.present?\n  end\nend\n",
+      // Same blank-check shape, but find_by is not a credential — stay unguarded.
+      "app/controllers/loaders_controller.rb":
+        "class LoadersController < ActionController::Base\n  before_action :kit_gate\n\n  def index; end\n\n  private\n\n  def kit_gate\n    @kit_app = KitApp.find_by(name: params[:name])\n    render json: {}, status: :unauthorized if @kit_app.blank?\n  end\nend\n",
     };
     for (const [rel, text] of Object.entries(files)) {
       await mkdir(dirname(join(dir, "repo", rel)), { recursive: true });
@@ -105,10 +145,22 @@ describe("a before_action whose body halts is a guard whatever its name", () => 
   it("guards through an ancestor's halting filter", () => {
     expect(policies("/clubs")).toEqual(["club_gate"]);
   });
+  it("guards a filter that halts when a token-set instance variable is blank", () => {
+    expect(policies("/kits")).toEqual(["kit_gate"]);
+  });
+  it("guards a filter that returns for a permitted caller then halts", () => {
+    expect(policies("/crews")).toEqual(["crew_gate"]);
+  });
   it("leaves a feature switch unguarded, whatever status it answers", () => {
     expect(policies("/switch")).toEqual([]);
   });
   it("leaves a namesake filter that only loads unguarded", () => {
     expect(policies("/pits")).toEqual([]);
+  });
+  it("leaves a guest-only redirect unguarded", () => {
+    expect(policies("/guests")).toEqual([]);
+  });
+  it("leaves a blank-check on a non-token find_by unguarded", () => {
+    expect(policies("/loaders")).toEqual([]);
   });
 });
