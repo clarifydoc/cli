@@ -425,7 +425,8 @@ export function derivedMemberKeys(local: string, method: string): string[] {
 }
 
 /** Iteration methods whose callback parameter is one element of the receiver. */
-const ITERATORS: ReadonlySet<string> = new Set(["map", "forEach", "flatMap", "filter", "find", "some", "every"]);
+/** The array methods whose callback receives each element. */
+export const ITERATORS: ReadonlySet<string> = new Set(["map", "forEach", "flatMap", "filter", "find", "some", "every"]);
 
 /** The identifier an expression starts from: `table` of `table.getHeaderGroups()`, `headerGroup` of `headerGroup.headers`. */
 function rootIdentifier(n: Node | null | undefined): string | null {

@@ -53,10 +53,11 @@ const STORE_FACTORY = /^use[A-Z][\w$]*Store$/;
 
 /** A composable: `useClubs`, imported from a project module (a relative path or an `@/`-style alias). */
 const COMPOSABLE = /^use[A-Z][\w$]*$/;
-const PROJECT_SOURCE = /^(?:\.|@\/|~\/|~~\/|@@\/|src\/)/;
+/** A module specifier naming a project file (relative, or one of the usual aliases). */
+export const PROJECT_SOURCE = /^(?:\.|@\/|~\/|~~\/|@@\/|src\/)/;
 
 /** Composables Nuxt, Vue Router and the VueUse-style layers hand a component without an import: never a project's own. */
-const AUTO_IMPORTED_BUILTIN = /^use(?:Route|Router|State|Fetch|LazyFetch|AsyncData|LazyAsyncData|Head|SeoMeta|ServerSeoMeta|Cookie|NuxtApp|NuxtData|Nuxt|RuntimeConfig|AppConfig|Error|Link|Id|Hydration|PreviewMode|TransitionState|LoadingIndicator|RequestHeaders|RequestHeader|RequestEvent|RequestURL|RequestFetch|Attrs|Slots|Model|TemplateRef|CssModule|I18n|LocalePath|SwitchLocalePath|Cookie)$/;
+const AUTO_IMPORTED_BUILTIN = /^use(?:Route|Router|State|Fetch|LazyFetch|AsyncData|LazyAsyncData|Head|SeoMeta|ServerSeoMeta|Cookie|NuxtApp|NuxtData|Nuxt|RuntimeConfig|AppConfig|Error|Link|Id|Hydration|PreviewMode|TransitionState|LoadingIndicator|RequestHeaders|RequestHeader|RequestEvent|RequestURL|RequestFetch|Attrs|Slots|Model|TemplateRef|CssModule|I18n|LocalePath|SwitchLocalePath)$/;
 
 /**
  * The factory every Vuex store read carries: `useStore()` from `vuex` (or `this.$store` / `mapState` in an Options API
@@ -82,10 +83,9 @@ function vuexGetterKey(store: Node): string | null {
 }
 
 /** The file declares `name` itself: a function, or a variable. */
-function declaresName(tree: Tree, name: string): boolean {
+function declaresName(text: string, name: string): boolean {
   const id = name.replace(/\$/g, "\\$&");
-  const re = new RegExp(`(?:\\bfunction\\*?\\s+${id}\\b|\\b(?:const|let|var)\\s+${id}(?![\\w$]))`);
-  return re.test(tree.rootNode.text);
+  return new RegExp(`(?:\\bfunction\\*?\\s+${id}\\b|\\b(?:const|let|var)\\s+${id}(?![\\w$]))`).test(text);
 }
 
 export function withStoreWatchers(tree: Tree, facts: CellFacts, text: string, template: readonly TemplateStatement[] = []): CellFacts {
@@ -99,12 +99,19 @@ export function withStoreWatchers(tree: Tree, facts: CellFacts, text: string, te
     return src === undefined || VUE_SOURCES.test(src);
   };
   /** A project composable called as `useClubs()`: imported from the project, never a library's hook. */
+  // Asked per call of a name: answered once per name.
+  const declared = new Map<string, boolean>();
+  const declares = (name: string): boolean => {
+    let hit = declared.get(name);
+    if (hit === undefined) declared.set(name, (hit = declaresName(text, name)));
+    return hit;
+  };
   const composableOf = (callee: Node | null | undefined): string | null => {
     if (callee?.type !== "identifier" || !COMPOSABLE.test(callee.text)) return null;
     if (PROJECT_SOURCE.test(sources.get(callee.text) ?? "")) return callee.text;
     // Nuxt auto-imports `composables/useClubs.ts`: a call nothing imports and the file does not declare. The project pass
     // (`JsStoreWatchResolver`) finds the project function of that name, in the caller's own app first, and links nothing for one it does not.
-    return !sources.has(callee.text) && !AUTO_IMPORTED_BUILTIN.test(callee.text) && !declaresName(tree, callee.text) ? callee.text : null;
+    return !sources.has(callee.text) && !AUTO_IMPORTED_BUILTIN.test(callee.text) && !declares(callee.text) ? callee.text : null;
   };
   const byScope = new Map<number, Map<string, Local>>();
   const scopeOf = (n: Node): Node => {

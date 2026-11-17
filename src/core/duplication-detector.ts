@@ -144,17 +144,22 @@ function shapesOf(fn: { name: string; calls: { name: string; kind: string }[] },
 /** The held name of an option callback written in place (`<useMutation:mutationFn@4>`, `<ConfirmBox:onConfirm@14>`). */
 const OPTION_CALLBACK = /^<[\w$]+:[\w$]+@\d+>$/;
 
+/** A name read without parentheses (`CallInfo.read`) is a value the linker may find runs code, not a call the body makes. */
+function withoutReads(a: FileAnalysis): FileAnalysis {
+  let changed = false;
+  const functions = a.functions.map((fn) => {
+    if (!fn.calls.some((c) => c.read)) return fn;
+    changed = true;
+    return { ...fn, calls: fn.calls.filter((c) => !c.read) };
+  });
+  return changed ? { ...a, functions } : a;
+}
+
 /**
  * A function stands for the option callbacks it writes in place and hands on (`CallInfo.passed: "argument"` of a held
  * function, named `<useMutation:mutationFn@4>`): their calls are its own, at the place it hands them on. Two hooks
  * built the same way are as alike as when the callback's body was theirs.
  */
-/** A name read without parentheses (`CallInfo.read`) is a value the linker may find runs code, not a call the body makes. */
-function withoutReads(a: FileAnalysis): FileAnalysis {
-  if (!a.functions.some((fn) => fn.calls.some((c) => c.read))) return a;
-  return { ...a, functions: a.functions.map((fn) => (fn.calls.some((c) => c.read) ? { ...fn, calls: fn.calls.filter((c) => !c.read) } : fn)) };
-}
-
 function withHeldCalls(a: FileAnalysis): FileAnalysis {
   const held = new Map<string, FileAnalysis["functions"][0]["calls"]>();
   for (const fn of a.functions) if (OPTION_CALLBACK.test(fn.name)) held.set(fn.name, fn.calls);

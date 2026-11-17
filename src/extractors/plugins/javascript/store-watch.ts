@@ -4,13 +4,12 @@ import type { DispatchResolver } from "../../dispatch/base.js";
 import { buildFilePathMap, resolveTarget } from "../../shared/link-scoring.js";
 import { sameCell } from "../../../core/reactive-triggers.js";
 import { VUEX_FACTORY } from "./store-reads.js";
+import { NUXT_CONFIG } from "./nuxt-auto-imports.js";
 import { stateParamReads } from "./vuex-state-reads.js";
 import { piniaStoreOf, type PiniaStore } from "./functions-classes.js";
 import { FALSY, MUTATORS, argumentsOf, getterOf, importSources, innermost, reactiveCellsOf, readPath } from "./reactive-cells.js";
 import { homeOf, type Files } from "./prop-flows.js";
 
-/** A Nuxt project's config file: its `composables/` functions are called without an import line. */
-const NUXT_CONFIG = /(?:^|\/)nuxt\.config\.[cm]?[jt]s$/;
 
 /**
  * Store state watched in one file and written in another (`FileAnalysis.storeWatch`):
@@ -136,13 +135,11 @@ function vuexGetterReads(tree: Tree): NonNullable<StoreWatch["getterReads"]> {
     const name = d?.childForFieldName("name")?.text ?? "";
     if (d && value?.type === "object" && /(?:^|[a-z])[gG]etters$/.test(name)) tables.push({ node: value, name });
   }
-  const seen = new Set<number>();
+  // Each table is the value of one pair or one declarator: no node is listed twice.
   for (const { node, name: table } of tables) {
-    if (seen.has(node.id)) continue;
-    seen.add(node.id);
     for (const m of node.namedChildren) {
-      const key = m?.type === "method_definition" || m?.type === "pair" ? m.childForFieldName(m.type === "pair" ? "key" : "name")?.text.replace(/^['"]|['"]$/g, "") : null;
       const fn = m?.type === "method_definition" ? m : m?.type === "pair" ? m.childForFieldName("value") : null;
+      const key = fn ? m!.childForFieldName(m!.type === "pair" ? "key" : "name")?.text.replace(/^['"]|['"]$/g, "") : null;
       if (!key || !fn) continue;
       let paths: string[];
       if (m!.type === "method_definition") {

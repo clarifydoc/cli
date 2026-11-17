@@ -101,7 +101,14 @@ export function computeParamOrigins(input: {
   const routeAt = new Map<string, RouteInfo & { filePath?: string }>();
   for (const r of input.routes) if (r.filePath) routeAt.set(`${r.filePath}:${r.line}`, r);
 
-  const viaBarrel = (file: string, name: string): string => throughBarrels(file, name, byFile, input.componentGraph);
+  // Many tags name the same component through the same barrel: each is followed once.
+  const barrelHits = new Map<string, string>();
+  const viaBarrel = (file: string, name: string): string => {
+    const key = `${file}\0${name}`;
+    let hit = barrelHits.get(key);
+    if (hit === undefined) barrelHits.set(key, (hit = throughBarrels(file, name, byFile, input.componentGraph)));
+    return hit;
+  };
   // A component's props: what each parent's markup binds them to, and what the route rendering it hands them.
   const rendering = new Map<string, Array<RouteInfo & { filePath?: string }>>();
   for (const r of input.routes) {
@@ -405,9 +412,14 @@ export function computeParamOrigins(input: {
  * The file a markup tag renders, among the files the parent imports: the one
  * its import of that name points at, else the one file named like the tag.
  */
-function childFile(a: FileAnalysis, tag: string, imported: readonly string[], follow?: (file: string, name: string) => string): string | null {
+function childFile(a: FileAnalysis, tag: string, imported: readonly string[], follow: (file: string, name: string) => string): string | null {
   const hit = childFileOf(a, tag, imported);
-  return hit && follow ? follow(hit, tag.includes("-") ? tag.replace(/(^|-)([a-z0-9])/g, (_m, _d, c: string) => c.toUpperCase()) : tag) : hit;
+  return hit ? follow(hit, pascalTag(tag)) : null;
+}
+
+/** A kebab-case tag as the component name it renders (`club-panel` → `ClubPanel`). */
+function pascalTag(tag: string): string {
+  return tag.includes("-") ? tag.replace(/(^|-)([a-z0-9])/g, (_m, _d, c: string) => c.toUpperCase()) : tag;
 }
 
 /**
@@ -452,15 +464,13 @@ function resolvesTo(source: string, file: string): boolean {
 }
 
 function childFileOf(a: FileAnalysis, tag: string, imported: readonly string[]): string | null {
-  const name = tag.includes("-") ? tag.replace(/(^|-)([a-z0-9])/g, (_m, _d, c: string) => c.toUpperCase()) : tag;
-  const stem = (f: string) => f.replace(/\.[\w]+$/, "");
+  const name = pascalTag(tag);
   const source = a.imports.find((i) => i.specifiers.includes(name) || i.specifiers.includes(tag))?.source;
   if (source) {
-    const tail = stem(source.replace(/^(?:\.\.?\/)+|^[@~]\/?/, ""));
-    const hits = imported.filter((f) => { const s = stem(f); return s === tail || s.endsWith(`/${tail}`) || s.endsWith(`/${tail}/index`); });
+    const hits = imported.filter((f) => resolvesTo(source, f));
     if (hits.length === 1) return hits[0]!;
   }
-  const named = imported.filter((f) => stem(f).split("/").pop() === name);
+  const named = imported.filter((f) => f.replace(/\.[\w]+$/, "").split("/").pop() === name);
   return named.length === 1 ? named[0]! : null;
 }
 

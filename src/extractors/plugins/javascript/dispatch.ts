@@ -1,3 +1,4 @@
+import { NUXT_CONFIG } from "./nuxt-auto-imports.js";
 import type { ClassInfo, ComponentSubscription, FileAnalysis, FunctionInfo, Language, SymbolLink } from "../../../types/analysis.js";
 import type { DispatchResolver } from "../../dispatch/base.js";
 import { resolveTarget, buildFilePathMap } from "../../shared/link-scoring.js";
@@ -1090,8 +1091,6 @@ function markupEmit(child: FileAnalysis, eventName: string): { name: string; lin
   return null;
 }
 
-/** A Nuxt project's config file: its `components/` directories are imported by file name. */
-const NUXT_CONFIG = /(?:^|\/)nuxt\.config\.[cm]?[jt]s$/;
 
 /**
  * Components a Nuxt project imports without an import line, by tag key per

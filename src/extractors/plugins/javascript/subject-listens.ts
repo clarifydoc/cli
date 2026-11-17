@@ -185,8 +185,13 @@ function asyncPipeMembers(cls: Node): { members: Set<string>; external: boolean 
       if (key === "templateUrl") external = true;
       if (key !== "template") continue;
       const value = pair?.childForFieldName("value")?.text ?? "";
-      for (const m of value.matchAll(/(?<![\w$.])([\w$]+)\s*\|\s*async\b/g)) members.add(m[1]!);
+      for (const name of asyncPipedNames(value)) members.add(name);
     }
   }
   return { members, external };
+}
+
+/** The members a template pipes through `async` (`fixtures$ | async`). */
+export function asyncPipedNames(template: string): string[] {
+  return [...template.matchAll(/(?<![\w$.])([\w$]+)\s*\|\s*async\b/g)].map((m) => m[1]!);
 }

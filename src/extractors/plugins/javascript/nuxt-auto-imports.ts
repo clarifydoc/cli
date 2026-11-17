@@ -1,7 +1,7 @@
 import type { FileAnalysis } from "../../../types/analysis.js";
 
 /** A Nuxt project's config file. */
-const NUXT_CONFIG = /(?:^|\/)nuxt\.config\.[cm]?[jt]s$/;
+export const NUXT_CONFIG = /(?:^|\/)nuxt\.config\.[cm]?[jt]s$/;
 const SCRIPT = /\.(?:[cm]?[jt]sx?|vue)$/;
 
 /**

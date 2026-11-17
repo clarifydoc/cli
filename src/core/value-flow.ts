@@ -16,6 +16,7 @@
  * bounds the whole run; past it nothing is emitted.
  */
 import type { ClassInfo, FileAnalysis, FunctionInfo, PropertyInfo, SymbolLink, ValueCell, ValueFlowFact } from "../types/analysis.js";
+import { resolveImportSource } from "./import-index.js";
 
 /** At most this many functions a cell may hold before it is poisoned. */
 const MAX_TARGETS = 32;
@@ -111,18 +112,14 @@ export function valueFlowInvokeSites(analyses: readonly FileAnalysis[]): Map<str
     if (!files) writtenPairs.set(pair, [a.filePath]);
     else if (!files.includes(a.filePath)) files.push(a.filePath);
   }
-  /** `name.member` written in the caller's own file, or in the file its import of `name` names (matched by path tail). */
+  const knownFiles = new Set(analyses.map((a) => a.filePath));
+  /** `name.member` written in the caller's own file, or — under the name it exports — in the file its import of `name` resolves to. */
   const heldWritten = (a: FileAnalysis, name: string, member: string): boolean => {
-    const files = writtenPairs.get(`${name}\0${member.split(".")[0]}`);
-    if (!files) return false;
-    if (files.includes(a.filePath)) return true;
-    const from = (a.imports ?? []).find((i) => !i.isType && (i.specifiers.includes(name) || Object.keys(i.aliases ?? {}).includes(name)));
-    const tail = from?.source.replace(/^(?:\.{1,2}\/)+|^[@~]{1,2}\//, "").replace(/\.[cm]?[jt]sx?$/, "");
-    if (!tail) return false;
-    return files.some((f) => {
-      const bare = f.replace(/\.[^./]+$/, "");
-      return bare === tail || bare.endsWith(`/${tail}`) || bare.endsWith(`/${tail}/index`) || bare === `${tail}/index`;
-    });
+    const key = member.split(".")[0];
+    if (writtenPairs.get(`${name}\0${key}`)?.includes(a.filePath)) return true;
+    const from = (a.imports ?? []).find((i) => !i.isType && (i.specifiers.includes(name) || i.aliases?.[name] !== undefined));
+    const target = from ? resolveImportSource(a.filePath, from.source, knownFiles) : null;
+    return !!target && !!writtenPairs.get(`${from!.aliases?.[name] ?? name}\0${key}`)?.includes(target);
   };
   for (const a of analyses) {
     // A path through an imported name (`kit.Bench.label()`, `Garage.methods.park()`) names a declaration the

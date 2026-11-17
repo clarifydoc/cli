@@ -517,9 +517,10 @@ export function applyRouterLevelGuards(root: Node, routes: RouteInfo[], sourceTe
     if (!receiver || NON_ROUTER_RECEIVERS.has(receiver)) continue;
     const args = call.childForFieldName("arguments")?.namedChildren ?? [];
     if (args.length === 0 || args[0]!.type === "string" || args[0]!.type === "template_string") continue;
-    const used = middlewareCalleeNames(args.flatMap(composedMiddleware));
+    const middleware = args.flatMap(composedMiddleware);
+    const used = middlewareCalleeNames(middleware);
     if (used.length > 0) routerCalls.push({ receiver, line: call.startPosition.row + 1, names: used });
-    for (const arg of args.flatMap(composedMiddleware)) {
+    for (const arg of middleware) {
       const guard = guardFromMiddleware(arg);
       if (guard) routerGuards.push({ receiver, line: call.startPosition.row + 1, guard });
       else if (filterKind(collapse(arg.text))) routerFilters.push({ receiver, line: call.startPosition.row + 1, text: collapse(arg.text) });

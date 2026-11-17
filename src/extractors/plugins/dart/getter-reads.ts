@@ -1,4 +1,5 @@
 import type { CallInfo, FileAnalysis, FunctionInfo } from "../../../types/analysis.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /**
  * A getter is read like a field (`squadSize`, `this.squadSize`, `club.badge`), so the call scan sees no call. This
@@ -19,7 +20,8 @@ export function addGetterReads(lines: readonly string[], analysis: FileAnalysis)
   }
   const code = codeView(lines);
   for (const fn of fns) {
-    if (new RegExp(String.raw`(?<![\w$.])get\s+${escape(simpleName(fn.name))}\b`).test(lines[fn.line - 1] ?? "")) fn.getter = true;
+    const name = simpleName(fn.name);
+    for (const m of (lines[fn.line - 1] ?? "").matchAll(GETTER_HEAD)) if (m[1] === name) fn.getter = true;
   }
   for (const fn of fns) {
     if (fn.name === "<setup>" || fn.line < 1) continue;
@@ -54,6 +56,8 @@ export function addGetterReads(lines: readonly string[], analysis: FileAnalysis)
   }
 }
 
+/** `get name` on a declaration line. */
+const GETTER_HEAD = /(?<![\w$.])get\s+([A-Za-z_$][\w$]*)(?![\w$])/g;
 /** `this.x` / `receiver.x`, not itself a call. */
 const MEMBER_READ = /(?<![\w$.@])([a-z_$][\w$]*)\s*\.\s*([a-z_$][\w$]*)(?![\w$])(?!\s*[(<])/g;
 /** A lowercase name not after a dot and not called. */
@@ -72,7 +76,6 @@ const STDLIB_MEMBERS: ReadonlySet<string> = new Set([
   "length", "isEmpty", "isNotEmpty", "first", "last", "single", "hashCode", "runtimeType", "keys", "values", "entries", "reversed", "iterator",
 ]);
 
-const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const simpleName = (name: string): string => name.slice(name.lastIndexOf(".") + 1);
 
 /**
@@ -115,7 +118,7 @@ function bodyOf(code: CodeView, fn: FunctionInfo): { text: string; position(at: 
   const slice = code.text.slice(from, to < 0 ? undefined : to);
   // Past the parameter list: the first `=>` or `{` at parenthesis depth zero after the name's own parentheses.
   const name = simpleName(fn.name);
-  let i = slice.search(new RegExp(String.raw`(?<![\w$])${escape(name)}\b`));
+  let i = slice.search(new RegExp(String.raw`(?<![\w$])${escapeRegex(name)}\b`));
   if (i < 0) i = 0;
   let depth = 0;
   let start = -1;

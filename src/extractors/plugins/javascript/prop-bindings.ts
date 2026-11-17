@@ -1,7 +1,7 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { FileAnalysis, FunctionPropBinding, InteractiveElementInfo, PropBinding } from "../../../types/analysis.js";
 import { expressionOrigin, templateValueOrigin } from "./arg-origins.js";
-import { derivedMemberKeys, derivedObjectAt, importedBinding, libraryObjectAt } from "./library-callbacks.js";
+import { ITERATORS, derivedMemberKeys, derivedObjectAt, importedBinding, libraryObjectAt } from "./library-callbacks.js";
 import { dispatchMapAt, PROJECT_SOURCE } from "./dispatch-map-props.js";
 import { heldFunction } from "./held-functions.js";
 import { namesFunction } from "./member-values.js";
@@ -114,14 +114,11 @@ export function jsxFunctionProps(tree: Tree, sourceText: string, declared: Reado
         out.push({ component: tag, prop: `${name.text}.${h.key}`, handler: h.name, line: attr.startPosition.row + 1, ...(h.handlerImport ? { handlerImport: h.handlerImport } : {}) });
       }
       if (held) continue;
-      // `<ActionBar actions={[{ label: 'Award', run: award }]} />`: the child's loop over its prop runs `actions.run`.
-      if (expr?.type === "array") {
-        for (const h of arrayCallbacksOf(expr, declared)) out.push({ component: tag, prop: `${name.text}.${h.key}`, handler: h.name, line: attr.startPosition.row + 1 });
-        continue;
-      }
+      // `<ActionBar actions={[{ label: 'Award', run: award }]} />`: the child's loop over its prop runs `actions.run`;
       // `<Panel action={{ onClick: reload }} />`: the child's `props.action.onClick()` runs it.
-      if (expr?.type === "object") {
-        for (const h of objectCallbacksOf(expr, declared)) out.push({ component: tag, prop: `${name.text}.${h.key}`, handler: h.name, line: attr.startPosition.row + 1 });
+      const literal = expr?.type === "array" ? arrayCallbacksOf(expr, declared) : expr?.type === "object" ? objectCallbacksOf(expr, declared) : null;
+      if (literal) {
+        for (const h of literal) out.push({ component: tag, prop: `${name.text}.${h.key}`, handler: h.name, line: attr.startPosition.row + 1 });
         continue;
       }
       // `<ClubTable actions={clubActions} />` with `clubActions` imported: a dispatch map there, which the resolver reads.
@@ -144,11 +141,13 @@ export function jsxFunctionProps(tree: Tree, sourceText: string, declared: Reado
  * `actions.map((a) => <button onClick={() => a.run()} />)` over a collection a component takes (`actions`, `props.actions`,
  * `this.props.actions`): the callback's first parameter holds each element, so its `a.run()` is the prop's `actions.run`.
  */
-export function jsxPropElements(tree: Tree): NonNullable<FileAnalysis["propElements"]> {
+export function jsxPropElements(tree: Tree, sourceText: string): NonNullable<FileAnalysis["propElements"]> {
   const out: NonNullable<FileAnalysis["propElements"]> = [];
+  // Only a component takes props, and only an iteration can bind an element: a file with neither walks nothing.
+  if (!ITERATION.test(sourceText) || !/<\/|\/>/.test(sourceText)) return out;
   for (const call of tree.rootNode.descendantsOfType("call_expression")) {
     const callee = call?.childForFieldName("function");
-    if (!call || callee?.type !== "member_expression" || !ITERATION_METHODS.has(callee.childForFieldName("property")?.text ?? "")) continue;
+    if (!call || callee?.type !== "member_expression" || !ITERATORS.has(callee.childForFieldName("property")?.text ?? "")) continue;
     const source = callee.childForFieldName("object")?.text ?? "";
     if (!/^(?:this\.props\.|props\.)?[A-Za-z_$][\w$]*$/.test(source)) continue;
     const cb = call.childForFieldName("arguments")?.namedChildren.find((a) => a?.type === "arrow_function" || a?.type === "function_expression");
@@ -157,12 +156,11 @@ export function jsxPropElements(tree: Tree): NonNullable<FileAnalysis["propEleme
     if (!cb || param?.type !== "identifier") continue;
     out.push({ source, local: param.text, line: cb.startPosition.row + 1, endLine: cb.endPosition.row + 1 });
   }
-  // Only a component takes props: a file that renders no JSX (a route, a service) states none.
+  // A file that renders no JSX (a route, a service) states none.
   if (out.length > 0 && tree.rootNode.descendantsOfType(["jsx_element", "jsx_self_closing_element"]).length === 0) return [];
   return out;
 }
 
-const ITERATION_METHODS: ReadonlySet<string> = new Set(["map", "forEach", "flatMap", "filter", "find", "some", "every"]);
 
 /** The functions the objects of an array literal hold under each key: a declared function by name (`run: award`, `{ award }`), or an arrow written in place by its own held name. */
 function arrayCallbacksOf(array: Node, declared: ReadonlySet<string>): Array<{ key: string; name: string }> {
@@ -193,7 +191,7 @@ function objectCallbacksOf(el: Node, declared: ReadonlySet<string>): Array<{ key
 }
 
 /** Whether a file iterates anything (a derived local is an iteration's parameter). */
-const ITERATION = /\.(?:map|forEach|flatMap|filter|find|some|every)\(/;
+const ITERATION = new RegExp(`\\.(?:${[...ITERATORS].join("|")})\\(`);
 
 /** A function named by an identifier or `this.member`, as written. */
 function handedFunction(n: Node | null): string | null {

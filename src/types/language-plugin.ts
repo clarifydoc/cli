@@ -718,7 +718,7 @@ export interface AstExtractorHooks {
    */
   unreadPropBindings?(tree: Tree): NonNullable<import("./analysis.js").FileAnalysis["unreadPropBindings"]>;
   /** The element parameters of callbacks a collection is iterated with (`FileAnalysis.propElements`). */
-  propElements?(tree: Tree): NonNullable<import("./analysis.js").FileAnalysis["propElements"]>;
+  propElements?(tree: Tree, sourceText: string): NonNullable<import("./analysis.js").FileAnalysis["propElements"]>;
   /**
    * The file's own functions its markup hands a child by name as a prop, where no event binding says so
    * (`<KitRow order={orderKit} />`): `FileAnalysis.functionProps`. `declared` names the file's functions and methods.

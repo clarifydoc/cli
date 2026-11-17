@@ -5,6 +5,7 @@ import {
   extractAngularComponentTreeFromTemplate,
   extractAngularInteractiveElementsFromTemplate,
 } from "./angular-template.js";
+import { asyncPipedNames } from "./subject-listens.js";
 
 /**
  * Resolve Angular components' EXTERNAL templates (`templateUrl: './x.html'`).
@@ -83,6 +84,6 @@ function dropUnpipedListens(a: FileAnalysis, template: string): void {
   const listens = a.subjectFlows?.listens;
   if (!listens?.some((l) => l.member !== undefined)) return;
   const piped = new Set<string>();
-  for (const m of template.matchAll(/(?<![\w$.])([\w$]+)\s*\|\s*async\b/g)) piped.add(m[1]!);
+  for (const name of asyncPipedNames(template)) piped.add(name);
   a.subjectFlows!.listens = listens.filter((l) => l.member === undefined || piped.has(l.member));
 }

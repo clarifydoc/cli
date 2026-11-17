@@ -1,6 +1,6 @@
 import type { Node, Tree } from "web-tree-sitter";
 import { VUE_SOURCES, VUE_WATCH, argumentsOf, callbackOf, computedMembers, getterOf, holdCallbacks, importSources, isDeep, isOption, optionKey, optionsObjects, optionsWatchers, readPath, type CellFacts } from "./reactive-cells.js";
-import { VUEX_FACTORY, type StoreTrigger } from "./store-reads.js";
+import { PROJECT_SOURCE, VUEX_FACTORY, type StoreTrigger } from "./store-reads.js";
 
 /** A `watch` key naming Vuex state: `'$store.state.clubs.list'`. */
 const VUEX_STATE_KEY = /^\$store\.state\.([\w$]+(?:\.[\w$]+)*)$/;
@@ -139,7 +139,6 @@ function callbackFor(arg: Node | undefined): { callback: Node | null; callee: st
   return callbackOf(arg);
 }
 
-const PROJECT_SOURCE = /^(?:\.|@\/|~\/|~~\/|@@\/|src\/)/;
 
 /**
  * Vuex state watched in code rather than in an Options `watch` key: `this.$watch('$store.state.clubs.list', cb)` /

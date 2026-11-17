@@ -2127,6 +2127,8 @@ interface LinkContext {
   collectionExtensions?: Map<string, CollectionExtensionDef[]>;
   /** Lazy: file → its analysis. */
   analysisAt?: Map<string, FileAnalysis>;
+  /** The simple names of every function or method marked `getter`: a read of any other name runs nothing. */
+  getterNames?: Set<string>;
   /** Lazy, per language: what its plugin says the users of a component pick of a record read at run time (`recordChoice`). */
   recordChoices?: Map<string, RecordChoice | null>;
   /**
@@ -4863,19 +4865,26 @@ function resolveReadName(
   analysis: FileAnalysis,
   ctx: LinkContext,
 ): SymbolLink | null {
+  const getter = call.read === "getter";
+  if (getter) {
+    if (!ctx.getterNames) {
+      ctx.getterNames = new Set();
+      for (const a of ctx.analyses) {
+        for (const f of a.functions) if (f.getter) ctx.getterNames.add(f.name.slice(f.name.lastIndexOf(".") + 1));
+        for (const c of a.classes) for (const m of c.methods) if (m.getter) ctx.getterNames.add(m.name);
+      }
+    }
+    if (!ctx.getterNames.has(call.name.slice(call.name.lastIndexOf(".") + 1))) return null;
+  }
   const { read: _read, ...asCall } = call;
   const link = resolveCallToDefinition(sourceFile, sourceSymbol, asCall, analysis, ctx);
   if (!link || (link.strategy && GUESSING_STRATEGIES.has(link.strategy))) return null;
-  if (call.read === "getter") {
-    // A declared getter runs on the read; a method, a field or a class of that name is a value.
-    if (link.relation !== "calls") return null;
-    const owner = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(link.targetFile);
-    return owner && routineAt(owner, link.targetSymbol)?.getter ? link : null;
-  }
-  if (link.relation === "instantiates") return link;
+  if (link.relation === "instantiates" && !getter) return link;
   if (link.relation !== "calls") return null;
   const target = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(link.targetFile);
   const routine = target && routineAt(target, link.targetSymbol);
+  // A declared getter runs on the read; a method, a field or a class of that name is a value.
+  if (getter) return routine?.getter ? link : null;
   if (!routine) return null;
   // A property's accessor runs on the read, an indexed one (`property FrontRow index 1 read GetRow`) with its index.
   const leaf = (s: string) => s.slice(s.lastIndexOf(".") + 1).toLowerCase();

@@ -49,11 +49,10 @@ export function routeAnchor(r: Pick<Row, "httpMethod" | "path" | "filePath">, li
   // A registrar's route symbol carries ` @<registrar>` after the path (`routeSymbolName`); the path is what a mount prefixes.
   const symbolOf = new Map<string, string>();
   for (const l of links) if (l.sourceFile === r.filePath && l.sourceSymbol.startsWith(prefix)) symbolOf.set(routeSymbolPath(l.sourceSymbol.slice(prefix.length)), l.sourceSymbol);
-  const paths = [...symbolOf.keys()];
-  if (paths.includes(r.path)) return symbolOf.get(r.path)!;
-  const suffix = paths.filter((p) => p !== "/" && r.path.endsWith(p)).sort((a, b) => b.length - a.length)[0];
-  if (suffix) return symbolOf.get(suffix)!;
-  return paths.includes("/") ? symbolOf.get("/")! : null;
+  const exact = symbolOf.get(r.path);
+  if (exact) return exact;
+  const suffix = [...symbolOf.keys()].filter((p) => p !== "/" && r.path.endsWith(p)).sort((a, b) => b.length - a.length)[0];
+  return symbolOf.get(suffix ?? "/") ?? null;
 }
 
 /** The routes a subject names: `GET /x` by method and path, exact first, then normalized, then a substring. */
