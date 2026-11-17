@@ -617,11 +617,22 @@ const STATEMENT_BUILDER_ROOT = new RegExp(String.raw`^${SQL_MODULE}(?:(?:select|
 const STATEMENT_FUNC_ROOT = new RegExp(String.raw`^${SQL_MODULE}func\.`);
 const SQL_FUNC_CALL = new RegExp(String.raw`^${SQL_MODULE}func\.\w+$`);
 
-/** `select(Club).where(…).order_by(…)` → the model `select` is given; null for any other expression. */
+/**
+ * `select(Club).where(…).join(Player, …).order_by(…)` → the model `select` is given, plus each
+ * `.join(…)` first argument that names a class (`Player`, `models.Player`) or a loop variable of
+ * classes. A string's `.join` or a project `join(…)` never reaches here — only a call chain rooted
+ * at `select`/`insert`/`update`/`delete`.
+ */
 function rootStatement(expr: Node): StatedModel | null {
   let cur: Node = expr;
+  const joined: string[] = [];
   while (cur.type === "call") {
     const fn = cur.childForFieldName("function");
+    if (fn?.type === "attribute" && (fn.childForFieldName("attribute")?.text ?? "") === "join") {
+      const arg = positional(cur)[0];
+      const names = arg ? joinEntityArg(arg) : null;
+      if (names) joined.push(...names);
+    }
     const inner = fn?.type === "attribute" ? fn.childForFieldName("object") : null;
     if (inner?.type !== "call") break;
     cur = inner;
@@ -630,7 +641,23 @@ function rootStatement(expr: Node): StatedModel | null {
   const verb = /^(?:[a-z_]\w*\.)*(select|insert|update|delete)$/.exec(cur.childForFieldName("function")?.text ?? "")?.[1];
   const first = verb ? positional(cur)[0] : undefined;
   const model = first ? modelExpression(first) : null;
-  return model ? { ...model, access: verb === "select" ? "read" : "write" } : null;
+  if (!model) return null;
+  const more = [...new Set([...(model.more ?? []), ...joined])].filter((m) => m !== model.model);
+  return { ...model, ...(more.length ? { more } : {}), access: verb === "select" ? "read" : "write" };
+}
+
+/**
+ * First argument of `.join(…)` on a select chain: a class by name (`Player`, `models.Player`), or a
+ * loop variable that walks such classes — never a column (`Player.id`), a relationship path
+ * (`Club.players`), a string, or a free-function / parameter that is not a listed model.
+ */
+function joinEntityArg(node: Node): string[] | null {
+  const m = modelExpression(node);
+  if (!m?.model) return null;
+  if (/^(?:[a-z_]\w*\.)*[A-Z]\w*$/.test(node.text)) return [m.model, ...(m.more ?? [])];
+  // `for model in (Player, Club): … .join(model)` — the loop listed the classes.
+  if (/^[a-z_]\w*$/.test(node.text)) return [m.model, ...(m.more ?? [])];
+  return null;
 }
 
 /**

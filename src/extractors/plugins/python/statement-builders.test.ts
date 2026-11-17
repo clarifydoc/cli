@@ -27,6 +27,14 @@ from sqlalchemy import select, func
 from models import Club, Player
 
 
+def join(parts):
+    return "|".join(parts)
+
+
+def squad_names(parts):
+    return "-".join(parts)
+
+
 def count_players(session, club_id):
     return session.execute(select(func.count(Player.id)).filter_by(club_id=club_id)).scalar()
 
@@ -45,6 +53,10 @@ def club_filter():
 
 def clubs(session):
     return session.query(Club).all()
+
+
+def clubs_with_players(session):
+    return session.execute(select(Club).join(Player, Player.club_id == Club.id)).scalars().all()
 `;
 
 describe("SQLAlchemy statement builders are no table (real-repo FP)", () => {
@@ -66,15 +78,21 @@ describe("SQLAlchemy statement builders are no table (real-repo FP)", () => {
   });
 
   it("targets the declared model's table for select(func.count(Model.id)).filter_by(...)", () => {
-    expect(rows.filter((d) => d.line === 7).map((d) => d.target)).toEqual(["Player"]);
+    expect(rows.filter((d) => d.line === 15).map((d) => d.target)).toEqual(["Player"]);
   });
 
   it("leaves a helper's parameter model to the session call's own row", () => {
-    expect(rows.filter((d) => d.line === 11).map((d) => [d.target, d.entityParameter ?? null])).toEqual([[null, "model"]]);
-    expect(rows.filter((d) => d.line === 15).map((d) => [d.target, d.entityParameter ?? null])).toEqual([[null, "model"]]);
+    expect(rows.filter((d) => d.line === 19).map((d) => [d.target, d.entityParameter ?? null])).toEqual([[null, "model"]]);
+    expect(rows.filter((d) => d.line === 23).map((d) => [d.target, d.entityParameter ?? null])).toEqual([[null, "model"]]);
   });
 
   it("reads the model a bare select(Model).filter_by names", () => {
-    expect(rows.filter((d) => d.line === 19).map((d) => d.target)).toEqual(["Club"]);
+    expect(rows.filter((d) => d.line === 27).map((d) => d.target)).toEqual(["Club"]);
+  });
+
+  it("reads both models of select(Club).join(Player, …), not string or project join", () => {
+    const joined = rows.filter((d) => d.line === 35);
+    expect([...new Set(joined.map((d) => d.target))].sort()).toEqual(["Club", "Player"]);
+    expect(rows.filter((d) => d.line === 7 || d.line === 11)).toEqual([]);
   });
 });
