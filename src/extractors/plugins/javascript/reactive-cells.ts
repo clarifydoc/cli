@@ -2,7 +2,7 @@ import type { Node, Tree } from "web-tree-sitter";
 import type { ReactiveCells } from "../../../types/analysis.js";
 import { sameCell } from "../../../core/reactive-triggers.js";
 import { withStoreWatchers, type StoreTrigger, type StoreWrite } from "./store-reads.js";
-import { withVuexOptions } from "./vuex-state-reads.js";
+import { withVuexCalls, withVuexOptions } from "./vuex-state-reads.js";
 import { withAngularListeners } from "./subject-listens.js";
 import { TEMPLATE_WRITE_MARK } from "./markup-expressions.js";
 import { decodeTargets, type TemplateTarget } from "./template-targets.js";
@@ -81,7 +81,7 @@ export interface CellFacts {
 }
 
 /** A subscription on `via.field` — a member of a service the class holds as `via` — whose callback is held as its own function. */
-export interface SubjectListen { callback: Node; hook: string; via: string; field: string; at: Node; cls: Node }
+export interface SubjectListen { callback: Node; hook: string; via: string; field: string; at: Node; cls: Node; /** The member of a component with an external template this stream is built in: kept only when that template pipes it through `async`. */ pendingMember?: string }
 
 /** A watcher whose source reads a prop of the component (`watch(() => props.query, …)`): a parent's write to the bound value runs it. */
 export interface PropTrigger { props: string[]; hook: string; callback: Node | null; callee: string | null; at: Node; /** Held only because it reads a prop: the project pass reaches it from the function that sets it up. */ heldHere?: true }
@@ -96,7 +96,7 @@ export function reactiveCellsOf(tree: Tree): CellFacts {
   memoTree = tree;
   const text = tree.rootNode.text;
   const template = templateWritesOf(tree, text);
-  memo = withVuexOptions(tree, withStoreWatchers(tree, withAngularListeners(tree, withSubjectListeners(tree, withPropWatchers(tree, withOptionsApi(tree, read(tree, text, template), text, template), text), text), text), text, template), text);
+  memo = withVuexCalls(tree, withVuexOptions(tree, withStoreWatchers(tree, withAngularListeners(tree, withSubjectListeners(tree, withPropWatchers(tree, withOptionsApi(tree, read(tree, text, template), text, template), text), text), text), text, template), text), text);
   return memo;
 }
 

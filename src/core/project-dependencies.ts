@@ -35,6 +35,7 @@ import type {
   SymbolLink,
 } from "../types/analysis.js";
 import { byOrdinal } from "./ordinal.js";
+import { routeSymbolPath } from "./route-symbol.js";
 
 /** Endpoints listed per edge, most-linked first; `endpointCount` keeps the total. */
 export const PROJECT_DEPENDENCY_ENDPOINT_CAP = 25;
@@ -88,7 +89,8 @@ export function buildProjectDependencies(input: {
   const implementedIn = new Map<string, string | null>();
   for (const l of input.symbolLinks) {
     if (l.strategy !== "spec-join" || !l.sourceSymbol.startsWith("route:")) continue;
-    const key = `${l.sourceFile}\0${l.sourceSymbol}`;
+    // Keyed on `route:<METHOD> <path>` (a registrar's ` @name` cut off): the call side names no registrar.
+    const key = `${l.sourceFile}\0route:${routeSymbolPath(l.sourceSymbol.slice("route:".length))}`;
     const project = input.projectOf(l.targetFile) ?? null;
     implementedIn.set(key, implementedIn.has(key) && implementedIn.get(key) !== project ? null : project);
   }

@@ -101,8 +101,24 @@ export function extractStoreShapes(tree: Tree, sourceText: string, filePath: str
   if (Object.keys(functions).length > 0) out.functions = functions;
   if (namespaced.length > 0) out.namespaced = namespaced;
   if (Object.keys(spreads).length > 0) out.spreads = spreads;
-  if (!out.values && !out.functions && !out.namespaced && !out.spreads) return undefined;
+  if (buildsRootStore(tree, sourceText)) out.root = true;
+  if (!out.values && !out.functions && !out.namespaced && !out.spreads && !out.root) return undefined;
   return JSON.stringify(out).length > MAX_SHAPES_SIZE ? undefined : out;
+}
+
+/** The file calls `createStore({…})` / `new Vuex.Store({…})` with Vuex imported: a root store, with or without `modules:`. */
+function buildsRootStore(tree: Tree, sourceText: string): boolean {
+  if (!sourceText.includes("vuex") || !/\b(?:createStore|Vuex\.Store|Store)\b/.test(sourceText)) return false;
+  const vuex = tree.rootNode.namedChildren.some((st) => st?.type === "import_statement" && /^['"]vuex['"]$/.test(st.childForFieldName("source")?.text ?? "")) || /require\(\s*['"]vuex['"]\s*\)/.test(sourceText);
+  if (!vuex) return false;
+  for (const call of tree.rootNode.descendantsOfType(["call_expression", "new_expression"])) {
+    if (!call) continue;
+    const callee = (call.childForFieldName("function") ?? call.childForFieldName("constructor"))?.text ?? "";
+    if (!/^(?:createStore|Vuex\.Store|Store)$/.test(callee)) continue;
+    const args = call.childForFieldName("arguments");
+    if (args?.namedChildren.some((a) => a?.type === "object")) return true;
+  }
+  return false;
 }
 
 function isSection(name: string): name is Section {

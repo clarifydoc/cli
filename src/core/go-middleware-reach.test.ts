@@ -164,6 +164,46 @@ describe("Go Huma registrars declaring the same templated path", () => {
   });
 });
 
+const SAME_FILE_REGISTRARS = `package v2
+
+import (
+\t"context"
+
+\t"github.com/danielgtaylor/huma/v2"
+\t"gorm.io/gorm"
+)
+
+func registerClubs(api huma.API, db *gorm.DB) {
+\thuma.Register(api, huma.Operation{
+\t\tMethod: "GET",
+\t\tPath:   "/items",
+\t}, func(ctx context.Context, in *struct{}) (*struct{}, error) {
+\t\tdb.Table("clubs").Find(in)
+\t\treturn nil, nil
+\t})
+}
+
+func registerCars(api huma.API, db *gorm.DB) {
+\thuma.Register(api, huma.Operation{
+\t\tMethod: "GET",
+\t\tPath:   "/items",
+\t}, func(ctx context.Context, in *struct{}) (*struct{}, error) {
+\t\tdb.Table("cars").Find(in)
+\t\treturn nil, nil
+\t})
+}
+`;
+
+describe("Go Huma registrars in ONE file declaring the same path", () => {
+  it("gives each registrar's route its own symbol, so each reaches only its own table", async () => {
+    const { analysis } = await runCarets({ "go.mod": GO_MOD, "v2/both.go": SAME_FILE_REGISTRARS });
+    const bySymbol = (analysis.symbolDataAccess ?? []).map((d) => `${d.symbol} -> ${d.entity}`).sort();
+    expect(bySymbol).toEqual(["route:GET /items @registerCars -> cars", "route:GET /items @registerClubs -> clubs"]);
+    const flows = (analysis.dataFlows ?? []).map((f) => `${f.entryLabel} ${f.resource}`).sort();
+    expect(flows).toEqual(["GET /items cars", "GET /items clubs"]);
+  });
+});
+
 const MOUNT_MAIN = `package main
 
 import (

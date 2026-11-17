@@ -140,6 +140,8 @@ export const typescriptManifest: LanguagePluginManifest = {
   language: "typescript",
   callPathsFromHead: true,
   collectionElementOf: collectionElementText,
+  // `await repo.all()` holds the `Club[]` a declared `Promise<Club[]>` resolves to.
+  asyncResultTypes: ["Promise"],
   family: "script",
   // `import assert from "assert"` is Node's, never a project file of that name.
   importedFile: jsImportedFile,
@@ -184,6 +186,8 @@ export const javascriptManifest: LanguagePluginManifest = {
   shebangInterpreter: /^(?:node(?:js)?|tsx|ts-node|bun|deno)$/,
   callPathsFromHead: true,
   collectionElementOf: collectionElementText,
+  // `await repo.all()` holds the `Club[]` a declared `Promise<Club[]>` resolves to.
+  asyncResultTypes: ["Promise"],
   family: "script",
   // `import assert from "assert"` is Node's, never a project file of that name.
   importedFile: jsImportedFile,

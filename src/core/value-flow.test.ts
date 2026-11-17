@@ -4,6 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { buildSymbolLinks } from "./symbol-linker.js";
+import { callSiteKey, valueFlowInvokeSites } from "./value-flow.js";
 import type { CallInfo, FileAnalysis, ValueFlowFact } from "../types/analysis.js";
 
 type Param = { name: string; type: string | null; defaultValue: string | null };
@@ -440,5 +441,25 @@ describe("value-flow: a held lambda stands for at most four project functions, c
       { kind: "arg", call: "run", line: 25, index: 0, from: { name: "<arg@25>" } },
     ];
     expect(targets([runner, decoy, plain])).toHaveLength(5);
+  });
+});
+
+describe("value-flow: a call on a module-level object's member (`held: \"module\"`)", () => {
+  // `Pitch.send()` runs what `Pitch.send` holds only where that same object's member is written: in the caller's own
+  // file, or in the file its import of `Pitch` names. A namesake `Pitch` of another file, or any object with a `send`
+  // member, leaves the call to the name tiers (real-repo FP: two files each declaring their own helper object).
+  const caller = (imports: unknown[] = []) => file("src/sdk/pitch.ts", {
+    imports,
+    functions: [fn("kickOff", 5, { valueFlow: [{ kind: "invoke", cell: { name: "Pitch", member: "send" }, call: "Pitch.send", line: 6, held: "module" }], calls: [call("Pitch.send", 6)] })],
+  });
+  const widget = file("src/widget/pitch.ts", { moduleValueFlow: [{ kind: "seed", to: { name: "Pitch", member: "send" }, fn: "send", line: 2 }] });
+  const other = file("src/kit.ts", { moduleValueFlow: [{ kind: "seed", to: { name: "kit", member: "send" }, fn: "send", line: 2 }] });
+  const key = callSiteKey("src/sdk/pitch.ts", "kickOff", 6, "Pitch.send");
+
+  it("leaves it to the name tiers when only a namesake object or another object's member is written", () => {
+    expect(valueFlowInvokeSites([caller(), widget, other]).get(key)).toBeUndefined();
+  });
+  it("hands it to value flow when the file it imports the object from writes the member", () => {
+    expect(valueFlowInvokeSites([caller([imp("../widget/pitch", ["Pitch"])]), widget]).get(key)).toBe("suppress");
   });
 });

@@ -472,6 +472,12 @@ export interface FileAnalysis {
    * bind (`recordChoice`) must not exclude what such a user could pick.
    */
   unreadPropBindings?: Array<{ component: string; prop: string; line: number }>;
+  /**
+   * The parameter of a callback an array prop is iterated with (`actions.map((a) => … a.run() …)`): `source` is the
+   * collection as written (`actions`, `props.actions`), `local` the element's name and the lines are the callback's.
+   * A call of `a.run` there is a call of the prop's `actions.run`.
+   */
+  propElements?: Array<{ source: string; local: string; line: number; endLine: number }>;
   /** Props a component's watchers re-run on, and the locals a Vue parent binds them to (`prop-flows.ts`). */
   propFlows?: PropFlows;
   /**
@@ -1123,7 +1129,11 @@ export type ValueFlowFact =
   /** The function returns what `from` holds. */
   | { kind: "return"; from: ValueCell; line: number }
   /** The call runs whatever `cell` holds. */
-  | { kind: "invoke"; cell: ValueCell; call: string; line: number };
+  /**
+   * `held`: the call runs a member of a module-level object (the file's own, or one it imports) that the function
+   * itself never stores into — it is the value's only while some statement writes that same object's member.
+   */
+  | { kind: "invoke"; cell: ValueCell; call: string; line: number; held?: "module" };
 
 export interface CallInfo {
   name: string;
@@ -1200,9 +1210,10 @@ export interface CallInfo {
    * only when it resolves, without guessing by name, to a function or method — a `calls` edge when that returns a
    * value and needs no argument, a `passes` edge otherwise (a method pointer: `OnClick := btnSaveClick`,
    * `List.Sort(CompareClubs)`) — or to a construction; a field or variable read is no edge. Never a database or
-   * API call by its name.
+   * API call by its name. `"getter"`: the read of a property-style accessor a language declares (Dart `get squadSize`) —
+   * linked only to a function marked `getter`, as a `calls` edge, so a read of a method or a field draws none.
    */
-  read?: true;
+  read?: true | "getter";
   /**
    * For a `passed: "return"` name: the key the function returns it under — `latest` in
    * `return { latest: loadLatest }`, `[1]` in `return [rows, refresh]`. A caller that destructures
@@ -1494,6 +1505,8 @@ export interface FunctionInfo {
    * its bare name. Set where the name alone does not say so — a Dart named constructor is named `fromJson`.
    */
   isConstructor?: true;
+  /** Declared as a getter (Dart `int get squadSize`): a read of its name runs it (`CallInfo.read: "getter"`). */
+  getter?: true;
   /** A `static` method of its class: `this` inside it is the class, not an instance. Set by the JS/TS plugin; omitted otherwise. */
   isStatic?: true;
   /**
@@ -2317,6 +2330,8 @@ export interface StoreShapes {
   namespaced?: string[];
   /** The names a module-level `actions` (or `mutations`) object spreads in (`const actions = { load, ...readActions }` → `actions: ["readActions"]`), or merges with `Object.assign`. */
   spreads?: Record<string, string[]>;
+  /** The file builds a Vuex root store (`createStore({…})`, `new Vuex.Store({…})`), whether or not it registers `modules:`. */
+  root?: true;
 }
 
 /** A call passing at least one path literal to a function (see `FileAnalysis.pathArgCalls`). */
@@ -2975,6 +2990,11 @@ export interface DataSourceInfo {
    */
   targetChoice?: boolean;
   /**
+   * A hole of the URL reads `this` inside a plain `function` (not a method, not an arrow): its `this` is bound
+   * by the caller, so core never types it as the enclosing class.
+   */
+  thisUnbound?: true;
+  /**
    * For `kind === "database"`: whether the op reads or writes, when the plugin's
    * ORM knowledge can tell (e.g. `findMany` → read, `create`/`save` → write).
    * Absent = unclassified (the dataflow-lite pass keeps such an access as the
@@ -3434,6 +3454,12 @@ export interface StoreWatch {
    */
   stateWrites?: Array<{ path: string; function: string; line: number; spelling: string; falsy?: boolean }>;
   /**
+   * The state a Vuex getter reads, by getter name (`total` → `list*`), paths relative to the module's state as `stateWrites`
+   * are (`*`: read through). `table` is the object it is written in (`getters`, or the variable's name). A watcher on
+   * `store.getters['clubs/total']` carries the read `@getter:clubs/total` and runs when a mutation writes what the getter reads.
+   */
+  getterReads?: Array<{ name: string; table: string; paths: string[] }>;
+  /**
    * The computeds a setup store or composable returns and the state each reads (`total` → `clubs*`, `*` for what is read through):
    * a watcher on `total` in another file runs when something writes `clubs`. `store` is the store class or composable name
    * the writes carry; a ref the function keeps to itself is named `~local`.
@@ -3544,7 +3570,7 @@ export interface SubjectFlows {
   /** A `.next` on a subject, in the named function the call sits in. */
   nexts?: Array<{ function: string; class: string; field: string; via?: string; line: number }>;
   /** A subscription written in place on a service's member, whose callback is the named (held) function. */
-  listens?: Array<{ function: string; class: string; field: string; via: string; line: number }>;
+  listens?: Array<{ function: string; class: string; field: string; via: string; line: number; /** A stream member of a component whose template is external: the project pass keeps the listen only when that template reads the member through `async`. */ member?: string }>;
   /** class → member → declared type name, for the members that hold a service (constructor parameter properties, typed fields, `inject(T)`). */
   types?: Record<string, Record<string, string>>;
 }

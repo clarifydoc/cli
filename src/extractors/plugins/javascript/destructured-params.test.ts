@@ -83,6 +83,21 @@ export function NestedNamed({ league: { table: t } }: Props) {
   return null;
 }
 `,
+  // Wrapped annotations keep the members of their first argument; a decoy namesake type stays its own.
+  "src/Wrapped.tsx": `import { Table } from './table';
+import { SharedProps } from './shared';
+interface Props { table: Table }
+interface Paged<T> { table: Table; item: T }
+export function ReadOnly({ table }: Readonly<Props>) { table.nextPage(); return null; }
+export function Picked({ table }: Pick<Props, 'table'>) { table.nextPage(); return null; }
+export function Generic({ table }: Paged<string>) { table.nextPage(); return null; }
+export function ImportedWrapped({ table }: Readonly<SharedProps>) { table.nextPage(); return null; }
+export function Literal({ table }: Readonly<{ table: Table }>) { table.nextPage(); return null; }
+`,
+  "src/WrappedDecoy.tsx": `import { Grid } from './grid';
+interface Props { table: Grid }
+export function WrappedDecoy({ table }: Readonly<Props>) { table.nextPage(); return null; }
+`,
   "src/Untyped.tsx": `export function Untyped({ table }) {
   table.nextPage();
   return null;
@@ -127,6 +142,14 @@ describe("destructured parameters", () => {
   it("types a binding read through a nested pattern", () => {
     expect(linksFrom(summary, "src/NestedInline.tsx")).toContain("NestedInline -table.nextPage-> src/table.ts#Table.nextPage");
     expect(linksFrom(summary, "src/NestedNamed.tsx")).toContain("NestedNamed -t.nextPage-> src/table.ts#Table.nextPage");
+  });
+
+  it("reads through Readonly, Pick and a project generic around the annotation", () => {
+    for (const fn of ["ReadOnly", "Picked", "Generic", "ImportedWrapped", "Literal"]) {
+      expect(linksFrom(summary, "src/Wrapped.tsx")).toContain(`${fn} -table.nextPage-> src/table.ts#Table.nextPage`);
+    }
+    expect(linksFrom(summary, "src/WrappedDecoy.tsx")).toContain("WrappedDecoy -table.nextPage-> src/grid.ts#Grid.nextPage");
+    expect(linksFrom(summary, "src/WrappedDecoy.tsx")).not.toContain("WrappedDecoy -table.nextPage-> src/table.ts#Table.nextPage");
   });
 
   it("links nothing for a prop whose type is not stated", () => {

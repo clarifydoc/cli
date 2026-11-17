@@ -149,6 +149,12 @@ const OPTION_CALLBACK = /^<[\w$]+:[\w$]+@\d+>$/;
  * function, named `<useMutation:mutationFn@4>`): their calls are its own, at the place it hands them on. Two hooks
  * built the same way are as alike as when the callback's body was theirs.
  */
+/** A name read without parentheses (`CallInfo.read`) is a value the linker may find runs code, not a call the body makes. */
+function withoutReads(a: FileAnalysis): FileAnalysis {
+  if (!a.functions.some((fn) => fn.calls.some((c) => c.read))) return a;
+  return { ...a, functions: a.functions.map((fn) => (fn.calls.some((c) => c.read) ? { ...fn, calls: fn.calls.filter((c) => !c.read) } : fn)) };
+}
+
 function withHeldCalls(a: FileAnalysis): FileAnalysis {
   const held = new Map<string, FileAnalysis["functions"][0]["calls"]>();
   for (const fn of a.functions) if (OPTION_CALLBACK.test(fn.name)) held.set(fn.name, fn.calls);
@@ -172,6 +178,7 @@ export function detectDuplicates(analyses: FileAnalysis[]): DuplicateGroup[] {
   const vendored = vendoredMinoritySet(analyses);
   const authored = analyses
     .filter((a) => !a.minified && !vendored.has(a.filePath) && !isTestFile(a.filePath, a.language))
+    .map(withoutReads)
     .map(withHeldCalls);
 
   // ── Name-based duplication ──

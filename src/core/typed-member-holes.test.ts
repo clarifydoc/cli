@@ -359,3 +359,99 @@ describe("a URL hole over the result of a call, and over this in a static method
     expect(reached(35)).toEqual(premierCup);
   });
 });
+
+/**
+ * A loop over an awaited call reads the element of the result a declared `Promise<Club[]>` resolves to, and
+ * `this` inside a plain `function` (whose `this` the caller binds) is never the class around it.
+ */
+const ASYNC_FILES: Record<string, string> = {
+  "web/package.json": JSON.stringify({ name: "league-web", dependencies: { axios: "^1.6.0" } }),
+  "web/src/types.ts": [
+    "export type ClubKind = 'league' | 'cup';",
+    "export interface Club { id: number; kind: ClubKind }",
+    "export type CarKind = 'sport' | 'city';",
+    "export interface Car { id: number; kind: CarKind }",
+  ].join("\n"),
+  "web/src/awaited.ts": [
+    "import axios from 'axios';",
+    "import type { Club, Car } from './types';",
+    "class ClubRepo {",
+    "  async all(): Promise<Club[]> { return []; }",
+    "}",
+    "class CarRepo {",
+    "  async all(): Promise<Car[]> { return []; }",
+    "}",
+    "export async function syncClubs(repo: ClubRepo) {",
+    "  for (const c of await repo.all()) {",
+    "    await axios.get(`/api/items/${c.kind}`);",
+    "  }",
+    "}",
+    "export async function syncCars(repo: CarRepo) {",
+    "  for (const c of await repo.all()) {",
+    "    await axios.get(`/api/items/${c.kind}`);",
+    "  }",
+    "}",
+  ].join("\n"),
+  "web/src/nested.ts": [
+    "import axios from 'axios';",
+    "import type { Car } from './types';",
+    "class CarSync {",
+    "  static car: Car;",
+    "  static run() {",
+    "    const go = function () {",
+    "      return axios.get(`/api/items/${this.car.kind}`);",
+    "    };",
+    "    return go();",
+    "  }",
+    "  static direct() {",
+    "    return axios.get(`/api/items/${this.car.kind}`);",
+    "  }",
+    "  static viaArrow() {",
+    "    const go = () => axios.get(`/api/items/${this.car.kind}`);",
+    "    return go();",
+    "  }",
+    "}",
+  ].join("\n"),
+  "api/package.json": JSON.stringify({ name: "league-api", dependencies: { express: "^4.18.0" } }),
+  "api/src/server.js": [
+    "const express = require('express');",
+    "const app = express();",
+    "app.get('/api/items/league', (req, res) => res.json({}));",
+    "app.get('/api/items/cup', (req, res) => res.json({}));",
+    "app.get('/api/items/friendly', (req, res) => res.json({}));",
+    "app.get('/api/items/sport', (req, res) => res.json({}));",
+    "app.get('/api/items/city', (req, res) => res.json({}));",
+    "app.listen(3000);",
+  ].join("\n"),
+};
+
+describe("a URL hole over an awaited loop and over this in a nested plain function", () => {
+  let dir: string;
+  let links: ApiRouteLink[] = [];
+  const reached = (file: string, line: number) =>
+    [...new Set(links.filter((l) => l.source === file && l.sourceLine === line && l.routePath.startsWith("/api/items/") && !l.routePath.includes("+")).map((l) => l.routePath))].sort();
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "typed-member-holes-async-"));
+    for (const [rel, src] of Object.entries(ASYNC_FILES)) {
+      await mkdir(join(dir, "src", dirname(rel)), { recursive: true });
+      await writeFile(join(dir, "src", rel), src);
+    }
+    await analyze({ projectRoot: join(dir, "src"), outputDir: join(dir, "out"), lsp: false, gitHistory: false } as never);
+    links = (await loadReportSummary(join(dir, "out"))).apiRouteLinks ?? [];
+  }, 120_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("types the element of `for (const c of await repo.all())` by the awaited declared result, each repository its own", () => {
+    expect(reached("web/src/awaited.ts", 11)).toEqual(["/api/items/cup", "/api/items/league"]);
+    expect(reached("web/src/awaited.ts", 16)).toEqual(["/api/items/city", "/api/items/sport"]);
+  });
+
+  it("leaves this in a plain function a wildcard, but reads it in a static method and through an arrow", () => {
+    expect(reached("web/src/nested.ts", 7)).toEqual([]);
+    expect(reached("web/src/nested.ts", 12)).toEqual(["/api/items/city", "/api/items/sport"]);
+    expect(reached("web/src/nested.ts", 15)).toEqual(["/api/items/city", "/api/items/sport"]);
+  });
+});

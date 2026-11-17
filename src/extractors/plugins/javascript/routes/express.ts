@@ -466,6 +466,10 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
                 ...(responses ? { responses } : {}),
               };
               if (method === "use") route.mount = true;
+              else {
+                const names = middlewareCalleeNames(middlewareNodes);
+                if (names.length > 0) route.middlewareCalls = names;
+              }
               if (mountModule !== null) route.mountModule = mountModule;
               routeMeta.set(route, { receiver, guards, params, ...(constant !== null || factoryHandler ? { needsRouter: true as const } : {}), ...(pathParam ? { pathParam } : {}) });
               routes.push(route);
@@ -502,6 +506,8 @@ export function applyRouterLevelGuards(root: Node, routes: RouteInfo[], sourceTe
   /** `scope`: the plugin function a Fastify hook sits in — it guards the routes written inside it, nothing outside. */
   const routerGuards: Array<{ receiver: string; line: number; guard: GuardAttr; scope?: { from: number; to: number } }> = [];
   const routerFilters: Array<{ receiver: string; line: number; text: string }> = [];
+  /** The functions every `receiver.use(…)` names, guard or not: what they read at request time is each later route's. */
+  const routerCalls: Array<{ receiver: string; line: number; names: string[] }> = [];
   for (const stmt of root.namedChildren) {
     const call = stmt.type === "expression_statement" ? stmt.namedChildren[0] : null;
     if (!call || call.type !== "call_expression") continue;
@@ -511,6 +517,8 @@ export function applyRouterLevelGuards(root: Node, routes: RouteInfo[], sourceTe
     if (!receiver || NON_ROUTER_RECEIVERS.has(receiver)) continue;
     const args = call.childForFieldName("arguments")?.namedChildren ?? [];
     if (args.length === 0 || args[0]!.type === "string" || args[0]!.type === "template_string") continue;
+    const used = middlewareCalleeNames(args.flatMap(composedMiddleware));
+    if (used.length > 0) routerCalls.push({ receiver, line: call.startPosition.row + 1, names: used });
     for (const arg of args.flatMap(composedMiddleware)) {
       const guard = guardFromMiddleware(arg);
       if (guard) routerGuards.push({ receiver, line: call.startPosition.row + 1, guard });
@@ -537,6 +545,11 @@ export function applyRouterLevelGuards(root: Node, routes: RouteInfo[], sourceTe
     if (auth) route.auth = auth;
     const inheritedFilters = routerFilters.filter((f) => f.receiver === meta.receiver && f.line < route.line).map((f) => f.text);
     applyRouteMeta(route, { params: meta.params, inheritedFilters, filters: ownFilters });
+    // Router-level middleware first (registration order), then the route's own: the functions the symbol linker resolves.
+    if (!route.mount) {
+      const calls = [...new Set([...routerCalls.filter((c) => c.receiver === meta.receiver && c.line < route.line).flatMap((c) => c.names), ...(route.middlewareCalls ?? [])])];
+      if (calls.length > 0) route.middlewareCalls = calls;
+    }
   }
 }
 
@@ -560,6 +573,20 @@ function dropUnprovenConstantRoutes(routes: RouteInfo[], sourceText: string): vo
     return false;
   });
   routes.splice(0, routes.length, ...kept);
+}
+
+/**
+ * The functions a middleware argument names (`RouteInfo.middlewareCalls`): `loadClub`, `auth.requireSession`, or the
+ * factory of `limit(10)` / `auth.session(db)` — the call the middleware is built by. Anything else (an inline function,
+ * an object) names none; one no project function matches is simply never linked.
+ */
+function middlewareCalleeNames(nodes: readonly Node[]): string[] {
+  const names: string[] = [];
+  for (const n of nodes) {
+    const target = n.type === "call_expression" ? n.childForFieldName("function") : n;
+    if (target && (target.type === "identifier" || target.type === "member_expression")) names.push(target.text.replace(/\s+/g, ""));
+  }
+  return names;
 }
 
 /**

@@ -101,19 +101,20 @@ export function computeParamOrigins(input: {
   const routeAt = new Map<string, RouteInfo & { filePath?: string }>();
   for (const r of input.routes) if (r.filePath) routeAt.set(`${r.filePath}:${r.line}`, r);
 
+  const viaBarrel = (file: string, name: string): string => throughBarrels(file, name, byFile, input.componentGraph);
   // A component's props: what each parent's markup binds them to, and what the route rendering it hands them.
   const rendering = new Map<string, Array<RouteInfo & { filePath?: string }>>();
   for (const r of input.routes) {
     if (r.kind !== "frontend" || !r.propsFromRoute || !r.componentPath) continue;
     // The component as a file, or as the router file imports it (`component: ClubView`).
     const router = r.filePath ? byFile.get(r.filePath) : undefined;
-    const file = byFile.has(r.componentPath) ? r.componentPath : router ? childFile(router, r.componentPath.replace(/^.*\//, "").replace(/\.\w+$/, ""), input.componentGraph?.[router.filePath] ?? []) : null;
+    const file = byFile.has(r.componentPath) ? r.componentPath : router ? childFile(router, r.componentPath.replace(/^.*\//, "").replace(/\.\w+$/, ""), input.componentGraph?.[router.filePath] ?? [], viaBarrel) : null;
     if (file) (rendering.get(file) ?? rendering.set(file, []).get(file)!).push(r);
   }
   const boundTo = new Map<string, Array<{ file: string; binding: PropBinding }>>();
   for (const a of analyses) {
     for (const b of a.propBindings ?? []) {
-      const child = childFile(a, b.component, input.componentGraph?.[a.filePath] ?? []);
+      const child = childFile(a, b.component, input.componentGraph?.[a.filePath] ?? [], viaBarrel);
       if (child) (boundTo.get(`${child}\0${b.prop}`) ?? boundTo.set(`${child}\0${b.prop}`, []).get(`${child}\0${b.prop}`)!).push({ file: a.filePath, binding: b });
     }
   }
@@ -404,7 +405,53 @@ export function computeParamOrigins(input: {
  * The file a markup tag renders, among the files the parent imports: the one
  * its import of that name points at, else the one file named like the tag.
  */
-function childFile(a: FileAnalysis, tag: string, imported: readonly string[]): string | null {
+function childFile(a: FileAnalysis, tag: string, imported: readonly string[], follow?: (file: string, name: string) => string): string | null {
+  const hit = childFileOf(a, tag, imported);
+  return hit && follow ? follow(hit, tag.includes("-") ? tag.replace(/(^|-)([a-z0-9])/g, (_m, _d, c: string) => c.toUpperCase()) : tag) : hit;
+}
+
+/**
+ * Where a name a barrel forwards is declared: `export { ClubPanel } from './ClubPanel'` (renamed, or `export *`
+ * whose one target declares the name), up to three barrels deep. A file that forwards nothing under the name is
+ * the answer itself.
+ */
+function throughBarrels(file: string, name: string, byFile: ReadonlyMap<string, FileAnalysis>, graph: Readonly<Record<string, readonly string[]>> | undefined): string {
+  let current = file;
+  let wanted = name;
+  for (let depth = 0; depth < 3; depth++) {
+    const a = byFile.get(current);
+    if (!a) return current;
+    const imported = graph?.[current] ?? [];
+    let next: string | null = null;
+    for (const e of a.exports) {
+      if (e.kind !== "re-export" || !e.source) continue;
+      if (e.name === "*") {
+        const targets = imported.filter((f) => resolvesTo(e.source!, f) && (byFile.get(f)?.exports.some((x) => x.name === wanted) || byFile.get(f)?.functions.some((fn) => fn.name === wanted)));
+        if (next === null && targets.length === 1) next = targets[0]!;
+      } else if (e.name === wanted) {
+        const hits = imported.filter((f) => resolvesTo(e.source!, f));
+        if (hits.length === 1) {
+          next = hits[0]!;
+          wanted = e.sourceName ?? wanted;
+          break;
+        }
+      }
+    }
+    if (!next) return current;
+    current = next;
+  }
+  return current;
+}
+
+/** A relative or aliased module specifier names this file (extension and `/index` left out). */
+function resolvesTo(source: string, file: string): boolean {
+  const stem = (f: string) => f.replace(/\.[\w]+$/, "");
+  const tail = stem(source.replace(/^(?:\.\.?\/)+|^[@~]\/?/, ""));
+  const s = stem(file);
+  return s === tail || s.endsWith(`/${tail}`) || s.endsWith(`/${tail}/index`);
+}
+
+function childFileOf(a: FileAnalysis, tag: string, imported: readonly string[]): string | null {
   const name = tag.includes("-") ? tag.replace(/(^|-)([a-z0-9])/g, (_m, _d, c: string) => c.toUpperCase()) : tag;
   const stem = (f: string) => f.replace(/\.[\w]+$/, "");
   const source = a.imports.find((i) => i.specifiers.includes(name) || i.specifiers.includes(tag))?.source;

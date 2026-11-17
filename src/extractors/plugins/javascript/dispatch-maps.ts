@@ -207,6 +207,78 @@ export function recordIndexOrigin(node: Node): CallArgOrigin["origin"] | null {
   return found && !found.transform && !found.derivation && found.origin.kind === "prop" ? found.origin : null;
 }
 
+/**
+ * A store picked by an immediately invoked function around a `switch` on a prop:
+ *
+ *     const store = (() => { switch (props.kind) { case "club": return useClubStore(); case "player": return usePlayerStore(); default: throw … } })();
+ *
+ * Stated as the record `{ club: useClubStore(), player: usePlayerStore() }` read at the key `props.kind`: one
+ * entry per case literal (grouped cases share their return), `key` null for a `default` that returns a call
+ * (an unreadable key, so the read reaches every entry). Null for any other shape — a case that returns anything
+ * but a named call, a statement besides the `switch`, a discriminant that is no plain prop, a case that is
+ * no literal, a `const` that is no IIFE.
+ */
+export function switchRecordEntries(declarator: Node): { holder: string; calls: Node[]; keys: Array<string | null>; indexOrigin: CallArgOrigin["origin"] } | null {
+  if (declarator.type !== "variable_declarator") return null;
+  const decl = declarator.parent;
+  if (decl?.type !== "lexical_declaration" || decl.child(0)?.type !== "const") return null;
+  const name = declarator.childForFieldName("name");
+  let value = declarator.childForFieldName("value");
+  if (name?.type !== "identifier" || value?.type !== "call_expression" || (value.childForFieldName("arguments")?.namedChildCount ?? 1) !== 0) return null;
+  let fn = value.childForFieldName("function");
+  while (fn?.type === "parenthesized_expression") fn = fn.namedChildren[0] ?? null;
+  if (fn?.type !== "arrow_function" && fn?.type !== "function_expression") return null;
+  if ((fn.childForFieldName("parameters") ?? fn.childForFieldName("parameter"))?.namedChildCount) return null;
+  const body = fn.childForFieldName("body");
+  if (body?.type !== "statement_block") return null;
+  const statements = body.namedChildren.filter((c) => c.type !== "comment");
+  const sw = statements[0];
+  if (statements.length !== 1 || sw?.type !== "switch_statement") return null;
+  let subject = sw.childForFieldName("value");
+  while (subject?.type === "parenthesized_expression") subject = subject.namedChildren[0] ?? null;
+  const found = subject ? expressionOrigin(subject) : null;
+  if (!found || found.transform || found.derivation || found.origin.kind !== "prop") return null;
+  const calls: Node[] = [];
+  const keys: Array<string | null> = [];
+  let pending: Array<string | null> = [];
+  for (const arm of sw.childForFieldName("body")?.namedChildren ?? []) {
+    if (arm.type === "comment") continue;
+    if (arm.type !== "switch_case" && arm.type !== "switch_default") return null;
+    if (arm.type === "switch_case") {
+      const label = arm.childForFieldName("value");
+      const key = label?.type === "string" && label.text.length > 2 ? `'${label.text.slice(1, -1)}'` : null;
+      if (!key) return null;
+      pending.push(key);
+    } else pending.push(null);
+    const stmts = arm.namedChildren.filter((c) => c.type !== "comment" && c.id !== arm.childForFieldName("value")?.id);
+    if (stmts.length === 0) continue;
+    let only: Node | null = stmts.length === 1 ? stmts[0]! : null;
+    if (only?.type === "statement_block") {
+      const inner = only.namedChildren.filter((c) => c.type !== "comment");
+      only = inner.length === 1 ? inner[0]! : null;
+    }
+    if (!only) return null;
+    // A `default` that only throws holds no entry.
+    if (only.type === "throw_statement") {
+      pending = [];
+      continue;
+    }
+    if (only.type !== "return_statement") return null;
+    let held: Node | null = only.namedChildren.find((c) => c.type !== "comment") ?? null;
+    while (held && TYPE_WRAPPERS.has(held.type)) held = held.namedChildren[0] ?? null;
+    if (held?.type !== "call_expression") return null;
+    const callee = held.childForFieldName("function");
+    if ((callee?.type !== "identifier" && callee?.type !== "member_expression") || !NAMED_VALUE.test(callee.text)) return null;
+    for (const key of pending) {
+      calls.push(held);
+      keys.push(key);
+    }
+    pending = [];
+  }
+  if (pending.length > 0) return null;
+  return calls.length > 0 ? { holder: name.text, calls, keys, indexOrigin: found.origin } : null;
+}
+
 let recordsTree: Node["tree"] | null = null;
 let recordNames = new Set<string>();
 

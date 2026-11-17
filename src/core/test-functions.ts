@@ -5,6 +5,7 @@
  * production code (a Rust `#[cfg(test)]` module, a Zig `test` block).
  */
 
+import { routeSymbolName } from "./route-symbol.js";
 import type { FileAnalysis, ProjectAnalysis, SymbolLink, TestFunctionRow } from "../types/analysis.js";
 import type { FileTestCoverage } from "./test-coverage.js";
 import { extensionFamily } from "../extractors/plugins/shared/path-utils.js";
@@ -119,7 +120,7 @@ function inProcessRequest(summary: ReachSummary, testCode: TestCodeIndex): (link
   const projects = summary.fileProjects ?? {};
   const guarded = new Set<string>();
   for (const r of summary.routeMap ?? []) {
-    if (r.filePath && (r.auth ? !r.auth.anonymous : r.middleware?.length > 0)) guarded.add(`${r.filePath}::route:${r.httpMethod ?? "USE"} ${r.path}`);
+    if (r.filePath && (r.auth ? !r.auth.anonymous : r.middleware?.length > 0)) guarded.add(`${r.filePath}::${routeSymbolName(r)}`);
   }
   return (l) => {
     if (!testCode.isTest(l.sourceFile, l.sourceSymbol)) return false;

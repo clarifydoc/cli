@@ -1,3 +1,4 @@
+import { routeSymbolName } from "./route-symbol.js";
 import { readFile } from "fs/promises";
 import { join } from "path";
 import type { ClassInfo, FileAnalysis, FunctionInfo, ProjectAnalysis } from "../types/analysis.js";
@@ -100,7 +101,7 @@ export function lintAnalysis(project: ProjectAnalysis, files?: ReadonlyMap<strin
   };
   // Anywhere in the map: the same endpoint declared in two files of one sub-project is one row (dedupeRoutes),
   // and the trace of the dropped declaration keeps its own symbol.
-  const routeSymbols = new Set((project.routeMap ?? []).map((r) => `route:${(r.httpMethod ?? "USE").toUpperCase()} ${r.path}`));
+  const routeSymbols = new Set((project.routeMap ?? []).map((r) => routeSymbolName({ ...r, httpMethod: (r.httpMethod ?? "USE").toUpperCase() })));
   const callNameSets = new Map<string, Set<string>>();
   const callNames = (path: string) => {
     let s = callNameSets.get(path);

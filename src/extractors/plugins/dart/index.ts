@@ -1,5 +1,6 @@
 import { addDartElementTypes, fieldCollections } from "./element-types.js";
 import { closureValueFlow } from "./closure-flow.js";
+import { addGetterReads } from "./getter-reads.js";
 import type {
   RouteInfo,
   ClassInfo,
@@ -1331,7 +1332,10 @@ export const dartSpec: RegexLangSpec = {
     }
     return classes;
   },
-  extractValueFlow: (_lines, analysis) => closureValueFlow(analysis),
+  extractValueFlow: (lines, analysis) => {
+    closureValueFlow(analysis);
+    addGetterReads(lines, analysis);
+  },
   extractScreens: (lines, filePath, classes) => extractFlutterScreens(lines, filePath, classes),
   extractUiComponents: (lines, filePath, classes) => flutterUi(lines, filePath, classes).components,
   extractNavigationHelpers: flutterNavigationHelpers,

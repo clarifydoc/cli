@@ -1,5 +1,6 @@
 /** Code-navigation tools: routes, screens, per-file facts, call traces, blast radius. */
 
+import { routeSymbolName } from "../../core/route-symbol.js";
 import { describeDrivers, describeGates } from "../../core/refactor-pressure.js";
 import { aggregateOnlyNote, perTestSources, testsOfCoverageFunction, type TestCoverageReport } from "../../core/test-coverage.js";
 import { routeOperation } from "../../core/openapi-export.js";
@@ -905,7 +906,7 @@ function unresolvedCalls(ctx: ToolContext, links: SymbolLink[]): UnresolvedCalls
 /** The calls of the function, method (`Class.method`) or route (`route:GET /x`) a link names as its source. */
 function callsOfSymbol(analysis: FileAnalysis, symbol: string): CallInfo[] | undefined {
   if (symbol.startsWith("route:")) {
-    const route = analysis.routes?.find((r) => `route:${r.httpMethod ?? "USE"} ${r.path}` === symbol);
+    const route = analysis.routes?.find((r) => routeSymbolName(r) === symbol);
     return route?.calls;
   }
   const dot = symbol.lastIndexOf(".");

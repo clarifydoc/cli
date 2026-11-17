@@ -4,9 +4,13 @@ import type { DispatchResolver } from "../../dispatch/base.js";
 import { buildFilePathMap, resolveTarget } from "../../shared/link-scoring.js";
 import { sameCell } from "../../../core/reactive-triggers.js";
 import { VUEX_FACTORY } from "./store-reads.js";
+import { stateParamReads } from "./vuex-state-reads.js";
 import { piniaStoreOf, type PiniaStore } from "./functions-classes.js";
 import { FALSY, MUTATORS, argumentsOf, getterOf, importSources, innermost, reactiveCellsOf, readPath } from "./reactive-cells.js";
 import { homeOf, type Files } from "./prop-flows.js";
+
+/** A Nuxt project's config file: its `composables/` functions are called without an import line. */
+const NUXT_CONFIG = /(?:^|\/)nuxt\.config\.[cm]?[jt]s$/;
 
 /**
  * Store state watched in one file and written in another (`FileAnalysis.storeWatch`):
@@ -52,7 +56,9 @@ export function storeWatch(tree: Tree, sourceText: string, functions: ReadonlyAr
   if (derived.length > 0) out.derived = derived;
   const stateWrites = /mutations/i.test(sourceText) ? vuexStateWrites(tree, functions) : [];
   if (stateWrites.length > 0) out.stateWrites = stateWrites;
-  return out.watchers || out.writes || out.stateWrites || out.derived ? out : null;
+  const getterReads = /getters/i.test(sourceText) ? vuexGetterReads(tree) : [];
+  if (getterReads.length > 0) out.getterReads = getterReads;
+  return out.watchers || out.writes || out.stateWrites || out.derived || out.getterReads ? out : null;
 }
 
 type StateWrite = NonNullable<StoreWatch["stateWrites"]>[number];
@@ -112,6 +118,45 @@ export function vuexStateWrites(tree: Tree, functions: readonly Fn[]): StateWrit
         // `Object.assign(state, p)`: every member of the module's state may change.
         emit(n, t.path.length === 1 && t.path[0] === "[]" ? [] : t.path, false);
       });
+    }
+  }
+  return out;
+}
+
+/** The state each getter of a `getters` table (a module's member, or a `const xGetters = {…}`) reads off its first parameter. */
+function vuexGetterReads(tree: Tree): NonNullable<StoreWatch["getterReads"]> {
+  const out: NonNullable<StoreWatch["getterReads"]> = [];
+  const tables: Array<{ node: Node; name: string }> = [];
+  for (const p of tree.rootNode.descendantsOfType("pair")) {
+    const value = p?.childForFieldName("value");
+    if (p && value?.type === "object" && /^['"]?getters['"]?$/.test(p.childForFieldName("key")?.text ?? "")) tables.push({ node: value, name: "getters" });
+  }
+  for (const d of tree.rootNode.descendantsOfType("variable_declarator")) {
+    const value = d?.childForFieldName("value");
+    const name = d?.childForFieldName("name")?.text ?? "";
+    if (d && value?.type === "object" && /(?:^|[a-z])[gG]etters$/.test(name)) tables.push({ node: value, name });
+  }
+  const seen = new Set<number>();
+  for (const { node, name: table } of tables) {
+    if (seen.has(node.id)) continue;
+    seen.add(node.id);
+    for (const m of node.namedChildren) {
+      const key = m?.type === "method_definition" || m?.type === "pair" ? m.childForFieldName(m.type === "pair" ? "key" : "name")?.text.replace(/^['"]|['"]$/g, "") : null;
+      const fn = m?.type === "method_definition" ? m : m?.type === "pair" ? m.childForFieldName("value") : null;
+      if (!key || !fn) continue;
+      let paths: string[];
+      if (m!.type === "method_definition") {
+        const param = fn.childForFieldName("parameters")?.namedChildren[0];
+        const pname = (param?.type === "required_parameter" ? param.childForFieldName("pattern") : param)?.text;
+        const body = fn.childForFieldName("body");
+        paths = [];
+        if (pname && body) for (const id of body.descendantsOfType("identifier")) {
+          if (!id || id.text !== pname || id.parent?.type !== "member_expression" || id.parent.childForFieldName("object")?.id !== id.id) continue;
+          const { path, deep } = readPath(id);
+          if (path.length > 0) paths.push(path.join(".") + (deep ? "*" : ""));
+        }
+      } else paths = stateParamReads(fn, (rest) => rest);
+      if (paths.length > 0 && !out.some((g) => g.name === key && g.table === table)) out.push({ name: key, table, paths: [...new Set(paths)] });
     }
   }
   return out;
@@ -420,14 +465,27 @@ export class JsStoreWatchResolver implements DispatchResolver {
       }
       return null;
     };
-    // Nuxt auto-imports a store from `stores/` with no import line: the one project function of that name.
+    // Nuxt auto-imports a store from `stores/` and a composable from `composables/` with no import line: the one project
+    // function of that name, in the caller's own app first (two apps may each have a `useClubs`).
     let byName: Map<string, FileAnalysis[]> | null = null;
-    const declaring = (factory: string): FileAnalysis[] => {
+    let nuxtProjects: Set<string> | null = null;
+    const declaring = (factory: string, caller: FileAnalysis): FileAnalysis[] => {
       if (!byName) {
         byName = new Map();
-        for (const a of analyses) for (const f of a.functions) if (f.returnType) (byName.get(f.name) ?? byName.set(f.name, []).get(f.name)!).push(a);
+        for (const a of analyses) {
+          for (const f of a.functions) {
+            const composable = a.storeWatch?.writes?.some((w) => !w.viaFactory && w.store === f.name) || a.storeWatch?.derived?.some((d) => d.store === f.name);
+            if (f.returnType || composable) (byName.get(f.name) ?? byName.set(f.name, []).get(f.name)!).push(a);
+          }
+        }
       }
-      return byName.get(factory) ?? [];
+      // A composable known only by the state it writes (no declared return type) is auto-imported only by Nuxt: the
+      // caller's sub-project must hold a `nuxt.config`, or a plain `useX()` from a global or a `require` would join it.
+      nuxtProjects ??= new Set(analyses.filter((a) => NUXT_CONFIG.test(a.filePath)).map((a) => a.projectId ?? ""));
+      const nuxt = nuxtProjects.has(caller.projectId ?? "");
+      const all = (byName.get(factory) ?? []).filter((a) => nuxt || a.functions.some((f) => f.name === factory && f.returnType));
+      if (all.length <= 1) return all;
+      return all.filter((a) => a.projectId !== undefined && a.projectId === caller.projectId);
     };
     const stores = new Map<string, string | null>();
     const storeOf = (file: FileAnalysis, factory: string): string | null => {
@@ -440,7 +498,7 @@ export class JsStoreWatchResolver implements DispatchResolver {
         const at = target ? files.byPath.get(target) : undefined;
         if (at) home = forwarded(at, imp.aliases?.[factory] ?? factory, 4);
       } else if (!home) {
-        const all = declaring(factory);
+        const all = declaring(factory, file);
         if (all.length === 1) home = { file: all[0]!, name: factory };
       }
       const fn = home?.file.functions.find((f) => f.name === home!.name);

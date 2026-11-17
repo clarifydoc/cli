@@ -1,3 +1,4 @@
+import { routeSymbolName } from "./route-symbol.js";
 import type {
   DataSourceInfo,
   FileAnalysis,
@@ -307,7 +308,7 @@ export function attributeDataAccessToSymbols(
     for (const r of a.routes ?? []) {
       for (const c of r.calls ?? []) {
         if (typeof c.line === "number" && !inlineRouteAt.has(c.line)) {
-          inlineRouteAt.set(c.line, { symbol: `route:${r.httpMethod ?? "USE"} ${r.path}`, line: r.line, named: !!r.handler });
+          inlineRouteAt.set(c.line, { symbol: routeSymbolName(r), line: r.line, named: !!r.handler });
         }
       }
     }
@@ -350,7 +351,7 @@ export function attributeDataAccessToSymbols(
       const named = ds.handler ? fns.find((f) => f.symbol === ds.handler) : undefined;
       if (named) best = { symbol: named.symbol, line: named.line };
       // A route's own access (a framework serving each stored resource with no handler function).
-      const ownRoute = ds.handler?.startsWith("route:") && (a.routes ?? []).some((r) => `route:${r.httpMethod ?? "USE"} ${r.path}` === ds.handler);
+      const ownRoute = ds.handler?.startsWith("route:") && (a.routes ?? []).some((r) => routeSymbolName(r) === ds.handler);
       if (ownRoute) best = { symbol: ds.handler!, line: ds.line };
       if (!best) continue;
 

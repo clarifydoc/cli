@@ -5,15 +5,21 @@ import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { JsSubjectResolver } from "./subject-flows.js";
+import { resolveAngularExternalTemplates } from "./angular-external-templates.js";
 import type { FileAnalysis } from "../../../types/analysis.js";
 
 async function analyzeAll(files: Record<string, string>): Promise<FileAnalysis[]> {
+  return (await analyzeIn(files)).analyses;
+}
+
+async function analyzeIn(files: Record<string, string>): Promise<{ analyses: FileAnalysis[]; root: string }> {
   const root = await mkdtemp(join(tmpdir(), "angular-listeners-"));
   const out = await mkdtemp(join(tmpdir(), "angular-listeners-out-"));
   const analyses: FileAnalysis[] = [];
   for (const [rel, src] of Object.entries(files)) {
     await mkdir(join(root, dirname(rel)), { recursive: true });
     await writeFile(join(root, rel), src);
+    if (!rel.endsWith(".ts")) continue;
     const result = await analyzeFile({
       file: { absolutePath: join(root, rel), relativePath: rel, language: "typescript" },
       frameworkIds: [],
@@ -25,7 +31,7 @@ async function analyzeAll(files: Record<string, string>): Promise<FileAnalysis[]
     } as never);
     analyses.push(result!.analysis);
   }
-  return analyses;
+  return { analyses, root };
 }
 
 const show = (l: { sourceFile: string; sourceSymbol: string; targetFile: string; targetSymbol: string }) => `${l.sourceFile}::${l.sourceSymbol} -> ${l.targetFile}::${l.targetSymbol}`;
@@ -105,5 +111,72 @@ export class ${svc}BadgeComponent {
     const table = analyses.find((a) => a.filePath === "src/league-table.component.ts")!;
     const held = table.functions.find((f) => /^<pipe@\d+>$/.test(f.name));
     expect(held?.calls.map((c) => c.name)).toContain("this.http.get");
+  });
+});
+
+/**
+ * The same `| async` listener when the stream is assigned in the constructor, and when the component keeps its
+ * markup in an external `templateUrl` file (read only for what the template pipes through `async`).
+ */
+describe("Angular | async listeners: constructor assignment and external templates", () => {
+  const service = (name: string) => `import { Injectable } from '@angular/core';
+import { Subject } from 'rxjs';
+@Injectable({ providedIn: 'root' })
+export class ${name}Service {
+  readonly changes$ = new Subject<string>();
+  announce(c: string) { this.changes$.next(c); }
+}`;
+  const ctorReader = (svc: string, route: string) => `import { Component } from '@angular/core';
+import { switchMap } from 'rxjs/operators';
+import { Observable } from 'rxjs';
+import { HttpClient } from '@angular/common/http';
+import { ${svc}Service } from './${svc.toLowerCase()}.service';
+@Component({ selector: 'app-${svc.toLowerCase()}-ctor', template: '<li *ngFor="let p of players$ | async">{{ p }}</li>' })
+export class ${svc}CtorComponent {
+  players$: Observable<unknown>;
+  constructor(private http: HttpClient, private svc: ${svc}Service) {
+    this.players$ = this.svc.changes$.pipe(switchMap(() => this.http.get('${route}')));
+  }
+}`;
+  const externalReader = (svc: string, route: string, piped: string) => `import { Component } from '@angular/core';
+import { switchMap } from 'rxjs/operators';
+import { HttpClient } from '@angular/common/http';
+import { ${svc}Service } from './${svc.toLowerCase()}.service';
+@Component({ selector: 'app-${svc.toLowerCase()}-ext', templateUrl: './${svc.toLowerCase()}-ext.component.html' })
+export class ${svc}ExtComponent {
+  constructor(private http: HttpClient, private svc: ${svc}Service) {}
+  ${piped}$ = this.svc.changes$.pipe(switchMap(() => this.http.get('${route}')));
+  unused$ = this.svc.changes$.pipe(switchMap(() => this.http.get('/api/never')));
+}`;
+  const files = {
+    "src/league.service.ts": service("League"),
+    "src/garage.service.ts": service("Garage"),
+    "src/league-ctor.component.ts": ctorReader("League", "/api/players"),
+    "src/garage-ctor.component.ts": ctorReader("Garage", "/api/bays"),
+    "src/league-ext.component.ts": externalReader("League", "/api/fixtures", "fixtures"),
+    "src/league-ext.component.html": '<li *ngFor="let f of fixtures$ | async">{{ f }}</li>',
+    "src/garage-ext.component.ts": externalReader("Garage", "/api/cars", "cars"),
+    "src/garage-ext.component.html": "<p>no stream here</p>",
+  };
+
+  it("runs a constructor-assigned stream read with | async, and only the service's own", async () => {
+    const links = new JsSubjectResolver().resolve(await analyzeAll(files)).map(show);
+    const from = links.filter((l) => l.startsWith("src/league.service.ts::")).map((l) => l.split(" -> ")[1]!.replace(/@\d+>/, "@N>"));
+    expect(from).toContain("src/league-ctor.component.ts::<pipe@N>");
+    expect(links.filter((l) => l.startsWith("src/garage.service.ts::")).map((l) => l.split(" -> ")[1]!)).not.toContain(expect.stringMatching(/league/));
+  });
+
+  it("runs a member an external template pipes through async, not one it leaves unread", async () => {
+    const { analyses, root } = await analyzeIn(files);
+    await resolveAngularExternalTemplates(analyses, root);
+    const links = new JsSubjectResolver().resolve(analyses).map(show);
+    const names = (svc: string) => links.filter((l) => l.startsWith(`src/${svc}.service.ts::`)).map((l) => l.split(" -> ")[1]!.replace(/@\d+>/, "@N>"));
+    // `fixtures$` is read in league's template; `unused$` and everything of garage's (its template pipes nothing) is not.
+    expect(names("league").filter((n) => n.includes("-ext.component"))).toEqual(["src/league-ext.component.ts::<pipe@N>"]);
+    expect(names("garage").filter((n) => n.includes("-ext.component"))).toEqual([]);
+    const ext = analyses.find((a) => a.filePath === "src/league-ext.component.ts")!;
+    const heldCalls = links.length;
+    expect(heldCalls).toBeGreaterThan(0);
+    expect(ext.subjectFlows?.listens?.length).toBe(1);
   });
 });

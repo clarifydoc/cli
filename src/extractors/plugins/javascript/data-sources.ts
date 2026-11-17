@@ -1920,6 +1920,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
               target: resolved.url,
               ...(resolved.alternatives?.length ? { targetAlternatives: resolved.alternatives } : {}),
               ...(resolved.alternatives?.length && resolved.choice ? { targetChoice: true as const } : {}),
+              ...(unboundThisHole(node, resolved) ? { thisUnbound: true as const } : {}),
               line: node.startPosition.row + 1,
               column: node.startPosition.column,
               // Recovered env base (display only; `target` stays app-relative).
@@ -3453,4 +3454,19 @@ function declaredProps(call: Node): string[] {
     }
   }
   return names.filter((n) => /^[\w$-]+$/.test(n));
+}
+
+/**
+ * A URL hole reading `this` (`${this.club.kind}`) inside a plain `function` that is no method of a class
+ * (a function expression or declaration, nested in a method or not): its `this` is whatever the caller binds,
+ * never the enclosing class. Arrow functions take the `this` around them and are walked through.
+ */
+function unboundThisHole(node: Node, resolved: { url: string; alternatives?: string[] }): boolean {
+  if (![resolved.url, ...(resolved.alternatives ?? [])].some((u) => u.includes("${this."))) return false;
+  for (let n = node.parent; n; n = n.parent) {
+    if (n.type === "arrow_function") continue;
+    if (n.type === "method_definition" || n.type === "class_body" || n.type === "public_field_definition") return false;
+    if (n.type === "function_expression" || n.type === "function_declaration" || n.type === "generator_function" || n.type === "generator_function_declaration" || n.type === "function") return true;
+  }
+  return false;
 }

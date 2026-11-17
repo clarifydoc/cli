@@ -1,3 +1,4 @@
+import { routeSymbolName } from "./route-symbol.js";
 import {
   relationForStrategy,
   type ClassInfo,
@@ -189,7 +190,7 @@ export function buildSymbolLinks(
 
     // Route handlers
     for (const route of analysis.routes) {
-      const sourceSymbol = `route:${route.httpMethod ?? "USE"} ${route.path}`;
+      const sourceSymbol = routeSymbolName(route);
 
       // Link route → its handler method (e.g., route:GET /api/users → getAllUsers).
       // Spec files route through the unique-or-nothing spec join below instead
@@ -424,7 +425,7 @@ export function buildSymbolLinks(
       // route's; the registrar around it is not, so the link leaves the route's own symbol.
       for (const name of route.middlewareCalls ?? []) {
         if (name === route.handler) continue;
-        const mw = resolveCallToDefinition(sourceFile, sourceSymbol, { name, kind: "internal", target: null, line: route.line }, analysis, ctx, true);
+        const mw = resolveMiddlewareName(sourceFile, sourceSymbol, name, route.line, analysis, ctx);
         if (mw) links.push(mw);
       }
       // The guards a route inherits from its mount site are named in the mount's file: they resolve there.
@@ -433,7 +434,7 @@ export function buildSymbolLinks(
         if (!mounted) continue;
         for (const name of calls) {
           if (name === route.handler) continue;
-          const mw = resolveCallToDefinition(file, sourceSymbol, { name, kind: "internal", target: null, line: route.line }, mounted, ctx, true);
+          const mw = resolveMiddlewareName(file, sourceSymbol, name, route.line, mounted, ctx);
           if (mw) links.push({ ...mw, sourceFile });
         }
       }
@@ -680,7 +681,7 @@ function parameterDispatchLinks(
       (forward.get(k) ?? forward.set(k, []).get(k)!).push(l);
     }
     for (const { a, r } of typedRoutes) {
-      const symbol = `route:${r.httpMethod ?? "USE"} ${r.path}`;
+      const symbol = routeSymbolName(r);
       const mentioned = r.handlerTypes!.join(" ");
       const visited = new Set<string>();
       let frontier = [`${a.filePath}\0${symbol}`];
@@ -1530,7 +1531,7 @@ function codeContractRoutes(ctx: LinkContext): Map<string, Array<{ file: string;
     for (const r of a.routes) {
       if (!r.contract || r.kind !== "api") continue;
       const key = `${r.contract.type.split(".").pop()}#${r.contract.method.toLowerCase()}`;
-      (idx.get(key) ?? idx.set(key, []).get(key)!).push({ file: a.filePath, symbol: `route:${r.httpMethod ?? "USE"} ${r.path}`, line: r.line });
+      (idx.get(key) ?? idx.set(key, []).get(key)!).push({ file: a.filePath, symbol: routeSymbolName(r), line: r.line });
     }
   }
   codeContractCache.set(ctx.analyses, idx);
@@ -3521,6 +3522,29 @@ function resolveRegistrarHandler(
   return { ...link, sourceSymbol };
 }
 
+/**
+ * A middleware a route names (`RouteInfo.middlewareCalls`), resolved as a handler is. A bare or dotted name the file's
+ * own import binds (`const { loadClub } = require("./auth")`, `import * as auth from "./auth"`) is a call into that
+ * import when the plain reading finds nothing.
+ */
+function resolveMiddlewareName(
+  file: string,
+  sourceSymbol: string,
+  name: string,
+  line: number,
+  analysis: FileAnalysis,
+  ctx: LinkContext,
+): SymbolLink | null {
+  const plain = resolveCallToDefinition(file, sourceSymbol, { name, kind: "internal", target: null, line }, analysis, ctx, true);
+  const head = name.split(".")[0]!;
+  const bound = analysis.imports.find((i) => !i.isType && i.specifiers.includes(head));
+  if (!bound) return plain;
+  // The import states where the name comes from: a leaf name guessed across the project (`express.json` → some `json`) says less.
+  const viaImport = resolveCallToDefinition(file, sourceSymbol, { name, kind: "cross-file", target: bound.source, line }, analysis, ctx, true);
+  if (viaImport) return viaImport;
+  return plain && plain.strategy !== "unique-global" && plain.strategy !== "unique-global-blind" ? plain : null;
+}
+
 /** See `LinkContext.namespaceSuffixIndex`. */
 function buildNamespaceSuffixIndex(
   symbolIndex: Map<string, Map<string, SymbolDef>>,
@@ -4842,6 +4866,12 @@ function resolveReadName(
   const { read: _read, ...asCall } = call;
   const link = resolveCallToDefinition(sourceFile, sourceSymbol, asCall, analysis, ctx);
   if (!link || (link.strategy && GUESSING_STRATEGIES.has(link.strategy))) return null;
+  if (call.read === "getter") {
+    // A declared getter runs on the read; a method, a field or a class of that name is a value.
+    if (link.relation !== "calls") return null;
+    const owner = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(link.targetFile);
+    return owner && routineAt(owner, link.targetSymbol)?.getter ? link : null;
+  }
   if (link.relation === "instantiates") return link;
   if (link.relation !== "calls") return null;
   const target = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(link.targetFile);
@@ -7711,7 +7741,7 @@ function ownMethodResult(ctx: LinkContext, sourceFile: string, consumer: string,
 }
 
 /** `Task<User>` → `User` when `Task` is one of the language's async result types; otherwise as written. */
-function awaitedType(written: string, asyncTypes: readonly string[] | undefined): string {
+export function awaitedType(written: string, asyncTypes: readonly string[] | undefined): string {
   if (!asyncTypes?.length) return written;
   const open = written.indexOf("<");
   if (open <= 0 || !written.endsWith(">")) return written;
@@ -10315,7 +10345,7 @@ function annotateTypeArguments(links: SymbolLink[], ctx: LinkContext): void {
       } else if (link.sourceSymbol.startsWith("route:")) {
         // A route served through an inherited handler runs on its owner's instance.
         ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
-        written = ctx.analysisAt.get(link.sourceFile)?.routes.find((r) => r.owner && `route:${r.httpMethod ?? "USE"} ${r.path}` === link.sourceSymbol)?.owner;
+        written = ctx.analysisAt.get(link.sourceFile)?.routes.find((r) => r.owner && routeSymbolName(r) === link.sourceSymbol)?.owner;
       }
     }
     if (!written) continue;

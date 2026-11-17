@@ -1,3 +1,4 @@
+import { routeSymbolPath } from "./route-symbol.js";
 import type { ProjectAnalysis, SymbolLink } from "../types/analysis.js";
 import { idFactory, mermaidLabel } from "./mermaid-text.js";
 import { trimTrailingSlashes } from "../extractors/plugins/shared/path-utils.js";
@@ -45,11 +46,14 @@ type Row = ProjectAnalysis["routeMap"][number];
  */
 export function routeAnchor(r: Pick<Row, "httpMethod" | "path" | "filePath">, links: readonly SymbolLink[]): string | null {
   const prefix = `route:${(r.httpMethod ?? "USE").toUpperCase()} `;
-  const paths = [...new Set(links.filter((l) => l.sourceFile === r.filePath && l.sourceSymbol.startsWith(prefix)).map((l) => l.sourceSymbol.slice(prefix.length)))];
-  if (paths.includes(r.path)) return prefix + r.path;
+  // A registrar's route symbol carries ` @<registrar>` after the path (`routeSymbolName`); the path is what a mount prefixes.
+  const symbolOf = new Map<string, string>();
+  for (const l of links) if (l.sourceFile === r.filePath && l.sourceSymbol.startsWith(prefix)) symbolOf.set(routeSymbolPath(l.sourceSymbol.slice(prefix.length)), l.sourceSymbol);
+  const paths = [...symbolOf.keys()];
+  if (paths.includes(r.path)) return symbolOf.get(r.path)!;
   const suffix = paths.filter((p) => p !== "/" && r.path.endsWith(p)).sort((a, b) => b.length - a.length)[0];
-  if (suffix) return prefix + suffix;
-  return paths.includes("/") ? `${prefix}/` : null;
+  if (suffix) return symbolOf.get(suffix)!;
+  return paths.includes("/") ? symbolOf.get("/")! : null;
 }
 
 /** The routes a subject names: `GET /x` by method and path, exact first, then normalized, then a substring. */

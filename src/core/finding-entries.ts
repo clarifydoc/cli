@@ -1,3 +1,4 @@
+import { routeSymbolName } from "./route-symbol.js";
 import type { Confidence, DataFlowPath, EntryPointInfo, FileAnalysis, PatternEntry, PatternInfo, RouteInfo, SecurityIssue, SymbolLink } from "../types/analysis.js";
 import { buildSymbolAdjacency, edgeKey, fileOf, keyOf } from "./symbol-graph.js";
 import { innermostAt, spansOf } from "./api-route-symbol-links.js";
@@ -37,7 +38,7 @@ export function attachFindingEntries(
   const apiRoutes = new Set<string>();
   for (const a of analyses) {
     for (const r of a.routes ?? []) {
-      if (r.kind === "api") apiRoutes.add(keyOf(a.filePath, `route:${r.httpMethod ?? "USE"} ${r.path}`));
+      if (r.kind === "api") apiRoutes.add(keyOf(a.filePath, routeSymbolName(r)));
     }
   }
   if (apiRoutes.size === 0) return 0;
@@ -84,7 +85,7 @@ export function attachPatternEntries(
     for (const r of a.routes ?? []) {
       if (r.kind !== "api") continue;
       const label = `${r.httpMethod ?? "USE"} ${r.path}`;
-      entryAt.set(keyOf(a.filePath, `route:${label}`), { kind: "route", entry: label, file: a.filePath });
+      entryAt.set(keyOf(a.filePath, routeSymbolName(r)), { kind: "route", entry: label, file: a.filePath });
     }
   }
   // A registration that names its handler, found among the registering file's own functions.

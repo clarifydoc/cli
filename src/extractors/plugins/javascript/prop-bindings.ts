@@ -1,5 +1,5 @@
 import type { Node, Tree } from "web-tree-sitter";
-import type { FunctionPropBinding, InteractiveElementInfo, PropBinding } from "../../../types/analysis.js";
+import type { FileAnalysis, FunctionPropBinding, InteractiveElementInfo, PropBinding } from "../../../types/analysis.js";
 import { expressionOrigin, templateValueOrigin } from "./arg-origins.js";
 import { derivedMemberKeys, derivedObjectAt, importedBinding, libraryObjectAt } from "./library-callbacks.js";
 import { dispatchMapAt, PROJECT_SOURCE } from "./dispatch-map-props.js";
@@ -114,6 +114,16 @@ export function jsxFunctionProps(tree: Tree, sourceText: string, declared: Reado
         out.push({ component: tag, prop: `${name.text}.${h.key}`, handler: h.name, line: attr.startPosition.row + 1, ...(h.handlerImport ? { handlerImport: h.handlerImport } : {}) });
       }
       if (held) continue;
+      // `<ActionBar actions={[{ label: 'Award', run: award }]} />`: the child's loop over its prop runs `actions.run`.
+      if (expr?.type === "array") {
+        for (const h of arrayCallbacksOf(expr, declared)) out.push({ component: tag, prop: `${name.text}.${h.key}`, handler: h.name, line: attr.startPosition.row + 1 });
+        continue;
+      }
+      // `<Panel action={{ onClick: reload }} />`: the child's `props.action.onClick()` runs it.
+      if (expr?.type === "object") {
+        for (const h of objectCallbacksOf(expr, declared)) out.push({ component: tag, prop: `${name.text}.${h.key}`, handler: h.name, line: attr.startPosition.row + 1 });
+        continue;
+      }
       // `<ClubTable actions={clubActions} />` with `clubActions` imported: a dispatch map there, which the resolver reads.
       const imported = expr?.type === "identifier" && !declared.has(expr.text) ? importedBinding(expr.tree, expr.text) : null;
       if (imported && imported.imported !== "default" && PROJECT_SOURCE.test(imported.source)) out.push({ component: tag, prop: name.text, handler: expr!.text, line: attr.startPosition.row + 1, mapImport: { source: imported.source, name: imported.imported } });
@@ -126,6 +136,58 @@ export function jsxFunctionProps(tree: Tree, sourceText: string, declared: Reado
         if (own) out.push({ component: tag, prop: name.text, handler: own, line: attr.startPosition.row + 1 });
       }
     }
+  }
+  return out;
+}
+
+/**
+ * `actions.map((a) => <button onClick={() => a.run()} />)` over a collection a component takes (`actions`, `props.actions`,
+ * `this.props.actions`): the callback's first parameter holds each element, so its `a.run()` is the prop's `actions.run`.
+ */
+export function jsxPropElements(tree: Tree): NonNullable<FileAnalysis["propElements"]> {
+  const out: NonNullable<FileAnalysis["propElements"]> = [];
+  for (const call of tree.rootNode.descendantsOfType("call_expression")) {
+    const callee = call?.childForFieldName("function");
+    if (!call || callee?.type !== "member_expression" || !ITERATION_METHODS.has(callee.childForFieldName("property")?.text ?? "")) continue;
+    const source = callee.childForFieldName("object")?.text ?? "";
+    if (!/^(?:this\.props\.|props\.)?[A-Za-z_$][\w$]*$/.test(source)) continue;
+    const cb = call.childForFieldName("arguments")?.namedChildren.find((a) => a?.type === "arrow_function" || a?.type === "function_expression");
+    const first = cb?.childForFieldName("parameters")?.namedChild(0) ?? cb?.childForFieldName("parameter") ?? null;
+    const param = first?.type === "required_parameter" ? first.childForFieldName("pattern") : first;
+    if (!cb || param?.type !== "identifier") continue;
+    out.push({ source, local: param.text, line: cb.startPosition.row + 1, endLine: cb.endPosition.row + 1 });
+  }
+  // Only a component takes props: a file that renders no JSX (a route, a service) states none.
+  if (out.length > 0 && tree.rootNode.descendantsOfType(["jsx_element", "jsx_self_closing_element"]).length === 0) return [];
+  return out;
+}
+
+const ITERATION_METHODS: ReadonlySet<string> = new Set(["map", "forEach", "flatMap", "filter", "find", "some", "every"]);
+
+/** The functions the objects of an array literal hold under each key: a declared function by name (`run: award`, `{ award }`), or an arrow written in place by its own held name. */
+function arrayCallbacksOf(array: Node, declared: ReadonlySet<string>): Array<{ key: string; name: string }> {
+  return array.namedChildren.flatMap((el) => (el?.type === "object" ? objectCallbacksOf(el, declared) : []));
+}
+
+/** The functions one object literal holds under each key (see `arrayCallbacksOf`). */
+function objectCallbacksOf(el: Node, declared: ReadonlySet<string>): Array<{ key: string; name: string }> {
+  const out: Array<{ key: string; name: string }> = [];
+  for (const m of el.namedChildren) {
+    if (m?.type === "shorthand_property_identifier") {
+      if (declared.has(m.text)) out.push({ key: m.text, name: m.text });
+      continue;
+    }
+    if (m?.type !== "pair") continue;
+    const key = m.childForFieldName("key")?.text.replace(/^['"]|['"]$/g, "");
+    const value = m.childForFieldName("value");
+    if (!key || !/^[A-Za-z_$][\w$]*$/.test(key) || !value) continue;
+    if (value.type === "arrow_function" || value.type === "function_expression") {
+      const own = heldFunction(value);
+      if (own) out.push({ key, name: own });
+      continue;
+    }
+    const named = handedFunction(value);
+    if (named && declared.has(named.replace(/^this\./, ""))) out.push({ key, name: named });
   }
   return out;
 }

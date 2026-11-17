@@ -1,3 +1,4 @@
+import { routeSymbolName } from "./route-symbol.js";
 import type { FileAnalysis, TestFunctionRow } from "../types/analysis.js";
 import { trimTrailingSlashes } from "../extractors/plugins/shared/path-utils.js";
 import { collectTestFunctions } from "./test-functions.js";
@@ -637,7 +638,7 @@ export function routeTestCoverage(
   for (const r of routes) {
     if (r.kind !== "api") continue;
     const label = `${(r.httpMethod ?? "USE").toUpperCase()} ${r.path}`;
-    const start = `${r.filePath}\u0000route:${r.httpMethod ?? "USE"} ${r.path}`;
+    const start = `${r.filePath}\u0000${routeSymbolName(r)}`;
     const seen = new Set([start]);
     let frontier = [start];
     let covered = 0;

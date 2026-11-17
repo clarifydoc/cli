@@ -63,13 +63,15 @@ function aliasesOf(cls: Node): Map<string, { observes: string; via?: string }> {
  *  - `toSignal(this.svc.changes$.pipe(switchMap(() => this.http.get(…))))`, which subscribes for the signal's life;
  *  - an observable member read with the `async` pipe in the component's inline template
  *    (`players$ = this.svc.changes$.pipe(…)` and `players$ | async`), which the template subscribes for as long as
- *    the component lives. An external template (`templateUrl`) is not read here.
+ *    the component lives. An external template (`templateUrl`) is read by the project pass (`angular-external-templates.ts`), which keeps
+ *    only the members it pipes through `async`.
+ *  - the same member assigned in the constructor (`this.players$ = this.svc.changes$.pipe(…)`).
  *
  * The operator callbacks (and the subscribe callback) are held, so a `next` elsewhere reaches them. The listen names
  * the service member and subject the alias resolves to, which the project pass joins by type.
  */
 export function withAngularListeners(tree: Tree, facts: CellFacts, text: string): CellFacts {
-  if (!/\btoSignal\b|\|\s*async\b|\.subscribe\s*\(/.test(text) || !/\b(?:Injectable|Component|Directive|Pipe|NgModule)\b|\binject\s*\(/.test(text)) return facts;
+  if (!/\btoSignal\b|\|\s*async\b|\btemplateUrl\b|\.subscribe\s*\(/.test(text) || !/\b(?:Injectable|Component|Directive|Pipe|NgModule)\b|\binject\s*\(/.test(text)) return facts;
   const sources = importSources(tree.rootNode);
   const classes = tree.rootNode.descendantsOfType(NAMED_CLASSES).filter((c): c is Node => c !== null);
   const declaredHere = new Set(classes.map((c) => c.childForFieldName("name")?.text ?? ""));
@@ -131,23 +133,35 @@ export function withAngularListeners(tree: Tree, facts: CellFacts, text: string)
     listen(cls, chain.root, n, chain.operatorCallbacks, first && first.descendantsOfType("call_expression").length > 0 ? first : null);
   }
 
-  // An observable member the class's inline template reads through `| async`.
-  if (/\|\s*async\b/.test(text)) {
+  // An observable member the class's template reads through `| async`: an inline template is read here; an external
+  // one (`templateUrl`) is read by the project pass, so every stream member of such a class is a candidate, marked
+  // `pendingMember`, and the pass drops the ones the template does not pipe.
+  if (/\|\s*async\b|\btemplateUrl\b/.test(text)) {
     for (const cls of classes) {
-      const read = asyncPipeMembers(cls);
-      if (read.size === 0) continue;
+      const { members: read, external } = asyncPipeMembers(cls);
+      if (read.size === 0 && !external) continue;
       const consider = (name: string | undefined, value: Node | null | undefined) => {
-        if (!name || !value || !read.has(name)) return;
+        if (!name || !value || (!external && !read.has(name))) return;
         const { source, operatorCallbacks } = pipeSource(value);
+        const before = found.length;
         listen(cls, source, value, operatorCallbacks);
+        if (external) for (let i = before; i < found.length; i++) found[i]!.pendingMember = name;
       };
       for (const d of cls.descendantsOfType(["public_field_definition", "field_definition"])) {
         if (d && classOf(d)?.id === cls.id) consider((d.childForFieldName("name") ?? d.childForFieldName("property"))?.text, d.childForFieldName("value"));
       }
       for (const m of cls.descendantsOfType("method_definition")) {
-        if (!m || classOf(m)?.id !== cls.id || !m.children.some((c) => c?.type === "get")) continue;
-        const returns = m.descendantsOfType("return_statement");
-        if (returns.length === 1) consider(m.childForFieldName("name")?.text, returns[0]?.namedChildren[0]);
+        if (!m || classOf(m)?.id !== cls.id) continue;
+        const name = m.childForFieldName("name")?.text;
+        if (name === "constructor") {
+          for (const as of m.descendantsOfType("assignment_expression")) {
+            const left = as?.childForFieldName("left");
+            if (as && left?.type === "member_expression" && left.childForFieldName("object")?.type === "this") consider(left.childForFieldName("property")?.text, as.childForFieldName("right"));
+          }
+        } else if (m.children.some((c) => c?.type === "get")) {
+          const returns = m.descendantsOfType("return_statement");
+          if (returns.length === 1) consider(name, returns[0]?.namedChildren[0]);
+        }
       }
     }
   }
@@ -158,17 +172,21 @@ export function withAngularListeners(tree: Tree, facts: CellFacts, text: string)
 
 /**
  * The members a class's inline template reads through the `async` pipe (`players$ | async`): read from the `template`
- * of its decorators — on the class, or on the `export` statement around it — never from the class body.
+ * of its decorators — on the class, or on the `export` statement around it — never from the class body. `external`:
+ * the markup is in a `templateUrl` file instead, which only the project pass can read.
  */
-function asyncPipeMembers(cls: Node): Set<string> {
-  const out = new Set<string>();
+function asyncPipeMembers(cls: Node): { members: Set<string>; external: boolean } {
+  const members = new Set<string>();
+  let external = false;
   const decorators = [...cls.children, ...(cls.parent?.type === "export_statement" ? cls.parent.children : [])].filter((c): c is Node => c?.type === "decorator");
   for (const d of decorators) {
     for (const pair of d.descendantsOfType("pair")) {
-      if (pair?.childForFieldName("key")?.text !== "template") continue;
-      const value = pair.childForFieldName("value")?.text ?? "";
-      for (const m of value.matchAll(/(?<![\w$.])([\w$]+)\s*\|\s*async\b/g)) out.add(m[1]!);
+      const key = pair?.childForFieldName("key")?.text;
+      if (key === "templateUrl") external = true;
+      if (key !== "template") continue;
+      const value = pair?.childForFieldName("value")?.text ?? "";
+      for (const m of value.matchAll(/(?<![\w$.])([\w$]+)\s*\|\s*async\b/g)) members.add(m[1]!);
     }
   }
-  return out;
+  return { members, external };
 }

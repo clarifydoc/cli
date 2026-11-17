@@ -127,7 +127,7 @@ export function subjectFlows(tree: Tree, sourceText: string, functions: Readonly
     const name = facts.held.get(l.callback.id);
     const cls = nameOfClass(l.cls);
     if (!name || !cls || !declared.has(name)) continue;
-    (out.listens ??= []).push({ function: name, class: cls, field: l.field, via: l.via, line: l.at.startPosition.row + 1 });
+    (out.listens ??= []).push({ function: name, class: cls, field: l.field, via: l.via, line: l.at.startPosition.row + 1, ...(l.pendingMember ? { member: l.pendingMember } : {}) });
   }
   if (!out.subjects && !out.listens && !out.nexts) return null;
   if (Object.keys(types).length > 0) out.types = types;

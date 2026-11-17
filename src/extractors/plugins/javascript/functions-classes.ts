@@ -28,7 +28,7 @@ import { jsDocImplements, jsDocIsInterface, jsDocParamTypes, jsDocReturnType, js
 import { FUNCTION_EXPRESSIONS, handlerOf, wrappedCalleeName, wrappedFunction } from "./wrapped-functions.js";
 import { optionsWatchers } from "./reactive-cells.js";
 import { isMemberLoaderBody, loadedDefaultSource, loadedMemberCall } from "./loaded-members.js";
-import { recordEntries, recordIndexOrigin, recordMemberChain } from "./dispatch-maps.js";
+import { recordEntries, recordIndexOrigin, recordMemberChain, switchRecordEntries } from "./dispatch-maps.js";
 import { ELEMENT_CALLBACKS, KEEPS_ELEMENTS, collectionElement } from "./element-types.js";
 import { destructuredParamTypes, objectTypesOf, paramNameSet, type ObjectTypes } from "./destructured-params.js";
 
@@ -621,7 +621,11 @@ function scanBody(
           const stated = annotation ? collectionElement(annotation.text.replace(/^:\s*/, "")) : null;
           if (stated) collections.set(name.text, stated);
           // A conditional initializer binds the name once per arm (`slug ? publicApi() : userApi()`).
-          const locals = conditionalLocals(children, name.text) ?? [declaredLocal(node, children, name.text, ctx)];
+          // A store picked by an IIFE `switch` on a prop: the local reads the record its cases state (`store[]`, one entry per case).
+          const picked = switchRecordEntries(node);
+          const locals = picked
+            ? [{ local: { name: name.text, type: "", from: `${name.text}[]`, indexOrigin: picked.indexOrigin }, annotated: false }]
+            : conditionalLocals(children, name.text) ?? [declaredLocal(node, children, name.text, ctx)];
           const list = bindings.get(name.text);
           if (list) list.push(...locals);
           else bindings.set(name.text, locals);
@@ -641,7 +645,7 @@ function scanBody(
             }
           }
           // A record of call results (`const stores = { [Kind.Club]: useClubStore(), … }`): under `stores[]`, each call.
-          const record = recordEntries(node);
+          const record = picked ?? recordEntries(node);
           for (const [i, call] of (record?.calls ?? []).entries()) {
             const from = callChainText(call, "typescript");
             if (!from) continue;

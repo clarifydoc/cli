@@ -98,10 +98,32 @@ export function valueFlowInvokeSites(analyses: readonly FileAnalysis[]): Map<str
   const writtenMembers = new Set<string>();
   // Only a seed or a copy says what a cell holds; a call's result (`debounce(load)`) is a value the facts do not follow.
   const writes = (f: ValueFlowFact): ValueCell | null => (f.kind === "seed" || f.kind === "copy" ? f.to : null);
+  // The (object, member) pairs written, for a call on a module-level object: `clubKeys.one()` is held only when some
+  // statement writes `clubKeys.one` itself, never because another object anywhere has a member named `one`.
+  // Keyed per writing file: another file's namesake object (`IFrameHelper` declared twice) is not this one.
+  const writtenPairs = new Map<string, string[]>();
   for (const a of analyses) for (const s of scopesOf(a)) for (const f of s.facts) {
     const to = writes(f);
-    if (to?.member !== undefined) writtenMembers.add(to.member);
+    if (to?.member === undefined) continue;
+    writtenMembers.add(to.member);
+    const pair = `${to.name}\0${to.member.split(".")[0]}`;
+    const files = writtenPairs.get(pair);
+    if (!files) writtenPairs.set(pair, [a.filePath]);
+    else if (!files.includes(a.filePath)) files.push(a.filePath);
   }
+  /** `name.member` written in the caller's own file, or in the file its import of `name` names (matched by path tail). */
+  const heldWritten = (a: FileAnalysis, name: string, member: string): boolean => {
+    const files = writtenPairs.get(`${name}\0${member.split(".")[0]}`);
+    if (!files) return false;
+    if (files.includes(a.filePath)) return true;
+    const from = (a.imports ?? []).find((i) => !i.isType && (i.specifiers.includes(name) || Object.keys(i.aliases ?? {}).includes(name)));
+    const tail = from?.source.replace(/^(?:\.{1,2}\/)+|^[@~]{1,2}\//, "").replace(/\.[cm]?[jt]sx?$/, "");
+    if (!tail) return false;
+    return files.some((f) => {
+      const bare = f.replace(/\.[^./]+$/, "");
+      return bare === tail || bare.endsWith(`/${tail}`) || bare.endsWith(`/${tail}/index`) || bare === `${tail}/index`;
+    });
+  };
   for (const a of analyses) {
     // A path through an imported name (`kit.Bench.label()`, `Garage.methods.park()`) names a declaration the
     // name tiers resolve exactly; a member key written in some object literal elsewhere must not take it from them.
@@ -127,7 +149,8 @@ export function valueFlowInvokeSites(analyses: readonly FileAnalysis[]): Map<str
         if (member !== undefined) {
           const dot = name.indexOf(".");
           if (dot > 0 && imported.has(name.slice(0, dot))) continue;
-          if (writtenMembers.has(member) || name === MODULE_CELL) out.set(key, "suppress");
+          const written = f.held === "module" ? heldWritten(a, name, member) : writtenMembers.has(member);
+          if (written || name === MODULE_CELL) out.set(key, "suppress");
           continue;
         }
         if (!local) {

@@ -55,12 +55,38 @@ const STORE_FACTORY = /^use[A-Z][\w$]*Store$/;
 const COMPOSABLE = /^use[A-Z][\w$]*$/;
 const PROJECT_SOURCE = /^(?:\.|@\/|~\/|~~\/|@@\/|src\/)/;
 
+/** Composables Nuxt, Vue Router and the VueUse-style layers hand a component without an import: never a project's own. */
+const AUTO_IMPORTED_BUILTIN = /^use(?:Route|Router|State|Fetch|LazyFetch|AsyncData|LazyAsyncData|Head|SeoMeta|ServerSeoMeta|Cookie|NuxtApp|NuxtData|Nuxt|RuntimeConfig|AppConfig|Error|Link|Id|Hydration|PreviewMode|TransitionState|LoadingIndicator|RequestHeaders|RequestHeader|RequestEvent|RequestURL|RequestFetch|Attrs|Slots|Model|TemplateRef|CssModule|I18n|LocalePath|SwitchLocalePath|Cookie)$/;
+
 /**
  * The factory every Vuex store read carries: `useStore()` from `vuex` (or `this.$store` / `mapState` in an Options API
  * component). Not an identifier, so no project function of that name can be mistaken for it — the Vuex state resolver
  * (`vuex-state.ts`) reads it, `JsStoreWatchResolver` finds no store for it. The path is from the root state (`clubs.list`).
  */
 export const VUEX_FACTORY = "$vuex";
+
+/** A Vuex read of a getter, not of state: `@getter:clubs/total` (the key as the store spells it). */
+export const GETTER_READ = "@getter:";
+
+/** The getter `store.getters['clubs/total']` / `store.getters.total` names, else null. */
+function vuexGetterKey(store: Node): string | null {
+  const getters = store.parent;
+  if (getters?.type !== "member_expression" || getters.childForFieldName("object")?.id !== store.id || getters.childForFieldName("property")?.text !== "getters") return null;
+  const use = getters.parent;
+  if (use?.type === "subscript_expression" && use.childForFieldName("object")?.id === getters.id) {
+    const index = use.childForFieldName("index");
+    return index?.type === "string" && index.text.length > 2 ? index.text.slice(1, -1) : null;
+  }
+  if (use?.type === "member_expression" && use.childForFieldName("object")?.id === getters.id) return use.childForFieldName("property")?.text ?? null;
+  return null;
+}
+
+/** The file declares `name` itself: a function, or a variable. */
+function declaresName(tree: Tree, name: string): boolean {
+  const id = name.replace(/\$/g, "\\$&");
+  const re = new RegExp(`(?:\\bfunction\\*?\\s+${id}\\b|\\b(?:const|let|var)\\s+${id}(?![\\w$]))`);
+  return re.test(tree.rootNode.text);
+}
 
 export function withStoreWatchers(tree: Tree, facts: CellFacts, text: string, template: readonly TemplateStatement[] = []): CellFacts {
   // A project composable's refs are read only in a Vue component: a composable call beside a Vue reactive API.
@@ -73,8 +99,13 @@ export function withStoreWatchers(tree: Tree, facts: CellFacts, text: string, te
     return src === undefined || VUE_SOURCES.test(src);
   };
   /** A project composable called as `useClubs()`: imported from the project, never a library's hook. */
-  const composableOf = (callee: Node | null | undefined): string | null =>
-    callee?.type === "identifier" && COMPOSABLE.test(callee.text) && PROJECT_SOURCE.test(sources.get(callee.text) ?? "") ? callee.text : null;
+  const composableOf = (callee: Node | null | undefined): string | null => {
+    if (callee?.type !== "identifier" || !COMPOSABLE.test(callee.text)) return null;
+    if (PROJECT_SOURCE.test(sources.get(callee.text) ?? "")) return callee.text;
+    // Nuxt auto-imports `composables/useClubs.ts`: a call nothing imports and the file does not declare. The project pass
+    // (`JsStoreWatchResolver`) finds the project function of that name, in the caller's own app first, and links nothing for one it does not.
+    return !sources.has(callee.text) && !AUTO_IMPORTED_BUILTIN.test(callee.text) && !declaresName(tree, callee.text) ? callee.text : null;
+  };
   const byScope = new Map<number, Map<string, Local>>();
   const scopeOf = (n: Node): Node => {
     for (let p = n.parent; p; p = p.parent) if (SCOPES.has(p.type) || p.type === "program") return p;
@@ -124,6 +155,13 @@ export function withStoreWatchers(tree: Tree, facts: CellFacts, text: string, te
       if (n.type === "identifier") {
         const local = resolve(n.text, n);
         if (local) {
+          // `store.getters['clubs/total']`: a Vuex getter, read as the state it reads (resolved with the store's modules).
+          const getter = local.kind === "store" && local.factory === VUEX_FACTORY ? vuexGetterKey(n) : null;
+          if (getter) {
+            const read = { factory: VUEX_FACTORY, path: `${GETTER_READ}${getter}` };
+            if (!out.some((r) => r.factory === read.factory && r.path === read.path)) out.push(read);
+            return;
+          }
           const { path, deep, returned } = readPath(n);
           if (local.kind === "store") add(local.factory, path, deep || !returned);
           else if (local.kind === "ref") {

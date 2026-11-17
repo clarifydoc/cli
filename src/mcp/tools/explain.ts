@@ -9,6 +9,7 @@ import { measuredLabel, measuredTestsFor, testsReaching } from "../../core/impac
 import { roleLine } from "../role.js";
 import { routeFactId } from "../../core/fact-ids.js";
 import { byOrdinal } from "../../core/ordinal.js";
+import { routeSymbolName } from "../../core/route-symbol.js";
 
 type Row = ProjectAnalysis["routeMap"][number];
 type ToolText = (args: Record<string, unknown>) => Promise<string | null>;
@@ -80,7 +81,7 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
         const method = r.httpMethod ?? undefined;
         heading = `# ${label(r)} — ${r.handler ?? "inline handler"} (${r.filePath}:${r.line}) · [${routeFactId(r)}]`;
         home = r.filePath;
-        const seed = r.handler ?? `route:${(r.httpMethod ?? "USE").toUpperCase()} ${r.path}`;
+        const seed = r.handler ?? routeSymbolName({ ...r, httpMethod: (r.httpMethod ?? "USE").toUpperCase() });
         if (r.kind === "api") parts.push({ title: "Contract and callers", get: () => contract({ path: r.path, ...(method ? { method } : {}), file: r.filePath }), follow: `clarifydoc_contract path="${r.path}"` });
         const anchor = routeAnchor(r, summary.symbolLinks ?? []);
         if (anchor) parts.push({ title: "What it reaches", get: () => trace({ symbol: anchor, file: r.filePath, direction: "callees", depth: 3, limit: 15 }), follow: `clarifydoc_trace symbol="${anchor}" file="${r.filePath}" direction="callees"` });

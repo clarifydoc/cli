@@ -43,8 +43,11 @@ export async function resolveAngularExternalTemplates(
     try {
       text = await readFile(htmlPath, "utf-8");
     } catch {
+      dropUnpipedListens(a, ""); // no template to read: a stream nothing is known to pipe is no listener
       continue; // template moved/renamed — leave the component un-enriched
     }
+
+    dropUnpipedListens(a, text);
 
     // The sibling .html is an Angular component template PARTIAL, not a
     // standalone page — the HTML plugin gave it a `kind:"frontend"` route by
@@ -70,4 +73,16 @@ export async function resolveAngularExternalTemplates(
     enriched++;
   }
   return enriched;
+}
+
+/**
+ * A component's stream members were taken as listeners before its external template was known
+ * (`SubjectFlows.listens[].member`): keep the ones the template reads through the `async` pipe.
+ */
+function dropUnpipedListens(a: FileAnalysis, template: string): void {
+  const listens = a.subjectFlows?.listens;
+  if (!listens?.some((l) => l.member !== undefined)) return;
+  const piped = new Set<string>();
+  for (const m of template.matchAll(/(?<![\w$.])([\w$]+)\s*\|\s*async\b/g)) piped.add(m[1]!);
+  a.subjectFlows!.listens = listens.filter((l) => l.member === undefined || piped.has(l.member));
 }

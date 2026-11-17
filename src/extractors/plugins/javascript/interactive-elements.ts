@@ -362,7 +362,7 @@ function scopeOf(handler: string | null, scopes: TemplateScope[] | undefined, fu
  * Only values that name a function (`fn`, `this.fn`, `{ fn }`) count; none when the collection is not declared
  * as one such literal in this component.
  */
-export function literalCallbacksOf(source: string, script: string): Record<string, string[]> | undefined {
+export function literalCallbacksOf(source: string, script: string, depth = 0): Record<string, string[]> | undefined {
   const name = /^(?:this\.)?([A-Za-z_$][\w$]*)$/.exec(source.trim())?.[1];
   if (!name) return undefined;
   const wrapper = String.raw`(?:(?:ref|shallowRef|reactive|computed)\s*(?:<[^>()]*>)?\s*\(\s*(?:\(\s*\)\s*=>\s*)?)?`;
@@ -378,6 +378,16 @@ export function literalCallbacksOf(source: string, script: string): Record<strin
   const out: Record<string, string[]> = {};
   for (const element of splitTopLevel(body)) {
     const obj = element.trim();
+    // `[...baseActions, { run: purge }]`: the kit takes on the callbacks of the literal array spread into it (the name is another single declaration).
+    const spread = /^\.\.\.\s*([A-Za-z_$][\w$]*|this\.[A-Za-z_$][\w$]*)$/.exec(obj)?.[1];
+    if (spread) {
+      const inner = depth < 2 && spread !== name ? literalCallbacksOf(spread, script, depth + 1) : undefined;
+      for (const [key, names] of Object.entries(inner ?? {})) {
+        const list = (out[key] ??= []);
+        for (const n of names) if (!list.includes(n)) list.push(n);
+      }
+      continue;
+    }
     if (!obj.startsWith("{") || !obj.endsWith("}")) continue;
     for (const entry of splitTopLevel(obj.slice(1, -1))) {
       const m = /^\s*['"]?([A-Za-z_$][\w$]*)['"]?\s*(?::\s*(?:this\.)?([A-Za-z_$][\w$]*)(?:\.bind\(this\))?)?\s*$/.exec(entry);

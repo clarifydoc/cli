@@ -1,3 +1,4 @@
+import { routeSymbolName } from "../core/route-symbol.js";
 import { readFile } from "fs/promises";
 import { join } from "path";
 import type {
@@ -435,7 +436,7 @@ function collectUnresolvedCalls(analyses: FileAnalysis[], existingLinks: SymbolL
 
     // From routes
     for (const route of analysis.routes) {
-      const sourceSymbol = `route:${route.httpMethod ?? "USE"} ${route.path}`;
+      const sourceSymbol = routeSymbolName(route);
       for (const call of route.calls) {
         if (shouldSkipCall(call, analysis.filePath, sourceSymbol, resolvedSet)) continue;
         unresolved.push({
@@ -742,6 +743,8 @@ function shouldSkipCall(
 ): boolean {
   // Skip non-resolvable kinds
   if (call.kind === "api-call" || call.kind === "database") return true;
+  // A name read without parentheses (`CallInfo.read`) is a value unless the linker found it runs code.
+  if (call.read) return true;
   // Skip already resolved
   const key = `${sourceFile}::${call.line}::${call.name}`;
   return resolvedSet.has(key);

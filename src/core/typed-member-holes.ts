@@ -2,6 +2,7 @@ import type { ClassInfo, DataSourceInfo, FileAnalysis, FunctionInfo, Language } 
 import type { ClassRef, ProjectContext } from "../types/project.js";
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
 import { pluginFor } from "../extractors/registry.js";
+import { awaitedType } from "./symbol-linker.js";
 
 type ApiCall = DataSourceInfo & { filePath: string };
 
@@ -45,6 +46,8 @@ export function expandTypedMemberHoles(calls: ApiCall[], analyses: readonly File
     const urls = [call.target, ...(call.targetAlternatives ?? [])];
     if (!urls.some((u) => HAS_MEMBER_HOLE.test(u))) continue;
     const holeValues = (path: string): string[] | null => {
+      // A plain `function`'s `this` is whatever its caller binds, never the class around it.
+      if (call.thisUnbound && path.startsWith("this.")) return null;
       const key = `${call.filePath}:${call.line}:${path}`;
       if (!memo.has(key)) memo.set(key, memberValues(file, call.line, path.replace(/\?\./g, ".").split("."), byFile, ctx));
       return memo.get(key)!;
@@ -118,7 +121,9 @@ function typeOfPath(file: FileAnalysis, line: number, path: readonly string[], b
     if (typeof found === "string") held = { filePath: file.filePath, language: file.language as Language, type: found };
     else {
       // A loop or callback element of a field or member chain: the element of the collection that chain declares.
-      const source = found.call ? callResult(file, line, found.from, byFile, ctx, depth + 1) : typeOfPath(file, line, found.from, byFile, ctx, depth + 1);
+      let source = found.call ? callResult(file, line, found.from, byFile, ctx, depth + 1) : typeOfPath(file, line, found.from, byFile, ctx, depth + 1);
+      // `for (const c of await repo.all())`: the result a declared `Promise<Club[]>` resolves to.
+      if (source && found.awaited) source = { ...source, type: awaitedType(source.type.trim(), pluginFor(source.language)?.asyncResultTypes) };
       const element = source ? pluginFor(source.language)?.collectionElementOf?.(source.type.trim()) : null;
       held = source && element ? { ...source, type: element } : null;
     }
@@ -244,7 +249,7 @@ function inlineMembers(text: string): Map<string, string> {
  * around the line, or of a typed local (`localTypes`, a stated type only); or, for a loop or callback
  * variable over a field or member chain, that chain (`for (const c of this.clubs)`).
  */
-function declaredTypeOf(file: FileAnalysis, line: number, name: string): string | { from: string[]; call?: true } | null {
+function declaredTypeOf(file: FileAnalysis, line: number, name: string): string | { from: string[]; call?: true; awaited?: true } | null {
   const around: FunctionInfo[] = [];
   const visit = (fns: readonly FunctionInfo[]): void => {
     for (const fn of fns) if (fn.line <= line && line <= fn.endLine) around.push(fn);
@@ -261,8 +266,8 @@ function declaredTypeOf(file: FileAnalysis, line: number, name: string): string 
       const only = named.every((t) => t.from === named[0]!.from && t.element === named[0]!.element) ? named[0]! : null;
       if (only?.element && only.from && !only.iterator && !only.awaited && /^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)+$/.test(only.from)) return { from: only.from.replace(/\?\./g, ".").split(".") };
       // A loop over what a call returns (`for (const c of repo.all())`): the chain's own return type, read by `callResult`.
-      const call = only?.element && only.from && !only.iterator && !only.awaited ? /^([A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)*)\(\)$/.exec(only.from) : null;
-      if (call) return { from: call[1]!.replace(/\?\./g, ".").split("."), call: true };
+      const call = only?.element && only.from && !only.iterator ? /^([A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)*)\(\)$/.exec(only.from) : null;
+      if (call) return { from: call[1]!.replace(/\?\./g, ".").split("."), call: true, ...(only!.awaited ? { awaited: true as const } : {}) };
       return null;
     }
     const param = fn.params.find((p) => p.name === name);

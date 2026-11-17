@@ -254,7 +254,38 @@ function scopeOf(n: Node): Node | null {
 type Target = { file: string; symbol: string; line: number; viaType?: string; viaTypeFile?: string };
 /** An action: the function it is (unless written in place in a call), and what else it reaches. */
 type Hit = { file: FileAnalysis; fn?: FunctionInfo; also?: Target[] };
-type Module = { file: FileAnalysis; exported: string };
+export type Module = { file: FileAnalysis; exported: string };
+
+/**
+ * The mutations a module's table holds that are written in a file other than the module's own: the tables it spreads or
+ * merges (`...baseMutations`, `Object.assign({}, mutations, extra)`, as `literalAction` reads them) and what a project factory
+ * builds it from. A helper file several modules import holds mutations only for the modules whose table takes them in —
+ * importing the file is not registering what it declares. `tables`: `<file>\0<table name>`; `fns`: `<file>\0<function>`.
+ */
+export function foreignMutations(stores: VuexStores, mod: Module): { tables: Set<string>; fns: Set<string> } {
+  const { ctx, filesOf, registered } = stores;
+  const tables = new Set<string>();
+  const fns = new Set<string>();
+  for (const f of filesOf(mod.file)) {
+    if (f !== mod.file && registered.has(f.filePath)) continue;
+    for (const name of f.storeShapes?.spreads?.mutations ?? []) {
+      const from = importedName(f, name, ctx);
+      tables.add(`${(from?.file ?? f).filePath}\0${from ? localName(from.file, from.name) : name}`);
+    }
+  }
+  const values = mod.file.storeShapes?.values;
+  let value = values?.[mod.exported] ?? values?.[localName(mod.file, mod.exported)];
+  if (value && "ref" in value && values?.[value.ref]) value = values[value.ref];
+  if (value) {
+    for (const hits of factoryActions(mod.file, value, ctx, "mutations").values()) {
+      for (const a of hits) {
+        if ("fn" in a) fns.add(`${a.fn.file.filePath}\0${a.fn.fn.name}`);
+        else if ("helper" in a) fns.add(`${a.helper.file.filePath}\0${a.helper.fn.name}`);
+      }
+    }
+  }
+  return { tables, fns };
+}
 
 /** The root stores of a project, their modules by namespace and the root the caller's app uses (shared by the Vuex resolvers). */
 export interface VuexStores {
@@ -272,7 +303,9 @@ export interface VuexStores {
 
 export function vuexStores(analyses: FileAnalysis[]): VuexStores | null {
     const registering = analyses.filter((a) => a.storeModules?.length);
-    if (registering.length === 0) return null;
+    // A store with no `modules:` is a root too: its own state, mutations and actions are the whole store.
+    const building = analyses.filter((a) => a.storeShapes?.root && !a.storeModules?.length);
+    if (registering.length === 0 && building.length === 0) return null;
     const filePathMap = buildFilePathMap(analyses);
     const byPath = new Map(analyses.map((a) => [a.filePath, a]));
     const ctx: FactoryContext = { byPath, filePathMap };
@@ -293,7 +326,7 @@ export function vuexStores(analyses: FileAnalysis[]): VuexStores | null {
       const f = moduleOf(a, m.name);
       if (f) registered.add(f.file.filePath);
     }
-    const roots = registering.filter((a) => !registered.has(a.filePath));
+    const roots = [...registering, ...building].filter((a) => !registered.has(a.filePath));
 
     /** The files a module's actions may be written in: its own, and those it imports. */
     const filesOf = (mod: FileAnalysis): FileAnalysis[] => [mod, ...mod.imports.flatMap((i) => imported(mod, i) ?? [])];

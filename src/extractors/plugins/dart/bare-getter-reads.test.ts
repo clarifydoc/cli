@@ -98,11 +98,12 @@ describe("Dart bare getter reads", () => {
     expect(reaches("lib/squad.dart", "useTop")).toContain("topSize->lib/squad.dart::topSize");
   });
 
-  it("never links a parameter, a local, a member of another object, a field or another class's getter", () => {
+  it("never links a parameter, a local, a field or another class's getter", () => {
     expect(reaches("lib/squad.dart", "SquadService.withParam")).toEqual([]);
     expect(reaches("lib/squad.dart", "SquadService.withLocal")).toEqual([]);
     expect(reaches("lib/squad.dart", "SquadService.withBare")).toEqual([]);
-    expect(reaches("lib/squad.dart", "SquadService.member")).toEqual([]);
+    // A member of a typed receiver is that class's getter (getter-reads.test.ts), never the reading class's own.
+    expect(reaches("lib/squad.dart", "SquadService.member")).toEqual(["o.squadSize->lib/other.dart::Other.squadSize"]);
     expect(reaches("lib/other.dart", "Other.read").filter((x) => x.includes("SquadService"))).toEqual([]);
   });
 });

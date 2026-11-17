@@ -1,8 +1,8 @@
 import type { FileAnalysis, Language, SymbolLink } from "../../../types/analysis.js";
 import type { DispatchResolver } from "../../dispatch/base.js";
 import { sameCell } from "../../../core/reactive-triggers.js";
-import { VUEX_FACTORY } from "./store-reads.js";
-import { vuexStores } from "./vuex.js";
+import { GETTER_READ, VUEX_FACTORY } from "./store-reads.js";
+import { foreignMutations, vuexStores, type Module } from "./vuex.js";
 
 /**
  * Vuex state a component watches and a mutation writes. A watcher's read names the path from the root state
@@ -41,6 +41,37 @@ export class VuexStateWatchResolver implements DispatchResolver {
       }
       return out;
     };
+    // Whether a mutation written in `file` belongs to the module: its own file, a `mutations` table of an imported file, or a
+    // table the module's own spreads / factory name — never a helper the module merely imports beside others that do too.
+    const foreign = new Map<string, ReturnType<typeof foreignMutations>>();
+    const holds = (root: FileAnalysis, prefix: string, file: FileAnalysis, fn: string): boolean => {
+      const mod: Module | undefined = prefix ? trees.get(root)?.get(prefix.split(".").join("/")) : { file: root, exported: "default" };
+      if (!mod || mod.file === file) return true;
+      const table = fn.includes(".") ? fn.slice(0, fn.lastIndexOf(".")) : "";
+      if (/(?:^|\.)mutations$/.test(table)) return true;
+      const key = `${root.filePath}\0${prefix}`;
+      let own = foreign.get(key);
+      if (!own) foreign.set(key, (own = foreignMutations(stores, mod)));
+      return own.tables.has(`${file.filePath}\0${table}`) || own.fns.has(`${file.filePath}\0${fn}`);
+    };
+    // The state paths a read stands for under one root store: its own, or the state a getter (`@getter:clubs/total`) reads.
+    const pathsOf = (read: string, root: FileAnalysis): string[] => {
+      if (!read.startsWith(GETTER_READ)) return [read];
+      const parts = read.slice(GETTER_READ.length).split("/").filter(Boolean);
+      const name = parts.pop();
+      const mod: Module | undefined = parts.length > 0 ? trees.get(root)?.get(parts.join("/")) : { file: root, exported: "default" };
+      if (!name || !mod) return [];
+      const prefix = parts.join(".");
+      const out: string[] = [];
+      for (const f of filesOf(mod.file)) {
+        if (f !== mod.file && registered.has(f.filePath)) continue;
+        for (const g of f.storeWatch?.getterReads ?? []) {
+          if (g.name !== name || (f !== mod.file && g.table !== "getters")) continue;
+          for (const p of g.paths) out.push(prefix ? `${prefix}.${p}` : p);
+        }
+      }
+      return out;
+    };
     const links: SymbolLink[] = [];
     const seen = new Set<string>();
     for (const file of writing) {
@@ -59,10 +90,11 @@ export class VuexStateWatchResolver implements DispatchResolver {
               if (w.truthyOnly && write.falsy) continue;
               if (file === a && write.function === w.function) continue;
               for (const place of places) {
-                if (!rootsOfApp.includes(place.root)) continue;
+                if (!rootsOfApp.includes(place.root) || !holds(place.root, place.prefix, file, write.function)) continue;
                 const written = place.prefix ? (write.path ? `${place.prefix}.${write.path}` : place.prefix) : write.path;
                 // A write of members the file cannot name (`""`) meets any read in or around the module.
-                if (written !== "" ? !sameCell(`s:${written}`, `s:${read.path}`) : moduleHeads.get(place.root)?.has(read.path.replace(/\*$/, "").split(".")[0]!)) continue;
+                const meets = pathsOf(read.path, place.root).some((readPath) => (written !== "" ? sameCell(`s:${written}`, `s:${readPath}`) : !moduleHeads.get(place.root)?.has(readPath.replace(/\*$/, "").split(".")[0]!)));
+                if (!meets) continue;
                 const id = `${file.filePath}\0${write.function}\0${write.line}\0${a.filePath}\0${w.function}`;
                 if (seen.has(id)) continue;
                 seen.add(id);
@@ -70,7 +102,7 @@ export class VuexStateWatchResolver implements DispatchResolver {
                   sourceFile: file.filePath,
                   sourceSymbol: write.function,
                   sourceLine: write.line,
-                  callName: write.spelling || read.path.replace(/\*$/, ""),
+                  callName: write.spelling || read.path.replace(/\*$/, "").replace(GETTER_READ, ""),
                   targetFile: a.filePath,
                   targetSymbol: w.function,
                   targetLine: target.line,

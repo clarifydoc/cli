@@ -1,3 +1,4 @@
+import { routeSymbolName } from "./route-symbol.js";
 import type { CallInfo, ClassInfo, Confidence, DataSourceInfo, FileAnalysis, FunctionInfo, ParamColumn, RouteInfo, SymbolLink } from "../types/analysis.js";
 import { byOrdinal } from "./ordinal.js";
 
@@ -226,7 +227,7 @@ export function computeParamColumns(input: {
     if (r.kind !== "api" || !r.filePath) continue;
     const params = (r.params ?? []).filter((p) => p.binding === "route" || p.binding === "query");
     if (params.length === 0) continue;
-    const routeSymbol = `route:${r.httpMethod ?? "USE"} ${r.path}`;
+    const routeSymbol = routeSymbolName(r);
     const rows: Array<Row & { param: string; binding: string }> = [];
     for (const p of params) {
       const found: Row[] = [];

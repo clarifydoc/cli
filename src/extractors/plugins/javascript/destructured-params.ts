@@ -206,6 +206,28 @@ export function objectTypesOf(root: Node): Map<string, Map<string, string>> {
 /** A type name that is most likely a generic parameter (`T`, `TProps`), never a class a project declares. */
 const GENERIC_PARAMETER = /^[A-Z]$|^T[A-Z]\w*$/;
 
+const TRANSPARENT_WRAPPERS = new Set(["Readonly", "Required", "Partial", "NonNullable", "Pick", "Omit"]);
+
+/**
+ * The type a wrapped annotation stands for: `Readonly<Props>`, `Pick<Props, "table">` and the like keep the members
+ * of their first argument; a project generic `Props<Item>` keeps those of `Props`. A member typed by one of its
+ * parameters stays untyped (the caller's `GENERIC_PARAMETER` check), as does any union or other composite.
+ */
+function unwrapAnnotation(type: string): string {
+  let t = type.trim();
+  for (let guard = 0; guard < 4; guard++) {
+    const m = /^([A-Za-z_$][\w$.]*)\s*<([\s\S]*)>$/.exec(t);
+    if (!m) break;
+    const args = splitDepth(m[2]!, new Set([","])).map((a) => a.trim());
+    if (TRANSPARENT_WRAPPERS.has(m[1]!)) t = args[0] ?? t;
+    else {
+      t = m[1]!;
+      break;
+    }
+  }
+  return t;
+}
+
 /** The synthetic local naming a destructured parameter as a whole, so a binding can be read off it as a member. */
 const paramLocal = (index: number): string => `$param${index}`;
 
@@ -221,7 +243,7 @@ export function destructuredParamTypes(params: readonly ParamInfo[], namedTypes:
   const out: LocalType[] = [];
   params.forEach((p, index) => {
     if (!p.name.trimStart().startsWith("{") || !p.type) return;
-    const type = p.type.trim();
+    const type = unwrapAnnotation(p.type);
     const named = /^[A-Za-z_$][\w$.]*$/.test(type);
     const members = type.startsWith("{") ? objectTypeMembers(type) : namedTypes?.get(type);
     let anchored = false;

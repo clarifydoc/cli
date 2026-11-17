@@ -6,7 +6,7 @@ import { withImportTypeArgs } from "./import-type-args.js";
 import { templateEscapePreprocess } from "./template-escapes.js";
 import { extractTsTypeAliases, extractJsNameAliases } from "./type-aliases.js";
 import { markupCalls, markupFunctions } from "./markup-calls.js";
-import { jsxFunctionProps, propBindings, unreadPropBindings } from "./prop-bindings.js";
+import { jsxFunctionProps, jsxPropElements, propBindings, unreadPropBindings } from "./prop-bindings.js";
 import { extractStringConstants } from "./string-constants.js";
 import { recordChoice } from "./record-choice.js";
 import { componentSubscriptions } from "./component-subscriptions.js";
@@ -264,6 +264,7 @@ function astHooks(language: Language): AstExtractorHooks {
     markupFunctions,
     propBindings,
     unreadPropBindings,
+    propElements: jsxPropElements,
     functionProps: jsxFunctionProps,
     componentSubscriptions,
     reactiveCells,

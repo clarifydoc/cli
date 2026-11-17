@@ -1,3 +1,4 @@
+import { routeSymbolName } from "./route-symbol.js";
 import type { FileAnalysis, RouteInfo, SymbolLink } from "../types/analysis.js";
 
 /** A function the analysis knows by file and symbol (`Class.method` for a method). */
@@ -43,7 +44,7 @@ export function routeHandlers(analyses: readonly FileAnalysis[], symbolLinks: re
   };
   return {
     handlersOf(route) {
-      let refs: HandlerRef[] = (linksFrom.get(`${route.filePath}\0route:${route.httpMethod ?? "USE"} ${route.path}`) ?? []).map((l) => ({
+      let refs: HandlerRef[] = (linksFrom.get(`${route.filePath}\0${routeSymbolName(route)}`) ?? []).map((l) => ({
         file: l.targetFile,
         symbol: l.targetSymbol,
       }));

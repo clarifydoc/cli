@@ -1,3 +1,4 @@
+import { routeSymbolName } from "./route-symbol.js";
 import type { EntryPointInfo,
   DataEffectKind,
   DataFlowPath,
@@ -588,7 +589,7 @@ export function computeDataFlows(
   const middlewareOf = new Map<string, Set<string>>();
   for (const r of routes) {
     const names = [...(r.middlewareCalls ?? []), ...(r.inheritedMiddleware ?? []).flatMap((m) => m.calls)].filter((n) => n !== r.handler);
-    if (r.kind === "api" && names.length) middlewareOf.set(keyOf(r.filePath, `route:${r.httpMethod ?? "USE"} ${r.path}`), new Set(names));
+    if (r.kind === "api" && names.length) middlewareOf.set(keyOf(r.filePath, routeSymbolName(r)), new Set(names));
   }
   for (const l of symbolLinks) {
     if (l.sourceSymbol.startsWith("route:") && l.relation !== "reference" && !l.navigational) {
@@ -616,7 +617,7 @@ export function computeDataFlows(
     // `clarifydoc_data_flows` returning "no data flows" on a repository whose
     // reach summary already carried the effects, one lookup away.
     let key: string | null = null;
-    const synthetic = keyOf(route.filePath, `route:${route.httpMethod ?? "USE"} ${route.path}`);
+    const synthetic = keyOf(route.filePath, routeSymbolName(route));
     // The functions this route's middleware resolved to: a flow whose witness leaves the route through one
     // is reached by the middleware, not the handler.
     const mwTargets = new Set<string>();
@@ -662,7 +663,7 @@ export function computeDataFlows(
     if (r && key) sources.push({ k: key, effects: r.effects });
     if (mwReach) sources.push({ k: synthetic, effects: mwReach.effects.filter((e) => isViaMiddleware(synthetic, e)) });
     for (const { k, effects } of sources) for (const e of effects) {
-      const dk = `${route.filePath} ${entryLabel} ${e.kind} ${e.resource}`;
+      const dk = `${route.filePath} ${entryLabel} ${route.registrar ?? ""} ${e.kind} ${e.resource}`;
       if (seen.has(dk)) continue;
       seen.add(dk);
       out.push({
@@ -691,7 +692,7 @@ export function computeDataFlows(
   const frontendKeys = new Map<string, string[]>();
   for (const r of routes) {
     if (r.kind !== "frontend") continue;
-    const k = keyOf(r.filePath, `route:${r.httpMethod ?? "USE"} ${r.path}`);
+    const k = keyOf(r.filePath, routeSymbolName(r));
     if (reachByKey.has(k)) (frontendKeys.get(r.path) ?? frontendKeys.set(r.path, []).get(r.path)!).push(k);
   }
   for (const screen of screens) {

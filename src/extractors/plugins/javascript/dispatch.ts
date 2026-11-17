@@ -634,6 +634,8 @@ export class JsPropCallbackResolver implements DispatchResolver {
         const freeName = PROP_CALLBACK.test(prop) || childFile.endsWith(".vue") || !!child.declaredProps?.includes(head);
         const callsProp = (name: string, line: number): boolean => {
           const local = propLocalOf(child, head, line);
+          // `actions.map((a) => a.run())` over the prop: the element's member is the prop's `actions.run`.
+          if (member && propElementsOf(child, local ? [local] : [`props.${head}`, `this.props.${head}`], line).some((e) => name === e + member)) return true;
           if (local !== undefined) return local !== null && name === local + member;
           return name === prop && freeName;
         };
@@ -684,6 +686,11 @@ export class JsPropCallbackResolver implements DispatchResolver {
     }
     return links;
   }
+}
+
+/** The element names of the callbacks around `line` that iterate one of `sources` (`FileAnalysis.propElements`). */
+function propElementsOf(file: FileAnalysis, sources: readonly string[], line: number): string[] {
+  return (file.propElements ?? []).filter((e) => e.line <= line && line <= e.endLine && sources.includes(e.source)).map((e) => e.local);
 }
 
 /**

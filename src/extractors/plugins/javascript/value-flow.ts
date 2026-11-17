@@ -28,6 +28,13 @@ const LIST_WRITERS: ReadonlySet<string> = new Set(["push", "unshift", "add", "ap
 const ELEMENT_CALLBACKS: ReadonlySet<string> = new Set(["forEach", "map", "filter", "some", "every", "find", "findLast", "flatMap"]);
 const CONTAINER_CTORS: ReadonlySet<string> = new Set(["Map", "Set", "WeakMap", "WeakSet", "Array"]);
 const LITERAL: ValueCell = { name: "<literal>" };
+/**
+ * Calls whose result stands for the value they are handed first: a reactive proxy, a frozen view, a context built
+ * from its default value. `const state = reactive<Actions>({ onSave: archive })` holds `onSave` like a plain literal.
+ */
+const VALUE_WRAPPERS: ReadonlySet<string> = new Set(["reactive", "shallowReactive", "readonly", "shallowReadonly", "markRaw", "createContext", "proxy", "freeze"]);
+/** Calls that read the value a context holds back (`useContext(CmdContext)`): the result is what the context was built with. */
+const CONTEXT_READS: ReadonlySet<string> = new Set(["useContext", "inject"]);
 /** Calls whose one type argument types the value they are handed first (`useState<Substitution>({ … })`). */
 const TYPED_VALUE_CALLS: ReadonlySet<string> = new Set(["useState", "useRef", "ref", "shallowRef", "reactive", "signal", "createSignal", "createContext", "atom", "writable"]);
 const MAX_DEPTH = 3;
@@ -122,6 +129,24 @@ function knownNamesOf(tree: Tree): Set<string> {
   }
   return out;
 }
+let importsTree: Tree | null = null;
+let importsMemo: Set<string> = new Set();
+/** Lower-case names a file imports from its own project (`./store`, `../state`, `@/state`): the objects other modules hand it. */
+function projectImportsOf(tree: Tree): Set<string> {
+  if (tree === importsTree) return importsMemo;
+  const out = new Set<string>();
+  for (const st of tree.rootNode.namedChildren) {
+    if (st.type !== "import_statement") continue;
+    const source = st.childForFieldName("source")?.text.replace(/^['"]|['"]$/g, "") ?? "";
+    if (!/^(?:\.{1,2}\/|[@~]\/)/.test(source)) continue;
+    const clause = st.namedChildren.find((c) => c.type === "import_clause");
+    if (!clause) continue;
+    for (const id of clause.descendantsOfType("identifier")) if (id && /^[a-z_$]/.test(id.text)) out.add(id.text);
+  }
+  importsTree = tree;
+  importsMemo = out;
+  return out;
+}
 let memoTree: Tree | null = null;
 let memo: ModuleFlow | null = null;
 
@@ -191,7 +216,7 @@ class Flow {
   /** A node of the tree walked (dispatch maps are read per tree). */
   root!: Node;
   /** `a.b(…)` calls on a local object: invoked only when the function stores into that member itself. */
-  private readonly memberCalls: Array<{ cell: ValueCell; name: string; line: number }> = [];
+  private readonly memberCalls: Array<{ cell: ValueCell; name: string; line: number; column?: number }> = [];
   /** Loop variables and element-callback parameters: bound where they are used, by construction. */
   private readonly iterNames = new Set<string>();
   private fnDepth = 0;
@@ -287,6 +312,8 @@ class Flow {
       if (object.type === "this") return this.plainDepth > 0 ? null : { name: "this", member: prop.text };
       if (object.type === "identifier") return { name: object.text, member: prop.text };
       const base = this.placeOf(object);
+      // `kit[kind].run`: a member of the element a computed key picks.
+      if (base && object.type === "subscript_expression" && base.name !== "this" && base.member?.endsWith("[]") && !base.member.includes(".")) return subOf(base, prop.text);
       return base && base.name === "this" && base.member !== undefined && base.member.split(".").length < MAX_DEPTH ? subOf(base, prop.text) : null;
     }
     if (n.type === "subscript_expression") {
@@ -305,7 +332,16 @@ class Flow {
   /** The place a destructuring reads from (`const { onClick } = substitution`), else null. */
   private destructureSource(value: Node | null | undefined): ValueCell | null {
     const v = unwrap(value);
+    if (v?.type === "call_expression") return this.placeOf(this.contextArgument(v));
     return v && (v.type === "identifier" || v.type === "member_expression") ? this.placeOf(v) : null;
+  }
+
+  /** `useContext(CmdContext)` → the `CmdContext` identifier, else null. */
+  private contextArgument(call: Node): Node | null {
+    const callee = unwrap(call.childForFieldName("function"));
+    if (callee?.type !== "identifier" || !CONTEXT_READS.has(callee.text)) return null;
+    const only = unwrap(call.childForFieldName("arguments")?.namedChildren.find((a) => a.type !== "comment") ?? null);
+    return only?.type === "identifier" && (this.inScope(only.text) || this.known.has(only.text)) ? only : null;
   }
 
   /** The `[key, local]` pairs an object pattern binds by plain name (a nested pattern, a rest and a computed key are left out). */
@@ -325,7 +361,7 @@ class Flow {
   /** `const { onClick } = substitution`: each name copies the source's member. */
   private destructure(pattern: Node, value: Node, line: number): void {
     const source = this.destructureSource(value);
-    if (!source || (source.name !== "this" && !this.inScope(source.name))) return;
+    if (!source || (source.name !== "this" && !this.inScope(source.name) && !(unwrap(value)?.type === "call_expression" && this.known.has(source.name)))) return;
     for (const [key, local] of this.patternBindings(pattern)) {
       this.names.add(local);
       this.readRoots.add(source.name);
@@ -411,7 +447,10 @@ class Flow {
       }
       case "call_expression": {
         const target = bound(n);
-        return target ? this.refsOf(target, depth + 1) : [];
+        if (target) return this.refsOf(target, depth + 1);
+        // `useContext(CmdContext)`: the value the context was built with, held by the name that built it.
+        const context = this.contextArgument(n);
+        return context ? [{ cell: { name: context.text } }] : [];
       }
       case "ternary_expression":
         return [...this.refsOf(n.childForFieldName("consequence"), depth + 1), ...this.refsOf(n.childForFieldName("alternative"), depth + 1)];
@@ -462,7 +501,11 @@ class Flow {
           const key = keyOf(m.childForFieldName("key"));
           const held = m.childForFieldName("value");
           const inner = unwrap(held);
-          if (key && inner?.type === "object") this.assignTo(subOf(to, key), inner, m.startPosition.row + 1, depth + 1);
+          if (key && inner?.type === "object") {
+            this.assignTo(subOf(to, key), inner, m.startPosition.row + 1, depth + 1);
+            // `kit[kind].run()`: an element of the object is any of its members, so a computed key reads them all.
+            this.assignTo(elementOf(to), inner, m.startPosition.row + 1, depth + 1);
+          }
           const refs = this.refsOf(held);
           if (key) this.emitRefs(subOf(to, key), refs, m.startPosition.row + 1);
           this.emitRefs(elementOf(to), refs, m.startPosition.row + 1);
@@ -472,7 +515,16 @@ class Flow {
     }
     if (v.type === "array") {
       this.facts.push({ kind: "copy", from: LITERAL, to, line });
-      for (const el of v.namedChildren) if (el.type !== "spread_element" && el.type !== "comment") this.emitRefs(elementOf(to), this.refsOf(el), el.startPosition.row + 1);
+      for (const el of v.namedChildren) {
+        if (el.type === "comment") continue;
+        if (el.type === "spread_element") {
+          // `[...base, run]`: the list takes on the elements of the one spread into it.
+          const from = this.placeOf(el.namedChild(0));
+          if (from && (from.member !== undefined || this.inScope(from.name))) this.facts.push({ kind: "copy", from: elementOf(from), to: elementOf(to), line: el.startPosition.row + 1 });
+          continue;
+        }
+        this.emitRefs(elementOf(to), this.refsOf(el), el.startPosition.row + 1);
+      }
       return;
     }
     if (v.type === "new_expression") {
@@ -487,11 +539,26 @@ class Flow {
     }
     const call = callOf(v);
     if (call && !bound(call)) {
+      const wrapped = this.wrappedValue(call);
+      if (wrapped) {
+        this.assignTo(to, wrapped, line, depth + 1);
+        return;
+      }
       const name = this.callName(call);
       if (name) this.facts.push({ kind: "result", call: name, line: call.startPosition.row + 1, to });
       return;
     }
     this.emitRefs(to, this.refsOf(v), line);
+  }
+
+  /** The first argument of a `reactive(…)`-style call, when it is an object literal or a name the function holds: the value the result stands for. */
+  private wrappedValue(call: Node): Node | null {
+    if (call.type !== "call_expression") return null;
+    const callee = unwrap(call.childForFieldName("function"));
+    const name = callee?.type === "member_expression" ? callee.childForFieldName("property")?.text : callee?.text;
+    if (!name || !VALUE_WRAPPERS.has(name)) return null;
+    const first = unwrap(call.childForFieldName("arguments")?.namedChildren.find((a) => a.type !== "comment") ?? null);
+    return first && (first.type === "object" || first.type === "array") ? first : null;
   }
 
   private assignment(node: Node): void {
@@ -622,10 +689,27 @@ class Flow {
       }
       return;
     }
+    const place = this.placeOf(callee);
+    // `kit[kind].run()`: the member of whichever element the computed key picks, run only when this function stored it.
+    const picked = unwrap(callee.childForFieldName("object"));
+    if (place && picked?.type === "subscript_expression" && property) {
+      const text = picked.childForFieldName("object")?.text ?? "";
+      const name = joinableCallName(`${text}[].${property}`);
+      if (name && dispatchMapCallee(picked) === null) {
+        this.memberCalls.push({ cell: place, name, line, column: node.startPosition.column });
+      }
+      return;
+    }
     const written = javascriptCallHooks.resolveCallName?.(node) ?? null;
     const callName = joinableCallName(written);
-    const place = this.placeOf(callee);
-    if (callName && place) this.memberCalls.push({ cell: place, name: callName, line });
+    if (callName && place) {
+      this.memberCalls.push({ cell: place, name: callName, line });
+      // `state.onSave()` on a module-level object — this file's own or a project module's the function imports — that another
+      // statement stored `onSave` into: core finds the writers; with none it keeps the ordinary resolution of the call.
+      if (!this.atModule && place.member !== undefined && !place.member.includes(".") && !this.names.has(place.name) && (this.moduleView?.names.has(place.name) || projectImportsOf(this.root.tree).has(place.name))) {
+        this.facts.push({ kind: "invoke", cell: place, call: callName, line, held: "module" });
+      }
+    }
     else if (!place) {
       // `board.action?.onClick()`: a member of a member, read through the declared types (core drops it when none says so).
       // The call keeps its optional-chain spelling, as its call row does.
@@ -695,6 +779,8 @@ class Flow {
     for (const m of this.memberCalls) {
       if (m.cell.name === "this" || m.cell.member === undefined || !stored.has(`${m.cell.name}\0${m.cell.member}`) || dispatchMapMember(m.name, this.root)) continue;
       this.facts.push({ kind: "invoke", cell: m.cell, call: m.name, line: m.line });
+      // The call row the invoke joins (the walk records `kit[kind].run` under no name a link can carry).
+      if (m.column !== undefined) this.extraCalls.push({ name: m.name, kind: "internal", target: null, line: m.line, column: m.column });
     }
   }
 }

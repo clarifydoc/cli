@@ -1,3 +1,4 @@
+import { routeSymbolName } from "./route-symbol.js";
 import type { ApiRouteLink, FileAnalysis, SymbolDataAccess, SymbolLink } from "../types/analysis.js";
 import { queueHoleKey } from "./data-access-graph.js";
 
@@ -201,7 +202,7 @@ export function synthesizeApiRouteSymbolLinks(
     // that route symbol too.
     if (tgt && (!declaredOn(tgt, link.handler, link.targetLine) || (!link.handler && (routeRow()?.calls?.length ?? 0) > 0))) {
       const route = routeRow();
-      if (route) tgt = { symbol: `route:${route.httpMethod ?? "USE"} ${route.path}`, line: route.line, endLine: route.line };
+      if (route) tgt = { symbol: routeSymbolName(route), line: route.line, endLine: route.line };
     }
     if (!tgt && link.handler) {
       const local = byName(spansFor(link.target), link.handler);
@@ -224,7 +225,7 @@ export function synthesizeApiRouteSymbolLinks(
       // anchor `computeDataFlows` uses. Without it the trace, and every
       // screen's reach, stopped at the HTTP boundary of such backends.
       const route = routeRow();
-      if (route) tgt = { symbol: `route:${route.httpMethod ?? "USE"} ${route.path}`, line: route.line, endLine: route.line };
+      if (route) tgt = { symbol: routeSymbolName(route), line: route.line, endLine: route.line };
     }
     if (!tgt) continue;
     // A self-edge (route handler calling its own endpoint) adds no trace value.
