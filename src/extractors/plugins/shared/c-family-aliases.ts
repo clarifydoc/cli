@@ -5,6 +5,8 @@ import { blankStringLiterals } from "./regex-base.js";
 const USING_ALIAS = /^\s*using\s+([A-Za-z_]\w*)\s*(?:\[\[[^\]]*\]\]\s*)?=\s*(?:typename\s+)?([^;{}]+);/;
 /** `typedef Car Motor;`, `typedef struct car car_t;`, `typedef const Car* CarRef;` — one declarator, no function pointer. */
 const TYPEDEF = /^\s*typedef\s+((?:(?:const|volatile|struct|class|union|enum|typename)\s+)*[A-Za-z_][\w:]*(?:\s*<[^;{}()]*>)?(?:\s*::\s*[A-Za-z_]\w*)*(?:\s*(?:const\b|[*&]))*)\s*([A-Za-z_]\w*)\s*;/;
+/** `namespace lib = home;`, `namespace util = league::util;` — a namespace alias, not a type. */
+const NAMESPACE_ALIAS = /^\s*namespace\s+([A-Za-z_]\w*)\s*=\s*((?:::\s*)?[A-Za-z_]\w*(?:\s*::\s*[A-Za-z_]\w*)*)\s*;/;
 /** A class head: `class Car {`, `struct CLUB_API Car : public Base`, `typedef struct car {` — its name, if any. */
 const CLASS_HEAD = /^\s*(?:template\s*<[^>]*>\s*)?(typedef\s+)?(?:class|struct|union)\s+(?:[A-Z][A-Z0-9_]+\s+)?([A-Za-z_]\w*)?(?![\w:]*\s*;)/;
 const NAMESPACE_HEAD = /^\s*(?:inline\s+)?namespace\b|^\s*extern\s+"C(?:\+\+)?"\s*\{?\s*$/;
@@ -36,13 +38,14 @@ interface Scope {
  *   using CarPtr = std::shared_ptr<Car>; → CarPtr = std::shared_ptr<Car>
  *   typedef struct car car_t;            → car_t = car
  *   typedef struct car { … } car_t;      → car_t = car
+ *   namespace lib = home;                 → lib   = home  (namespace alias; the linker rewrites `lib::Twin`)
  *
  * One declared inside a class is named by the class's path (`Garage::Ptr`), as a nested class is. A template
  * alias, a function-pointer typedef and an anonymous struct's typedef are left out.
  */
 export function extractCFamilyTypeAliases(lines: readonly string[]): TypeAliasInfo[] {
   const out: TypeAliasInfo[] = [];
-  if (!lines.some((l) => /\b(?:using|typedef)\b/.test(l))) return out;
+  if (!lines.some((l) => /\b(?:using|typedef|namespace)\b/.test(l))) return out;
   const stack: Scope[] = [];
   let pending: Scope | null = null;
   let comment = false;
@@ -66,8 +69,10 @@ export function extractCFamilyTypeAliases(lines: readonly string[]): TypeAliasIn
       const named = (name: string): string | null => (classPath.some((n) => !n) ? null : [...classPath, name].join("::"));
       const using = /^\s*template\b/.test(line) ? null : USING_ALIAS.exec(line);
       const typedef = using ? null : TYPEDEF.exec(line);
-      const alias = using ? { name: using[1]!, type: using[2]! } : typedef ? { name: typedef[2]!, type: typedef[1]! } : null;
-      const type = alias ? pointeeOf(alias.type.replace(/\b(?:struct|class|union|enum|typename)\s+/g, "").replace(/\s+/g, " ").trim()) : undefined;
+      const nsAlias = using || typedef ? null : NAMESPACE_ALIAS.exec(line);
+      const alias = using ? { name: using[1]!, type: using[2]! } : typedef ? { name: typedef[2]!, type: typedef[1]! }
+        : nsAlias ? { name: nsAlias[1]!, type: nsAlias[2]!.replace(/\s+/g, "") } : null;
+      const type = alias ? (nsAlias ? alias.type : pointeeOf(alias.type.replace(/\b(?:struct|class|union|enum|typename)\s+/g, "").replace(/\s+/g, " ").trim())) : undefined;
       const name = alias ? named(alias.name) : null;
       if (alias && name && type && type !== alias.name) out.push({ name, type, line: i + 1 });
       // `typedef struct car { int speed; } car_t;` on one line.

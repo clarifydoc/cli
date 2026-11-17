@@ -546,6 +546,52 @@ export function extractFunctionsWithSpec(lines: string[], spec: RegexLangSpec): 
 }
 
 /**
+ * Further `class`/`struct` heads on the same line after `from` (just past a prior one's closing `}`): each is its
+ * own ClassInfo with members clipped to its braces, so `struct Twin { void home(){} }; struct Twin { void away(){} };`
+ * never hands `away` to the first Twin.
+ */
+function pushOneLineSiblingClasses(classes: ClassInfo[], line: string, row: number, from: number, spec: RegexLangSpec): void {
+  let at = from;
+  while (at < line.length) {
+    // Skip the prior class's trailing `;` so a line-anchored `^…class|struct` can match the next head.
+    while (at < line.length && /[\s;]/.test(line[at]!)) at++;
+    if (at >= line.length) break;
+    const tail = " ".repeat(at) + line.slice(at);
+    let hit: { getExtends?: (line: string) => string | null; getImplements?: (line: string) => string[]; kind?: ClassInfo["kind"]; name: string } | null = null;
+    for (const { pattern, getExtends, getImplements, kind } of spec.classPatterns) {
+      // Patterns are line-anchored (`^`); the blanked prefix keeps columns so they still match.
+      const m = tail.match(pattern);
+      if (m && m[1]) { hit = { getExtends, getImplements, kind, name: m[1] }; break; }
+    }
+    if (!hit) break;
+    // Search from `at` (never m.index — the blanked prefix makes the match start at 0).
+    const brace = line.indexOf("{", at);
+    if (brace < 0) break;
+    const close = headerLineClose(line, brace + 1);
+    if (close < 0) break;
+    // Blank prior classes on the line so headerLineMethods starts at this head's `{`.
+    const clipped = " ".repeat(brace) + line.slice(brace, close) + " ".repeat(Math.max(0, line.length - close));
+    const methods = headerLineMethods(clipped, row, spec);
+    const decls = headerLineSegments(clipped, brace + 1).map((s) => " " + clipped.slice(s.from, s.to).trim());
+    const properties = extractPropertiesFromBody(decls, spec.propertyPatterns, spec);
+    const cls: ClassInfo = {
+      name: hit.name,
+      extends: hit.getExtends?.(line) ?? null,
+      implements: hit.getImplements?.(line) ?? [],
+      decorators: [],
+      methods,
+      properties,
+      isExported: true,
+      line: row + 1,
+      endLine: row + 1,
+    };
+    if (hit.kind) cls.kind = hit.kind;
+    classes.push(cls);
+    at = close;
+  }
+}
+
+/**
  * The function written after a one-line class's closing `}` on its line (`struct A { void f() {} }; void g() {}`):
  * the one match per line above reads the class's member, so what follows the class is read from the tail alone (the
  * text before it blanked, columns kept, so the line-anchored patterns still match).
@@ -561,8 +607,26 @@ function functionsAfterHeaderLineClass(lines: string[], i: number, spec: RegexLa
   }
   const brace = head ? line.indexOf("{", head.index ?? 0) : -1;
   if (brace < 0) return [];
-  const close = headerLineClose(line, brace + 1);
+  let close = headerLineClose(line, brace + 1);
   if (close < 0) return [];
+  // Skip further one-line class siblings (`struct A {…}; struct B {…}; void g() {}`) so `g` is read, not `B`'s member.
+  if (spec.splitHeaderLineMembers) {
+    while (close < line.length) {
+      const after = " ".repeat(close) + line.slice(close).replace(/^\s*;/, " ");
+      let sibling: RegExpMatchArray | null = null;
+      for (const c of spec.classPatterns) {
+        sibling = after.match(c.pattern);
+        if (sibling) break;
+      }
+      if (!sibling) break;
+      // Search from `close` (never sibling.index — the blanked prefix makes the match start at 0).
+      const nextBrace = line.indexOf("{", close);
+      if (nextBrace < 0) break;
+      const nextClose = headerLineClose(line, nextBrace + 1);
+      if (nextClose < 0) break;
+      close = nextClose;
+    }
+  }
   const tail = " ".repeat(close) + line.slice(close).replace(/^\s*;/, " ");
   if (!tail.trim()) return [];
   for (const { pattern, isExported, isAsync: asyncCheck, keywordNames, rename } of spec.functionPatterns) {
@@ -783,9 +847,18 @@ export function extractClassesWithSpec(lines: string[], spec: RegexLangSpec): Cl
         }
 
         // A class written on one line (`class UserRepo { func save() -> Int { 1 } }`):
-        // its methods sit on the header line itself, after the body's `{`.
-        if (methods.length === 0 && endLine === i + 1 && resolveBlockStyle(spec) === "brace") {
-          methods.push(...headerLineMethods(lines[i]!, i, spec));
+        // its methods sit on the header line itself, after the body's `{` — clipped to that
+        // class's own closing `}`, so a sibling `struct Twin {…}; struct Twin {…};` does not
+        // hand the second class's members to the first.
+        const oneLine = endLine === i + 1 && resolveBlockStyle(spec) === "brace";
+        const headAt = m.index ?? 0;
+        const braceAt = oneLine ? lines[i]!.indexOf("{", headAt) : -1;
+        const closeAt = braceAt >= 0 ? headerLineClose(lines[i]!, braceAt + 1) : -1;
+        const clipped = oneLine && closeAt >= 0
+          ? lines[i]!.slice(0, closeAt) + " ".repeat(Math.max(0, lines[i]!.length - closeAt))
+          : lines[i]!;
+        if (methods.length === 0 && oneLine) {
+          methods.push(...headerLineMethods(clipped, i, spec));
         }
 
         // Extract properties (typed fields). A wrapped header (`class A extends B`
@@ -799,10 +872,10 @@ export function extractClassesWithSpec(lines: string[], spec: RegexLangSpec): Cl
         }
         const properties: PropertyInfo[] = extractPropertiesFromBody(lines.slice(open + 1, endLine), spec.propertyPatterns, spec);
         // The fields of a class written on one line sit on its header line, after the `{`.
-        if (spec.splitHeaderLineMembers && endLine === i + 1 && resolveBlockStyle(spec) === "brace") {
-          const brace = lines[i]!.indexOf("{");
+        if (spec.splitHeaderLineMembers && oneLine) {
+          const brace = clipped.indexOf("{", headAt);
           if (brace >= 0) {
-            const decls = headerLineSegments(lines[i]!, brace + 1).map((s) => " " + lines[i]!.slice(s.from, s.to).trim());
+            const decls = headerLineSegments(clipped, brace + 1).map((s) => " " + clipped.slice(s.from, s.to).trim());
             properties.push(...extractPropertiesFromBody(decls, spec.propertyPatterns, spec));
           }
         }
@@ -820,6 +893,10 @@ export function extractClassesWithSpec(lines: string[], spec: RegexLangSpec): Cl
         };
         if (kind) cls.kind = kind;
         classes.push(cls);
+        // Further one-line classes on the same line after this one's `}` (`struct A {…}; struct B {…};`).
+        if (spec.splitHeaderLineMembers && oneLine && closeAt >= 0) {
+          pushOneLineSiblingClasses(classes, lines[i]!, i, closeAt, spec);
+        }
         break;
       }
     }

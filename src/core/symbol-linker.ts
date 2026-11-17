@@ -6166,18 +6166,25 @@ function receiverDeclaredType(
   head: string,
 ): string | null {
   const lang = analysis.language;
+  /** Prefer a written namespace path (`lib::Twin`) over the bare leaf so unique-global cannot match a namesake. */
+  const asDeclared = (type: string | null | undefined): string | null => {
+    if (!type) return null;
+    const bare = receiverTypeName(type, lang);
+    const path = bare ? writtenTypePath(type, bare) : null;
+    return path ?? bare;
+  };
   const callable = findEnclosingCallable(analysis, sourceSymbol);
   if (callable) {
     const local = callable.localTypes?.find((l) => l.name === head);
-    if (local) return receiverTypeName(local.type, lang);
+    if (local) return asDeclared(local.type);
     const param = callable.params?.find((p) => p.name === head);
-    if (param?.type) return receiverTypeName(param.type, lang);
+    if (param?.type) return asDeclared(param.type);
   }
   const dot = sourceSymbol.indexOf(".");
   if (dot > 0) {
     const cls = analysis.classes.find((c) => c.name === sourceSymbol.slice(0, dot));
     const prop = cls?.properties?.find((p) => p.name === head);
-    if (prop?.type) return receiverTypeName(prop.type, lang);
+    if (prop?.type) return asDeclared(prop.type);
   }
   return null;
 }
@@ -8972,16 +8979,25 @@ function namespacedTypeRef(
   } else {
     const leaf = segments.at(-1)!;
     if (!declarations(leaf).some((d) => d.cls.namespace)) return undefined;
+    // A namespace alias (`namespace lib = home;`) rewrites the qualifier before matching.
+    const aliasOf = (q: string): string => (ctx.typeAliases ? followTypeAlias(ctx.typeAliases, q, sourceFile, () => false) : q);
     search: for (let k = segments.length - 1; k >= 1; k--) {
       const name = segments.slice(k).join("::");
       const qualifier = segments.slice(0, k).join("::");
+      const aliased = aliasOf(qualifier);
       const decls = declarations(name);
-      for (const ns of [...(scope?.chain ?? []).map((c) => `${c}::${qualifier}`), qualifier]) {
+      const qualifiers = [...new Set([
+        ...(scope?.chain ?? []).flatMap((c) => [`${c}::${qualifier}`, ...(aliased !== qualifier ? [`${c}::${aliased}`] : [])]),
+        qualifier,
+        ...(aliased !== qualifier ? [aliased] : []),
+      ])];
+      for (const ns of qualifiers) {
         const hit = decls.filter((d) => d.cls.namespace === ns);
         if (hit.length > 0) { pool = hit; break search; }
       }
     }
-    if (pool.length === 0) return undefined;
+    // A foreign namespace (`lib::Twin` with no `lib` and no alias) must not fall through to a bare namesake.
+    if (pool.length === 0) return null;
   }
   const files = [...new Set(pool.map((d) => d.file))];
   if (files.length === 1) return { typeName: pool[0]!.name, typeFile: files[0]! };

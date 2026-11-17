@@ -25,6 +25,13 @@ using league::Car;
     ]);
   });
 
+  it("reads a namespace alias as a type-alias entry the linker can rewrite", () => {
+    expect(aliases("namespace lib = home;\nnamespace util = league::util;\n")).toEqual([
+      "lib = home",
+      "util = league::util",
+    ]);
+  });
+
   it("reads C struct typedefs, written apart or around the struct's body", () => {
     expect(aliases(`struct car;
 typedef struct car car_t;
@@ -55,5 +62,14 @@ struct car* make_car(int seats) {
   return 0;
 }
 `)).toEqual(["Table::Ptr = std::shared_ptr<Table>"]);
+  });
+
+  it("reads a namespace alias as lib = home", () => {
+    expect(aliases(`namespace home {
+class Twin;
+}
+namespace lib = home;
+namespace util = league::util;
+`)).toEqual(["lib = home", "util = league::util"]);
   });
 });

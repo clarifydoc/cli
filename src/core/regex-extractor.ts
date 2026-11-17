@@ -203,11 +203,13 @@ function adoptParsedMembers(classes: ClassInfo[], functions: FunctionInfo[], spa
     if (claimed.has(fn) || nested(fn)) continue;
     let owner: ClassInfo | null = null;
     // A parser that states the class a member is declared in decides it, even on the class's own line.
+    // Several same-named classes sharing that extent (two `struct Twin` on one line): refuse rather than guess.
     const named = ownerOf(fn);
     if (named) {
-      for (const cls of classes) {
-        if ((cls.name === named || cls.name.endsWith(`::${named}`)) && cls.line <= fn.line && fn.endLine <= cls.endLine && (!owner || cls.line > owner.line)) owner = cls;
-      }
+      const hits = classes.filter((cls) =>
+        (cls.name === named || cls.name.endsWith(`::${named}`)) && cls.line <= fn.line && fn.endLine <= cls.endLine);
+      if (hits.length === 1) owner = hits[0]!;
+      else if (hits.length > 1) continue;
     }
     if (!owner) {
       for (const cls of classes) {
