@@ -142,6 +142,34 @@ def renew_nested(make):
     return inner
 
 
+def renew_matched(event):
+    match event:
+        case [ticket]:
+            ticket.renew()
+
+
+def renew_matched_keyword(event):
+    match event:
+        case {"k": ticket, **rest}:
+            ticket.renew()
+        case Fixture(name=ticket):
+            ticket.renew()
+
+
+def renew_deleted():
+    del ticket
+    ticket.renew()
+
+
+def renew_global_below(make):
+    def inner():
+        global ticket
+        ticket = make()
+
+    inner()
+    ticket.renew()
+
+
 class Desk:
     def run(self):
         ticket.renew()
@@ -215,8 +243,8 @@ describe("symbol-linker — a cut receiver name is typed by no binding of the ca
       expect(linksOf("python", "renew_all", "ticket.settle")).toEqual([]);
     });
 
-    it("leaves a function that rebinds the name alone — by assignment, loop, parameter, global or an enclosing function", () => {
-      for (const fn of ["renew_rebound", "renew_each", "renew_given", "renew_global", "renew_caught", "renew_opened", "renew_nested.inner", "inner"]) {
+    it("leaves a function that rebinds the name alone — by assignment, loop, parameter, global, a match capture, `del`, a nested function's `global` or an enclosing function", () => {
+      for (const fn of ["renew_rebound", "renew_each", "renew_given", "renew_global", "renew_caught", "renew_opened", "renew_nested.inner", "inner", "renew_matched", "renew_matched_keyword", "renew_deleted", "renew_global_below"]) {
         expect(linksOf("python", fn, "ticket.renew").filter((l) => l.targetSymbol === "SeasonTicket.renew")).toEqual([]);
       }
     });

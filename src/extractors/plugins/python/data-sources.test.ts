@@ -805,3 +805,21 @@ describe("Python Dapr pub/sub", () => {
     expect(await rows(["def create(garage):", "    garage.publish_event(pubsub_name='p', topic_name='car-parked', data=1)"].join("\n"))).toEqual([]);
   });
 });
+
+describe("a loop over a module-level constant of classes", () => {
+  const rowsOf = async (src: string) => {
+    const tree = await parseSource(src, "python" as never, "x.py");
+    return new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database").map((d) => [d.entity ?? null, d.line]);
+  };
+  const HEAD = ["from sqlalchemy import select, func", ""];
+  it("reads every class a mapping's values or a tuple holds", async () => {
+    const src = [...HEAD, "COUNTED = {'clubs': Club, 'players': Player}", "LISTED = (Club, Player)", "", "def counts(session):", "    for key, model in COUNTED.items():", "        session.scalar(select(func.count(model.id)))", "", "def listed(session):", "    for model in LISTED:", "        session.scalars(select(model))"].join("\n");
+    const found = await rowsOf(src);
+    expect(found).toEqual([["Club", 8], ["Player", 8], ["Club", 12], ["Player", 12]]);
+  });
+  it("reads no class from a bare dict (its keys), a name bound twice or a non-literal", async () => {
+    const src = [...HEAD, "COUNTED = {'clubs': Club}", "OTHER = (Club,)", "OTHER = (Car,)", "BUILT = make_models()", "", "def a(session):", "    for model in COUNTED:", "        session.scalars(select(model))", "", "def b(session):", "    for model in OTHER:", "        session.scalars(select(model))", "", "def c(session):", "    for model in BUILT:", "        session.scalars(select(model))"].join("\n");
+    const found = await rowsOf(src);
+    expect(found.filter(([e]) => e === "Club" || e === "Car")).toEqual([]);
+  });
+});

@@ -6,7 +6,7 @@ import { propFunctionName } from "./markup-calls.js";
 import { WHOLE_SLOT_PROPS } from "./template-scopes.js";
 import { dispatchMapHoldersOf, type MapHeld } from "./dispatch-map-props.js";
 import { escapeRegex } from "../shared/path-utils.js";
-import { destructuredProps } from "../../shared/destructuring.js";
+import { destructuredProps, destructuredRest } from "../../shared/destructuring.js";
 
 /**
  * Component-event dispatch: wire a child component's `emit('save')` to the
@@ -638,6 +638,9 @@ export class JsPropCallbackResolver implements DispatchResolver {
           // `actions.map((a) => a.run())` over the prop: the element's member is the prop's `actions.run`.
           if (member && propElementsOf(child, local ? [local] : [`props.${head}`, `this.props.${head}`], line).some((e) => name === e + member)) return true;
           if (local !== undefined) return local !== null && name === local + member;
+          // `function Pager({ n, ...others })`: `others.table.nextPage()` is the prop's `table.nextPage` — a rest holds every prop the pattern names no other way.
+          const rest = restOf(child, line);
+          if (rest && name.startsWith(`${rest}.`)) return name.slice(rest.length + 1) === prop;
           return name === prop && freeName;
         };
         const callers: Array<{ symbol: string; line: number; callName: string }> = [];
@@ -723,6 +726,15 @@ function propLocalOf(file: FileAnalysis, prop: string, line: number): string | n
     if (props.has(prop)) return props.get(prop)!;
   }
   return undefined;
+}
+
+/** The name the component around `line` binds the props its pattern names no other way to (`function Pager({ n, ...others })` → `others`), else null. */
+function restOf(file: FileAnalysis, line: number): string | null {
+  for (const f of enclosingFunctions(file, line)) {
+    const rest = destructuredRest(f.params[0]?.name ?? "");
+    if (rest) return rest;
+  }
+  return null;
 }
 
 /** Whether the component around `line` destructures its props (`function KitRow({ order })`), rather than taking them whole. */

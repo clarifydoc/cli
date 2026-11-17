@@ -3,7 +3,7 @@ import { parseUnifiedHunks, reverseSymbolReach, symbolsInHunks } from "./changed
 import type { SymbolLink } from "../types/analysis.js";
 
 describe("parseUnifiedHunks", () => {
-  it("reads new-side ranges, a pure deletion as the line it sat before", () => {
+  it("reads new-side ranges; a pure deletion is kept apart as the old-side lines removed", () => {
     const diff = [
       "diff --git a/src/a.ts b/src/a.ts",
       "--- a/src/a.ts",
@@ -15,7 +15,9 @@ describe("parseUnifiedHunks", () => {
       "+++ /dev/null",
       "@@ -1,5 +0,0 @@",
     ].join("\n");
-    expect([...parseUnifiedHunks(diff)]).toEqual([["src/a.ts", [[3, 6], [22, 22], [31, 31]]]]);
+    const hunks = parseUnifiedHunks(diff);
+    expect([...hunks]).toEqual([["src/a.ts", [[3, 6], [22, 22]]]]);
+    expect([...hunks.deleted!]).toEqual([["src/a.ts", [[30, 32]]]]);
   });
 });
 

@@ -427,4 +427,32 @@ describe("routes.rb: a `controller :name do` block", () => {
     const out = routes(draw(`  controller :clubs do\n    get 'archive', action: :archive\n    get :roster\n  end\n  get 'cups', to: 'cups#index'`));
     expect(out.map(sig)).toEqual(["GET /archive -> ClubsController#archive", "GET /roster -> ClubsController#roster", "GET /cups -> CupsController#index"]);
   });
+
+  it("honours on:, path: and module: on the routes of the block", () => {
+    const out = routes(draw([
+      "  resources :clubs do",
+      "    controller :squads do",
+      "      get :roster, on: :member",
+      "      get :table, on: :collection",
+      "      get :badge, path: 'crest', on: :member",
+      "      post :sign, module: :staff",
+      "    end",
+      "  end",
+      "  controller :fixtures do",
+      "    get :where, path: 'location'",
+      "  end",
+      "  resources :cars do",
+      "    get :trim, on: :member",
+      "  end",
+    ].join("\n")));
+    const s = out.map(sig);
+    expect(s).toContain("GET /clubs/:id/roster -> SquadsController#roster");
+    expect(s).toContain("GET /clubs/table -> SquadsController#table");
+    expect(s).toContain("GET /clubs/:id/crest -> SquadsController#badge");
+    expect(s).toContain("POST /clubs/:club_id/sign -> Staff::SquadsController#sign");
+    expect(s).toContain("GET /location -> FixturesController#where");
+    // outside the block the namesake resource keeps its own controller
+    expect(s).toContain("GET /cars/:id/trim -> CarsController#trim");
+    expect(s.some((x) => x.includes("/clubs/:club_id/roster"))).toBe(false);
+  });
 });

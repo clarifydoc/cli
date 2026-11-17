@@ -412,6 +412,36 @@ export class PublicClubsApi extends BaseReadOnlyAPI {
     expect(targets.map((t) => t[0])).toEqual(["/api/leagues/{}/clubs", "/api/leagues/{}/clubs/{}"]);
   });
 
+  describe("a helper a subclass hands `super(…)` through a module binding", () => {
+    const base = `
+export abstract class BaseApi {
+  public baseRoute: string;
+  constructor(requests: Requests, baseRoute: string) { this.baseRoute = baseRoute; }
+  async getAll() { return await this.requests.get(this.baseRoute); }
+}`;
+    const client = `
+export function leaguePath(slug: string): string { return \`/api/v1/leagues/\${slug}\`; }
+export const api = { leaguePath: (slug: string) => slug };`;
+
+    it("takes the helper of a namespace-imported module", async () => {
+      const targets = await project({
+        "src/base.ts": base,
+        "src/client.ts": client,
+        "src/clubs.ts": `import { BaseApi } from "./base";\nimport * as urls from "./client";\nexport class ClubsApi extends BaseApi {\n  constructor(requests: Requests, slug: string) { super(requests, urls.leaguePath(slug)); }\n}`,
+      });
+      expect(targets.map((t) => t[0])).toEqual(["/api/v1/leagues/{}"]);
+    });
+
+    it("never takes a namesake of the module when the head is an object the module exports", async () => {
+      const targets = await project({
+        "src/base.ts": base,
+        "src/client.ts": client,
+        "src/clubs.ts": `import { BaseApi } from "./base";\nimport { api } from "./client";\nexport class ClubsApi extends BaseApi {\n  constructor(requests: Requests, slug: string) { super(requests, api.leaguePath(slug)); }\n}`,
+      });
+      expect(targets.map((t) => t[0]).join()).not.toContain("/api/v1/leagues");
+    });
+  });
+
   it("requests the entry of a module's URL table a pass-through helper is handed (real-repo FP)", async () => {
     const targets = await project({
       "src/base/route.ts": `export function route(rest: string, params: Record<string, string> | null = null): string {

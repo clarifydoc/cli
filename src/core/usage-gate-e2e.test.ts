@@ -5,6 +5,8 @@ import { join } from "path";
 import { analyze } from "./analyzer.js";
 import { loadReportSummary } from "./report-payload.js";
 import type { ProjectAnalysis } from "../types/analysis.js";
+import { findExportBundle } from "../export/index.js";
+import type { Summary } from "../export/types.js";
 
 /**
  * A shared confirm dialog two pages use, each binding its own handler: the club page's
@@ -118,9 +120,19 @@ describe("an emit returns to the usage it came in by (React callback props)", ()
     expect(tablesOf(summary, "web/src/pages/PlayerPage.tsx")).toEqual(["players"]);
   });
 
-  it("lets the dialog alone and the app rendering both pages reach both tables", () => {
-    expect(tablesOf(summary, "web/src/components/ConfirmDialog.tsx")).toEqual(["clubs", "players"]);
+  it("lists no page's tables on the shared dialog's own screen, and both on the app rendering both pages", () => {
+    expect(tablesOf(summary, "web/src/components/ConfirmDialog.tsx")).toEqual([]);
     expect(tablesOf(summary, "web/src/App.tsx")).toEqual(["clubs", "players"]);
+  });
+
+  it("writes the shared dialog's screen spec with neither page's request, and each page's with its own", () => {
+    const files = new Map(findExportBundle("screens")!.render(summary as unknown as Summary).map((f) => [f.path, f.content]));
+    const spec = (name: string) => files.get(`screens/${name}.md`) ?? "";
+    expect(spec("ConfirmDialog")).not.toMatch(/api\/(clubs|players)/);
+    expect(spec("ClubPage")).toContain("/api/clubs");
+    expect(spec("ClubPage")).not.toContain("/api/players");
+    expect(spec("PlayerPage")).toContain("/api/players");
+    expect(spec("PlayerPage")).not.toContain("/api/clubs");
   });
 
   it("drops the other page's handler from the page's own reach", () => {
@@ -236,7 +248,14 @@ describe("an emit returns to the usage it came in by (Vue template refs)", () =>
   it("returns a page's call into the dialog to that page's handler only", () => {
     expect(summary.symbolLinks.some((l) => l.sourceSymbol === "quickSave" && l.targetSymbol === "onConfirm")).toBe(true);
     expect(tablesOf(summary, "web/src/pages/ClubPage.vue")).toEqual(["clubs"]);
-    expect(tablesOf(summary, "web/src/components/ConfirmDialog.vue")).toEqual(["clubs", "players"]);
+    expect(tablesOf(summary, "web/src/components/ConfirmDialog.vue")).toEqual([]);
+  });
+
+  it("keeps the dialog's symbol reach whole, the parents' effects flagged as reached through a binding", () => {
+    const reach = summary.symbolReach?.find((r) => r.file === "web/src/components/ConfirmDialog.vue" && r.symbol === "onConfirm");
+    const db = reach?.effects.filter((e) => e.kind.startsWith("db")) ?? [];
+    expect(db.map((e) => e.resource).sort()).toEqual(["clubs", "players"]);
+    expect(db.every((e) => e.viaBinding)).toBe(true);
   });
 
   it("leaves the dialog through no page's handler for a page that calls into it but binds the event nowhere", () => {

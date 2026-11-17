@@ -26,6 +26,11 @@ export function nameWords(name: string): string[] {
   return leaf.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase().split(/_+/).filter(Boolean);
 }
 
+/** Whether a callable's name says it is optional or a configuration switch — never a check on the caller, whatever its body does. */
+export function namesNonCaller(name: string): boolean {
+  return nameWords(name).some((w) => OPTIONAL_WORD.test(w) || SWITCH_WORD.test(w));
+}
+
 /** The rule above, on a callable's name as written (a dotted path's last segment). */
 export function namesCallerCheck(name: string): boolean {
   const words = nameWords(name);

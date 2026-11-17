@@ -14,10 +14,10 @@ import type { ProjectAnalysis } from "../types/analysis.js";
 const FILES: Record<string, string> = {
   "Cargo.toml": `[package]\nname = "league"\nversion = "0.1.0"\n`,
   "src/main.rs": `mod Pitch;\nmod other;\nmod shape;\nmod run;\nfn main() {}\n`,
-  "src/Pitch.rs": `pub struct Garage;\n\nimpl Garage {\n    pub fn park() {}\n}\n`,
-  "src/other.rs": `pub struct Garage;\n\nimpl Garage {\n    pub fn park() {}\n}\n`,
+  "src/Pitch.rs": `pub struct Garage;\n\nimpl Garage {\n    pub fn park() {}\n}\n\npub fn tune() {}\n`,
+  "src/other.rs": `pub struct Garage;\n\nimpl Garage {\n    pub fn park() {}\n}\n\npub fn tune() {}\n\npub fn wash() {}\n`,
   "src/shape.rs": `pub struct Shape;\n\npub struct Kind;\n\nimpl Kind {\n    pub fn make() {}\n}\n`,
-  "src/run.rs": `use crate::shape::{Kind, Shape};\n\npub fn through_module() {\n    crate::Pitch::Garage::park();\n}\n\npub fn through_assoc() {\n    Shape::Kind::make();\n}\n`,
+  "src/run.rs": `use crate::shape::{Kind, Shape};\n\npub fn through_module() {\n    crate::Pitch::Garage::park();\n}\n\npub fn through_assoc() {\n    Shape::Kind::make();\n}\n\npub fn free_in_module() {\n    crate::Pitch::tune();\n}\n\npub fn free_missing() {\n    crate::Pitch::wash();\n}\n\npub fn free_no_module() {\n    crate::Nowhere::tune();\n}\n`,
 };
 
 describe.each([
@@ -55,5 +55,17 @@ describe.each([
 
   it("keeps an associated-type path unlinked when no module has the name", () => {
     expect(linkOf("through_assoc")).toEqual([]);
+  });
+
+  it("links a free function of a capitalized module, never the namesake beside it", () => {
+    expect(linkOf("free_in_module")).toEqual(["crate::Pitch::tune -> src/Pitch.rs"]);
+  });
+
+  it("links nothing when the capitalized module lacks the function", () => {
+    expect(linkOf("free_missing")).toEqual([]);
+  });
+
+  it("links nothing when no module has the capitalized name", () => {
+    expect(linkOf("free_no_module")).toEqual([]);
   });
 });

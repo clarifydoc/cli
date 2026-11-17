@@ -2,7 +2,7 @@ import type { Node, Tree } from "web-tree-sitter";
 import type { CallInfo, ParamInfo, ValueCell, ValueFlowFact } from "../../../types/analysis.js";
 import { javascriptCallHooks } from "./call-hooks.js";
 import { dispatchMapCallee, dispatchMapMember } from "./dispatch-maps.js";
-import { boundAtSite } from "./block-scope.js";
+import { boundAtSite, reboundBefore } from "./block-scope.js";
 import { heldFunction } from "./held-functions.js";
 
 /**
@@ -219,6 +219,8 @@ class Flow {
   private readonly memberCalls: Array<{ cell: ValueCell; name: string; line: number; column?: number }> = [];
   /** Loop variables and element-callback parameters: bound where they are used, by construction. */
   private readonly iterNames = new Set<string>();
+  /** Locals bound to a context read (`const ctx = useContext(CmdContext)`): the context's name each stands for. */
+  private readonly contextLocals = new Map<string, { context: string; scope: Node }>();
   private fnDepth = 0;
   private plainDepth = 0;
   private tmp = 0;
@@ -280,7 +282,14 @@ class Flow {
       case "variable_declarator": {
         const name = node.childForFieldName("name");
         const value = node.childForFieldName("value");
-        if (name?.type === "identifier" && value && !isFunctionLike(value)) this.assignTo({ name: name.text }, value, node.startPosition.row + 1);
+        if (name?.type === "identifier" && value && !isFunctionLike(value)) {
+          const call = callOf(value);
+          const context = call ? this.contextArgument(call) : null;
+          // The alias holds in the block that declares it (a function body, a callback's, the module's), nowhere else.
+          const scope = node.parent?.parent;
+          if (context && scope) this.contextLocals.set(name.text, { context: context.text, scope });
+          this.assignTo({ name: name.text }, value, node.startPosition.row + 1);
+        }
         else if (name?.type === "object_pattern" && value) this.destructure(name, value, node.startPosition.row + 1);
         break;
       }
@@ -313,7 +322,7 @@ class Flow {
       if (object.type === "identifier") return { name: object.text, member: prop.text };
       const base = this.placeOf(object);
       // `kit[kind].run`: a member of the element a computed key picks.
-      if (base && object.type === "subscript_expression" && base.name !== "this" && base.member?.endsWith("[]") && !base.member.includes(".")) return subOf(base, prop.text);
+      if (base && object.type === "subscript_expression" && base.name !== "this" && base.member?.endsWith("[]") && !base.member.slice(0, -2).includes("[")) return subOf(base, prop.text);
       return base && base.name === "this" && base.member !== undefined && base.member.split(".").length < MAX_DEPTH ? subOf(base, prop.text) : null;
     }
     if (n.type === "subscript_expression") {
@@ -322,7 +331,9 @@ class Flow {
       if (!base) return null;
       if (base.name === "this" || base.member !== undefined) {
         // `this.items[k]`: the element of a field (no per-key cells below `this`).
-        return base.name === "this" && base.member !== undefined ? elementOf(base) : null;
+        if (base.name === "this" && base.member !== undefined) return elementOf(base);
+        // `kits.club[k]`: an element of a member of a local object (one computed key, below the first level).
+        return key === null && base.name !== "this" && base.member !== undefined && !base.member.includes("[") ? elementOf(base) : null;
       }
       return key ? { name: base.name, member: key } : elementOf(base);
     }
@@ -690,6 +701,16 @@ class Flow {
       return;
     }
     const place = this.placeOf(callee);
+    // `ctx.onPurge()` with `const ctx = useContext(CmdContext)`: the member the context was built with, run only where
+    // that context's own member is written (the file's own, or the file its import names).
+    const alias = place?.member !== undefined && !place.member.includes(".") ? this.contextLocals.get(place.name) : undefined;
+    // Inside the declaring scope, and no parameter, local, loop or catch binding of the name between the call and it.
+    const context = alias && isWithin(node, alias.scope) && !reboundBefore(node, place!.name, alias.scope) ? alias.context : undefined;
+    if (context && place?.member !== undefined) {
+      const callName = joinableCallName(javascriptCallHooks.resolveCallName?.(node) ?? null);
+      if (callName) this.facts.push({ kind: "invoke", cell: { name: context, member: place.member }, call: callName, line, held: "module" });
+      return;
+    }
     // `kit[kind].run()`: the member of whichever element the computed key picks, run only when this function stored it.
     const picked = unwrap(callee.childForFieldName("object"));
     if (place && picked?.type === "subscript_expression" && property) {
@@ -829,4 +850,10 @@ export function moduleValueFlowOf(tree: Tree, sourceText: string): ValueFlowFact
 /** A call spelled as a chain or an expression (`rows.map(…).sort`) names no callee the linker could join. */
 function joinableCallName(name: string | null): string | null {
   return name && name.length <= 100 && /^(?:new )?[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\[\](?:\.[A-Za-z_$][\w$]*)*)?$/.test(name) ? name : null;
+}
+
+/** Whether `node` lies inside `scope`. */
+function isWithin(node: Node, scope: Node): boolean {
+  for (let p: Node | null = node.parent; p; p = p.parent) if (p.id === scope.id) return true;
+  return false;
 }

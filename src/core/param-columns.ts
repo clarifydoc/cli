@@ -151,8 +151,8 @@ export function computeParamColumns(input: {
   };
 
   type Row = Omit<ParamColumn, "route">;
-  const walk = (file: string, symbol: string, at: number | null, calls: readonly CallInfo[], slot: Slot, hops: ParamColumn["hops"], depth: number, confidence: Confidence, seen: Set<string>, out: Row[]): void => {
-    const key = `${file}::${symbol}@${at}#${slotKey(slot)}`;
+  const walk = (file: string, symbol: string, at: number | null, calls: readonly CallInfo[], slot: Slot, hops: ParamColumn["hops"], depth: number, confidence: Confidence, seen: Set<string>, out: Row[], literals?: ReadonlyMap<number, string>): void => {
+    const key = `${file}::${symbol}@${at}#${slotKey(slot)}${literals ? `~${[...literals].map(([i, v]) => `${i}=${v}`).join(",")}` : ""}`;
     if (seen.has(key) || depth > MAX_DEPTH || out.length >= MAX_PER_ROUTE) return;
     seen.add(key);
     for (const d of statementsOf.get(`${file}::${symbol}@${at}`) ?? []) {
@@ -160,8 +160,11 @@ export function computeParamColumns(input: {
       let named = false;
       for (const w of d.whereFields ?? []) {
         if (!matches(w.origin, slot)) continue;
+        // A column the function takes as a parameter: the string literal the call just walked through handed it.
+        const field = w.fieldParam === undefined ? w.field : literals?.get(w.fieldParam);
+        if (field === undefined) continue;
         named = true;
-        out.push({ column: column(w.field), hops, ...(w.transform ? { transform: w.transform } : {}), confidence });
+        out.push({ column: column(field), hops, ...(w.transform ? { transform: w.transform } : {}), confidence });
       }
       // A condition object the statement filters on whole: the field the walk carries in it is the column —
       // unless the filter compares that value with a column it names itself, which says it better.
@@ -204,7 +207,14 @@ export function computeParamColumns(input: {
           }
           const hop = { file: link.targetFile, symbol: link.targetSymbol, line: target.fn.line, arg: index, ...(field !== undefined ? { field } : {}) };
           const conf = weakest(confidence, link.confidence ?? "INFERRED");
-          walk(target.file, target.symbol, target.fn.line, target.fn.calls, next, [...hops, hop], depth + 1, conf, seen, out);
+          // The string literals this call hands the callee, by its parameter: a column a generic repository takes by name.
+          const given = new Map<number, string>();
+          for (const x of call.argOrigins ?? []) {
+            if (x.origin.kind !== "literal") continue;
+            const at = x.param !== undefined ? target.fn.params.findIndex((p) => p.name === x.param) : x.index + (target.fn.params[0]?.isReceiver && call.name.includes(".") ? 1 : 0);
+            if (at >= 0 && at < target.fn.params.length) given.set(at, x.origin.value);
+          }
+          walk(target.file, target.symbol, target.fn.line, target.fn.calls, next, [...hops, hop], depth + 1, conf, seen, out, given.size ? given : undefined);
           // A generic handler calling a method on the object it is handed (`DoUpdate(ctx, obj CObject, a)` →
           // `obj.Update(s, a)`): the call site, which knows the object's type, holds the dispatch to that
           // type's method (`obj.Update` → `ClubRead.Update`), where the field is its receiver's.

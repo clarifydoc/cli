@@ -80,6 +80,23 @@ export function addMacroMembers(lines: readonly string[], cls: ClassInfo, classe
   const skipTo = new Set<number>();
   // Macro heads first: only a line that is one pays for the nesting test.
   let isOwn: ((i: number) => boolean) | undefined;
+  // `Score = Struct.new(:home, :away) do … end` / `Data.define(:player, :fee)`: the listed fields are readers
+  // (and, on a Struct, writers) of the class the constant names.
+  const record = /=\s*(Struct\.new|Data\.define)\b\s*\(?(.*?)\)?\s*(?:\bdo\b.*|\{.*)?$/.exec(lines[cls.line - 1] ?? "");
+  if (record) {
+    for (const n of listedNames(record[2]!.replace(/,?\s*(?:\w+:|:\w+\s*=>)\s*[^,]+$/, ""))) {
+      add(n, cls.line, cls.line, record[1]!);
+      if (record[1] === "Struct.new") add(`${n}=`, cls.line, cls.line, record[1]!);
+    }
+  }
+  // `include Singleton`: the class answers `instance` (no return type: a subclass's `instance` is its own, and
+  // which classes extend this one is no fact of this file).
+  for (let i = cls.line; i < limit; i++) {
+    if (/^\s*include\s+(?:::)?Singleton\s*$/.test(lines[i] ?? "") && (isOwn ??= ownLineTest(cls, classes))(i)) {
+      add("instance", i + 1, i + 1, "Singleton", { classLevel: true });
+      break;
+    }
+  }
   for (let i = cls.line; i < limit; i++) {
     if (skipTo.has(i)) continue;
     const raw = lines[i] ?? "";

@@ -52,9 +52,9 @@ export function extractStoreShapes(tree: Tree, sourceText: string, filePath: str
     } else if (value.type === "object") {
       if (declaresNamespaced(value)) namespaced.push(name.text);
       // `const actions = { load, ...readActions }`: actions another file defines (a `mutations` table the same).
-      const spread = isSection(name.text) ? value.namedChildren.filter((c) => c?.type === "spread_element").map((c) => unwrap(c!.namedChildren[0])).filter((v) => v?.type === "identifier").map((v) => v!.text) : [];
+      const spread = isSection(name.text) || isTableName(name.text) ? value.namedChildren.filter((c) => c?.type === "spread_element").map((c) => unwrap(c!.namedChildren[0])).filter((v) => v?.type === "identifier").map((v) => v!.text) : [];
       if (spread.length > 0) spreads[name.text] = spread;
-    } else if (value.type === "call_expression" && isSection(name.text) && objectAssignArgs(value).length > 0) {
+    } else if (value.type === "call_expression" && (isSection(name.text) || isTableName(name.text)) && objectAssignArgs(value).length > 0) {
       // `const actions = Object.assign({}, baseActions, { save() {…} })`.
       const spread = mergedActionNames(value);
       if (spread.length > 0) spreads[name.text] = [...new Set([...(spreads[name.text] ?? []), ...spread])];
@@ -119,6 +119,11 @@ function buildsRootStore(tree: Tree, sourceText: string): boolean {
     if (args?.namedChildren.some((a) => a?.type === "object")) return true;
   }
   return false;
+}
+
+/** A table another table spreads in is named for what it holds (`baseMutations`, `crudActions`): it spreads further tables in turn. */
+function isTableName(name: string): boolean {
+  return /(?:^|[a-z])(?:[mM]utations|[aA]ctions)$/.test(name);
 }
 
 function isSection(name: string): name is Section {

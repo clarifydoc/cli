@@ -5,6 +5,7 @@ import { extractSpringClientProxies } from "./client-proxies.js";
 import { mapperDataSources, mapperFunctions } from "./mybatis.js";
 import { ormMappingFunctions } from "./orm-mappings.js";
 import { liquibaseClasses, liquibaseImports } from "./liquibase.js";
+import { localName } from "../shared/xml-scan.js";
 import { androidNavGraphFacts } from "../shared/android-nav-graph.js";
 import { CXF_SERVER_ADDRESS_FACT, CXF_SERVICE_BEANS_FACT, cxfAddressPath, type ServerAddressFact } from "../shared/cxf-service-beans.js";
 
@@ -40,7 +41,7 @@ import { CXF_SERVER_ADDRESS_FACT, CXF_SERVICE_BEANS_FACT, cxfAddressPath, type S
  */
 
 // ─── Tolerant XML tag scan (tags span lines; quoted '>' must not close) ─────
-const XML_TAG_RE = /<(\/?)([a-zA-Z][\w.-]*)((?:[^<>"']|"[^"]*"|'[^']*')*?)(\/?)>/g;
+const XML_TAG_RE = /<(\/?)([a-zA-Z][\w.:-]*)((?:[^<>"']|"[^"]*"|'[^']*')*?)(\/?)>/g;
 
 function attrOf(attrs: string, name: string): string | null {
   const m = attrs.match(new RegExp(`(?:^|\\s)${name}\\s*=\\s*"([^"]*)"|(?:^|\\s)${name}\\s*=\\s*'([^']*)'`));
@@ -49,7 +50,10 @@ function attrOf(attrs: string, name: string): string | null {
 
 interface XmlTag {
   close: boolean;
+  /** The local name: `bean` for `<beans:bean>` — a prefix spells a namespace, not what the element is. */
   name: string;
+  /** The name as written, prefix included (`jaxrs:server`). */
+  qname: string;
   attrs: string;
   selfClose: boolean;
   line: number;
@@ -69,7 +73,7 @@ function scanTags(source: string): XmlTag[] {
       if (masked.charCodeAt(i) === 10) line++;
     }
     lastIndex = m.index!;
-    out.push({ close: m[1] === "/", name: m[2]!, attrs: m[3] ?? "", selfClose: m[4] === "/", line });
+    out.push({ close: m[1] === "/", name: localName(m[2]!), qname: m[2]!, attrs: m[3] ?? "", selfClose: m[4] === "/", line });
   }
   return out;
 }
@@ -360,8 +364,6 @@ function extractBeanConstants(lines: string[]): Record<string, string> {
  */
 function cxfServerBeans(lines: string[], facts: RouteFact[]): void {
   const tags = parsedOf(lines).tags;
-  // The tag scanner stops a name at `:` — `jaxrs:serviceBeans` reads as `jaxrs` with attrs `:serviceBeans …`.
-  const local = (t: XmlTag): string => (t.attrs.startsWith(":") ? /^:([\w.-]+)/.exec(t.attrs)?.[1] ?? t.name : t.name);
   const classOfBean = new Map<string, string>();
   const refs: string[] = [];
   const inline: string[] = [];
@@ -370,7 +372,7 @@ function cxfServerBeans(lines: string[], facts: RouteFact[]): void {
   let serving = 0;
   let line = 0;
   for (const t of tags) {
-    const name = local(t);
+    const name = t.name;
     if (name === "serviceBeans" && !t.selfClose) serving += t.close ? -1 : 1;
     if (t.close) {
       if (name === "bean") beans.pop();
@@ -417,11 +419,9 @@ const CXF_ENDPOINTS = new Set(["jaxrs:server", "jaxws:endpoint", "jaxws:server"]
  */
 function cxfServerAddresses(lines: string[], facts: RouteFact[]): void {
   const tags = parsedOf(lines).tags;
-  const qualified = (t: XmlTag): string => (t.attrs.startsWith(":") ? `${t.name}:${/^:([\w.-]+)/.exec(t.attrs)?.[1] ?? ""}` : t.name);
-  const attrsOf = (t: XmlTag): string => (t.attrs.startsWith(":") ? t.attrs.replace(/^:[\w.-]+/, "") : t.attrs);
   const classOfBean = new Map<string, string>();
   for (const t of tags) {
-    if (t.close || qualified(t) !== "bean") continue;
+    if (t.close || t.name !== "bean") continue;
     const id = attrOf(t.attrs, "id") ?? attrOf(t.attrs, "name");
     const cls = attrOf(t.attrs, "class");
     if (id && cls && attrOf(t.attrs, "factory-method") === null) classOfBean.set(id, cls);
@@ -436,11 +436,11 @@ function cxfServerAddresses(lines: string[], facts: RouteFact[]): void {
     open = null;
   };
   for (const t of tags) {
-    const name = qualified(t);
+    const name = t.qname;
     if (CXF_ENDPOINTS.has(name)) {
       if (t.close) { flush(); continue; }
       flush();
-      const attrs = attrsOf(t);
+      const attrs = t.attrs;
       const address = attrOf(attrs, "address");
       const path = address === null ? null : cxfAddressPath(address);
       if (path === null) continue;
@@ -459,7 +459,7 @@ function cxfServerAddresses(lines: string[], facts: RouteFact[]): void {
       continue;
     }
     if (t.close || serving <= 0) continue;
-    const attrs = attrsOf(t);
+    const attrs = t.attrs;
     if (local === "ref") {
       const ref = attrOf(attrs, "bean") ?? attrOf(attrs, "component-id");
       if (ref) open.refs.push(ref);

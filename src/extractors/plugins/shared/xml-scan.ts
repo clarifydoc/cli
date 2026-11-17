@@ -41,6 +41,17 @@ export function withoutXmlComments(xml: string): string {
   return out + xml.slice(at);
 }
 
+/**
+ * `xml` written with its root element's namespace prefix (`<m:project xmlns:m="…">`) read as the same
+ * document without one: the prefix is stripped from the ELEMENT names that carry it, so a regex that
+ * matches `<dependency>` also matches `<m:dependency>`. Another namespace's prefixes and attribute
+ * names are left as written; a document whose root has no prefix comes back unchanged.
+ */
+export function withoutRootPrefix(xml: string, root: string): string {
+  const prefix = new RegExp(`<([A-Za-z_][\\w.-]*):${root}[\\s>]`).exec(xml)?.[1];
+  return prefix ? xml.replace(new RegExp(`<(/?)${prefix}:(?=[A-Za-z_])`, "g"), "<$1") : xml;
+}
+
 /** Scan all tags in an XML source, tracking 1-based line numbers. */
 export function scanTags(source: string): XmlTag[] {
   const masked = source.replace(/<!--[\s\S]*?-->/g, (c) => c.replace(/[^\n]/g, " "));

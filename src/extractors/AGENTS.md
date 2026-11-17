@@ -224,7 +224,9 @@ cosmetic — `dedupeRoutes` keys on method+path, so several routers' un-prefixed
   else the class declaring the method; `return this.sub` states nothing.
   A returned ref or computed whose value derives from a parameter is stated as `FunctionInfo.derivedLocals` (a
   computed lookup keyed by it, or a ref every assignment of which is a lookup or a function's result for it — a
-  `watch` callback's first parameter being the watched value); a call site reading the member (`const { club } =
+  `watch` callback's first parameter being the watched value; a `computed` over a TanStack Query result,
+  `query.data.value?.squad` of `useQuery(computed(() => clubQuery(toValue(clubId))))`, derives through the options
+  function); a call site reading the member (`const { club } =
   useClub(() => props.clubId)`, `club.value.id`) states a `returned` derivation step, and `paramOrigins` follows it.
 - Emits: a child emitting by data (`FileAnalysis.dynamicEmits`, `$emit(btn.event)`) reaches the handlers a parent states
   with `event: 'name'` literals (`eventLiterals`); `<component :is="Map[k]">` fans out over the map's

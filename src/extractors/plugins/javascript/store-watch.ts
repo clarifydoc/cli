@@ -122,6 +122,28 @@ export function vuexStateWrites(tree: Tree, functions: readonly Fn[]): StateWrit
   return out;
 }
 
+/** The getters a getter function reads off its parameter `index` (`getters.total`, `getters['clubs/total']`), as the keys written. */
+function getterKeysOf(fn: Node, index: number): string[] {
+  const params = fn.childForFieldName("parameters")?.namedChildren ?? [];
+  const param = index === 0 ? params[0] ?? fn.childForFieldName("parameter") : params[index];
+  const name = (param?.type === "required_parameter" ? param.childForFieldName("pattern") : param)?.text;
+  const body = fn.childForFieldName("body");
+  if (!name || !body || !/^[\w$]+$/.test(name)) return [];
+  const out = new Set<string>();
+  for (const id of body.type === "identifier" ? [body] : body.descendantsOfType("identifier")) {
+    if (!id || id.text !== name) continue;
+    const use = id.parent;
+    if (use?.type === "member_expression" && use.childForFieldName("object")?.id === id.id) {
+      const key = use.childForFieldName("property")?.text;
+      if (key) out.add(key);
+    } else if (use?.type === "subscript_expression" && use.childForFieldName("object")?.id === id.id) {
+      const idx = use.childForFieldName("index");
+      if (idx?.type === "string" && idx.text.length > 2) out.add(idx.text.slice(1, -1));
+    }
+  }
+  return [...out];
+}
+
 /** The state each getter of a `getters` table (a module's member, or a `const xGetters = {…}`) reads off its first parameter. */
 function vuexGetterReads(tree: Tree): NonNullable<StoreWatch["getterReads"]> {
   const out: NonNullable<StoreWatch["getterReads"]> = [];
@@ -153,7 +175,20 @@ function vuexGetterReads(tree: Tree): NonNullable<StoreWatch["getterReads"]> {
           if (path.length > 0) paths.push(path.join(".") + (deep ? "*" : ""));
         }
       } else paths = stateParamReads(fn, (rest) => rest);
-      if (paths.length > 0 && !out.some((g) => g.name === key && g.table === table)) out.push({ name: key, table, paths: [...new Set(paths)] });
+      // The getters (second parameter), the root state (third) and the root getters (fourth) it reads.
+      const getters = getterKeysOf(fn, 1);
+      const rootGetters = getterKeysOf(fn, 3);
+      const rootPaths = stateParamReads(fn, (rest) => rest, 2);
+      if ((paths.length > 0 || getters.length > 0 || rootGetters.length > 0 || rootPaths.length > 0) && !out.some((g) => g.name === key && g.table === table)) {
+        out.push({
+          name: key,
+          table,
+          paths: [...new Set(paths)],
+          ...(getters.length > 0 ? { getters } : {}),
+          ...(rootPaths.length > 0 ? { rootPaths: [...new Set(rootPaths)] } : {}),
+          ...(rootGetters.length > 0 ? { rootGetters } : {}),
+        });
+      }
     }
   }
   return out;

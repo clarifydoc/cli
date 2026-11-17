@@ -54,7 +54,7 @@ describe("pathKey", () => {
 const screen = (filePath: string, name: string, routePath: string | null, navigatesTo: string[] = [], extra: Partial<ScreenInfo> = {}): ScreenInfo => ({
   name, formType: "page", caption: null, dimensions: null, components: [], filePath, routePath, navigatesTo, ...extra,
 });
-const route = (path: string, extra: Partial<RouteInfo & { filePath: string }>): RouteInfo & { filePath: string } => ({
+const route = (path: string, extra: Partial<RouteInfo & { filePath: string; projectId: string }>): RouteInfo & { filePath: string } => ({
   path, httpMethod: null, kind: "frontend", handler: null, line: 1, filePath: "src/router.ts", ...extra,
 } as RouteInfo & { filePath: string });
 
@@ -86,6 +86,35 @@ describe("buildScreenFlow", () => {
     expect(edge("dialog")).toEqual(["src/pages/Clubs.vue -> src/dialogs/TransferDialog.vue"]);
     expect(flow.nodes.find((n) => n.id === "src/dialogs/TransferDialog.vue")?.kind).toBe("dialog");
     expect(flow.nodes.some((n) => n.id === "src/components/NavBar.vue")).toBe(false);
+  });
+});
+
+describe("a route name read from a link", () => {
+  // Two sub-projects: the other one states `clubs.show` as a route name; the caller's own only derives it.
+  const flow = (ownStated: boolean) =>
+    buildScreenFlow({
+      screens: [
+        screen("a/pages/Home.vue", "Home", "/home"),
+        screen("a/pages/ClubA.vue", "ClubA", "/a/clubs"),
+        screen("b/pages/ClubB.vue", "ClubB", "/b/clubs"),
+      ],
+      routes: [
+        route("/a/clubs", { kind: "api", httpMethod: "GET", filePath: "a/routes.php", projectId: "a", ...(ownStated ? { name: "clubs.show" } : { derivedName: "clubs.show" }) }),
+        route("/b/clubs", { kind: "api", httpMethod: "GET", filePath: "b/routes.php", projectId: "b", name: "clubs.show" }),
+      ],
+      launches: [],
+      elements: [{ element: "link", event: "click", handler: null, line: 3, filePath: "a/pages/Home.vue", request: { method: "GET", target: "route:clubs.show" } }],
+      componentGraph: {},
+      projectOf: (f) => f.split("/")[0],
+    })!;
+  const targets = (ownStated: boolean) => flow(ownStated).edges.filter((e) => e.from === "a/pages/Home.vue").map((e) => e.to);
+
+  it("takes the caller's own derived name over another sub-project's stated one", () => {
+    expect(targets(false)).toEqual(["a/pages/ClubA.vue"]);
+  });
+
+  it("takes the caller's own stated name when both sub-projects state it", () => {
+    expect(targets(true)).toEqual(["a/pages/ClubA.vue"]);
   });
 });
 

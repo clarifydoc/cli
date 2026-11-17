@@ -1,5 +1,5 @@
 import { astroFrontmatter } from "../../../parsers/astro-sfc.js";
-import { projectCalleeIn } from "./markup-calls.js";
+import { projectCalleeIn, sendsRequest } from "./markup-calls.js";
 import { templateScopes } from "./template-scopes.js";
 import { encodeTargets, templateTargets } from "./template-targets.js";
 
@@ -9,13 +9,13 @@ import { encodeTargets, templateTargets } from "./template-targets.js";
  * `{#each rows() as r}`, `{@html crest(n)}`, `class={tone(n)}` — each kept in the parsed text
  * at its own place as a top-level statement (`;(label(club));`), so its calls are the
  * component's `<setup>` calls like those of its script, at their own lines. Handlers
- * (`@click`, `on:click`, `onfocus`) are the interactive elements' (`markupCalls`), a slot's
+ * (`@click`, `on:click`, `onfocus`) are the interactive elements' (`markupCalls`; a Vue handler sending a request in one statement is also an expression), a slot's
  * destructured parameters and a snippet's declaration are no expressions, and one that calls
  * nothing a project could define is left out.
  */
 export function withMarkupExpressions(raw: string, blanked: string, kind: "vue" | "svelte" | "astro"): string {
   const vueTemplate = kind === "vue" ? templateText(raw, true) : "";
-  const spans = kind === "vue" ? [...vueExpressions(vueTemplate), ...vueTemplateWrites(vueTemplate)] : kind === "astro" ? astroExpressions(raw) : svelteExpressions(raw);
+  const spans = kind === "vue" ? [...vueExpressions(vueTemplate), ...vueHandlerRequests(vueTemplate), ...vueTemplateWrites(vueTemplate)] : kind === "astro" ? astroExpressions(raw) : svelteExpressions(raw);
   let out = blanked;
   // Back to front: a replacement changes the columns after it, never the lines.
   for (const { start, end, expr, mark } of spans.sort((a, b) => b.start - a.start)) {
@@ -97,6 +97,24 @@ function vueExpressions(t: string): Span[] {
     let expr = m[3] ?? m[4] ?? "";
     // `p in players` / `(p, i) of players`: the collection is what is evaluated.
     if (m[1]!.startsWith("v-for")) expr = expr.replace(/^[\s\S]*?\s(?:in|of)\s+/, "");
+    const quote = m.index! + m[0].length - m[2]!.length;
+    spans.push({ start: quote, end: m.index! + m[0].length, expr });
+  }
+  return spans;
+}
+
+/**
+ * The handlers that send a request themselves (`@click="axios.post(`/api/clubs/${club.id}/archive`)"`,
+ * `@click="(c) => fetch(…)"`): kept at their own place like any expression, so the data-source reader sees the
+ * call. Handlers are otherwise the interactive elements' (`markupCalls`); one with several statements is
+ * left to them.
+ */
+function vueHandlerRequests(t: string): Span[] {
+  if (!t.includes("@") && !t.includes("v-on:")) return [];
+  const spans: Span[] = [];
+  for (const m of t.matchAll(/\s(@[\w:.-]+|v-on:[\w:.-]+)\s*=\s*("([^"]*)"|'([^']*)')/g)) {
+    const expr = decodeEntities(m[3] ?? m[4] ?? "");
+    if (!sendsRequest(expr)) continue;
     const quote = m.index! + m[0].length - m[2]!.length;
     spans.push({ start: quote, end: m.index! + m[0].length, expr });
   }

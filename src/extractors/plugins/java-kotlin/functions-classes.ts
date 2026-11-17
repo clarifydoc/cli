@@ -239,8 +239,11 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     }
 
     const strings = body ? stringConstants(body) : null;
+    // `companion object Factory { … }`: Java reaches its members as `Club.Factory.create()`, not `Club.Companion…`.
+    const memberHolder = lang === "kotlin" ? body?.children.find((c) => c.type === "companion_object")?.children.find((c) => c.type === "type_identifier")?.text : undefined;
     return {
       name,
+      ...(memberHolder ? { memberHolder } : {}),
       kind: isInterface ? "interface" : isEnum ? "enum" : "class",
       ...(!isInterface && !isEnum && isAbstract(node) ? { abstract: true as const } : {}),
       extends: extendsName,

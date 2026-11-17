@@ -135,6 +135,7 @@ export class CSharpEntityExtractor extends EntityExtractor {
    * ER nodes (and their config-declared relations resolve). Mutates in place.
    */
   override reconcileProject(analyses: FileAnalysis[]): void {
+    producedQueryEntities(analyses);
     // (1) Names declared as EF entities by `DbSet<T>` or `IEntityTypeConfiguration<T>`.
     const efEntityNames = new Set<string>();
     // A set's property name → the entity types declared under it.
@@ -1130,6 +1131,40 @@ const TYPE_DENYLIST = new Set<string>([
 const COLLECTION_RE = /^(?:System\.Collections\.Generic\.)?(?:I?Collection|I?List|List|IEnumerable|IReadOnlyCollection|IReadOnlyList|ISet|HashSet|ICollection|IList|SortedSet)\s*<\s*([^>]+?)\s*>$/;
 
 /** Strip generics / nullable `?` / array `[]` / namespace, returning the bare identifier. */
+/**
+ * A bulk write on a query another class's method returns (`DataSourceInfo.entityProducer`, C#
+ * `_repo.Active().ExecuteUpdateAsync(…)`): the entity is the set the method's declared type is a query over —
+ * `IQueryable<Club>`, `IOrderedQueryable<Club>`, `DbSet<Club>`, or a task of one — when the classes named like the
+ * receiver's type and declaring that method agree on one. A method no class of that name declares, a return type
+ * that is no query, or a type parameter binds nothing.
+ */
+function producedQueryEntities(analyses: readonly FileAnalysis[]): void {
+  if (!analyses.some((a) => a.dataSources?.some((d) => d.entityProducer && !d.entity))) return;
+  const byName = new Map<string, ClassInfo[]>();
+  for (const a of analyses) if (a.language === "csharp") for (const c of a.classes ?? []) (byName.get(c.name) ?? byName.set(c.name, []).get(c.name)!).push(c);
+  for (const a of analyses) {
+    if (a.language !== "csharp") continue;
+    for (const ds of a.dataSources ?? []) {
+      if (!ds.entityProducer || ds.entity) continue;
+      const found = new Set<string>();
+      let declaredAny = false;
+      for (const cls of byName.get(ds.entityProducer.type) ?? []) {
+        for (const m of cls.methods.filter((x) => x.name === ds.entityProducer!.method)) {
+          declaredAny = true;
+          const ret = (m.returnType ?? "").replace(/\s+/g, "");
+          const inner = /^(?:(?:[\w.]+\.)?(?:Task|ValueTask)<)?(?:[\w.]+\.)?(?:I(?:Ordered|Includable)?Queryable|I?DbSet)<([\w.]+?)(?:,[\w.<>]+)?>>?$/.exec(ret)?.[1];
+          const entity = inner ? inner.slice(inner.lastIndexOf(".") + 1) : "";
+          found.add(/^[A-Z]\w*$/.test(entity) && !/^T(?:[A-Z][a-z]\w*)?$/.test(entity) ? entity : "");
+        }
+      }
+      const [entity] = found;
+      if (!declaredAny || found.size !== 1 || !entity) continue;
+      ds.entity = entity;
+      ds.target = entity;
+    }
+  }
+}
+
 function bareType(type: string | null | undefined): string {
   if (!type) return "";
   let t = type.trim();

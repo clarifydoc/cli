@@ -6,6 +6,7 @@ import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractCppConnectElements } from "./connect-elements.js";
 import { CLASS_PATTERN, declaredNamespaces, extractCppClasses } from "./classes.js";
 import { markLocalCallables } from "../shared/c-family-callables.js";
+import { markQtSlotPasses } from "./qt-slots.js";
 import { extractCFamilyValueFlow } from "../shared/c-family-value-flow.js";
 import { extractCFamilyLocalTypes, keepTypeScopes } from "../shared/c-family-locals.js";
 import { cppCollectionElement, cppRangeBindings } from "./collection-element.js";
@@ -305,7 +306,10 @@ export const cppSpec: RegexLangSpec = {
     return classes;
   },
   postProcessClasses: tagQmlElementClasses,
-  markLocalCalls: markLocalCallables,
+  markLocalCalls: (code, fns) => {
+    markLocalCallables(code, fns);
+    markQtSlotPasses(code, fns);
+  },
   extractValueFlow: (lines, analysis) => extractCFamilyValueFlow(lines, analysis, true),
   extractLocalTypes: (body, fn) => extractCFamilyLocalTypes(body, fn.params, cppCollectionElement, cppRangeBindings),
   // `using Ride = Car;`, `typedef struct car car_t;`: core types a receiver declared with the alias by what it names.

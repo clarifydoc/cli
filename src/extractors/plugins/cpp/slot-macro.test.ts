@@ -44,9 +44,12 @@ void TeamWindow::resetClub(int id) { wipe(); }
 `,
 };
 
-describe("Qt SLOT() macro slots", () => {
+describe.each([
+  ["ANTLR reading", true],
+  ["regex reading", false],
+] as const)("Qt SLOT() macro slots (%s)", (_name, antlr) => {
   it("hands the slot on as a pass, like &Class::slot, and never calls it", () => {
-    const analyses = Object.entries(files).map(([rel, src]) => ({ ...extractWithRegex(src, rel, "cpp", undefined, readCpp(src)), projectId: "root" }));
+    const analyses = Object.entries(files).map(([rel, src]) => ({ ...extractWithRegex(src, rel, "cpp", undefined, antlr ? readCpp(src) : undefined), projectId: "root" }));
     const links = buildSymbolLinks(analyses)
       .filter((l) => l.sourceFile === "src/club.cpp")
       .map((l) => `${l.callName} -> ${l.targetFile}:${l.targetSymbol} ${l.relation}`)

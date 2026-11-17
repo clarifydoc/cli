@@ -660,8 +660,9 @@ function modelExpression(node: Node): { model?: string; attribute?: string; para
 /**
  * The classes a loop variable takes when the loop enclosing `at` walks a literal:
  * `for field, model in {"tags": Tag, "tools": Tool}.items():`, `.values()`, or
- * `for model in (Tag, Tool):` / `[Tag, Tool]`. Undefined when `name` is not such a variable
- * or an item is no class by name.
+ * `for model in (Tag, Tool):` / `[Tag, Tool]`, or one a module-level constant holds
+ * (`MODELS = {"tags": Tag}`; `for model in MODELS.values():`, `for model in MODELS:` over a list or tuple).
+ * Undefined when `name` is not such a variable or an item is no class by name.
  */
 function loopModels(name: string, at: Node): string[] | undefined {
   for (let cur: Node | null = at, child: Node | null = null; cur; child = cur, cur = cur.parent) {
@@ -688,9 +689,15 @@ function loopModels(name: string, at: Node): string[] | undefined {
       const fn = right.childForFieldName("function");
       const leaf = fn?.childForFieldName("attribute")?.text;
       const obj = fn?.childForFieldName("object");
-      if (fn?.type !== "attribute" || obj?.type !== "dictionary" || (leaf !== "items" && leaf !== "values")) return undefined;
+      const literal = obj?.type === "identifier" ? moduleConstant(obj.text, cur) : obj;
+      if (fn?.type !== "attribute" || literal?.type !== "dictionary" || (leaf !== "items" && leaf !== "values")) return undefined;
       pairs = leaf === "items";
-      right = obj;
+      right = literal;
+    } else if (right.type === "identifier") {
+      const literal = moduleConstant(right.text, cur);
+      // A bare dict walks its keys, never its classes.
+      if (!literal || literal.type === "dictionary") return undefined;
+      right = literal;
     }
     if (right.type === "dictionary") {
       if (targets.length !== (pairs ? 2 : 1)) return undefined;
@@ -704,6 +711,27 @@ function loopModels(name: string, at: Node): string[] | undefined {
     return names.length > 0 && names.every((n): n is string => !!n) ? [...new Set(names)] : undefined;
   }
   return undefined;
+}
+
+/**
+ * The dict, list, tuple or set a module-level `NAME = …` binds, when the module assigns the name exactly once at
+ * its top level (no rebinding, no `global` write, no augmented assignment) — what a loop in any function reads.
+ */
+function moduleConstant(name: string, at: Node): Node | undefined {
+  let root: Node = at;
+  while (root.parent) root = root.parent;
+  let found: Node | undefined;
+  let count = 0;
+  for (const stmt of root.namedChildren) {
+    const a = stmt.type === "expression_statement" ? stmt.namedChild(0) : null;
+    if (a?.type !== "assignment" && a?.type !== "augmented_assignment") continue;
+    if (a.childForFieldName("left")?.text !== name) continue;
+    count++;
+    const right = a.type === "assignment" ? a.childForFieldName("right") : null;
+    if (right && (right.type === "dictionary" || right.type === "list" || right.type === "tuple" || right.type === "set")) found = right;
+    else found = undefined;
+  }
+  return count === 1 ? found : undefined;
 }
 
 /** `name` is a parameter of the function enclosing `at`, which its body never assigns or loops over. */

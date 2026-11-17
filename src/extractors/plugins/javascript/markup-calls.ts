@@ -16,6 +16,33 @@ export function projectCalleeIn(expr: string): boolean {
   return false;
 }
 
+/** A request a handler sends: `fetch(…)`, `$fetch(…)`, or a client's verb called with a URL (`axios.post("/clubs")`). */
+const REQUEST_CALL = /(?<![\w$.])\$?fetch\s*\(|\.\s*(?:get|post|put|patch|delete|head|request)\s*\(\s*[`'"]/;
+
+/** Whether `expr` holds a `;` outside strings and brackets: more than one statement, which `;(…);` cannot hold. */
+function hasStatementBreak(expr: string): boolean {
+  let depth = 0;
+  for (let i = 0; i < expr.length; i++) {
+    const ch = expr[i]!;
+    if (ch === '"' || ch === "'" || ch === "`") {
+      const stop = expr.indexOf(ch, i + 1);
+      if (stop < 0) return true;
+      i = stop;
+    } else if (ch === "(" || ch === "[" || ch === "{") depth++;
+    else if (ch === ")" || ch === "]" || ch === "}") depth--;
+    else if (ch === ";" && depth === 0) return true;
+  }
+  return depth !== 0;
+}
+
+/**
+ * A handler that sends a request in one statement: `withMarkupExpressions` keeps it as an expression (the data-source
+ * reader sees the call), so `markupCalls` leaves it out rather than state its calls twice.
+ */
+export function sendsRequest(handler: string): boolean {
+  return REQUEST_CALL.test(handler) && !hasStatementBreak(handler);
+}
+
 /** `editDialog?.open()` calls `editDialog.open`, as the chain is read everywhere else in markup. */
 const plainChains = (handler: string) => handler.replace(/\?\.(?=[A-Za-z_$])/g, ".");
 

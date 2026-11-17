@@ -10,14 +10,15 @@ import type { RouteResolver } from "../../route-resolvers/base.js";
  * none. The view `clubs/join` is the page of `ClubsController#join` when the router gives that action ONE
  * GET path and its body hands the browser nowhere else (no `render`, `redirect_to`, `head`, `respond_to`,
  * `send_*`). A view served at two paths, or by an action that may render another page, says nothing.
- * Only views with such a form are read: the page-to-route link is claimed for no other.
+ * Every such view is the page of its route, which is what lets a link to it (`link_to "Club", club_path(@club)`,
+ * resolved to the path through the route's name) draw an edge on the screen map.
  */
 export const railsOwnView: RouteResolver = {
   id: "rails-own-view",
   languages: ["ruby", "erb"],
   priority: 60,
   resolve(analyses: FileAnalysis[]): void {
-    const views = analyses.filter((a) => a.language === "erb" && a.screens?.some((s) => !s.renderedBy?.length && a.interactiveElements.some((e) => e.ownViewPost)));
+    const views = analyses.filter((a) => a.language === "erb" && a.screens?.some((s) => !s.renderedBy?.length));
     if (views.length === 0) return;
     const ruby = analyses.filter((a) => a.language === "ruby");
 

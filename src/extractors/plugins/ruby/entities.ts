@@ -804,9 +804,17 @@ function resolveChainAccesses(analyses: FileAnalysis[], concernAssociations: Rea
     if (found.size === 1) noteCurrent(attr, [...found][0]!);
   }
   for (const { attr, via, association } of viaChains) noteCurrent(attr, ownerTarget(currentModel(via)?.model, association));
+  // An association an ancestor model declares belongs to the subclass too; the nearest declaration wins.
+  const modelParent = new Map<string, string>();
+  for (const a of ruby) for (const cls of a.classes) if (cls.decorators.includes("entity") && cls.extends) modelParent.set(cls.name.split("::").pop()!, cls.extends.replace(/^::/, "").split("::").pop()!);
   function ownerTarget(owner: string | undefined, association: string): string | null {
-    const targets = owner ? ownerAssociations.get(owner)?.get(association) : undefined;
-    return targets && targets.size === 1 ? [...targets][0]! : null;
+    const seen = new Set<string>();
+    for (let m = owner; m && !seen.has(m) && seen.size < 8; m = modelParent.get(m)) {
+      seen.add(m);
+      const targets = ownerAssociations.get(m)?.get(association);
+      if (targets) return targets.size === 1 ? [...targets][0]! : null;
+    }
+    return null;
   }
   function currentModel(attr: string): { model: string; inferred: boolean } | null {
     const stated = currentStated.get(attr);
@@ -911,13 +919,23 @@ function resolveChainAccesses(analyses: FileAnalysis[], concernAssociations: Rea
               continue;
             }
           }
+          // `@club = @league.clubs.find_by(…)`: the association, on the model the owner variable holds.
+          const viaOwner = /^@([a-z_]\w*)\.([a-z_]\w*)\.[a-z_]/.exec(rhs.replace(/\([^()]*\)/g, ""));
+          const ownerModel = viaOwner ? lookup(chainOf(o), viaOwner[1]!) : null;
+          const owned = ownerModel ? ownerTarget(ownerModel, viaOwner![2]!) : null;
+          if (owned && modelNames.has(owned)) {
+            found.add(owned);
+            continue;
+          }
           const before = beforeOf(rhs);
           // A model constant states its own type (`@match = Match.find(…)`).
           const stated = before && /^[A-Z]/.test(before) && modelNames.has(before.replace(/^::/, "").split("::").pop()!) ? before.replace(/^::/, "").split("::").pop()! : null;
           const entity = before ? stated ?? direct(before) ?? lookup(chainOf(o), before) : null;
           if (entity) found.add(entity);
+          // An owner nothing types says nothing, which no other assignment may stand in for.
+          else if (viaOwner) found.add("");
         }
-        if (found.size === 1) setMemo(o.cls, ivar, [...found][0]!);
+        if (found.size === 1 && !found.has("")) setMemo(o.cls, ivar, [...found][0]!);
       }
     }
     let progress = false;
@@ -943,20 +961,25 @@ function resolveChainAccesses(analyses: FileAnalysis[], concernAssociations: Rea
 function moveConcernRelations(analyses: FileAnalysis[]): void {
   const ruby = analyses.filter((a) => a.language === "ruby");
   const entities = new Set<string>();
-  const includers = new Map<string, Array<{ a: FileAnalysis; model: string }>>();
+  // Every class or module by what it mixes in; an entity's `implements` are the modules it takes.
+  const includers = new Map<string, Array<{ a: FileAnalysis; name: string; entity: boolean }>>();
   for (const a of ruby) {
     for (const cls of a.classes) {
-      if (!cls.decorators.includes("entity")) continue;
-      entities.add(cls.name);
-      // An entity's `implements` are the modules it mixes in.
+      const entity = cls.decorators.includes("entity");
+      if (entity) entities.add(cls.name);
       for (const mixin of cls.implements) {
         const name = mixin.replace(/^::/, "");
-        includers.set(name, [...(includers.get(name) ?? []), { a, model: cls.name }]);
+        includers.set(name, [...(includers.get(name) ?? []), { a, name: cls.name, entity }]);
       }
     }
   }
   // `include Scoreable` names the concern as declared; a namespaced one is written in full.
-  const includersOf = (concern: string) => includers.get(concern) ?? [];
+  // A concern another concern includes reaches the models that include the outer one.
+  const includersOf = (concern: string, seen: Set<string> = new Set()): Array<{ a: FileAnalysis; model: string }> => {
+    if (seen.has(concern) || seen.size > 8) return [];
+    seen.add(concern);
+    return (includers.get(concern) ?? []).flatMap((inc) => (inc.entity ? [{ a: inc.a, model: inc.name }] : includersOf(inc.name, seen)));
+  };
   const moved: Array<{ a: FileAnalysis; rel: EntityRelation }> = [];
   for (const a of ruby) {
     const rels = a.entityRelations;

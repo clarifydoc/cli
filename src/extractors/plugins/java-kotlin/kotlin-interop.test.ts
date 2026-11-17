@@ -41,6 +41,25 @@ package com.example.league
 
 fun tally(n: Int): Int = n + 1
 `,
+    "src/main/kotlin/com/example/league/Standings.kt": `package com.example.league
+
+var season: Int = 1
+val isOpen: Boolean = true
+private val hidden: String = "h"
+const val limit: Int = 20
+
+class Match {
+    companion object Factory {
+        fun kickOff(): Match = Match()
+    }
+}
+
+class Friendly {
+    companion object Factory {
+        fun kickOff(): Friendly = Friendly()
+    }
+}
+`,
     "src/main/java/com/example/league/Holder.java": `package com.example.league;
 
 public class Holder {
@@ -62,6 +81,14 @@ public class Garage {
         Club.Companion.build();
         ScoreBoard.tally(2);
         ScoresKt.tally(2);
+        StandingsKt.getSeason();
+        StandingsKt.setSeason(2);
+        StandingsKt.isOpen();
+        StandingsKt.getHidden();
+        StandingsKt.getLimit();
+        Match.Factory.kickOff();
+        Match.Companion.kickOff();
+        Friendly.Factory.kickOff();
         club.getName();
         club.setPoints(3);
         club.isActive();
@@ -96,6 +123,21 @@ public class Garage {
   it("reaches an object's and a companion's members through INSTANCE and Companion", () => {
     expect(target("Referee.INSTANCE.whistle")).toEqual(["Clubs.kt::Referee.whistle"]);
     expect(target("Club.Companion.build")).toEqual(["Clubs.kt::Club.build"]);
+  });
+
+  it("reaches a top-level property through the facade's getter and setter, never a private or const one", () => {
+    expect(target("StandingsKt.getSeason")).toEqual(["Standings.kt::getSeason"]);
+    expect(target("StandingsKt.setSeason")).toEqual(["Standings.kt::setSeason"]);
+    expect(target("StandingsKt.isOpen")).toEqual(["Standings.kt::isOpen"]);
+    expect(target("StandingsKt.getHidden")).toEqual([]);
+    expect(target("StandingsKt.getLimit")).toEqual([]);
+  });
+
+  it("reaches a named companion's members through its own name, on the class it belongs to", () => {
+    expect(target("Match.Factory.kickOff")).toEqual(["Standings.kt::Match.kickOff"]);
+    expect(target("Friendly.Factory.kickOff")).toEqual(["Standings.kt::Friendly.kickOff"]);
+    // The default holder's name is gone once the companion is named.
+    expect(target("Match.Companion.kickOff")).toEqual([]);
   });
 
   it("keeps the typed reading where the class declares a field of that name", () => {

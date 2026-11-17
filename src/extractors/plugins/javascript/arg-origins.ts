@@ -244,6 +244,11 @@ function originOf(n: Node, depth: number): Found | null {
     }
     case "member_expression":
     case "subscript_expression": {
+      // `query.data.value?.squad`, `query = useQuery(computed(() => clubQuery(toValue(clubId))))`: what the query fetches.
+      if (n.type === "member_expression" && n.text.includes("data")) {
+        const fetched = queryDataOf(n, depth);
+        if (fetched) return fetched;
+      }
       // `clubId.value`, where `clubId = computed(() => route.params.id)`: the reactive wrapper's value.
       const obj = n.childForFieldName("object");
       if (n.type === "member_expression" && n.childForFieldName("property")?.text === "value" && obj?.type === "identifier" && readsUrl(n)) {
@@ -374,8 +379,83 @@ function identifierOrigin(n: Node, name: string, depth: number): Found | null {
   // `const { id } = useParams()` / `const { id: clubId } = this.props.match.params`
   const kind = paramsObject(bound.value, depth + 1);
   if (kind) return { kind, name: bound.key };
+  // `const { data } = useQuery(clubQuery(props.clubId))`: what the query fetches.
+  const call = unwrap(bound.value).node;
+  if (bound.key === "data") {
+    const fetched = queryResultOf(call, [], depth);
+    if (fetched) return fetched;
+  }
   // `const { club } = useClub(() => props.clubId)`: a member of what the composable returns for the value.
-  return returnedMemberOf(unwrap(bound.value).node, bound.key, depth);
+  return returnedMemberOf(call, bound.key, depth);
+}
+
+/** TanStack Query's hooks whose result's `data` is what the options' fetch returns. */
+const QUERY_HOOKS = new Set(["useQuery", "useSuspenseQuery", "useInfiniteQuery", "useSuspenseInfiniteQuery"]);
+
+/** The one expression an arrow function's block body returns (`() => { return x }`), or null when it holds anything else. */
+function singleReturn(fn: Node): Node | null {
+  if (fn.type !== "arrow_function" && fn.type !== "function_expression") return null;
+  const body = fn.childForFieldName("body");
+  if (body?.type !== "statement_block") return null;
+  const stmts = body.namedChildren.filter((c): c is Node => !!c && c.type !== "comment");
+  return stmts.length === 1 && stmts[0]!.type === "return_statement" ? stmts[0]!.namedChild(0) : null;
+}
+
+/**
+ * `<query>.data[.value][.prop…]` where `query` is a local holding a TanStack Query hook's result: what the
+ * hook's options fetch, read for its properties (`queryResultOf`). Null for anything else.
+ */
+function queryDataOf(n: Node, depth: number): Found | null {
+  const path: string[] = [];
+  let cur: Node = n;
+  while (cur.type === "member_expression" || cur.type === "non_null_expression") {
+    if (cur.type === "non_null_expression") {
+      cur = cur.namedChild(0) ?? cur;
+      continue;
+    }
+    const prop = cur.childForFieldName("property");
+    if (!prop || prop.type !== "property_identifier") return null;
+    path.unshift(prop.text);
+    cur = cur.childForFieldName("object") ?? cur;
+  }
+  if (cur.type !== "identifier" || paramOf(cur, cur.text)) return null;
+  const bound = bindingOf(cur, cur.text);
+  if (bound?.kind === "value" && path[0] === "data") return queryResultOf(unwrap(bound.value).node, path.slice(1), depth);
+  // `const { data } = useQuery(…)` … `data.value.squad`.
+  if (bound?.kind === "member" && bound.key === "data") return queryResultOf(unwrap(bound.value).node, path, depth);
+  return null;
+}
+
+/**
+ * What `call` (`useQuery(options)`) fetches, read for `path` (a ref's `.value` first, then properties): the
+ * origin of the value its options are keyed by — `computed(() => clubQuery(toValue(clubId)))`, a getter, or an
+ * object whose `queryFn` calls a function with it — with the options function as a `helper` step, `field` the
+ * properties read. Only a query whose options state a function of a known value; never a literal-only key.
+ */
+function queryResultOf(call: Node, path: readonly string[], depth: number): Found | null {
+  if (call.type !== "call_expression" || depth > 4) return null;
+  const fn = call.childForFieldName("function");
+  if (fn?.type !== "identifier" || !QUERY_HOOKS.has(fn.text)) return null;
+  const first = call.childForFieldName("arguments")?.namedChildren.find((a) => a?.type !== "comment");
+  if (!first) return null;
+  let options: Node | null = first;
+  if (first.type === "object") {
+    const pair = first.namedChildren.find((c) => c?.type === "pair" && c.childForFieldName("key")?.text === "queryFn");
+    const value = pair?.childForFieldName("value");
+    options = value ? (getterBody(value) ?? singleReturn(value)) : null;
+  } else {
+    // `computed(() => clubQuery(id))` unwraps to the call; a block body or a plain getter by hand.
+    const callee = first.type === "call_expression" ? first.childForFieldName("function")?.text : undefined;
+    const inner = callee === "computed" ? first.childForFieldName("arguments")?.namedChildren.find((a) => a?.type !== "comment") : first;
+    options = inner ? (getterBody(inner) ?? singleReturn(inner) ?? (inner === first ? first : null)) : null;
+  }
+  if (!options) return null;
+  const found = originOf(unwrap(options).node, depth + 1);
+  const last = found?.steps?.[found.steps.length - 1];
+  if (!found || found.kind === "literal" || last?.kind !== "helper" || last.field) return null;
+  const read = path[0] === "value" ? path.slice(1) : path;
+  if (read.length === 0) return found;
+  return { ...found, steps: [...found.steps!.slice(0, -1), { ...last, field: read.join(".") }] };
 }
 
 /** Calls whose result is the router's, the props' or a wrapper's, never a composable's for a value. */
@@ -675,6 +755,13 @@ function isComponentFunction(fn: Node): boolean {
   return up?.type === "variable_declarator" && /^[A-Z]/.test(up.childForFieldName("name")?.text ?? "");
 }
 
+/** Does a parameter of function `fn` bind `name` (plain, destructured or defaulted)? */
+function parametersDeclare(fn: Node, name: string): boolean {
+  const single = fn.childForFieldName("parameter");
+  if (single) return declares(single, name);
+  return (fn.childForFieldName("parameters")?.namedChildren ?? []).some((p) => !!p && p.type !== "comment" && declares(p.childForFieldName("pattern") ?? p, name));
+}
+
 function declares(pattern: Node | null, name: string): boolean {
   if (!pattern) return false;
   if (pattern.type === "identifier" || pattern.type === "shorthand_property_identifier_pattern") return pattern.text === name;
@@ -688,6 +775,8 @@ function declares(pattern: Node | null, name: string): boolean {
  */
 function bindingOf(at: Node, name: string): { kind: "value"; value: Node } | { kind: "member"; key: string; value: Node } | null {
   for (let scope: Node | null = at.parent; scope; scope = scope.parent) {
+    // A function's own parameter of that name (a destructured one, which `paramOf` does not follow) hides every outer binding.
+    if (FUNCTION_NODE.test(scope.type) && parametersDeclare(scope, name)) return null;
     if (!SCOPE_NODES.has(scope.type)) continue;
     for (const stmt of scope.namedChildren) {
       const decl = stmt?.type === "export_statement" ? stmt.childForFieldName("declaration") : stmt;
@@ -805,6 +894,13 @@ export function derivedLocalsOf(fn: Node, locals: readonly string[]): Array<{ lo
       const callee = init?.type === "call_expression" ? init.childForFieldName("function")?.text : undefined;
       const values: Node[] = [];
       if (callee === "computed" && held && held.id !== init!.id) values.push(held);
+      else if (callee === "computed") {
+        // `computed(() => { return query.data.value?.squad })`: a block that only returns.
+        const arg = init!.childForFieldName("arguments")?.namedChildren.find((a) => a?.type !== "comment");
+        const returned = arg ? singleReturn(arg) : null;
+        if (!returned) continue;
+        values.push(returned);
+      }
       else if (callee === "ref" || callee === "shallowRef") {
         const first = init!.childForFieldName("arguments")?.namedChildren.find((a) => a?.type !== "comment");
         if (first && !emptyValue(first)) values.push(first);

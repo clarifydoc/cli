@@ -87,6 +87,13 @@ export interface ImpactDiffResult {
   measuredTests?: { tests: Array<CoverageTest & { ran: string[] }>; more: number; from: string[] };
   /** Why there is no measured evidence: the coverage reports are aggregate-only. */
   coverageNote?: string;
+  /**
+   * What this report could not judge, one sentence each: changed paths the
+   * analysis does not know (`unknownFiles`), counts that are lower bounds
+   * (`truncated`), no measured test evidence (`coverageNote`). Absent when
+   * nothing was left out.
+   */
+  limitations?: string[];
   /** Commands that run the tests, per language, by its plugin's runner (`pytest a.py::test_x`, `go test ./pkg -run …`). */
   testCommands?: Array<{ language: string; command: string }>;
   /** Sample reverse-import chains: changed file → … → screen/route file. */
@@ -482,6 +489,11 @@ export function computeImpactDiff(
     level = "moderate";
   }
 
+  const limitations: string[] = [];
+  if (unknownFiles.length) limitations.push(`${unknownFiles.length} changed file(s) are not in the analysis (${unknownFiles.slice(0, 5).join(", ")}${unknownFiles.length > 5 ? ", …" : ""}), so what they reach was not judged — analyze again to include them`);
+  if (truncated) limitations.push("a capped list overflowed, so the counts of screens, routes, data and dependents are lower bounds");
+  if (coverageNote) limitations.push(`no per-test evidence: ${coverageNote}`);
+
   const sortedDependents = [...dependents].sort();
   const result: ImpactDiffResult = {
     generatedAt: new Date().toISOString(),
@@ -512,6 +524,7 @@ export function computeImpactDiff(
     ...(patchCoverage ? { patchCoverage } : {}),
     ...(measured ? { measuredTests: measured } : {}),
     ...(coverageNote ? { coverageNote } : {}),
+    ...(limitations.length ? { limitations } : {}),
     ...(testCallers.length ? { testCallers: testCallers.slice(0, 50) } : {}),
     ...(testCommands.length ? { testCommands } : {}),
     risk: { level, reasons },
@@ -615,6 +628,10 @@ export function renderImpactText(r: ImpactDiffResult): string {
     lines.push("", "Chains:");
     for (const c of r.chains) lines.push(`  ${chainLine(c)}`);
   }
+  if (r.limitations?.length) {
+    lines.push("", "Could not judge:");
+    for (const l of r.limitations) lines.push(`  - ${l}`);
+  }
   return lines.join("\n");
 }
 
@@ -681,7 +698,115 @@ export function renderImpactMarkdown(r: ImpactDiffResult): string {
     md.push("");
     md.push("</details>");
   }
+  if (r.limitations?.length) {
+    md.push("");
+    md.push("**Could not judge**");
+    md.push("");
+    for (const l of r.limitations) md.push(`- ${l}`);
+  }
   return md.join("\n");
+}
+
+/** One change a reviewer should read first: a changed or removed function, with what it reaches. */
+export interface ReviewPriority {
+  /** The function (`Class.method`), or the file when the diff's lines were not read. */
+  symbol: string;
+  file: string;
+  /** 1-based; 0 when only the file is known. */
+  line: number;
+  risk: "high" | "moderate" | "low";
+  /** Why: `breaking`, `removed`, or what it reaches. */
+  why: string[];
+  /** Functions that call it, directly or up to four calls away (tests and route anchors left out). */
+  callers: number;
+  routes: number;
+  /** The tests that reach it, nearest first — at most three. */
+  tests: Array<{ file: string; symbol: string; line: number }>;
+  testCount: number;
+}
+
+const PRIORITY_SCAN_CAP = 200;
+
+/**
+ * The review priorities of an impact result, riskiest first: each changed
+ * function (and each removed one, whose callers lose it) with its callers,
+ * the routes its callers anchor and the tests that reach it. Without the
+ * diff's lines, the changed files by how many files depend on them.
+ */
+export function reviewPriorities(summary: ProjectAnalysis, r: ImpactDiffResult, limit = 3): ReviewPriority[] {
+  const si = r.symbolImpact;
+  const links = summary.symbolLinks ?? [];
+  const testCode = testCodeIndex(summary);
+  const out: Array<ReviewPriority & { score: number }> = [];
+  if (si) {
+    const sig = new Map((si.signatureChanges ?? []).map((c) => [`${c.file}::${c.symbol}`, c]));
+    const targets = new Map<string, ChangedSymbol>(si.changed.slice(0, PRIORITY_SCAN_CAP).map((s) => [`${s.file}::${s.symbol}`, s]));
+    // A removed or moved function is not in the new analysis' changed set, but its callers lose it.
+    for (const c of si.signatureChanges ?? []) {
+      if ((c.kind === "removed" || c.kind === "moved") && !targets.has(`${c.file}::${c.symbol}`)) targets.set(`${c.file}::${c.symbol}`, { file: c.file, symbol: c.symbol, line: c.line, endLine: c.line });
+    }
+    for (const [key, s] of targets) {
+      const reach = reverseSymbolReach(links, [s], 6);
+      const calls = reach.filter((c) => !c.symbol.startsWith("route:") && !testCode.isTest(c.file, c.symbol));
+      const callers = calls.filter((c) => c.depth <= 4).length;
+      const routes = reach.filter((c) => c.symbol.startsWith("route:") && c.depth <= 4).length;
+      const tests = reach.filter((c) => !c.symbol.startsWith("route:") && testCode.isTest(c.file, c.symbol));
+      const change = sig.get(key);
+      const why: string[] = [];
+      if (change?.breaking) why.push(`breaking: ${describeSignatureChange(change)}`);
+      else if (change) why.push(describeSignatureChange(change));
+      if (routes) why.push(`${routes} route(s)`);
+      const risk: ReviewPriority["risk"] = change?.breaking || routes > 0 ? "high" : routes > 0 || callers > 0 ? "moderate" : "low";
+      const score = (change?.breaking ? 1000 : 0) + (change ? 100 : 0) + routes * 20 + callers + (tests.length ? 0 : 5);
+      out.push({ symbol: s.symbol, file: s.file, line: s.line, risk, why, callers, routes, tests: tests.slice(0, 3).map((t) => ({ file: t.file, symbol: t.symbol, line: t.line })), testCount: tests.length, score });
+    }
+  } else {
+    const blast = new Map((summary.blastRadius ?? []).map((b) => [b.filePath, b]));
+    for (const f of r.changedFiles) {
+      const b = blast.get(f);
+      const callers = (b?.affectedFiles.length ?? 0) + (b?.transitiveFiles.length ?? 0);
+      const tests = r.tests.filter((t) => b?.affectedFiles.includes(t) || b?.transitiveFiles.includes(t));
+      const risk: ReviewPriority["risk"] = b?.changeRisk === "dangerous" ? "high" : b?.changeRisk === "moderate" ? "moderate" : "low";
+      out.push({ symbol: f, file: f, line: 0, risk, why: ["file only: the diff's lines were not read"], callers, routes: b?.traceImpact?.routeCount ?? 0, tests: tests.slice(0, 3).map((t) => ({ file: t, symbol: "", line: 0 })), testCount: tests.length, score: (risk === "high" ? 1000 : risk === "moderate" ? 500 : 0) + callers });
+    }
+  }
+  return out
+    .sort((a, b) => b.score - a.score || byOrdinal(a.file, b.file) || a.line - b.line)
+    .slice(0, limit)
+    .map(({ score: _score, ...p }) => p);
+}
+
+/**
+ * The short form of an impact report: its risk line and the top review
+ * priorities, one per line, as text or Markdown.
+ */
+export function renderImpactBrief(r: ImpactDiffResult, priorities: readonly ReviewPriority[], md = false): string {
+  const place = (p: ReviewPriority) => (p.line > 0 ? `${p.file}:${p.line}` : p.file);
+  const tests = (p: ReviewPriority) =>
+    p.tests.length
+      ? `${p.tests.map((t) => (t.symbol ? `${t.symbol} (${t.file}:${t.line})` : t.file)).join(", ")}${p.testCount > p.tests.length ? ` +${p.testCount - p.tests.length}` : ""}`
+      : "none";
+  const out: string[] = [];
+  if (md) {
+    out.push(`### ClarifyDoc impact — **${r.risk.level.toUpperCase()}** risk — review first`, "");
+    priorities.forEach((p, i) => {
+      out.push(`${i + 1}. **${p.risk.toUpperCase()}** \`${place(p)}\` ${p.symbol !== p.file ? `\`${p.symbol}\` ` : ""}— ${p.callers} caller(s); tests: ${tests(p)}${p.why.length ? ` — ${p.why.join("; ")}` : ""}`);
+    });
+    if (!priorities.length) out.push("Nothing changed in the analysis.");
+    if (r.limitations?.length) out.push("", ...r.limitations.map((l) => `- _Could not judge:_ ${l}`));
+    return out.join("\n");
+  }
+  out.push(`Review first — ${priorities.length === 1 ? "the 1 change" : `the ${priorities.length} riskiest changes`}  [risk: ${r.risk.level.toUpperCase()}, base: ${r.baseLabel}]`);
+  priorities.forEach((p, i) => {
+    out.push(`${i + 1}. ${p.risk.toUpperCase()}  ${place(p)}${p.symbol !== p.file ? `  ${p.symbol}` : ""}`);
+    out.push(`   ${p.callers} caller(s); tests: ${tests(p)}${p.why.length ? `; ${p.why.join("; ")}` : ""}`);
+  });
+  if (!priorities.length) out.push("Nothing changed in the analysis.");
+  if (r.limitations?.length) {
+    out.push("", "Could not judge:");
+    for (const l of r.limitations) out.push(`  - ${l}`);
+  }
+  return out.join("\n");
 }
 
 /**

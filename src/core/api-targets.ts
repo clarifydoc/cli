@@ -1,9 +1,9 @@
-import type { DataSourceInfo, FileAnalysis, FunctionInfo, PathArgCall } from "../types/analysis.js";
+import type { DataSourceInfo, FileAnalysis, Language, FunctionInfo, PathArgCall } from "../types/analysis.js";
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
 import type { ClassIndex, ClassRef, ImportIndex, ProjectContext } from "../types/project.js";
 import { buildModuleValueLookup } from "./module-values.js";
 import { buildImportDirectoryResolver } from "./import-directories.js";
-import { importsNameDirectories, pluginFor } from "../extractors/registry.js";
+import { importsNameDirectories, manifestFor, pluginFor } from "../extractors/registry.js";
 import { buildWrapperIndex } from "./wrapper-index.js";
 
 type ApiCall = DataSourceInfo & { filePath: string };
@@ -668,7 +668,11 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
     if (helperCall) {
       const fn = helperCall[1]!;
       const source = ctx.importIndex.localFor(file, fn.split(".")[0]!) ?? file;
-      const helper = byFile.get(source)?.functions.find((f) => f.name === fn && f.urlTemplate);
+      // `urls.club_url(id)` through a module the file imports: a function of that module's file, by its own name.
+      // Only where the head IS the module (a namespace import, a `mod`/`from . import` of the module's own file), not a named export of it.
+      const member = fn.includes(".") && source !== file && bindsModule(byFile, file, fn.split(".")[0]!, source) ? fn.slice(fn.indexOf(".") + 1) : undefined;
+      const helper = byFile.get(source)?.functions.find((f) => f.name === fn && f.urlTemplate)
+        ?? (member ? byFile.get(source)?.functions.find((f) => f.name === member && f.urlTemplate) : undefined);
       return helper ? resolveThisCallWith(helper, source, splitArgs(helperCall[2]!), cls, depth) : null;
     }
     const name = /^([A-Za-z_$][\w$]*)((?:\.[\w$]+)*)$/.exec(expr);
@@ -944,4 +948,23 @@ function passThroughHelpers(analyses: readonly FileAnalysis[]): Set<string> {
     }
   }
   return new Set([...seen].filter(([, ok]) => ok).map(([n]) => n));
+}
+
+/**
+ * Whether `head`, imported by `file` from `source` (the file it resolves to), names that module itself rather than
+ * a member the module exports: a namespace import (`import * as urls`), or a binding whose declared name is the
+ * module file's own name (`mod urls`, `from . import urls as u`) that the module does not export as a member.
+ */
+function bindsModule(byFile: ReadonlyMap<string, FileAnalysis>, file: string, head: string, source: string): boolean {
+  const imp = byFile.get(file)?.imports.find((i) => i.specifiers.includes(head));
+  if (!imp || imp.isDefault) return false;
+  if (imp.isNamespace) return true;
+  const declared = imp.aliases?.[head] ?? head;
+  const parts = source.split("/");
+  const stem = parts[parts.length - 1]!.replace(/\.[^.]*$/, "");
+  // A directory imported by name is its index module: `routes/__init__.py` for `from league.utils import routes`.
+  const language = byFile.get(source)?.language;
+  const indexOf = language ? manifestFor(language as Language)?.directoryIndexStems?.includes(stem) : false;
+  const named = stem === declared || (indexOf === true && parts[parts.length - 2] === declared);
+  return named && !byFile.get(source)?.exports.some((e) => e.name === declared);
 }

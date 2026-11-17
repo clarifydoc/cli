@@ -218,6 +218,8 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
     mapMember?: boolean;
     /** The plugin's per-site answer (`CallExtractionHooks.boundAt`); absent = the function-wide set decides. */
     bound?: boolean;
+    /** The plugin's answer to `CallExtractionHooks.receiverReboundAt`. */
+    rebound?: boolean;
   }> = [];
   const boundHere = new Set<string>();
   const localHere = new Set<string>();
@@ -238,6 +240,7 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
   ) => {
     candidates.push({ name, line: node.startPosition.row + 1, column: node.startPosition.column, isReference, passed, receiver, key, args, argCount, argOrigins, argKinds });
     if (!isReference && hooks.boundAt) candidates[candidates.length - 1]!.bound = hooks.boundAt(node, name);
+    if (!isReference && hooks.receiverReboundAt && name.includes(".") && hooks.receiverReboundAt(node, name)) candidates[candidates.length - 1]!.rebound = true;
   };
   const addResult = (name: string, node: Node, passed?: "attribute" | "return" | "property", returnedAs?: string, extra?: { libraryOption?: string }) => {
     if (!name) return;
@@ -353,7 +356,7 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
       : c.argOrigins?.length || c.indexOrigin ? `${c.name}\0@${c.line}:${c.column}`
       : c.argCount != null && !hooks.noOverloads ? `${c.name}\0#${c.argCount}${c.argKinds ? `(${c.argKinds.join(",")})` : ""}${typed}` : c.name + typed;
     // A site its own block binds the name of is another claim than one the module's name reaches.
-    const seenKey = c.bound ? `${seenKeyBase}\0bound` : seenKeyBase;
+    const seenKey = c.bound ? `${seenKeyBase}\0bound` : c.rebound ? `${seenKeyBase}\0rebound` : seenKeyBase;
     // One site is one call, however many ways the walk met it (a decorator is also its call node) — a value held
     // under several keys is one claim per key (a library option callback under each method running it).
     const site = `${c.name}\0@${c.line}:${c.column}${c.passed === "property" ? `\0${c.returnedAs}` : ""}`;
@@ -365,6 +368,7 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
     if (c.returnedAs) call.returnedAs = c.returnedAs;
     if (c.libraryOption) call.libraryOption = c.libraryOption;
     if (c.mapMember) call.mapMember = true;
+    if (c.rebound) call.receiverRebound = true;
     if (!c.isReference && (c.bound ?? localHere.has(c.name))) call.boundLocally = true;
     if (c.args) call.args = c.args;
     if (c.argCount != null) call.argCount = c.argCount;

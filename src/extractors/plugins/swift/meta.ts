@@ -47,6 +47,8 @@ export const swiftMeta: LanguagePluginMeta = {
   treeSitter: { grammar: "swift", load: () => import("./tree-sitter.js").then((m) => m.loadSwiftReader()) },
   knownPackages: swiftPackages,
   builtinTypes: SWIFT_BUILTINS,
+  // `var club: Optional<Club>` is the `Club?` spelled long: `club?.save()` and `club!.save()` reach `Club.save`.
+  transparentTypeWrappers: ["Optional"],
   requestSchema: swiftRequestSchema,
   // SwiftData @Model and Core Data NSManagedObject classes (see entities.ts).
   entities: new SwiftEntityExtractor(),

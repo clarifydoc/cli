@@ -111,7 +111,7 @@ export class RailsViewResolver implements DispatchResolver {
         const { method, target } = el.request;
         const candidates = target.startsWith("/")
           ? byPath.filter((r) => r.re.test(target.replace(/\/$/, "") || "/"))
-          : byHelper.get(target.replace(/_(?:path|url)$/, "")) ?? [];
+          : byHelper.get(target.replace(/^route:/, "").replace(/_(?:path|url)$/, "")) ?? [];
         for (const c of candidates) {
           if (!sameVerb(c.verb, method)) continue;
           const site = actionSite(c.handler);

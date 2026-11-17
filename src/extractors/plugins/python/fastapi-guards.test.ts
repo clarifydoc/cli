@@ -106,6 +106,30 @@ def get_club(club_id: int):
     ]);
   });
 
+  it("hands the router class's dependency callables to its routes, named for the class's own file", async () => {
+    const out = await analyze({
+      ...BASE,
+      "league/routes/clubs.py": `
+from fastapi import APIRouter
+from league.routes.base.routers import MemberRouter
+
+public_router = APIRouter(prefix="/clubs")
+router = MemberRouter(prefix="/clubs")
+
+@public_router.get("/public")
+def list_public():
+    pass
+
+@router.get("/{club_id}")
+def get_club(club_id: int):
+    pass
+`,
+    });
+    const route = (p: string) => out.flatMap((a) => a.routes).find((r) => r.path === p)!;
+    expect(route("/clubs/{club_id}").inheritedMiddleware).toEqual([{ file: "league/routes/base/routers.py", calls: ["get_current_user"] }]);
+    expect(route("/clubs/public").inheritedMiddleware).toBeUndefined();
+  });
+
   it("passes a guarded router's dependencies on to the routers it includes, and include_router's own", async () => {
     const out = await analyze({
       ...BASE,

@@ -112,16 +112,28 @@ export function boundNamesOf(body: Node | null, params: readonly ParamInfo[]): {
 
 /**
  * The names a function body rebinds in its own scope or reaches for through `global`/`nonlocal` and may
- * assign: every assignment, loop or `with … as` target, walrus, import, nested `def`/class, each `global` or
- * `nonlocal` name. A module-level binding such a name stands for is not what the body's reads of it see.
+ * assign: every assignment, loop or `with … as` target, walrus, `match` capture, `del`, import, nested `def`/class
+ * (and the `global`/`nonlocal` names declared inside one), each `global` or `nonlocal` name. A module-level binding such a name stands for is not what the body's reads of it see.
  */
 export function rebindingNamesOf(body: Node | null): Set<string> {
   const names = new Set<string>();
   const walk = (node: Node): void => {
     for (const n of node.namedChildren) {
       switch (n.type) {
-        case "function_definition": case "class_definition": { const id = n.childForFieldName("name"); if (id) names.add(id.text); continue; }
+        case "function_definition": case "class_definition": {
+          const id = n.childForFieldName("name");
+          if (id) names.add(id.text);
+          // A nested scope's own bindings stay its own — except the names it declares `global` or `nonlocal` and may assign.
+          declaredOuterNames(n, names);
+          continue;
+        }
         case "assignment": case "augmented_assignment": case "for_statement": case "for_in_clause": targetNames(n.childForFieldName("left"), names); break;
+        // `del helper` makes the name local to the body, as an assignment does.
+        case "delete_statement": for (const t of n.namedChildren) for (const e of t.type === "expression_list" ? t.namedChildren : [t]) targetNames(e, names); break;
+        // A `match` capture: `case [helper]:`, `case {"k": helper, **rest}:`, `case Club(name=helper):`, `case [first, *rest]:`.
+        case "case_pattern": { const c = n.namedChild(0); if (n.namedChildCount === 1 && c?.type === "dotted_name") singleName(c, names); break; }
+        case "splat_pattern": targetNames(n.namedChild(0), names); break;
+        case "keyword_pattern": { const c = n.namedChild(1); if (c?.type === "dotted_name") singleName(c, names); break; }
         case "named_expression": targetNames(n.childForFieldName("name"), names); break;
         case "as_pattern": targetNames(n.childForFieldName("alias")?.namedChild(0) ?? n.childForFieldName("alias"), names); break;
         case "global_statement": case "nonlocal_statement": for (const c of n.namedChildren) names.add(c.text); break;
@@ -138,6 +150,20 @@ export function rebindingNamesOf(body: Node | null): Set<string> {
   };
   if (body) walk(body);
   return names;
+}
+
+/** A `match` capture pattern: a bare name (`helper`), never a dotted value (`Color.RED`) or the wildcard. */
+function singleName(dotted: Node, into: Set<string>): void {
+  const id = dotted.namedChildren;
+  if (id.length === 1 && id[0]!.type === "identifier" && id[0]!.text !== "_") into.add(id[0]!.text);
+}
+
+/** The names a nested scope (at any depth) declares `global` or `nonlocal`. */
+function declaredOuterNames(scope: Node, into: Set<string>): void {
+  for (const n of scope.namedChildren) {
+    if (n.type === "global_statement" || n.type === "nonlocal_statement") for (const c of n.namedChildren) into.add(c.text);
+    else declaredOuterNames(n, into);
+  }
 }
 
 /** What the module's own statements bind: names assigned at module level, never defs, classes or imports. */

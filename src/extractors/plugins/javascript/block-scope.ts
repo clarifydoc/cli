@@ -154,18 +154,73 @@ export function boundAtSite(site: Node, name: string): boolean {
 }
 
 /**
+ * Where the nearest binding of a name is at a site: a scope below the top level, the module's own, or none. With
+ * `stop`, the walk ends at that node (exclusive) and answers "inner" or "none" only.
+ */
+function bindingScopeAt(site: Node, name: string, stop?: Node): "inner" | "module" | "none" {
+  for (let p = site.parent; p; p = p.parent) {
+    if (stop && p.id === stop.id) return "none";
+    if (p.type === "program") return topLevelNames(p).has(name) ? "module" : "none";
+    if (p.type === "statement_block" || p.type === "switch_body") {
+      if (declaredIn(p).has(name)) return "inner";
+    } else if (p.type === "for_statement" || p.type === "for_in_statement" || p.type === "catch_clause") {
+      if (headBinds(p, name)) return "inner";
+    } else if (FUNCTION_BOUNDARIES.has(p.type)) {
+      if (varsOf(p).has(name) || paramNames(p).has(name)) return "inner";
+    }
+  }
+  return "none";
+}
+
+/**
  * True where `name` at `site` is a binding of the module itself: no enclosing block, loop, catch or function
  * (parameters included) between the site and the top level binds it, and the top level declares or imports it.
  */
 export function moduleBindingAt(site: Node, name: string): boolean {
+  return bindingScopeAt(site, name) === "module";
+}
+
+/**
+ * True where a parameter, local, loop or catch binding of an enclosing scope hides `name` at `site`
+ * (`CallExtractionHooks.receiverReboundAt`): a call through it is on that binding, never on a module's namesake.
+ */
+export function reboundBelowModuleAt(site: Node, name: string): boolean {
+  return bindingScopeAt(site, name) === "inner";
+}
+
+/** Whether an object literal (through `as`/`satisfies`) holds `key`: a pair, a method or a shorthand member. */
+function objectHasKey(value: Node | null, key: string): boolean {
+  let v = value;
+  while (v && (v.type === "as_expression" || v.type === "satisfies_expression" || v.type === "parenthesized_expression")) v = v.namedChildren[0] ?? null;
+  if (v?.type !== "object") return false;
+  return v.namedChildren.some((m) => {
+    if (m.type === "shorthand_property_identifier") return m.text === key;
+    if (m.type !== "pair" && m.type !== "method_definition") return false;
+    const k = m.childForFieldName("key") ?? m.childForFieldName("name");
+    return !!k && (k.type === "string" ? k.text.slice(1, -1) : k.text) === key;
+  });
+}
+
+/**
+ * True where the nearest binding of `head` below the module is a `const`/`let`/`var` whose initializer is an object
+ * literal holding `key`: a call `head.key(…)` there is that object's own member, not a rebound value.
+ */
+export function ownMemberObjectAt(site: Node, head: string, key: string): boolean {
   for (let p = site.parent; p; p = p.parent) {
-    if (p.type === "program") return topLevelNames(p).has(name);
+    if (p.type === "program") return false;
     if (p.type === "statement_block" || p.type === "switch_body") {
-      if (declaredIn(p).has(name)) return false;
+      if (!declaredIn(p).has(head)) continue;
+      for (const stmt of p.namedChildren) {
+        if (stmt.type !== "lexical_declaration" && stmt.type !== "variable_declaration") continue;
+        for (const d of stmt.namedChildren) {
+          if (d.type === "variable_declarator" && d.childForFieldName("name")?.text === head) return objectHasKey(d.childForFieldName("value"), key);
+        }
+      }
+      return false;
     } else if (p.type === "for_statement" || p.type === "for_in_statement" || p.type === "catch_clause") {
-      if (headBinds(p, name)) return false;
+      if (headBinds(p, head)) return false;
     } else if (FUNCTION_BOUNDARIES.has(p.type)) {
-      if (varsOf(p).has(name) || paramNames(p).has(name)) return false;
+      if (varsOf(p).has(head) || paramNames(p).has(head)) return false;
     }
   }
   return false;
@@ -190,4 +245,9 @@ function topLevelNames(program: Node): Set<string> {
 export function boundByParameterAt(site: Node, name: string): boolean {
   for (let p = site.parent; p && p.type !== "program"; p = p.parent) if (FUNCTION_BOUNDARIES.has(p.type) && paramNames(p).has(name)) return true;
   return false;
+}
+
+/** True where an enclosing scope strictly between `site` and `scope` (a block or function body) rebinds `name`. */
+export function reboundBefore(site: Node, name: string, scope: Node): boolean {
+  return bindingScopeAt(site, name, scope) === "inner";
 }

@@ -372,8 +372,18 @@ export function planCodexHooks(self: Launcher = selfCommand(), configToml?: stri
   const block = `${CODEX_HOOK_START}\n${table("PreToolUse", command)}\n${table("PostToolUse", gitCommand)}${CODEX_HOOK_END}\n`;
   // The previous block; or, when a table rewritten above it took the start comment, its tables up to the end marker.
   // Only lines of the shape we wrote, so a damaged block never takes a user's own tables with it.
-  const ours = /(?:# clarifydoc:hooks:start\n)?(?:\[\[hooks\.(?:Pre|Post)ToolUse(?:\.hooks)?\]\]\n|matcher = "Bash"\n|type = "command"\n|command = [^\n]*\n|timeout = 10\n|\n)*# clarifydoc:hooks:end\n?/g;
+  // A start with no end, the end before the start, or two blocks: a file we cannot read safely (a lone end is what the pattern below handles).
+  const starts = existing.split(CODEX_HOOK_START).length - 1;
+  const ends = existing.split(CODEX_HOOK_END).length - 1;
+  if (starts > 1 || ends > 1 || (starts === 1 && (ends !== 1 || existing.indexOf(CODEX_HOOK_END) < existing.indexOf(CODEX_HOOK_START)))) {
+    const found = findMarkedRegion(existing, CODEX_HOOK_START, CODEX_HOOK_END);
+    return { file, content: block, skip: damagedNote(found.kind === "damaged" ? found.reason : "its hook markers are unbalanced") };
+  }
+  // Without its start comment the block must begin at one of our `[[hooks.…]]` headers, never at a person's own `command =` line before it.
+  const ours = /(?:# clarifydoc:hooks:start\n|(?=\[\[hooks\.(?:Pre|Post)ToolUse\]\]\n))(?:\[\[hooks\.(?:Pre|Post)ToolUse(?:\.hooks)?\]\]\n|matcher = "Bash"\n|type = "command"\n|command = [^\n]*\n|timeout = 10\n|\n)*# clarifydoc:hooks:end\n?/g;
   const without = existing.replace(ours, "").replace(/\n{3,}/g, "\n\n");
+  // A lone end marker no block of ours leads up to: nothing here is ours to replace.
+  if (without.includes(CODEX_HOOK_END)) return { file, content: block, skip: damagedNote(`its end marker \`${CODEX_HOOK_END}\` has no start marker \`${CODEX_HOOK_START}\` or hook tables of ours before it`) };
   if (/^\s*(?:hooks\.)?(?:Pre|Post)ToolUse\s*=/m.test(without)) {
     return { file, content: block, skip: "its PreToolUse or PostToolUse hooks are an inline array, which cannot be mixed with [[hooks.…]] tables — add these hooks to that array by hand" };
   }
@@ -461,10 +471,10 @@ export function planGitHooks(root: string, opts: { output?: string; hooksDir?: s
     const refresh = `(cd ${q(root)} && ${run} analyze . -o ${q(opts.output ?? ".clarifydoc")} --incremental --no-lsp --no-pretty </dev/null >/dev/null 2>&1 &)`;
     const body = when ? `if ${when}; then\n  ${refresh}\nfi` : refresh;
     const block = `${HOOK_START}\n# Refresh the ClarifyDoc analysis in the background (clarifydoc install --git-hooks).\nif [ -z "$CLARIFYDOC_NO_GIT_HOOK" ]; then\n${body.split("\n").map((l) => `  ${l}`).join("\n")}\nfi\n${HOOK_END}\n`;
-    const i = existing.indexOf(HOOK_START);
-    const j = existing.indexOf(HOOK_END);
+    const region = findMarkedRegion(existing, HOOK_START, HOOK_END);
+    if (region.kind === "damaged") return { file, content: block, skip: damagedNote(region.reason), mode: 0o755 };
     let content: string;
-    if (i >= 0 && j > i) content = `${existing.slice(0, i)}${block}${existing.slice(j + HOOK_END.length).replace(/^\n/, "")}`;
+    if (region.kind === "one") content = `${existing.slice(0, region.start)}${block}${existing.slice(region.end + HOOK_END.length).replace(/^\n/, "")}`;
     else if (existing.startsWith("#!")) {
       const nl = existing.indexOf("\n");
       content = nl < 0 ? `${existing}\n${block}` : `${existing.slice(0, nl + 1)}${block}${existing.slice(nl + 1)}`;
@@ -541,6 +551,31 @@ Tools: ${names.map((n) => `\`${n}\``).join(", ")}.
   ];
 }
 
+/**
+ * Where a marked block sits in a person's file. A block is replaced only when
+ * exactly one start is followed by exactly one end; anything else (a lone
+ * start, a lone end, the end before the start, two blocks) is a damaged file
+ * we must not guess about, so the caller leaves it alone and says why.
+ */
+export type MarkedRegion = { kind: "none" } | { kind: "one"; start: number; end: number } | { kind: "damaged"; reason: string };
+
+export function findMarkedRegion(text: string, start: string, end: string): MarkedRegion {
+  const count = (m: string) => text.split(m).length - 1;
+  const starts = count(start);
+  const ends = count(end);
+  if (starts === 0 && ends === 0) return { kind: "none" };
+  if (starts === 1 && ends === 1) {
+    const i = text.indexOf(start);
+    const j = text.indexOf(end);
+    if (j > i) return { kind: "one", start: i, end: j };
+    return { kind: "damaged", reason: `its end marker \`${end}\` comes before its start marker \`${start}\`` };
+  }
+  if (starts > 1 || ends > 1) return { kind: "damaged", reason: `it holds ${starts} start and ${ends} end markers (\`${start}\` … \`${end}\`), so which text is ours is unclear` };
+  return { kind: "damaged", reason: starts ? `its start marker \`${start}\` has no end marker \`${end}\`` : `its end marker \`${end}\` has no start marker \`${start}\`` };
+}
+
+const damagedNote = (reason: string) => `${reason}. Fix or remove the markers by hand and run install again; nothing was changed`;
+
 const START = "<!-- clarifydoc:start -->";
 const END = "<!-- clarifydoc:end -->";
 
@@ -555,10 +590,10 @@ export function planGuidance(root: string, file = "AGENTS.md", facts: string[] =
   const existing = existsSync(path) ? readFileSync(path, "utf8") : "";
   const projectPart = facts.length ? `\n### In this project\n\n${facts.map((f) => `- ${f}`).join("\n")}\n` : "";
   const section = `${START}\n${AGENT_GUIDANCE.trimEnd()}\n${projectPart}${END}\n`;
-  const i = existing.indexOf(START);
-  const j = existing.indexOf(END);
-  const content = i >= 0 && j > i
-    ? `${existing.slice(0, i)}${section}${existing.slice(j + END.length).replace(/^\n/, "")}`
+  const region = findMarkedRegion(existing, START, END);
+  if (region.kind === "damaged") return { file: path, content: section, skip: damagedNote(region.reason) };
+  const content = region.kind === "one"
+    ? `${existing.slice(0, region.start)}${section}${existing.slice(region.end + END.length).replace(/^\n/, "")}`
     : `${existing.trimEnd()}${existing.trim() ? "\n\n" : ""}${section}`;
   return { file: path, content };
 }

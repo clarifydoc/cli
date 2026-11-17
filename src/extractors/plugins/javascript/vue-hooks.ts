@@ -5,6 +5,7 @@ import { extractSlotFunctions, extractVueFunctionProps, extractVueInteractiveEle
 import { screenSwitchFacts } from "./routes/screen-tables.js";
 import { addReactiveTriggers } from "./reactive-triggers.js";
 import { withMarkupExpressions } from "./markup-expressions.js";
+import { templateLoopVariables } from "./template-scopes.js";
 import { addTemplateRefs } from "./template-refs.js";
 import { dynamicEmitFacts, tagEventLiterals } from "./events.js";
 import { boundListeners } from "./bound-listeners.js";
@@ -104,6 +105,11 @@ export function vuePreprocess(
         if (slotFunctions.length > 0) analysis.slotFunctions = slotFunctions;
         // `<HomeScreen v-show="screen === 'Home'" />`: the screen a hand-rolled router shows by key.
         const startLine = raw.slice(0, raw.indexOf(sfc.template)).split("\n").length;
+        // `v-for="club in clubs"`: the loop variables a hole in the template's expressions may read a member of.
+        const loops = templateLoopVariables(sfc.template, sfc.script ?? "");
+        // Each loop's range is the element carrying the `v-for`: a variable of that name elsewhere is the script's.
+        const lineAt = (offset: number) => startLine + (sfc.template!.slice(0, offset).match(/\n/g)?.length ?? 0);
+        if (loops.length > 0) analysis.templateLoops = loops.map(({ start, end, ...l }) => ({ ...l, line: lineAt(start), endLine: lineAt(end - 1) }));
         const switches = screenSwitchFacts(sfc.template, startLine, analysis.imports, raw);
         if (switches.length > 0) analysis.routeFacts = [...(analysis.routeFacts ?? []), ...switches];
       }

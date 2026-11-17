@@ -181,14 +181,14 @@ const STATEMENT_LEAVES = new Set(["execute", "exec", "scalars", "scalar"]);
 export function pythonWhereFields(call: Node): DataSourceInfo["whereFields"] | null {
   const out: NonNullable<DataSourceInfo["whereFields"]> = [];
   const seen = new Set<string>();
-  const add = (field: string, value: Node): void => {
+  const add = (field: string, value: Node, fieldParam?: number): void => {
     const { node: v, transform } = unwrap(value);
     const origin = valueOrigin(v);
     if (!origin || origin.kind === "literal") return;
-    const k = `${field}|${JSON.stringify(origin)}`;
+    const k = `${field}|${fieldParam ?? ""}|${JSON.stringify(origin)}`;
     if (seen.has(k)) return;
     seen.add(k);
-    out.push({ field, origin, ...(transform ? { transform } : {}) });
+    out.push({ field, origin, ...(transform ? { transform } : {}), ...(fieldParam !== undefined ? { fieldParam } : {}) });
   };
   const visited = new Set<number>();
   const chain = (expr: Node, depth: number): void => {
@@ -218,7 +218,31 @@ export function pythonWhereFields(call: Node): DataSourceInfo["whereFields"] | n
 }
 
 /** One argument of a filter call: a keyword lookup, a column comparison, or `and_(…)` / `Q(…)` holding them. */
-function filterArg(a: Node, add: (field: string, value: Node) => void): void {
+function filterArg(a: Node, add: (field: string, value: Node, fieldParam?: number) => void): void {
+  // `**{key: value}`: a column the caller names — a literal key is the keyword spelled out, a parameter's name is
+  // the column the project pass reads off each call handing it a string literal (`DataSourceInfo.whereFields.fieldParam`).
+  if (a.type === "dictionary_splat") {
+    const dict = a.namedChild(0);
+    if (dict?.type !== "dictionary") return;
+    const pairs = dict.namedChildren.filter((c) => c.type !== "comment");
+    if (pairs.length !== 1 || pairs[0]!.type !== "pair") return;
+    const key = pairs[0]!.childForFieldName("key");
+    const value = pairs[0]!.childForFieldName("value");
+    if (!key || !value) return;
+    if (key.type === "string") {
+      const text = stringText(key);
+      if (text && /^[A-Za-z_]\w*$/.test(text)) {
+        const parts = text.split("__");
+        while (parts.length > 1 && DJANGO_LOOKUPS.has(parts[parts.length - 1]!)) parts.pop();
+        add(parts.join("."), value);
+      }
+    } else if (key.type === "identifier") {
+      const fn = enclosingDef(key);
+      const index = fn ? paramIndex(fn, key.text) : -1;
+      if (fn && index >= 0 && assignsTo(fn, key.text).length === 0) add(key.text, value, index);
+    }
+    return;
+  }
   if (a.type === "keyword_argument") {
     const key = a.childForFieldName("name")?.text;
     const value = a.childForFieldName("value");

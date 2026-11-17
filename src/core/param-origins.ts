@@ -248,7 +248,13 @@ export function computeParamOrigins(input: {
     const key = `${target.file}::${target.symbol}#${index}${field ? `.${field}` : ""}`;
     if (seen.has(key) || out.length >= MAX_PER_SLOT * 4) return;
     seen.add(key);
-    for (const link of (callersOf.get(`${target.file}::${target.symbol}`) ?? []).slice().sort((a, b) => byOrdinal(a.sourceFile, b.sourceFile) || a.sourceLine - b.sourceLine)) {
+    const callers = (callersOf.get(`${target.file}::${target.symbol}`) ?? []).slice().sort((a, b) => byOrdinal(a.sourceFile, b.sourceFile) || a.sourceLine - b.sourceLine);
+    // A call recorded twice — as a function's own and as a hook callback's data source (`onMounted(() => load(id))`,
+    // the module's `<setup>` too) — is one site: the record naming no function of the file is its copy.
+    const siteOf = (l: SymbolLink) => `${l.sourceFile}\0${l.sourceLine}\0${l.callName}`;
+    const ownSites = new Set(callers.filter((l) => fnNamed(l.sourceFile, l.sourceSymbol)).map(siteOf));
+    for (const link of callers) {
+      if (ownSites.has(siteOf(link)) && !fnNamed(link.sourceFile, link.sourceSymbol)) continue;
       const call = callOf(link);
       const conf = weakest(confidence, link.confidence ?? "INFERRED");
       const hop = { file: link.sourceFile, symbol: link.sourceSymbol, line: link.sourceLine, arg: index, ...(field ? { field } : {}) };

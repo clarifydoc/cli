@@ -1,5 +1,5 @@
 import { argOriginsOf } from "./arg-origins.js";
-import { boundAtSite } from "./block-scope.js";
+import { boundAtSite, moduleBindingAt, ownMemberObjectAt, reboundBelowModuleAt } from "./block-scope.js";
 import type { Node } from "web-tree-sitter";
 import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { receiverTypeOfCall } from "./di.js";
@@ -16,7 +16,7 @@ import { requiredSource } from "./imports-exports.js";
 import { arrayMapEntries, memberAssignment, namesFunction } from "./member-values.js";
 import { heldFunction } from "./held-functions.js";
 import { contractFunction } from "./contract-handlers.js";
-import { derivedLocalsIn, derivedMemberKeys, libraryBindingCallee, libraryDestructuredMembers, libraryObjectMembers } from "./library-callbacks.js";
+import { derivedLocalsIn, derivedMemberKeys, libraryBindingCallee, libraryDestructuredMembers, libraryObjectMembers, librarySubscriptionCallee } from "./library-callbacks.js";
 
 /** Vue 3 <script setup> compiler macros — auto-imported, not in imports array */
 const VUE_COMPILER_MACROS = new Set([
@@ -164,14 +164,21 @@ export const javascriptCallHooks: CallExtractionHooks = {
     }
     const record = callee?.type === "member_expression" && callee.text.includes("[") ? recordCallee(callee) : null;
     // `mutate(x)` after `const { mutate } = useMutation({ mutationFn })`: `mutate.mutate`, the key the callback is held under.
-    return record ?? (callee?.type === "identifier" ? libraryBindingCallee(node) : null) ?? genericResolveCallName(node, {
+    return record ?? (callee?.type === "identifier" ? libraryBindingCallee(node) : null) ?? (callee?.type === "member_expression" && callee.text.startsWith("$") ? librarySubscriptionCallee(node) : null) ?? genericResolveCallName(node, {
       ...(awaitedGeneric ? { calleeOverride: callee } : {}),
       extraCallee: (c) => dispatchMapCallee(c) ?? mappedActionCallee(c),
     });
   },
 
   // `ACTIONS.send(club)` on a map holding `send`: the map's own key, not a noise-named method.
-  statedMember: (node, name) => dispatchMapMember(name, node),
+  // Only where the file's top-level object is the binding in scope: a parameter or local of that name is another value.
+  statedMember: (node, name) => dispatchMapMember(name, node, true) && (moduleBindingAt(node, name.slice(0, name.indexOf("."))) || ownMemberObjectAt(node, name.slice(0, name.indexOf(".")), name.slice(name.indexOf(".") + 1))),
+  receiverReboundAt: (node, name) => {
+    const dot = name.indexOf(".");
+    const head = dot > 0 ? name.slice(0, dot).replace(/[?!]$/, "") : "";
+    // A local object literal holding the called key is the member's owner, not a rebinding of its name.
+    return /^[A-Za-z_$][\w$]*$/.test(head) && reboundBelowModuleAt(node, head) && !ownMemberObjectAt(node, head, name.slice(dot + 1));
+  },
   importedMapMember: (node, name) => importedMapMember(name, node),
 
   // `addEventListener("resize", this.onResize)`: the instance's own method, handed on — also bound first

@@ -49,17 +49,8 @@ export const storyboardNavigationResolver: RouteResolver = {
     }
     const row = (target: string, line: number): RouteInfo => ({ path: target, httpMethod: null, kind: "frontend", handler: target, componentPath: target, calls: [], middleware: [], line, navigation: true });
 
-    for (const s of scenes) {
-      const holder = s.cls ? holders.get(s.cls) : undefined;
-      if (!holder) continue;
-      for (const g of s.segues) {
-        if (g.kind === "relationship") continue;
-        for (const target of classesOf(byId.get(g.to))) {
-          if (!holder.analysis.routes.some((r) => r.navigation && r.path === target && r.line === holder.line)) holder.analysis.routes.push(row(target, holder.line));
-        }
-      }
-    }
-
+    // The rows the code itself writes come first: `performSegue(withIdentifier:)` and `instantiateViewController`
+    // name their class at their own line, which the scene's row at the class line below must not outrank.
     for (const a of code) {
       if (!a.routes.some((r) => r.navigation && (r.path.startsWith(NAV_BY_SEGUE) || r.path.startsWith(NAV_BY_STORYBOARD_ID)))) continue;
       const kept: RouteInfo[] = [];
@@ -74,6 +65,18 @@ export const storyboardNavigationResolver: RouteResolver = {
         if (target && !kept.some((k) => k.navigation && k.path === target && k.line === r.line)) kept.push({ ...r, path: target, handler: target, componentPath: target });
       }
       a.routes = kept;
+    }
+
+    // A segue of a scene is an edge at its class, unless the file's code already reaches that class itself.
+    for (const s of scenes) {
+      const holder = s.cls ? holders.get(s.cls) : undefined;
+      if (!holder) continue;
+      for (const g of s.segues) {
+        if (g.kind === "relationship") continue;
+        for (const target of classesOf(byId.get(g.to))) {
+          if (!holder.analysis.routes.some((r) => r.navigation && r.path === target)) holder.analysis.routes.push(row(target, holder.line));
+        }
+      }
     }
   },
 };

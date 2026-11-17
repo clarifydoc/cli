@@ -158,6 +158,8 @@ export function bfs(
 export interface UsageGate {
   /** Whether any link carries binding sites. */
   readonly active: boolean;
+  /** Whether the link caller → callee is a dispatch back to a component's user (it carries binding sites). */
+  bound(caller: string, callee: string): boolean;
   /** The state after the forward step caller → callee, or null when the gate refuses it. */
   forward(state: string, caller: string, callee: string): string | null;
   /** The state after the reverse step callee → caller (a walk from effects back to entries), or null when refused. */
@@ -179,7 +181,7 @@ type GateLink = Pick<SymbolLink, "sourceFile" | "sourceSymbol" | "targetFile" | 
   readonly relation?: string;
 };
 const GATES = new WeakMap<readonly GateLink[], { length: number; gate: UsageGate }>();
-const OPEN_GATE: UsageGate = { active: false, forward: () => "", reverse: () => "" };
+const OPEN_GATE: UsageGate = { active: false, bound: () => false, forward: () => "", reverse: () => "" };
 
 /** The links' usage gate, built once per array. */
 export function usageGate(symbolLinks: readonly GateLink[]): UsageGate {
@@ -235,6 +237,7 @@ function buildUsageGate(symbolLinks: readonly GateLink[]): UsageGate {
   };
   return {
     active: true,
+    bound: (caller, callee) => filesOf.has(edgeKey(caller, callee)),
     forward(state, caller, callee) {
       const from = fileOf(caller);
       const to = fileOf(callee);

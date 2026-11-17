@@ -27,8 +27,8 @@ export const springxmlMeta: LanguagePluginMeta = {
     if (/<(?:\w+:)?definitions\b[^>]*schemas\.xmlsoap\.org\/wsdl\//.test(rawSource)) return { sourceText: rawSource, language: "wsdl" };
     const isFlow = rawSource.includes("springframework.org/schema/webflow") && /<flow[\s>]/.test(rawSource);
     // Spring `<beans>` or an OSGi Blueprint `<blueprint>` container: bean classes, REST clients, CXF endpoints.
-    const isBeans = /<(?:beans|blueprint)[\s>]/.test(rawSource)
-      && (/<bean\b[^>]*\bclass\s*=/.test(rawSource) || /<(?:jaxrs:client|jaxrs:server|jaxws:endpoint|jaxws:server)\b/.test(rawSource));
+    const isBeans = /<(?:[\w-]+:)?(?:beans|blueprint)[\s>]/.test(rawSource)
+      && (/<(?:[\w-]+:)?bean\b[^>]*\bclass\s*=/.test(rawSource) || /<(?:jaxrs:client|jaxrs:server|jaxws:endpoint|jaxws:server)\b/.test(rawSource));
     if (!isFlow && !isBeans && !isMapperXml(rawSource) && !isAndroidNavGraph(rawSource) && !isOrmMappingXml(rawSource) && !isLiquibaseChangelog(rawSource)) {
       return { skip: "not a Spring flow/bean definition, MyBatis mapper, JPA mapping file, Liquibase changelog or Android navigation graph" };
     }

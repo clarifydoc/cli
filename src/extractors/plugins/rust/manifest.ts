@@ -24,6 +24,7 @@ export const rustManifest: LanguagePluginManifest = {
   // flutter_rust_bridge and wasm-pack configurations: generated Dart / JS modules bound to Rust functions.
   foreignBindings: rustForeignBindings,
   language: "rust",
+  directoryIndexStems: ["mod"],
   collectionElementOf: rustCollectionElement,
   family: "rust",
   // Each file in `src/bin/` is a binary crate root; the default `**/bin/**`

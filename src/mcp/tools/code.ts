@@ -1452,6 +1452,27 @@ const PATH_MAX_HOPS = 8;
 /** Paths of the shortest length listed by `to`. */
 const PATH_MAX_LISTED = 5;
 
+/** Strategies that guess, weakest first: among edges of one confidence, the one found this way is the one to verify. */
+const WEAK_STRATEGIES = ["unique-global-blind", "unique-global", "value-flow", "type-argument", "interface-fanout", "reference", "lsp-reference"];
+const strategyWeakness = (s?: string): number => {
+  if (!s) return WEAK_STRATEGIES.length + 1;
+  if (s.startsWith("dispatch:")) return WEAK_STRATEGIES.indexOf("value-flow") + 0.5;
+  const i = WEAK_STRATEGIES.indexOf(s);
+  return i < 0 ? WEAK_STRATEGIES.length : i;
+};
+
+/** The least certain hop of a path: the lowest confidence, then the guessiest strategy, the earliest on a tie. */
+function weakestHop(path: SymbolLink[]): { edge: SymbolLink; symbols: string } {
+  const conf: Record<string, number> = { AMBIGUOUS: 0, INFERRED: 1, EXTRACTED: 2 };
+  let edge = path[0]!;
+  for (const e of path.slice(1)) {
+    const a = conf[e.confidence ?? "INFERRED"]!;
+    const b = conf[edge.confidence ?? "INFERRED"]!;
+    if (a < b || (a === b && strategyWeakness(e.strategy) < strategyWeakness(edge.strategy))) edge = e;
+  }
+  return { edge, symbols: `${edge.sourceSymbol}() → ${edge.targetSymbol}()` };
+}
+
 /**
  * `clarifydoc_trace to=…`: the shortest call paths from the seed to the
  * target, over the resolved call graph. A breadth-first search from every
@@ -1565,9 +1586,15 @@ export async function pathReport(
     const paths = [...new Map(fwd.found.flatMap((end) => rebuild(end, fwd.via, fwd.dist, PATH_MAX_LISTED)).map((p) => [spelled(p), p])).values()];
     paths.sort((a, b) => rank[weakestOf(b)]! - rank[weakestOf(a)]!);
     const { shown, hidden } = cap(paths, Math.min(limit, PATH_MAX_LISTED));
+    const weak = weakestHop(paths[0]!);
+    const stopped = [
+      paths[0]!.length >= PATH_MAX_HOPS ? `found only at the ${PATH_MAX_HOPS}-hop search limit` : "",
+      paths.length >= PATH_MAX_LISTED ? `the search keeps at most ${PATH_MAX_LISTED} paths of that length per end, so others may exist` : "",
+    ].filter(Boolean);
     return joinLines([
       title,
       `${plural(paths.length, "shortest path")} of ${plural(paths[0]!.length, "hop")}, surest first:`,
+      `Weakest hop of the surest path: ${weak.symbols} at ${loc(weak.edge.sourceFile, weak.edge.sourceLine)} — ${weak.edge.confidence?.toLowerCase() ?? "inferred"}${weak.edge.strategy && weak.edge.strategy !== "direct" ? ` via ${weak.edge.strategy}` : ""}${paths.length > 1 && rank[weakestOf(paths[paths.length - 1]!)]! < rank[weakestOf(paths[0]!)]! ? "; a path listed later is weaker" : ""}${stopped.length ? `. Search stopped: ${stopped.join("; ")}` : ""}.`,
       "",
       ...shown.flatMap(render),
       hidden ? `  … ${hidden} more of the same length` : "",

@@ -3,7 +3,7 @@ import type { ClassRef, ProjectContext } from "../../../types/project.js";
 import type { RouteResolver } from "../../route-resolvers/base.js";
 import { enclosingModules } from "./index.js";
 import { railsUnderscore } from "./schema.js";
-import { guardForFilter } from "./route-meta.js";
+import { guardForFilter, HALTS_CALLER } from "./route-meta.js";
 import { withInheritedGuards } from "../../shared/route-metadata.js";
 import { singularize } from "../shared/inflection.js";
 
@@ -177,8 +177,15 @@ export const railsRouteAnchor: RouteResolver = {
         const m = r.kind === "api" && r.handler ? HANDLER_RE.exec(r.handler) : null;
         const ref = m ? byName.get(m[1]!) : null;
         if (!ref) return r;
-        const guards = chainFilters(ref, m![2]!, byName, qualified).flatMap((name) => guardForFilter(name, `before_action :${name}`) ?? []);
-        if (guards.every((g) => r.middleware.includes(g.text))) return r;
+        // An ancestor's filters, and an own one a concern defines whose body halts an unauthorized caller.
+        const ancestors = new Set(chainFilters(ref, m![2]!, byName, qualified));
+        const guards = activeFilters(chainOf(ref, byName, qualified), m![2]!).flatMap((name) => {
+          const halts = definerOf(ref, name, byName, qualified, modules)?.fn.decorators?.includes(HALTS_CALLER) ?? false;
+          if (!ancestors.has(name) && !halts) return [];
+          return guardForFilter(name, `before_action :${name}`, halts) ?? [];
+        });
+        // The filter text is in `middleware` whether or not a guard came with it; the policy says it did.
+        if (guards.every((g) => r.middleware.includes(g.text) && (g.policies ?? []).every((p) => r.auth?.policies.includes(p) ?? false))) return r;
         changed = true;
         return withInheritedGuards(r, guards);
       });

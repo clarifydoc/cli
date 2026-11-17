@@ -205,7 +205,7 @@ export function computeComplexity(
   for (const fn of functions) {
     // A test suite's body is its tests, each measured on its own. A callback handed on from a function
     // (`<toast.action@17>`, `<ClubCard:onPick@9>`) is measured in the function that writes it.
-    if (fn.name === "<setup>" || fn.testCase?.kind === "suite" || isHandedOnName(fn.name)) continue;
+    if (fn.name === "<setup>" || fn.synthetic || fn.testCase?.kind === "suite" || isHandedOnName(fn.name)) continue;
     results.push(rowFor(fn.name, fn, root, spec, endRow));
   }
 

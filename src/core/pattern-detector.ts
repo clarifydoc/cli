@@ -82,7 +82,8 @@ export function detectPatterns(
   for (const a of analyses) {
     // Generated members (record accessors, Lombok) are no code the file writes.
     const allMethods = a.classes.flatMap((c) => c.methods.filter((m) => !m.synthetic));
-    const totalFnCount = a.functions.length + allMethods.length;
+    const authoredFns = a.functions.filter((f) => !f.synthetic);
+    const totalFnCount = authoredFns.length + allMethods.length;
 
     // ── Good patterns ──
 
@@ -257,7 +258,7 @@ export function detectPatterns(
     // Java/C# entity with 20 hand-written getters/setters is a data holder,
     // not a god object (each is ≤3 lines with at most one parameter).
     const godFnCount =
-      a.functions.filter((f) => !isTrivialAccessor(f)).length +
+      authoredFns.filter((f) => !isTrivialAccessor(f)).length +
       allMethods.filter((m) => !isTrivialAccessor(m)).length;
     if (godFnCount > 15) {
       const graded = gradeGodObject(godFnCount, structure?.get(a.filePath));

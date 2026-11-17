@@ -33,6 +33,17 @@ export function destructuredProps(pattern: string): Map<string, string | null> {
   return out;
 }
 
+/** The name an object pattern's rest element binds (`{ n, ...others }` → `others`), else null. */
+export function destructuredRest(pattern: string): string | null {
+  const text = pattern.trim();
+  if (!text.startsWith("{")) return null;
+  for (const raw of splitTopLevel(text.slice(1)) ?? []) {
+    const part = raw.trim();
+    if (part.startsWith("...") && IDENTIFIER.test(part.slice(3).trim())) return part.slice(3).trim();
+  }
+  return null;
+}
+
 /**
  * The names a destructuring pattern binds, nested patterns included — never a property key
  * it reads from (`{ refresh: again }` binds `again`) nor a name its defaults use

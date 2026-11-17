@@ -3,6 +3,7 @@ import type { ProjectContext } from "../../../../types/project.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";
 import { type ClassAt, declaredAlong, DRF_GENERIC_VIEW, PythonClassIndex } from "./drf.js";
 import { serializerSites } from "./serializer-dispatch.js";
+import { routeSymbolName } from "../../../../core/route-symbol.js";
 
 /**
  * The tables DRF's own code writes where the project writes no code of its own.
@@ -21,6 +22,65 @@ import { serializerSites } from "./serializer-dispatch.js";
  * `Meta.model` the project does not state, a `get_serializer_class` picking one at run time, or a serializer
  * with an own `create`/`update` (its body's accesses count) adds nothing.
  */
+
+/**
+ * django-allauth's own views, which a urlconf routes to by name (`path("accounts/signup/", SignupView.as_view())`,
+ * `allauth_account_views.login`): the project writes none of their code, and they act on the user model — signing
+ * up creates the user, a password change / set / reset saves it, a login and a reset request look it up. A table of
+ * what the library is known to do per view; a view it does not list (`logout`, the e-mail and social views) adds
+ * nothing. The module must be allauth's own: a project module of another name, or a project class named
+ * `SignupView`, is never one of these.
+ */
+const ALLAUTH_ACCOUNT_VIEWS: Record<string, { name: string; access: "read" | "write" }> = {
+  login: { name: "login", access: "read" },
+  LoginView: { name: "login", access: "read" },
+  signup: { name: "signup", access: "write" },
+  SignupView: { name: "signup", access: "write" },
+  password_change: { name: "password change", access: "write" },
+  PasswordChangeView: { name: "password change", access: "write" },
+  password_set: { name: "password set", access: "write" },
+  PasswordSetView: { name: "password set", access: "write" },
+  password_reset: { name: "password reset request", access: "read" },
+  PasswordResetView: { name: "password reset request", access: "read" },
+  password_reset_from_key: { name: "password reset", access: "write" },
+  PasswordResetFromKeyView: { name: "password reset", access: "write" },
+};
+const ALLAUTH_USER_MODEL = "User";
+
+/** The allauth account view a route's handler names through the file's own imports, else null. */
+function allauthAccountView(a: FileAnalysis, handler: string, projectFiles: ReadonlySet<string>): { name: string; access: "read" | "write" } | null {
+  const [head, ...rest] = handler.split(".");
+  if (!head || rest.length > 1) return null;
+  const imp = a.imports.find((i) => !i.isType && (i.specifiers.includes(head) || i.aliases?.[head] !== undefined));
+  if (!imp) return null;
+  const exported = imp.aliases?.[head] ?? head;
+  // `from allauth.account import views as v` + `v.login`, or `from allauth.account.views import SignupView` + `SignupView`.
+  const module = rest.length === 1 ? `${imp.source}.${exported}` : imp.source;
+  const view = rest.length === 1 ? rest[0]! : exported;
+  if (module !== "allauth.account.views" || projectFiles.has("allauth/account/views.py")) return null;
+  return ALLAUTH_ACCOUNT_VIEWS[view] ?? null;
+}
+
+export const allauthLibraryAccess: RouteResolver = {
+  id: "allauth-library-access",
+  languages: ["python"],
+  priority: 32,
+  resolve(analyses: FileAnalysis[], _ctx: ProjectContext): void {
+    if (!analyses.some((a) => a.imports.some((i) => i.source === "allauth.account" || i.source === "allauth.account.views"))) return;
+    const projectFiles = new Set(analyses.map((a) => a.filePath));
+    for (const a of analyses) {
+      for (const r of a.routes) {
+        if (r.kind !== "api" || r.mount || !r.handler) continue;
+        const view = allauthAccountView(a, r.handler, projectFiles);
+        if (!view) continue;
+        addRow(a, {
+          kind: "database", name: `allauth: ${view.name}`, target: ALLAUTH_USER_MODEL, entity: ALLAUTH_USER_MODEL, authUser: true, access: view.access,
+          line: r.line, handler: routeSymbolName(r), calls: [],
+        });
+      }
+    }
+  },
+};
 
 const WRITE_ACTIONS = new Set(["create", "update", "partial_update", "destroy"]);
 /** A generic API view's methods that write, by the verb the route carries. */

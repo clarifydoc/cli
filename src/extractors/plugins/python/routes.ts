@@ -243,6 +243,8 @@ interface RouterDecl {
   prefix: string;
   /** `APIRouter(dependencies=[Depends(x)])` — every route on the router inherits them. */
   guards: GuardAttr[];
+  /** The callables of those dependencies (`dependencyCallNames`), resolved in this file. */
+  dependencyCalls: string[];
   /** The prefix `url_for` names its routes under: a Flask `Blueprint("clubs", …)`'s name, "" for an app. */
   endpointPrefix: string;
   /** An Azure Functions app or blueprint (`func.FunctionApp()`, `func.Blueprint()`): routes by `route=`, named by the function. */
@@ -283,12 +285,29 @@ function collectRouterDecls(root: Node, consts: ReadonlyMap<string, string>): Ma
     decls.set(left.text, {
       prefix,
       guards: deps ? guardsFromDependencies(deps) : [],
+      dependencyCalls: deps ? dependencyCallNames(deps) : [],
       endpointPrefix: blueprint ? `${blueprint}.` : "",
       ...(AZURE_APP_CTOR.test(ctor!.text) ? { azure: true as const } : {}),
       ...(!ROUTER_CTORS.has(ctorName) ? { ctor: ctor!.text } : {}),
     });
   }
   return decls;
+}
+
+/**
+ * The callables a `dependencies=[Depends(a), Security(b)]` list has the framework run before the handler — every
+ * one, not only the guards among them (a dependency that loads the row the route edits reads its table); a factory
+ * call (`Depends(get_authorizer())`) names the factory. `RouteInfo.middlewareCalls`.
+ */
+function dependencyCallNames(list: Node): string[] {
+  const names: string[] = [];
+  const items = list.type === "list" || list.type === "tuple" ? list.namedChildren : [list];
+  for (const item of items) {
+    if (item.type !== "call" || !dependencyGuard(item)) continue;
+    const { named } = dependencyCallee(item);
+    if (named && !names.includes(named.text)) names.push(named.text);
+  }
+  return names;
 }
 
 /** `[Depends(verify_token), Security(scopes_ok, scopes=["items:read"])]` → one guard each. */
@@ -400,6 +419,7 @@ interface RouteDecorator {
   pathTemplate: string | null;
   /** `dependencies=[…]` on the decorator. */
   guards: GuardAttr[];
+  dependencyCalls: string[];
   /** `response_model=User`, `status_code=201` / `status.HTTP_201_CREATED`. */
   responseModel: string | null;
   statusCode: number | null;
@@ -460,6 +480,7 @@ function routeDecorator(dec: Node): RouteDecorator | null {
     path,
     pathTemplate,
     guards: deps ? guardsFromDependencies(deps) : [],
+    dependencyCalls: deps ? dependencyCallNames(deps) : [],
     responseModel: model && model.text !== "None" ? model.text : null,
     statusCode: Number.isFinite(statusCode) ? statusCode : null,
     endpoint: (args ? stringKeyword(args, "endpoint", new Map()) : null) ?? null,
@@ -534,6 +555,8 @@ function walkForRegistrationCalls(
             ...(router && (endpoint ?? handler) ? { name: router.endpointPrefix + (endpoint ?? handler.split(".").pop()!) } : {}),
           };
           applyRouteMeta(route, { inheritedGuards: router?.guards, guards: [...(deps ? guardsFromDependencies(deps) : []), ...signature.guards], params });
+          const middlewareCalls = [...new Set([...(router?.dependencyCalls ?? []), ...(deps ? dependencyCallNames(deps) : [])])];
+          if (middlewareCalls.length > 0) route.middlewareCalls = middlewareCalls;
           routes.push(route);
         }
       }
@@ -616,6 +639,8 @@ function walkForPythonRoutes(node: Node, routes: RouteInfo[], routers: Map<strin
             guards: [...rd.guards, ...guards, ...signature.guards],
             params,
           });
+          const middlewareCalls = [...new Set([...(router?.dependencyCalls ?? []), ...rd.dependencyCalls])];
+          if (middlewareCalls.length > 0) route.middlewareCalls = middlewareCalls;
           routes.push(route);
         }
       }
@@ -660,7 +685,7 @@ function classGuardFacts(cls: Node, facts: RouteFact[]): void {
   const supers = cls.childForFieldName("superclasses")?.namedChildren ?? [];
   if (supers.some((s) => ROUTER_CLASS_NAME.test(s.text.replace(/\[.*$/s, "")))) {
     const deps = initDependencies(body);
-    if (deps) facts.push({ kind: PY_ROUTER_CLASS, line, owner: name, data: { guards: guardsFromDependencies(deps) } satisfies PyRouterClassFact });
+    if (deps) facts.push({ kind: PY_ROUTER_CLASS, line, owner: name, data: { guards: guardsFromDependencies(deps), calls: dependencyCallNames(deps) } satisfies PyRouterClassFact });
   }
   const attrs: PyViewClassFact["attrs"] = [];
   const lines: number[] = [];

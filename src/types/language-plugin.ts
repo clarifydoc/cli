@@ -844,6 +844,12 @@ export interface AstExtractorHooks {
    * (Kotlin: `ClubsKt` for `Clubs.kt`, or the `@file:JvmName` it states). Read only for a file that has such functions.
    */
   facadeClass?(sourceText: string, filePath: string): string | null;
+  /**
+   * Members the file's top-level declarations give its facade class that no function states — Kotlin's `val x` /
+   * `var x` read through `ClubsKt.getX()` / `setX(…)`. Appended to `FileAnalysis.functions` (marked `synthetic`, so
+   * no complexity row) before the facade is named; empty for a file that has no facade (a script).
+   */
+  facadeFunctions?(tree: Tree, sourceText: string, filePath: string): import("./analysis.js").FunctionInfo[];
   /** The package or namespace the file's declarations belong to → `FileAnalysis.packageName` (C# `namespace League.Clubs;`). */
   packageName?(tree: Tree, sourceText: string): string | null;
   /**
@@ -1061,6 +1067,12 @@ export interface CallExtractionHooks {
    * untyped declaration shadows a parameter (a typed one is `receiverTypeOf`'s). Sets `CallInfo.boundLocally`.
    */
   boundAt?(node: Node, name: string): boolean;
+  /**
+   * Whether the head of a dotted call (`cache` of `cache.get(x)`) is a binding of a scope below the module — a
+   * parameter, a local, a loop or catch variable — at this site. Sets `CallInfo.receiverRebound`: the call is on that
+   * value, so no member of a same-file namesake object answers it by its full name.
+   */
+  receiverReboundAt?(node: Node, name: string): boolean;
   /**
    * The local names a declaration binds from what a call returns (`const { save } = useClubActions()`,
    * `const [rows, refresh] = useMatches()`): a function the factory hands back, so a name handed on
@@ -1953,6 +1965,12 @@ export interface LanguagePluginManifest {
    * a `theme/_index.scss`). Import resolution tries the prefixed name.
    */
   partialPrefix?: string;
+  /**
+   * The file stems that make a file the index module of its directory: a directory imported by name is that
+   * file (Python `pkg/__init__.py`, Rust `pkg/mod.rs`, JS `pkg/index.ts`). A binding named like the directory
+   * then names the module itself.
+   */
+  directoryIndexStems?: readonly string[];
   /**
    * An import the file writes relative to itself is also searched on load
    * paths the build configures (Sass `includePaths` / `loadPaths`): when it

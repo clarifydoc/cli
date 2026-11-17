@@ -1,8 +1,9 @@
 import type { ClassInfo, FunctionInfo, RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../types/analysis.js";
 import type { GuardAttr } from "../../shared/route-metadata.js";
 import { applyRouteMeta, pathParamNames } from "../../shared/route-metadata.js";
+import { callerHalts } from "./caller-halts.js";
 import { extractRubyResponses } from "./responses.js";
-import { nameWords, namesCallerCheck } from "../shared/guard-words.js";
+import { nameWords, namesCallerCheck, namesNonCaller } from "../shared/guard-words.js";
 
 /**
  * The attribute layer of Ruby routes — what a Rails/Sinatra handler reads from
@@ -161,9 +162,23 @@ function collapse(s: string): string {
   return s.trim().replace(/\s+/g, " ");
 }
 
-/** The guard a filter method name implies, or null for a plain loader (`set_user`). */
-export function guardForFilter(name: string, text: string): GuardAttr | null {
+/** The method decorator a filter whose body halts an unauthorized caller carries. */
+export const HALTS_CALLER = "halts-caller";
+
+/**
+ * Whether a filter method's body stops the request for a caller it cannot identify or permit: a 401/403,
+ * a `raise` of a NotAuthorized-named error or a redirect, governed by a condition that tests who the
+ * caller is, with the polarity that halts when the check fails ([caller-halts.ts](caller-halts.ts)).
+ * A loader, a 404, a switch, a parameter check or an account-state check does not.
+ */
+export function haltsCaller(bodyLines: string[]): boolean {
+  return callerHalts(bodyLines.map((l) => stripComment(l).trim()).filter(Boolean));
+}
+
+/** The guard a filter method name implies, or null for a plain loader (`set_user`); `halts` when its body stops an unauthorized caller. */
+export function guardForFilter(name: string, text: string, halts = false): GuardAttr | null {
   if (DEVISE_RE.test(name)) return { text, policies: [name], schemes: ["devise"] };
+  if (halts && !namesNonCaller(name)) return { text, policies: [name] };
   if (LOADER_WORD.test(nameWords(name)[0] ?? "") || !namesCallerCheck(name)) return null;
   return { text, policies: [name] };
 }
@@ -192,7 +207,8 @@ export function collectFilters(lines: string[], cls: ClassInfo): FilterDecl[] {
       const { only, except } = actionScope(stmt);
       for (const name of names) {
         const text = `before_action :${name}`;
-        decls.push({ names: [name], text, only, except, kind: "filter", guard: guardForFilter(name, text) });
+        const halts = cls.methods.find((m) => m.name === name)?.decorators?.includes(HALTS_CALLER) ?? false;
+        decls.push({ names: [name], text, only, except, kind: "filter", guard: guardForFilter(name, text, halts) });
       }
       continue;
     }
@@ -203,7 +219,8 @@ export function collectFilters(lines: string[], cls: ClassInfo): FilterDecl[] {
       for (const name of names) {
         const text = `skip_before_action :${name}`;
         // Skipping a loader waives nothing; skipping an auth filter opens the action.
-        const guard = guardForFilter(name, text) ? { text, anonymous: true } : null;
+        const halts = cls.methods.find((m) => m.name === name)?.decorators?.includes(HALTS_CALLER) ?? false;
+        const guard = guardForFilter(name, text, halts) ? { text, anonymous: true } : null;
         decls.push({ names: [name], text, only, except, kind: "skip", guard });
       }
       continue;

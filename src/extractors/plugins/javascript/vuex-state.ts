@@ -2,7 +2,7 @@ import type { FileAnalysis, Language, SymbolLink } from "../../../types/analysis
 import type { DispatchResolver } from "../../dispatch/base.js";
 import { sameCell } from "../../../core/reactive-triggers.js";
 import { GETTER_READ, VUEX_FACTORY } from "./store-reads.js";
-import { foreignMutations, vuexStores, type Module } from "./vuex.js";
+import { foreignMutations, localName, vuexStores, type Module } from "./vuex.js";
 
 /**
  * Vuex state a component watches and a mutation writes. A watcher's read names the path from the root state
@@ -54,24 +54,62 @@ export class VuexStateWatchResolver implements DispatchResolver {
       if (!own) foreign.set(key, (own = foreignMutations(stores, mod)));
       return own.tables.has(`${file.filePath}\0${table}`) || own.fns.has(`${file.filePath}\0${fn}`);
     };
-    // The state paths a read stands for under one root store: its own, or the state a getter (`@getter:clubs/total`) reads.
-    const pathsOf = (read: string, root: FileAnalysis): string[] => {
-      if (!read.startsWith(GETTER_READ)) return [read];
-      const parts = read.slice(GETTER_READ.length).split("/").filter(Boolean);
-      const name = parts.pop();
-      const mod: Module | undefined = parts.length > 0 ? trees.get(root)?.get(parts.join("/")) : { file: root, exported: "default" };
-      if (!name || !mod) return [];
-      const prefix = parts.join(".");
+    // Whether a module declares `namespaced: true`: only then do its getters answer under its name.
+    const isNamespaced = (m: Module): boolean => !!m.file.storeShapes?.namespaced?.some((n) => n === m.exported || n === localName(m.file, m.exported));
+    // The namespace a module's getters answer under: the registered names of itself and its parents that are namespaced.
+    const effectiveNs = (root: FileAnalysis, ns: string): string => {
+      const segments = ns.split("/");
       const out: string[] = [];
-      for (const f of filesOf(mod.file)) {
-        if (f !== mod.file && registered.has(f.filePath)) continue;
-        for (const g of f.storeWatch?.getterReads ?? []) {
-          if (g.name !== name || (f !== mod.file && g.table !== "getters")) continue;
-          for (const p of g.paths) out.push(prefix ? `${prefix}.${p}` : p);
+      for (let i = 0; i < segments.length; i++) {
+        const m = trees.get(root)?.get(segments.slice(0, i + 1).join("/"));
+        if (m && isNamespaced(m)) out.push(segments[i]!);
+      }
+      return out.join("/");
+    };
+    // The state paths a getter reads under one root store, from the root state: what it reads of its own module's state,
+    // of `rootState`, and what the getters it reads (`getters.total`, `rootGetters['season/year']`) read in turn.
+    type GetterRead = NonNullable<NonNullable<FileAnalysis["storeWatch"]>["getterReads"]>[number];
+    const getterPaths = (root: FileAnalysis, key: string, seen: Set<string>): string[] => {
+      if (seen.has(key) || seen.size > 24) return [];
+      seen.add(key);
+      const parts = key.split("/").filter(Boolean);
+      const name = parts.pop();
+      if (!name) return [];
+      const where = parts.join("/");
+      type Match = { g: GetterRead; ns: string; eff: string };
+      const legacy: Match[] = [];
+      const effective: Match[] = [];
+      const collect = (mod: Module, ns: string, into: Match[]): void => {
+        for (const f of filesOf(mod.file)) {
+          if (f !== mod.file && registered.has(f.filePath)) continue;
+          for (const g of f.storeWatch?.getterReads ?? []) {
+            if (g.name !== name || (f !== mod.file && g.table !== "getters")) continue;
+            into.push({ g, ns, eff: effectiveNs(root, ns) });
+          }
         }
+      };
+      // The registered path as the namespace (a module that is not namespaced answers by it too) and the root's own getters;
+      // else a module that is not namespaced under its bare name, when exactly one getter of the store has it.
+      if (where === "") collect({ file: root, exported: "default" }, "", legacy);
+      else {
+        const mod = trees.get(root)?.get(where);
+        if (mod) collect(mod, where, legacy);
+      }
+      for (const [ns, mod] of trees.get(root) ?? []) {
+        if (effectiveNs(root, ns) === where && ns !== where) collect(mod, ns, effective);
+      }
+      const kept = effective.length === 1 && legacy.length === 0 ? effective : legacy;
+      const out: string[] = [];
+      for (const { g, ns, eff } of kept) {
+        const prefix = ns.split("/").join(".");
+        for (const p of g.paths) out.push(prefix ? `${prefix}.${p}` : p);
+        for (const local of g.getters ?? []) out.push(...getterPaths(root, eff ? `${eff}/${local}` : local, seen));
+        out.push(...(g.rootPaths ?? []));
+        for (const rg of g.rootGetters ?? []) out.push(...getterPaths(root, rg, seen));
       }
       return out;
     };
+    const pathsOf = (read: string, root: FileAnalysis): string[] => (read.startsWith(GETTER_READ) ? getterPaths(root, read.slice(GETTER_READ.length), new Set()) : [read]);
     const links: SymbolLink[] = [];
     const seen = new Set<string>();
     for (const file of writing) {

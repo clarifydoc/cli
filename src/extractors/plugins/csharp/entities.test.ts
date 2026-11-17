@@ -332,6 +332,24 @@ describe("EF Core cross-file entity reconciliation", () => {
     expect(api.dataSources.map((d) => `${d.target} ${d.entity}`)).toEqual(["FanSubscription FanSubscription"]);
   });
 
+  it("types a bulk write on another class's returned query by that method's declared query type", () => {
+    const method = (name: string, returnType: string) => ({ name, line: 3, endLine: 4, params: [], calls: [], returnType }) as never;
+    const clubs = cls("ClubRepository");
+    clubs.methods = [method("Active", "IQueryable<Club>"), method("Names", "List<string>")];
+    const cars = cls("CarRepository");
+    cars.methods = [method("Active", "Task<IOrderedQueryable<Car>>")];
+    const csharp = (path: string, classes: ClassInfo[]) => ({ ...analysis(path, classes), language: "csharp" }) as FileAnalysis;
+    const row = (producer: { type: string; method: string }, line: number) => ({ kind: "database", name: "EF: ExecuteUpdateAsync", target: null, entityProducer: producer, access: "write", calls: [], line });
+    const api = { ...csharp("Api/ClubsController.cs", []), dataSources: [
+      row({ type: "ClubRepository", method: "Active" }, 10),
+      row({ type: "CarRepository", method: "Active" }, 11),
+      row({ type: "ClubRepository", method: "Names" }, 12), // returns no query
+      row({ type: "GarageRepository", method: "Active" }, 13), // no such class
+    ] } as unknown as FileAnalysis;
+    new CSharpEntityExtractor().reconcileProject([csharp("Data/ClubRepository.cs", [clubs]), csharp("Data/CarRepository.cs", [cars]), api]);
+    expect(api.dataSources.map((d) => `${d.line} ${d.entity ?? "-"}`)).toEqual(["10 Club", "11 Car", "12 -", "13 -"]);
+  });
+
   it("establishes entity-ness and the table from the fluent API alone (Entity<T>(b => b.ToTable(…)))", () => {
     const call = (name: string, line: number, args?: string[]) => ({ name, kind: "internal", target: null, line, ...(args ? { args } : {}) });
     const ext = cls("TransferLogExtensions");

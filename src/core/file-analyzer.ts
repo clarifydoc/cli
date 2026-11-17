@@ -635,6 +635,10 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     if (moduleBindings && moduleBindings.length > 0) analysis.moduleBindings = moduleBindings;
     const declaredNamespace = hooks?.declaredNamespace?.(tree, sourceText);
     if (declaredNamespace) analysis.declaredNamespace = declaredNamespace;
+    const facadeFunctions = hooks?.facadeFunctions?.(tree, sourceText, file.relativePath);
+    // A function the file writes under the accessor's name stands in its place.
+    const written = new Set(analysis.functions.map((f) => f.name));
+    for (const fn of facadeFunctions ?? []) if (!written.has(fn.name)) analysis.functions.push(fn);
     const facadeClass = analysis.functions.some((f) => !f.name.startsWith("<")) ? hooks?.facadeClass?.(sourceText, file.relativePath) : null;
     if (facadeClass) analysis.facadeClass = facadeClass;
     const packageName = hooks?.packageName?.(tree, sourceText);
@@ -803,7 +807,9 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
         setup = { name: "<setup>", params: [], returnType: null, isAsync: false, isExported: false, decorators: [], calls: [], line: 1, endLine: 1 };
         analysis.functions.unshift(setup);
       }
-      setup.calls.push(...classified);
+      // A handler that sends a request is also an expression of the template (`withMarkupExpressions`): its call is already there.
+      const own = setup.calls;
+      setup.calls.push(...classified.filter((c) => !own.some((x) => x.line === c.line && x.name === c.name)));
     }
     const propBindings = hooks?.propBindings?.(tree, sourceText, rawSource, file.relativePath);
     if (propBindings && propBindings.length > 0) analysis.propBindings = propBindings;

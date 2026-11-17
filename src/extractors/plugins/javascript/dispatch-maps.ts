@@ -25,6 +25,12 @@ export interface DispatchMapEntry {
  * not a map. Whether a value is a function is the linker's to say.
  */
 export function dispatchMapEntries(declarator: Node): { holder: string; entries: DispatchMapEntry[] } | null {
+  const map = readMap(declarator);
+  return map && map.entries.length > 0 ? { holder: map.holder, entries: map.entries } : null;
+}
+
+/** `dispatchMapEntries` plus the keys held by a function written in place, and also for a map holding only such functions. */
+function readMap(declarator: Node): { holder: string; entries: DispatchMapEntry[]; inline: string[] } | null {
   if (declarator.type !== "variable_declarator") return null;
   const decl = declarator.parent;
   if (decl?.type !== "lexical_declaration" || decl.child(0)?.type !== "const") return null;
@@ -33,6 +39,7 @@ export function dispatchMapEntries(declarator: Node): { holder: string; entries:
   while (value && TYPE_WRAPPERS.has(value.type)) value = value.namedChildren[0] ?? null;
   if (name?.type !== "identifier" || value?.type !== "object") return null;
   const entries: DispatchMapEntry[] = [];
+  const inline: string[] = [];
   for (const member of value.namedChildren) {
     if (member.type === "comment" || member.type === "method_definition") continue;
     if (member.type === "shorthand_property_identifier") {
@@ -43,12 +50,15 @@ export function dispatchMapEntries(declarator: Node): { holder: string; entries:
     const key = member.childForFieldName("key");
     const held = member.childForFieldName("value");
     if (!key || !held) return null;
-    if (INLINE_FUNCTIONS.has(held.type)) continue;
+    if (INLINE_FUNCTIONS.has(held.type)) {
+      if (key.type === "property_identifier" || key.type === "string") inline.push(key.type === "string" ? key.text.slice(1, -1) : key.text);
+      continue;
+    }
     if ((held.type !== "identifier" && held.type !== "member_expression") || !NAMED_VALUE.test(held.text)) return null;
     const keyText = key.type === "string" ? key.text.slice(1, -1) : key.text;
     entries.push({ value: held, key: keyText });
   }
-  return entries.length > 0 ? { holder: name.text, entries } : null;
+  return entries.length > 0 || inline.length > 0 ? { holder: name.text, entries, inline } : null;
 }
 
 let mapsTree: Node["tree"] | null = null;
@@ -126,19 +136,33 @@ export function dispatchMapCallee(callee: Node): string | null {
 
 /**
  * Whether a call `ACTIONS.send(…)` names a key the file's own dispatch map holds (`const ACTIONS = { send: sendClub }`):
- * the key is the map's, however much its leaf looks like a promise or array method.
+ * the key is the map's, however much its leaf looks like a promise or array method. `withInline` counts a key held by a
+ * function written in place (`{ send: () => post() }`), which is a function of its own that the call reaches by name.
  */
-export function dispatchMapMember(callName: string, node: Node): boolean {
+export function dispatchMapMember(callName: string, node: Node, withInline = false): boolean {
   const dot = callName.indexOf(".");
   if (dot <= 0 || callName.indexOf(".", dot + 1) >= 0) return false;
-  const holder = callName.slice(0, dot);
-  if (!dispatchMapNames(node).has(holder)) return false;
+  const keys = mapKeysOf(node.tree).get(callName.slice(0, dot));
   const key = callName.slice(dot + 1);
-  for (const d of node.tree.rootNode.descendantsOfType("variable_declarator")) {
-    const map = d ? dispatchMapEntries(d) : null;
-    if (map?.holder === holder && map.entries.some((e) => e.key === key)) return true;
+  return !!keys && (keys.entries.has(key) || (withInline && keys.inline.has(key)));
+}
+
+let keysTree: Node["tree"] | null = null;
+let keysMemo = new Map<string, { entries: Set<string>; inline: Set<string> }>();
+
+/** The keys of every dispatch map a file declares, by holder (read once per tree). */
+function mapKeysOf(tree: Node["tree"]): ReadonlyMap<string, { entries: Set<string>; inline: Set<string> }> {
+  if (tree === keysTree) return keysMemo;
+  keysTree = tree;
+  keysMemo = new Map();
+  for (const d of tree.rootNode.descendantsOfType("variable_declarator")) {
+    const map = d ? readMap(d) : null;
+    if (!map) continue;
+    const held = keysMemo.get(map.holder) ?? keysMemo.set(map.holder, { entries: new Set(), inline: new Set() }).get(map.holder)!;
+    for (const e of map.entries) held.entries.add(e.key);
+    for (const k of map.inline) held.inline.add(k);
   }
-  return false;
+  return keysMemo;
 }
 
 /** A computed key that is no lookup of a fixed name: `stores[props.kind]`, `stores[kind]` — never `stores["club"]` or `stores[0]`. */
@@ -223,21 +247,65 @@ export function switchRecordEntries(declarator: Node): { holder: string; calls: 
   const decl = declarator.parent;
   if (decl?.type !== "lexical_declaration" || decl.child(0)?.type !== "const") return null;
   const name = declarator.childForFieldName("name");
-  let value = declarator.childForFieldName("value");
-  if (name?.type !== "identifier" || value?.type !== "call_expression" || (value.childForFieldName("arguments")?.namedChildCount ?? 1) !== 0) return null;
+  const value = declarator.childForFieldName("value");
+  if (name?.type !== "identifier" || value?.type !== "call_expression") return null;
+  const args = value.childForFieldName("arguments")?.namedChildren.filter((c) => c.type !== "comment") ?? [];
   let fn = value.childForFieldName("function");
   while (fn?.type === "parenthesized_expression") fn = fn.namedChildren[0] ?? null;
-  if (fn?.type !== "arrow_function" && fn?.type !== "function_expression") return null;
-  if ((fn.childForFieldName("parameters") ?? fn.childForFieldName("parameter"))?.namedChildCount) return null;
+  let sw: Node | null;
+  let origin: CallArgOrigin["origin"] | null;
+  if (fn?.type === "arrow_function" || fn?.type === "function_expression") {
+    if (args.length !== 0 || (fn.childForFieldName("parameters") ?? fn.childForFieldName("parameter"))?.namedChildCount) return null;
+    sw = soleSwitch(fn);
+    origin = sw ? propOrigin(sw.childForFieldName("value")) : null;
+  } else if (fn?.type === "identifier" && args.length === 1) {
+    // A named helper of the file, handed the prop: `pickStore(props.kind)` with `function pickStore(kind) { switch (kind) … }`.
+    const helper = localFunction(value.tree.rootNode, fn.text);
+    const params = helper ? (helper.childForFieldName("parameters") ?? helper.childForFieldName("parameter")) : null;
+    const formal = params?.type === "identifier" ? params : params?.namedChildCount === 1 ? params.namedChildren[0] : null;
+    const formalName = formal?.type === "identifier" ? formal.text : formal?.type === "required_parameter" && formal.childForFieldName("pattern")?.type === "identifier" ? formal.childForFieldName("pattern")!.text : null;
+    sw = helper && formalName ? soleSwitch(helper) : null;
+    let subject = sw?.childForFieldName("value") ?? null;
+    while (subject?.type === "parenthesized_expression") subject = subject.namedChildren[0] ?? null;
+    origin = subject?.type === "identifier" && subject.text === formalName ? propOrigin(args[0]!) : null;
+  } else return null;
+  if (!sw || !origin) return null;
+  const arms = switchArms(sw);
+  return arms ? { holder: name.text, ...arms, indexOrigin: origin } : null;
+}
+
+/** A plain prop the way a component's users can name it (`props.kind`), else null. */
+function propOrigin(node: Node | null): CallArgOrigin["origin"] | null {
+  let subject = node;
+  while (subject?.type === "parenthesized_expression") subject = subject.namedChildren[0] ?? null;
+  const found = subject ? expressionOrigin(subject) : null;
+  return found && !found.transform && !found.derivation && found.origin.kind === "prop" ? found.origin : null;
+}
+
+/** The one `switch` a function's block body consists of, else null. */
+function soleSwitch(fn: Node): Node | null {
   const body = fn.childForFieldName("body");
   if (body?.type !== "statement_block") return null;
   const statements = body.namedChildren.filter((c) => c.type !== "comment");
-  const sw = statements[0];
-  if (statements.length !== 1 || sw?.type !== "switch_statement") return null;
-  let subject = sw.childForFieldName("value");
-  while (subject?.type === "parenthesized_expression") subject = subject.namedChildren[0] ?? null;
-  const found = subject ? expressionOrigin(subject) : null;
-  if (!found || found.transform || found.derivation || found.origin.kind !== "prop") return null;
+  return statements.length === 1 && statements[0]!.type === "switch_statement" ? statements[0]! : null;
+}
+
+/** A function the file declares at its top level by name: `function f(…) {…}`, `const f = (…) => {…}`. */
+function localFunction(root: Node, name: string): Node | null {
+  for (const st of root.namedChildren) {
+    const inner = st.type === "export_statement" ? st.namedChildren.find((c) => c.type === "function_declaration" || c.type === "lexical_declaration") ?? st : st;
+    if (inner.type === "function_declaration" && inner.childForFieldName("name")?.text === name) return inner;
+    if (inner.type !== "lexical_declaration") continue;
+    for (const d of inner.namedChildren) {
+      const v = d.type === "variable_declarator" && d.childForFieldName("name")?.text === name ? d.childForFieldName("value") : null;
+      if (v?.type === "arrow_function" || v?.type === "function_expression") return v;
+    }
+  }
+  return null;
+}
+
+/** The entries of a `switch` whose every arm returns a named call (or throws): one per case literal, `key` null for a `default` that returns one. */
+function switchArms(sw: Node): { calls: Node[]; keys: Array<string | null> } | null {
   const calls: Node[] = [];
   const keys: Array<string | null> = [];
   let pending: Array<string | null> = [];
@@ -276,7 +344,7 @@ export function switchRecordEntries(declarator: Node): { holder: string; calls: 
     pending = [];
   }
   if (pending.length > 0) return null;
-  return calls.length > 0 ? { holder: name.text, calls, keys, indexOrigin: found.origin } : null;
+  return calls.length > 0 ? { calls, keys } : null;
 }
 
 let recordsTree: Node["tree"] | null = null;

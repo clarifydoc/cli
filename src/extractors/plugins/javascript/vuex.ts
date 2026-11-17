@@ -268,10 +268,17 @@ export function foreignMutations(stores: VuexStores, mod: Module): { tables: Set
   const fns = new Set<string>();
   for (const f of filesOf(mod.file)) {
     if (f !== mod.file && registered.has(f.filePath)) continue;
-    for (const name of f.storeShapes?.spreads?.mutations ?? []) {
-      const from = importedName(f, name, ctx);
-      tables.add(`${(from?.file ?? f).filePath}\0${from ? localName(from.file, from.name) : name}`);
-    }
+    // A table a spread names, and the tables that one spreads in turn (three deep).
+    const take = (file: FileAnalysis, name: string, depth: number): void => {
+      const from = importedName(file, name, ctx);
+      const at = from?.file ?? file;
+      const held = from ? localName(from.file, from.name) : name;
+      const key = `${at.filePath}\0${held}`;
+      if (tables.has(key)) return;
+      tables.add(key);
+      if (depth < 3) for (const inner of at.storeShapes?.spreads?.[held] ?? []) take(at, inner, depth + 1);
+    };
+    for (const name of f.storeShapes?.spreads?.mutations ?? []) take(f, name, 0);
   }
   const values = mod.file.storeShapes?.values;
   let value = values?.[mod.exported] ?? values?.[localName(mod.file, mod.exported)];
@@ -445,13 +452,28 @@ export class VuexDispatchResolver implements DispatchResolver {
       for (const f of filesOf(mod)) {
         if (f !== mod && registered.has(f.filePath)) continue;
         for (const name of f.storeShapes?.spreads?.[section] ?? []) {
-          const from = importedName(f, name, ctx);
-          const file = from?.file ?? f;
-          const held = from ? localName(from.file, from.name) : name;
-          const fn = file.functions.find((x) => x.name === `${held}.${act}`)
-            ?? (from?.name === "default" && file.exports.some((e) => e.name === "default" && !e.sourceName && !e.source) ? file.functions.find((x) => x.name === act || x.name === `default.${act}`) : undefined);
-          if (fn) return { file, fn };
+          const hit = spreadMember(f, name, act, 0);
+          if (hit) return hit;
         }
+      }
+      return null;
+    };
+
+    /**
+     * `act` in the table `name` spread into a module's, as `f` names it: written there, or in a table that one spreads in
+     * (`crudMutations = { ...baseMutations, … }`), through imports, three tables deep.
+     */
+    const spreadMember = (f: FileAnalysis, name: string, act: string, depth: number): Hit | null => {
+      const from = importedName(f, name, ctx);
+      const file = from?.file ?? f;
+      const held = from ? localName(from.file, from.name) : name;
+      const fn = file.functions.find((x) => x.name === `${held}.${act}`)
+        ?? (from?.name === "default" && file.exports.some((e) => e.name === "default" && !e.sourceName && !e.source) ? file.functions.find((x) => x.name === act || x.name === `default.${act}`) : undefined);
+      if (fn) return { file, fn };
+      if (depth >= 3) return null;
+      for (const inner of file.storeShapes?.spreads?.[held] ?? []) {
+        const hit = spreadMember(file, inner, act, depth + 1);
+        if (hit) return hit;
       }
       return null;
     };
@@ -777,7 +799,7 @@ function declaredConstant(file: FileAnalysis, key: string, ctx: FactoryContext, 
 }
 
 /** A local name for an exported one: `export default createStore` → createStore. */
-function localName(file: FileAnalysis, exported: string): string {
+export function localName(file: FileAnalysis, exported: string): string {
   return file.exports.find((x) => x.name === exported && !x.source)?.sourceName ?? exported;
 }
 

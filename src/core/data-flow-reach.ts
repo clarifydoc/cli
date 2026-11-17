@@ -325,6 +325,7 @@ export function computeSymbolReachWithWitness(input: SymbolReachInput): { reach:
     firstNodes.set(`${kind} ${resource}`, first);
     type Hop = { key: string; dist: number; oFile: string; oSym: string; guessed: boolean; state: string };
     const reached: Hop[] = [];
+    const reachedAt = new Map<string, number>();
     // Every node the walk took up, each of a symbol's states: the guessing tier resumes from all of them.
     const dequeued: Hop[] = [];
     // Roots that start further out (bound generic accesses) join the queue when
@@ -351,7 +352,12 @@ export function computeSymbolReachWithWitness(input: SymbolReachInput): { reach:
         if (!allowGuess) dequeued.push(cur);
         if ((!allowGuess || cur.guessed) && !first.has(cur.key)) {
           first.set(cur.key, stateNode(cur.key, cur.state));
+          reachedAt.set(cur.key, reached.length);
           reached.push(cur);
+        } else if (!allowGuess && !cur.state && first.get(cur.key) !== cur.key) {
+          // Reached first by a parent's binding, and now by the symbol's own code: that one is its effect.
+          first.set(cur.key, cur.key);
+          reached[reachedAt.get(cur.key)!] = cur;
         }
         if (cur.dist >= MAX_DEPTH) continue;
         for (const next of reverse.get(cur.key) ?? []) {
@@ -389,6 +395,7 @@ export function computeSymbolReachWithWitness(input: SymbolReachInput): { reach:
         originSymbol: cur.oSym,
         distance: cur.dist,
         confidence: cur.guessed ? "AMBIGUOUS" : cur.dist === 0 ? "EXTRACTED" : "INFERRED",
+        ...(cur.state ? { viaBinding: true as const } : {}),
       });
     }
   }
@@ -398,6 +405,7 @@ export function computeSymbolReachWithWitness(input: SymbolReachInput): { reach:
   for (const [key, effects] of bySymbol) {
     effects.sort(
       (a, b) =>
+        Number(!!a.viaBinding) - Number(!!b.viaBinding) ||
         a.distance - b.distance ||
         byOrdinal(a.kind, b.kind) ||
         byOrdinal(a.resource, b.resource),
@@ -708,6 +716,8 @@ export function computeDataFlows(
     for (const spanKey of keys) {
       const r = reachByKey.get(spanKey);
       for (const e of r?.effects ?? []) {
+        // A shared child's screen lists what its own code reaches, not each parent's handler behind its emits.
+        if (e.viaBinding) continue;
         const ek = `${e.kind} ${e.resource}`;
         const prev = best.get(ek)?.e;
         // The surest path first, then the shortest.

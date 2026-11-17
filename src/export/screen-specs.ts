@@ -195,6 +195,8 @@ export function screenSpecs(summary: Summary): BundleFile[] {
   const callees = new Map<Key, Array<{ to: Key; http: boolean }>>();
   const symbolsIn = new Map<string, Set<string>>();
   const calledByName = new Map<string, Key>();
+  // The same names where only a dispatch back to a component's user (a bound emit) leads on: the parents' handlers.
+  const calledByBinding = new Map<string, Key>();
   const addSymbol = (file: string, symbol: string) => (symbolsIn.get(file) ?? symbolsIn.set(file, new Set()).get(file)!).add(symbol);
   for (const l of summary.symbolLinks ?? []) {
     if (l.relation === "reference" || l.navigational || l.sourceSymbol.startsWith("(")) continue;
@@ -206,7 +208,8 @@ export function screenSpecs(summary: Summary): BundleFile[] {
     if (l.callName) {
       const leaf = l.callName.replace(/\(.*$/s, "").trim().split(".").pop() ?? "";
       const k = `${l.sourceFile}||${leaf}`;
-      if (!calledByName.has(k)) calledByName.set(k, keyOf(l.targetFile, l.targetSymbol));
+      const names = l.viaUsage?.length ? calledByBinding : calledByName;
+      if (!names.has(k)) names.set(k, keyOf(l.targetFile, l.targetSymbol));
     }
   }
   for (const c of summary.complexity ?? []) for (const f of c.functions ?? []) addSymbol(c.filePath, f.functionName);
@@ -291,6 +294,8 @@ export function screenSpecs(summary: Summary): BundleFile[] {
         if (!http.length) unrouted.push(...(directCalls.get(k) ?? []).filter((u) => u.includes("/") && !/^[\w$.]+\(/.test(u)));
         for (const c of callees.get(k) ?? []) {
           if (c.http || avoid.has(c.to)) continue;
+          // A walk still in its start file is the screen's own code: a bound emit leads to a parent's handler, not its effect.
+          if (gate.active && !state && gate.bound(k, c.to)) continue;
           const to = gate.active ? gate.forward(state, k, c.to) : "";
           if (to === null || seen.has(stateNode(c.to, to))) continue;
           seen.add(stateNode(c.to, to));
@@ -306,13 +311,22 @@ export function screenSpecs(summary: Summary): BundleFile[] {
     };
   };
 
+  // Whether the last `handlerKeys` answer is the parents' handlers: the control hands the work to its users, so the
+  // screen's own reach is nothing (each parent's screen has them as its own control's).
+  let toParents = false;
   /**
    * The functions a handler runs: the one it names, in its screen's files by name or leaf, else the one its file
    * calls by that name; or, for a handler that emits, the parent handlers the emit links reach — an emit behind a
    * condition (`open ? emit('close') : emit('open')`) reaches each event it spells.
    */
   const handlerKeys = (handler: string, files: string[]): Key[] => {
-    const emitted = (event: string) => calledByName.get(`${files[0]}||emit:${event}`);
+    toParents = false;
+    const emitted = (event: string) => {
+      const own = calledByName.get(`${files[0]}||emit:${event}`);
+      const parent = own ? undefined : calledByBinding.get(`${files[0]}||emit:${event}`);
+      if (parent) toParents = true;
+      return own ?? parent;
+    };
     const emit = /^\$?emit\s*\(\s*['"]([\w:.-]+)['"]/.exec(handler) ?? /^(?:this\.)?([\w$]+)\.emit\b/.exec(handler);
     if (emit) return [emitted(emit[1]!)].filter((k): k is Key => !!k);
     const clean = handler.replace(/\(.*$/s, "").replace(/^(?:void|await|return)\s+|^!/, "").trim();
@@ -322,6 +336,11 @@ export function screenSpecs(summary: Summary): BundleFile[] {
       for (const file of files) {
         const named = calledByName.get(`${file}||${leaf}`);
         if (named) return [named];
+        const bound = calledByBinding.get(`${file}||${leaf}`);
+        if (bound) {
+          toParents = true;
+          return [bound];
+        }
       }
       return [];
     }
@@ -364,9 +383,10 @@ export function screenSpecs(summary: Summary): BundleFile[] {
     for (const el of files.flatMap((f) => elementsByFile.get(f) ?? [])) {
       if (!el.handler && !el.request) continue;
       const ks = el.handler ? handlerKeys(el.handler, files) : [];
-      for (const k of ks) handlers.add(k);
+      const handedUp = toParents && ks.length > 0;
+      if (!handedUp) for (const k of ks) handlers.add(k);
       const at = ks.join("\u0000");
-      const walked = ks.length ? actionReach.get(at) ?? actionReach.set(at, walk(ks, new Set())).get(at)! : null;
+      const walked = ks.length && !handedUp ? actionReach.get(at) ?? actionReach.set(at, walk(ks, new Set())).get(at)! : null;
       const reach: Reach = walked ? { ...walked, unrouted: [...walked.unrouted] } : { routes: [], effects: [], unrouted: [] };
       // A server-rendered form or link states its request outright.
       if (el.request) reach.unrouted.push(`${el.request.method.toUpperCase()} ${el.request.target}`);

@@ -1,6 +1,6 @@
 import type { Node, Tree } from "web-tree-sitter";
 import { VUE_SOURCES, VUE_WATCH, argumentsOf, callbackOf, computedMembers, getterOf, holdCallbacks, importSources, isDeep, isOption, optionKey, optionsObjects, optionsWatchers, readPath, type CellFacts } from "./reactive-cells.js";
-import { PROJECT_SOURCE, VUEX_FACTORY, type StoreTrigger } from "./store-reads.js";
+import { GETTER_READ, PROJECT_SOURCE, VUEX_FACTORY, type StoreTrigger } from "./store-reads.js";
 
 /** A `watch` key naming Vuex state: `'$store.state.clubs.list'`. */
 const VUEX_STATE_KEY = /^\$store\.state\.([\w$]+(?:\.[\w$]+)*)$/;
@@ -15,7 +15,7 @@ const VUEX_STATE_KEY = /^\$store\.state\.([\w$]+(?:\.[\w$]+)*)$/;
  * watcher on its computed ran when a mutation wrote the state.
  */
 export function withVuexOptions(tree: Tree, facts: CellFacts, text: string): CellFacts {
-  if (!text.includes("watch") || !/\$store\b|mapState/.test(text)) return facts;
+  if (!text.includes("watch") || !/\$store\b|mapState|mapGetters/.test(text)) return facts;
   const components = optionsObjects(tree);
   if (components.length === 0) return facts;
   const found: StoreTrigger[] = [];
@@ -35,7 +35,9 @@ export function withVuexOptions(tree: Tree, facts: CellFacts, text: string): Cel
       for (const t of body?.descendantsOfType("this") ?? []) {
         if (!t || t.parent?.type !== "member_expression" || t.parent.childForFieldName("object")?.id !== t.id) continue;
         const { path, deep } = readPath(t);
-        if (path[0] === "$store" && path[1] === "state" && path.length > 2) {
+        const getter = path[0] === "$store" && path[1] === "getters" ? storeGetterKey(t) : null;
+        if (getter) out.add(`${GETTER_READ}${getter}`);
+        else if (path[0] === "$store" && path[1] === "state" && path.length > 2) {
           // The member handed back as it is (`return this.$store.state.x`) is read as stated; any use reads through.
           let top: Node = t;
           while (top.parent?.type === "member_expression" && top.parent.childForFieldName("object")?.id === top.id) top = top.parent;
@@ -54,7 +56,7 @@ export function withVuexOptions(tree: Tree, facts: CellFacts, text: string): Cel
       const direct = VUEX_STATE_KEY.exec(w.path)?.[1];
       const paths = direct ? [direct] : /^[\w$]+$/.test(w.path) && (computed.has(w.path) || mapped.has(w.path)) ? readsOfMember(w.path, new Set()) : [];
       if (paths.length === 0) continue;
-      const reads = paths.map((p) => ({ factory: VUEX_FACTORY, path: w.deep && !p.endsWith("*") ? `${p}*` : p }));
+      const reads = paths.map((p) => ({ factory: VUEX_FACTORY, path: w.deep && !p.endsWith("*") && !p.startsWith(GETTER_READ) ? `${p}*` : p }));
       for (const cb of w.callbacks) {
         // The callback is the method's own function (`optionNames`), or a method the key names.
         if (!cb.node && !cb.callee) continue;
@@ -66,7 +68,27 @@ export function withVuexOptions(tree: Tree, facts: CellFacts, text: string): Cel
   return { ...facts, storeTriggers: [...(facts.storeTriggers ?? []), ...found] };
 }
 
-/** `computed: { ...mapState('clubs', ['list']) }`: each member name → the state paths it reads, from the root state. */
+/**
+ * The getter `this.$store.getters.total` / `this.$store.getters['clubs/total']` names (`t` is the `this` of the chain), as the
+ * key is written; null when the chain reads the getters object itself.
+ */
+function storeGetterKey(t: Node): string | null {
+  let getters: Node = t;
+  while (getters.parent?.type === "member_expression" && getters.parent.childForFieldName("object")?.id === getters.id) {
+    getters = getters.parent;
+    if (getters.childForFieldName("property")?.text === "getters") break;
+  }
+  if (getters.type !== "member_expression" || getters.childForFieldName("property")?.text !== "getters" || getters.text !== "this.$store.getters") return null;
+  const use = getters.parent;
+  if (use?.type === "subscript_expression" && use.childForFieldName("object")?.id === getters.id) {
+    const index = use.childForFieldName("index");
+    return index?.type === "string" && index.text.length > 2 ? index.text.slice(1, -1) : null;
+  }
+  if (use?.type === "member_expression" && use.childForFieldName("object")?.id === getters.id) return use.childForFieldName("property")?.text ?? null;
+  return null;
+}
+
+/** `computed: { ...mapState('clubs', ['list']) }` / `...mapGetters('clubs', ['total'])`: each member name → what it reads (state paths, or `@getter:` keys), from the root. */
 function mapStateMembers(options: Node): Map<string, string[]> {
   const out = new Map<string, string[]>();
   for (const m of options.namedChildren) {
@@ -81,18 +103,23 @@ function mapStateMembers(options: Node): Map<string, string[]> {
   return out;
 }
 
-/** What one `mapState(…)` call binds: each member name → the state paths it reads (empty when the call is not `mapState`). */
+/**
+ * What one `mapState(…)` / `mapGetters(…)` call binds: each member name → the state paths it reads, or the getter it reads
+ * (`@getter:clubs/total`, the key as the store spells it); empty when the call is neither.
+ */
 function mapStateCall(call: Node): Map<string, string[]> {
   const out = new Map<string, string[]>();
   const callee = call.childForFieldName("function");
-  if (callee?.type === "identifier" ? callee.text !== "mapState" : !(callee?.type === "member_expression" && callee.childForFieldName("property")?.text === "mapState")) return out;
+  const helper = callee?.type === "identifier" ? callee.text : callee?.type === "member_expression" ? callee.childForFieldName("property")?.text : null;
+  if (helper !== "mapState" && helper !== "mapGetters") return out;
+  const getters = helper === "mapGetters";
   let args = argumentsOf(call);
   let ns = "";
   if (args[0]?.type === "string" && args.length >= 2) {
-    ns = args[0].text.slice(1, -1).split("/").filter(Boolean).join(".");
+    ns = args[0].text.slice(1, -1).split("/").filter(Boolean).join(getters ? "/" : ".");
     args = args.slice(1);
   }
-  const at = (rest: string): string => (ns ? `${ns}.${rest}` : rest);
+  const at = (rest: string): string => (getters ? `${GETTER_READ}${ns ? `${ns}/${rest}` : rest}` : ns ? `${ns}.${rest}` : rest);
   const spec = args[0];
   if (spec?.type === "array") {
     for (const el of spec.namedChildren) if (el?.type === "string") out.set(el.text.slice(1, -1), [at(el.text.slice(1, -1))]);
@@ -106,7 +133,7 @@ function mapStateCall(call: Node): Map<string, string[]> {
       const value = p?.type === "pair" ? p.childForFieldName("value") : null;
       if (!key || !value) continue;
       if (value.type === "string") out.set(key, [at(value.text.slice(1, -1))]);
-      else {
+      else if (!getters) {
         const paths = stateParamReads(value, at);
         if (paths.length > 0) out.set(key, paths);
       }
@@ -116,9 +143,10 @@ function mapStateCall(call: Node): Map<string, string[]> {
 }
 
 /** The state paths a function reads off its first parameter, the state (`(state) => state.clubs.rows`), `*`-marked when read through. */
-export function stateParamReads(fn: Node, at: (rest: string) => string): string[] {
-  if (fn.type !== "arrow_function" && fn.type !== "function_expression" && fn.type !== "function") return [];
-  const param = fn.childForFieldName("parameters")?.namedChildren[0] ?? fn.childForFieldName("parameter");
+export function stateParamReads(fn: Node, at: (rest: string) => string, index = 0): string[] {
+  if (fn.type !== "arrow_function" && fn.type !== "function_expression" && fn.type !== "function" && !(index > 0 && fn.type === "method_definition")) return [];
+  const params = fn.childForFieldName("parameters")?.namedChildren;
+  const param = index === 0 ? params?.[0] ?? fn.childForFieldName("parameter") : params?.[index];
   const name = (param?.type === "required_parameter" ? param.childForFieldName("pattern") : param)?.text;
   const body = fn.childForFieldName("body");
   if (!name || !body) return [];
@@ -147,7 +175,7 @@ function callbackFor(arg: Node | undefined): { callback: Node | null; callee: st
  * object it returns bound to a `$store` (`computed(mapped.list.bind({ $store: store }))`) — watched through `watch(list, cb)`.
  */
 export function withVuexCalls(tree: Tree, facts: CellFacts, text: string): CellFacts {
-  if (!/\$watch|\.watch\s*\(|mapState/.test(text) || !/vuex|\$store|[sS]tore/.test(text)) return facts;
+  if (!/\$watch|\.watch\s*\(|mapState|mapGetters/.test(text) || !/vuex|\$store|[sS]tore/.test(text)) return facts;
   const sources = importSources(tree.rootNode);
   const storeLocals = new Set<string>();
   for (const d of tree.rootNode.descendantsOfType("variable_declarator")) {
@@ -165,7 +193,7 @@ export function withVuexCalls(tree: Tree, facts: CellFacts, text: string): CellF
     if (reads.length === 0 || (!cb.callback && !cb.callee)) return;
     const deep = isDeep(opts);
     found.push({
-      reads: reads.map((p) => ({ factory: VUEX_FACTORY, path: deep && !p.endsWith("*") ? `${p}*` : p })),
+      reads: reads.map((p) => ({ factory: VUEX_FACTORY, path: deep && !p.endsWith("*") && !p.startsWith(GETTER_READ) ? `${p}*` : p })),
       hook: "watch",
       callback: cb.callback,
       callee: cb.callee,
@@ -176,7 +204,7 @@ export function withVuexCalls(tree: Tree, facts: CellFacts, text: string): CellF
   // Composition `mapState`: the bound object's members, and the computeds made of them.
   const mapped = new Map<string, Map<string, string[]>>();
   const members = new Map<string, string[]>();
-  if (sources.get("mapState") === "vuex") {
+  if (sources.get("mapState") === "vuex" || sources.get("mapGetters") === "vuex") {
     for (const d of tree.rootNode.descendantsOfType("variable_declarator")) {
       const value = d?.childForFieldName("value");
       const name = d?.childForFieldName("name");

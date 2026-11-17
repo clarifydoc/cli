@@ -138,6 +138,7 @@ export const typescriptManifest: LanguagePluginManifest = {
   testCommand: jsTestCommand,
   projectCommands: jsProjectCommands,
   language: "typescript",
+  directoryIndexStems: ["index"],
   callPathsFromHead: true,
   collectionElementOf: collectionElementText,
   // `await repo.all()` holds the `Club[]` a declared `Promise<Club[]>` resolves to.
@@ -183,6 +184,7 @@ export const javascriptManifest: LanguagePluginManifest = {
   routerOutlet: JS_ROUTER_OUTLET,
   testCommand: jsTestCommand,
   language: "javascript",
+  directoryIndexStems: ["index"],
   shebangInterpreter: /^(?:node(?:js)?|tsx|ts-node|bun|deno)$/,
   callPathsFromHead: true,
   collectionElementOf: collectionElementText,

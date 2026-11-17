@@ -128,6 +128,32 @@ export function declaredParamTypes(lines: readonly string[], defIdx: number): Ma
   return out;
 }
 
+/**
+ * The class a Sorbet `sig { returns(Score) }` above the `def` at 0-based `defIdx` says the method returns
+ * (`T.nilable(Score)` too; `void`, `T.untyped` and generic types state no class), or null.
+ */
+export function declaredReturnType(lines: readonly string[], defIdx: number): string | null {
+  let sigText = "";
+  let pending = -1;
+  for (let i = defIdx - 1; i >= 0 && i >= defIdx - 40; i--) {
+    const trimmed = lines[i]!.trim();
+    if (trimmed.startsWith("#")) continue;
+    if (/^sig\s*(?:\(|\{|do\b)/.test(trimmed)) {
+      sigText = lines.slice(i, pending >= 0 ? pending + 1 : i + 1).filter((l) => !l.trim().startsWith("#")).join(" ");
+      break;
+    }
+    if (trimmed && /^(?:\}|end\b|\.|\)|params\b|returns\b|void\b|[a-z_]\w*:\s)/.test(trimmed)) {
+      if (pending < 0) pending = i;
+      continue;
+    }
+    break;
+  }
+  const at = sigText.search(/\.?\breturns\s*\(/);
+  const body = at >= 0 ? balanced(sigText, sigText.indexOf("(", at)) : null;
+  const type = body !== null ? rubyTypeText(body) : null;
+  return type && /^(?:::)?[A-Z]\w*(?:::[A-Z]\w*)*(?: \| nil)?$/.test(type) ? type.replace(/^::/, "") : null;
+}
+
 /** The text inside the bracket that opens at `open`, or null when it never closes. */
 function balanced(text: string, open: number): string | null {
   let depth = 0;

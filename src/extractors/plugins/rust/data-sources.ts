@@ -181,8 +181,11 @@ const joinedText = new WeakMap<string[], string>();
  * file cannot read (another file's helper, a body that does more than format).
  */
 function urlOfHelperCall(lines: string[], line: string, verbAt: number): string | null | undefined {
-  const call = /^\s*&?\s*([A-Za-z_]\w*)\s*\(/.exec(line.slice(line.indexOf("(", verbAt) + 1));
+  const call = /^\s*&?\s*((?:[A-Za-z_]\w*::)*)([A-Za-z_]\w*)\s*\(/.exec(line.slice(line.indexOf("(", verbAt) + 1));
   if (!call) return undefined;
+  // A path (`urls::club_url(id)`) names a function of another module: this file's namesake is not it.
+  const modulePath = call[1]!.replace(/::$/, "").split("::").filter((s) => s && s !== "self");
+  const callee = call[2]!;
   const rest = line.slice(line.indexOf("(", verbAt) + 1 + call[0].length);
   let depth = 1;
   let end = -1;
@@ -192,12 +195,21 @@ function urlOfHelperCall(lines: string[], line: string, verbAt: number): string 
   }
   if (end < 0) return null;
   const args = splitTopLevel(rest.slice(0, end)).map((a) => a.trim().replace(/^&\s*(?:mut\s+)?/, ""));
-  const name = call[1]!;
+  const name = callee;
   let text = joinedText.get(lines);
   if (text === undefined) joinedText.set(lines, (text = lines.join("\n")));
-  const head = new RegExp(`(?:^|\\n)[ \\t]*(?:pub(?:\\([^)]*\\))?\\s+)?(?:async\\s+)?fn\\s+${name}\\s*(?:<[^>]*>)?\\s*\\(`).exec(text);
+  const head = modulePath.length > 0 ? null : new RegExp(`(?:^|\\n)[ \\t]*(?:pub(?:\\([^)]*\\))?\\s+)?(?:async\\s+)?fn\\s+${name}\\s*(?:<[^>]*>)?\\s*\\(`).exec(text);
+  // A helper this file does not declare — imported (`use urls::club_url;`) or reached through its module
+  // (`urls::club_url(id)`): the call as a hole, which the project pass fills from the helper's own template
+  // (`FunctionInfo.urlTemplate`) once it knows which module the name stands for.
+  if (!head) {
+    // Only a name the file binds itself — a `use` naming the helper, a `mod`/`use` naming the module before it.
+    const binder = modulePath.at(-1) ?? name;
+    const binds = new RegExp(`(?:^|\\n)[ \\t]*(?:pub(?:\\([^)]*\\))?\\s+)?(?:use\\b[^;]*\\b${binder}\\b[^;]*;|mod\\s+${binder}\\b)`).test(text);
+    return binds ? `\${${modulePath.length > 0 ? `${binder}.` : ""}${name}(${args.join(", ")})}` : null;
+  }
   // One declaration of the name only: a namesake in an `impl` or another module is no telling which one a call means.
-  if (!head || text.slice(head.index + head[0].length).search(new RegExp(`\\bfn\\s+${name}\\s*[(<]`)) >= 0) return null;
+  if (text.slice(head.index + head[0].length).search(new RegExp(`\\bfn\\s+${name}\\s*[(<]`)) >= 0) return null;
   const paramsEnd = closingAt(text, head.index + head[0].length - 1);
   const bodyStart = paramsEnd < 0 ? -1 : /^[^{;]*\{/.exec(text.slice(paramsEnd + 1))?.[0].length ?? -1;
   if (bodyStart < 0) return null;
@@ -222,7 +234,7 @@ function urlOfHelperCall(lines: string[], line: string, verbAt: number): string 
 }
 
 /** The index of the bracket closing the one at `open` (`(`, `{` or `[`), string literals skipped; -1 when none. */
-function closingAt(text: string, open: number): number {
+export function closingAt(text: string, open: number): number {
   let depth = 0;
   for (let k = open; k < text.length; k++) {
     const c = text[k]!;
@@ -234,7 +246,7 @@ function closingAt(text: string, open: number): number {
   return -1;
 }
 
-function renderFormat(template: string, args: string[]): string | null {
+export function renderFormat(template: string, args: string[]): string | null {
   let n = 0;
   let literal = /[^{}]/.test(template.replace(/\{[^}]*\}/g, ""));
   const out = template.replace(/\{[^}]*\}/g, () => {
@@ -247,7 +259,7 @@ function renderFormat(template: string, args: string[]): string | null {
 }
 
 /** Arguments split at top-level commas. */
-function splitTopLevel(text: string): string[] {
+export function splitTopLevel(text: string): string[] {
   const out: string[] = [];
   let depth = 0;
   let cur = "";

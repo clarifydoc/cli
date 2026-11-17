@@ -258,3 +258,58 @@ describe("DRF library effects", () => {
     expect(reads).toContain("GET /league/ Standing");
   });
 });
+
+const ALLAUTH_FILES: Record<string, string> = {
+  "requirements.txt": "django==5.0\ndjango-allauth==65.0\n",
+  "config/settings.py": `ROOT_URLCONF = "config.urls"\nINSTALLED_APPS = ["league"]\n`,
+  "config/urls.py": `from allauth.account import views as allauth_account_views
+from allauth.account.views import SignupView, PasswordChangeView as ChangePassword
+from django.urls import path
+
+from league import account_views
+from league import views as league_views
+
+urlpatterns = [
+    path("accounts/login/", allauth_account_views.login),
+    path("accounts/signup/", SignupView.as_view()),
+    path("accounts/password/change/", ChangePassword.as_view()),
+    path("accounts/logout/", allauth_account_views.logout),
+    path("clubs/login/", league_views.login),
+    path("clubs/signup/", account_views.SignupView.as_view()),
+]
+`,
+  "league/views.py": `def login(request):\n    return None\n`,
+  "league/account_views.py": `from django.views import View
+
+
+class SignupView(View):
+    def post(self, request):
+        return None
+`,
+};
+
+describe("django-allauth views the project does not write", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "cd-allauth-"));
+    for (const [rel, text] of Object.entries(ALLAUTH_FILES)) {
+      await mkdir(dirname(join(dir, "app", rel)), { recursive: true });
+      await writeFile(join(dir, "app", rel), text);
+    }
+    await analyze({ projectRoot: join(dir, "app"), outputDir: join(dir, "out"), lsp: false, gitHistory: false });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 180_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("act on the user model by what the library does, and a project view of the same name does not", () => {
+    const flows = (summary.dataFlows ?? []).filter((f) => f.entryKind === "route").map((f) => `${f.entryLabel} ${f.effect} ${f.resource}`).sort();
+    expect(flows).toEqual([
+      "/accounts/login/ db-read User",
+      "/accounts/password/change/ db-write User",
+      "/accounts/signup/ db-write User",
+    ]);
+  });
+});

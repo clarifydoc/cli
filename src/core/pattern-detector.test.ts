@@ -99,3 +99,20 @@ describe("god-object grading uses internal structure", () => {
     expect(god(p).detail).toMatch(/Structure unknown/);
   });
 });
+
+describe("god-object count skips generated functions", () => {
+  const synthetic = (name: string, i: number) => ({ ...method(name, 10 + i * 20, 40 + i * 20, 2), synthetic: true as const });
+  const bulky = (name: string, i: number) => method(name, 10 + i * 20, 40 + i * 20, 2);
+  const file = (functions: ReturnType<typeof method>[]): FileAnalysis => ({ ...fileWith([]), functions, classes: [] }) as FileAnalysis;
+
+  it("does not flag a file whose bulk is generated functions", () => {
+    const generated = Array.from({ length: 20 }, (_, i) => synthetic(`copyClub${i}`, i));
+    const written = Array.from({ length: 4 }, (_, i) => bulky(`playMatch${i}`, 30 + i));
+    expect(detectPatterns([file([...generated, ...written])], []).some((p) => p.kind === "god-object")).toBe(false);
+  });
+
+  it("still flags the same number of written functions", () => {
+    const written = Array.from({ length: 20 }, (_, i) => bulky(`playMatch${i}`, i));
+    expect(detectPatterns([file(written)], []).some((p) => p.kind === "god-object")).toBe(true);
+  });
+});

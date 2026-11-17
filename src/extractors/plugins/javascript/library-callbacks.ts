@@ -57,8 +57,8 @@ const tableFeature = (feature: string, ...more: string[]): string[] => [`set${fe
 export const LIBRARY_OBJECTS: readonly LibraryObject[] = [
   {
     // TanStack Table v8: every state setter hands its updater to the feature's `on…Change` option.
-    packages: /^@tanstack\/(?:(?:vue|react|solid|angular|lit|qwik|preact)-)?table(?:-core)?$/,
-    factories: new Set(["useVueTable", "useReactTable", "createSolidTable", "createAngularTable", "useQwikTable", "createTable"]),
+    packages: /^@tanstack\/(?:(?:vue|react|solid|angular|lit|qwik|preact|svelte)-)?table(?:-core)?$/,
+    factories: new Set(["useVueTable", "useReactTable", "createSolidTable", "createSvelteTable", "createAngularTable", "useQwikTable", "createTable"]),
     runs: {
       onPaginationChange: tableFeature("Pagination", "setPageIndex", "resetPageIndex", "setPageSize", "resetPageSize", "nextPage", "previousPage", "firstPage", "lastPage"),
       onSortingChange: tableFeature("Sorting"),
@@ -308,6 +308,45 @@ function libraryBoundNames(tree: Tree): ReadonlySet<string> {
     for (const m of patternMembers(pattern)) boundNames.add(m.local);
   }
   return boundNames;
+}
+
+/**
+ * A Svelte store's auto-subscription on a library object (`$table.nextPage()` after
+ * `const table = createSvelteTable({ onPaginationChange })`): the call on the store's value is the library object's own
+ * method, named as its holder records it (`table.nextPage`). Only for a name the file declares as a library result.
+ */
+export function librarySubscriptionCallee(call: Node): string | null {
+  const callee = call.childForFieldName("function");
+  if (callee?.type !== "member_expression") return null;
+  const object = callee.childForFieldName("object");
+  const method = callee.childForFieldName("property");
+  if (object?.type !== "identifier" || method?.type !== "property_identifier" || !/^\$[A-Za-z_][\w$]*$/.test(object.text)) return null;
+  const name = object.text.slice(1);
+  if (!libraryHolderNames(call.tree).has(name)) return null;
+  // A nearer binding of the store's own name (a parameter, a local) makes `$name` another store.
+  for (let p = call.parent; p; p = p.parent) {
+    if (!SCOPE_FUNCTIONS.has(p.type)) continue;
+    const params = p.childForFieldName("parameters") ?? p.childForFieldName("parameter");
+    if (params && bindsName(params, name)) return null;
+  }
+  return `${name}.${method.text}`;
+}
+
+let holdersTree: Tree | null = null;
+let holderNames = new Set<string>();
+
+/** The names the file binds to a library object (`const table = useVueTable({ … })`), read once per tree. */
+function libraryHolderNames(tree: Tree): ReadonlySet<string> {
+  if (holdersTree === tree) return holderNames;
+  holdersTree = tree;
+  holderNames = new Set();
+  const imports = [...importsOf(tree).values()];
+  if (!imports.some((i) => LIBRARY_OBJECTS.some((l) => l.factories.has(i.imported) && l.packages.test(i.source)))) return holderNames;
+  for (const d of tree.rootNode.descendantsOfType("variable_declarator")) {
+    const name = d?.childForFieldName("name");
+    if (name?.type === "identifier" && libraryObjectCall(unwrap(d?.childForFieldName("value")))) holderNames.add(name.text);
+  }
+  return holderNames;
 }
 
 /**

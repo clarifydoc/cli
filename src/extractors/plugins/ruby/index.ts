@@ -23,10 +23,13 @@ import {
   isSinatraFile,
   propagateHelperAccess,
   filterDecorators,
+  haltsCaller,
+  HALTS_CALLER,
 } from "./route-meta.js";
 import {
   RUBY_DI_CALL_PATTERNS,
   applyDeclaredParamTypes,
+  declaredReturnType,
   assignedFieldTypes,
   memoizedReturn,
   autoInjectProperties,
@@ -48,6 +51,20 @@ import { rubyModuleBindings } from "./module-bindings.js";
 import { extractRubyModuleValueFlow, extractRubyValueFlow } from "./value-flow.js";
 
 /** The helper name of a `resources … as: :teams` route: `teams`, `team`, `new_team`, `edit_team`. */
+/**
+ * The helper Rails derives for a `resources`/`resource` route nothing renames: the collection of a
+ * name whose plural is its singular is `news_index`, a member `news`; nested ones are prefixed by
+ * their parents (`club_players`).
+ */
+function derivedResourceHelper(prefix: string, name: string, action: string, singular: boolean): string {
+  const member = singular ? name : railsSingularize(name);
+  if (action === "new") return `new_${prefix}${member}`;
+  if (action === "edit") return `edit_${prefix}${member}`;
+  const collection = !singular && (action === "index" || action === "create");
+  if (collection) return prefix + (member === name ? `${name}_index` : name);
+  return prefix + member;
+}
+
 function resourceHelper(prefix: string, as: string, action: string, singular: boolean): string {
   const member = singular ? as : railsSingularize(as);
   if (action === "new") return `new_${prefix}${member}`;
@@ -554,6 +571,33 @@ function addTypedLocalCalls(lines: readonly string[], fn: FunctionInfo, elementH
 }
 
 /**
+ * `columns = League::Stats::Columns` … `columns.names(model)`: a local the method assigns a class or module constant
+ * (once, and no parameter) holds that constant, so its calls are calls on it — `League::Stats::Columns.names`, a
+ * singleton method found by the constant's name instead of a guess by the leaf name. An ALL_CAPS constant is a
+ * value, not a class, and stays as it was.
+ */
+function rewriteConstantLocals(lines: readonly string[], fn: FunctionInfo): void {
+  if (fn.calls.length === 0) return;
+  const assigned = new Map<string, string[]>();
+  for (const [, text] of bodyLines(lines, fn)) {
+    const m = /^\s*([a-z_]\w*)\s*=(?!=)\s*((?:::)?[A-Z]\w*(?:::[A-Z]\w*)*)\s*(?:#.*)?$/.exec(text);
+    if (m) (assigned.get(m[1]!) ?? assigned.set(m[1]!, []).get(m[1]!)!).push(m[2]!);
+    else {
+      const other = /^\s*([a-z_]\w*)\s*(?:\|\||&&|[-+*\/])?=(?!=)/.exec(text);
+      if (other) (assigned.get(other[1]!) ?? assigned.set(other[1]!, []).get(other[1]!)!).push("");
+    }
+  }
+  const body = bodyLines(lines, fn).map(([, t]) => t).join("\n");
+  for (const [name, values] of assigned) {
+    // A block parameter of the same name (`|columns|`) is another variable.
+    if (new RegExp(String.raw`\|[^|\n]*(?<![\w@])${name}\b[^|\n]*\|`).test(body)) continue;
+    const constant = values[0]!.replace(/^::/, "");
+    if (values.length !== 1 || !constant || !/[a-z]/.test(constant.split("::").pop()!) || fn.params.some((p) => p.name.replace(/^[*&]+/, "") === name)) continue;
+    for (const c of fn.calls) if (c.name.startsWith(`${name}.`) && !c.receiverType) c.name = constant + c.name.slice(name.length);
+  }
+}
+
+/**
  * The parameters of the method's blocks (`team.players.each { |player| … }`): each is a local of unknown
  * type (`untypedLocals`, so the linker never guesses its calls by name), or — where the iterated
  * collection is a typed association or model query — the first element of it (`localTypes[].from`).
@@ -723,7 +767,7 @@ function addTypedCallsOverFunctions(lines: readonly string[], fns: readonly Func
 }
 
 /** `Current.league = League.find(…)`, `Current.club = @club`, `Current.club = Current.league.clubs.find(…)`: the attribute and its value. */
-const CURRENT_ASSIGN_RE = /(?<![\w.@$])Current\.([a-z_]\w*)\s*(?:\|\|)?=(?![=~>])\s*(@[a-z_]\w*(?=\s*(?:if|unless|$))|(?:[A-Z][\w:]*|[a-z_]\w*)(?:\.[a-z_]\w*[?!]?(?:\([^)]*\))?)+)/;
+const CURRENT_ASSIGN_RE = /(?<![\w.@$])Current\.([a-z_]\w*)\s*(?:\|\|)?=(?![=~>])\s*(@[a-z_]\w*(?=\s*(?:if|unless|$))|(?:[A-Z][\w:]*|[a-z_]\w*)(?:\.[a-z_]\w*[?!]?(?:\([^)]*\))?)+|[a-z_]\w*(?=\s*(?:if|unless|$)))/;
 
 /** `@x = a.b(…)` / `@x ||= A.b.c(…)` inside a class's methods → `{ x: "a.b(…)" }`, several chains one per line. */
 function ivarAssignedChains(lines: string[], cls: ClassInfo): Record<string, string> {
@@ -731,7 +775,7 @@ function ivarAssignedChains(lines: string[], cls: ClassInfo): Record<string, str
   for (const m of cls.methods) {
     for (let i = m.line; i < Math.min(m.endLine, lines.length); i++) {
       const code = (lines[i] ?? "").replace(/#.*$/, "");
-      const a = /@([a-z_]\w*)\s*(?:\|\|)?=\s*((?:[A-Z][\w:]*|[a-z_]\w*)(?:\.[a-z_]\w*[?!]?(?:\([^)]*\))?)+)/.exec(code);
+      const a = /@([a-z_]\w*)\s*(?:\|\|)?=\s*((?:[A-Z][\w:]*|@?[a-z_]\w*)(?:\.[a-z_]\w*[?!]?(?:\([^)]*\))?)+)/.exec(code);
       // Every chain assigned, one per line: the entity pass keeps the model they agree on.
       if (a && !(out[a[1]!] ?? "").split("\n").includes(a[2]!)) out[a[1]!] = out[a[1]!] ? `${out[a[1]!]}\n${a[2]}` : a[2]!;
       // `@model ||= @match`: the variable is another variable's value, typed where that one is assigned.
@@ -742,7 +786,11 @@ function ivarAssignedChains(lines: string[], cls: ClassInfo): Record<string, str
       const cur = CURRENT_ASSIGN_RE.exec(code);
       if (cur) {
         const key = `Current.${cur[1]}`;
-        if (!(out[key] ?? "").split("\n").includes(cur[2]!)) out[key] = out[key] ? `${out[key]}\n${cur[2]}` : cur[2]!;
+        // `Current.user = user`: a local the method assigned earlier holds that chain (`user = Player.find(…)`);
+        // one no assignment explains (a parameter, `nil`) states nothing.
+        const bare = /^[a-z_]\w*$/.test(cur[2]!);
+        const value = bare ? (/^(?:nil|true|false|self)$/.test(cur[2]!) ? null : localChainBefore(lines, i, cur[2]!)) : cur[2]!;
+        if (value && !(out[key] ?? "").split("\n").includes(value)) out[key] = out[key] ? `${out[key]}\n${value}` : value;
       }
     }
   }
@@ -1345,6 +1393,12 @@ export const rubySpec: RegexLangSpec = {
     },
     { pattern: /^\s*module\s+(?:::)?([A-Z]\w*(?:::[A-Z]\w*)*)/, getExtends: () => null },
     {
+      // `Score = Struct.new(:home, :away) do … end` / `Transfer = Data.define(:player, :fee) do … end`: a class a
+      // constant names, with the block's `def`s as methods and the listed fields as members (`addMacroMembers`).
+      pattern: /^\s*(?:::)?([A-Z]\w*(?:::[A-Z]\w*)*)\s*=\s*(?:Struct\.new|Data\.define)\b.*(?:\bdo\b(?:\s*\|[^|]*\|)?|\{)\s*$/,
+      getExtends: () => null,
+    },
+    {
       // `Striker = Class.new(Base) do … end` / `Striker = Class.new(Base) { … }` — an anonymous class a constant
       // names: a class of that name extending `Base`, whose block's `def`s are its methods. The block's `end` or
       // `}` closes the class (`blockEnds`); a class nobody names is no class here.
@@ -1373,6 +1427,7 @@ export const rubySpec: RegexLangSpec = {
       for (const m of cls.methods) {
         addParenlessParams(lines, m);
         applyDeclaredParamTypes(lines, m);
+        if (!m.returnType && !m.synthetic) m.returnType = declaredReturnType(lines, m.line - 1);
         dropDetachedMemberCalls(lines, m);
       }
       // What the class holds: dry-auto_inject readers (by container key) and
@@ -1400,12 +1455,15 @@ export const rubySpec: RegexLangSpec = {
         addOwnClassCalls(code, cls, m);
         addImplicitReceiverCalls(code, m, bound);
         // `@club = Club.find(…)` types `@club.update_honours` in the method.
+        // A filter whose body stops an unauthorized caller is a guard whatever its name.
+        if (mayFilter && haltsCaller(lines.slice(m.line, Math.max(m.line, m.endLine)))) m.decorators.push(HALTS_CALLER);
         const fields = assignedFieldTypes(lines, m, bound, mayFilter);
         if (fields.length > 0) (m.localTypes ??= []).push(...fields);
         addReaderHeads(code, m, readers, bound);
         addAnonymousClassCalls(code, m);
         const elements = addBlockParamTypes(code, m, associations, bound);
         addTypedLocalCalls(code, m, elements);
+        rewriteConstantLocals(lines, m);
         addMemberChainCalls(code, m, associations, bound);
         addJobDispatchCalls(lines, m);
         addOwnMethodCalls(code, cls, m, bound);
@@ -1496,6 +1554,7 @@ export const rubySpec: RegexLangSpec = {
       addParenlessParams(lines, fn);
       applyDeclaredParamTypes(lines, fn);
       dropDetachedMemberCalls(lines, fn);
+      rewriteConstantLocals(lines, fn);
     }
     addTypedCallsOverFunctions(lines, fns);
     withRubyArgOrigins(lines, fns);
@@ -1726,7 +1785,9 @@ export const rubySpec: RegexLangSpec = {
     // Parallel to `blockStack`: the `resources :x do … end` block a route is
     // declared in, for `on: :collection` / `on: :member` and the implicit
     // controller of a bare `get 'presence'` inside it.
-    interface ResourceFrame { base: string; controllerClass: string; memberPath: string }
+    // `controllerToken` + `modules` (a `controller :x do` frame only) let a `module:` on a route
+    // inside re-derive the class.
+    interface ResourceFrame { base: string; controllerClass: string; memberPath: string; controllerToken?: string; modules?: string[] }
     const resourceStack: (ResourceFrame | null)[] = [];
     const innermostResource = (): ResourceFrame | null => {
       for (let k = resourceStack.length - 1; k >= 0; k--) if (resourceStack[k]) return resourceStack[k];
@@ -1739,6 +1800,19 @@ export const rubySpec: RegexLangSpec = {
     const nameStack: string[] = [];
     const currentNamePrefix = (): string => nameStack.join("");
     let nextNamePrefix = "";
+    // Parallel to `blockStack`: what a block adds to a DERIVED route name (`club_` under `resources :clubs`,
+    // a `scope as:`), or null when the block changes names in a way this reader does not follow (`concern`,
+    // `shallow`) — a route inside gets no derived name then.
+    const derivedStack: (string | null)[] = [];
+    let nextDerived: string | null = "";
+    const derivedPrefix = (): string | null => {
+      let out = "";
+      for (let k = 0; k < derivedStack.length; k++) {
+        if (derivedStack[k] === null) return null;
+        out += (nameStack[k] ?? "") + derivedStack[k];
+      }
+      return out;
+    };
     const pushBlock = (
       prefix: string,
       guard: GuardAttr | null = null,
@@ -1749,6 +1823,8 @@ export const rubySpec: RegexLangSpec = {
       blockStack.push(absolute ? { prefix, absolute } : { prefix });
       nameStack.push(nextNamePrefix);
       nextNamePrefix = "";
+      derivedStack.push(nextDerived);
+      nextDerived = "";
       scopeStack.push(absolute);
       guardStack.push(guard);
       moduleStack.push(module);
@@ -1757,6 +1833,7 @@ export const rubySpec: RegexLangSpec = {
     const popBlock = (): void => {
       blockStack.pop();
       nameStack.pop();
+      derivedStack.pop();
       scopeStack.pop();
       guardStack.pop();
       moduleStack.pop();
@@ -1796,13 +1873,30 @@ export const rubySpec: RegexLangSpec = {
         const raw = line.match(/^scope\s+['"]([^'"]+)['"]/)?.[1] ?? line.match(/\bpath:\s*['"]([^'"]+)['"]/)?.[1] ?? "";
         const p = raw ? raw.replace(/^\/?/, "/") : "";
         const module = line.match(/\bmodule:\s*:?['"]?([\w/]+)/)?.[1];
+        // `scope as: :staff` prefixes the names inside; a `shallow` scope renames them in ways not followed.
+        const scopeAs = line.match(/\bas:\s*(?::|['"])(\w+)/)?.[1];
+        nextDerived = /\bshallow/.test(line) ? null : scopeAs ? `${scopeAs}_` : "";
         pushBlock(p === "/" ? "" : p, null, module ? railsModule(module) : null);
+        continue;
+      }
+      // A `concern` body is mounted by name elsewhere and `shallow` re-nests the names: no derived names inside.
+      if (/^(?:concern|shallow)\b/.test(line) && opensDoBlock) {
+        nextDerived = null;
+        pushBlock("");
         continue;
       }
       // `controller :clubs do … end`: the routes inside are that controller's actions, at the enclosing path.
       const controllerBlock = line.match(/^controller\s+(?::|['"])([\w/]+)['"]?/);
       if (controllerBlock && opensDoBlock) {
-        pushBlock("", null, null, { base: currentPrefix(), controllerClass: railsControllerClass(controllerBlock[1]!, currentModules()), memberPath: "" });
+        // Inside `resources :clubs do`, `on: :member` / `on: :collection` still hang off that resource.
+        const enclosing = innermostResource();
+        pushBlock("", null, null, {
+          base: enclosing?.base ?? currentPrefix(),
+          memberPath: enclosing?.memberPath ?? "",
+          controllerClass: railsControllerClass(controllerBlock[1]!, currentModules()),
+          controllerToken: controllerBlock[1]!,
+          modules: currentModules(),
+        });
         continue;
       }
       // Devise: `authenticate :user do … end` / `authenticated :admin do … end`
@@ -1894,8 +1988,10 @@ export const rubySpec: RegexLangSpec = {
         const explicitController = stmt.match(/\bcontroller:\s*(?:['"]([\w/]+)['"]|:(\w+))/)?.slice(1).find(Boolean) ?? null;
         let frame: ResourceFrame | null = null;
         let nestedPrefix = "";
+        let lastName = "";
         for (const m of beforeOpts.matchAll(/:(\w+)/g)) {
           const name = m[1]!;
+          lastName = name;
           // Rails maps a singular `resource :session` to the plural SessionsController.
           const controllerClass = railsControllerClass(
             explicitController ?? (singular ? railsPluralize(name) : name),
@@ -1914,6 +2010,8 @@ export const rubySpec: RegexLangSpec = {
             // Rails routes `update` on PATCH and on PUT alike.
             for (const method of action === "update" ? ["PATCH", info.method] : [info.method]) {
               const helper = asName ? resourceHelper(currentNamePrefix(), asName, action, singular) : null;
+              const parents = derivedPrefix();
+              const derived = !asName && parents !== null && !/\bshallow\b/.test(stmt) ? derivedResourceHelper(parents, name, action, singular) : null;
               routes.push(withGuards({
                 path: base + info.suffix.replace("/:id", memberPath),
                 httpMethod: method,
@@ -1923,10 +2021,13 @@ export const rubySpec: RegexLangSpec = {
                 middleware: [],
                 line: i + 1,
                 ...(helper ? { name: helper } : {}),
+                ...(derived ? { derivedName: derived } : {}),
               }));
             }
           }
         }
+        // Names nested below take this resource's singular as their prefix (`club_players`).
+        if (opensDoBlock) nextDerived = /\bshallow\b/.test(stmt) || !frame ? null : `${singular ? asName ?? lastName : railsSingularize(asName ?? lastName)}_`;
         if (opensDoBlock) pushBlock(nestedPrefix, null, null, frame); // `resources :x do` opens a nested block
         continue;
       }
@@ -1943,6 +2044,7 @@ export const rubySpec: RegexLangSpec = {
             calls: [],
             middleware: [],
             line: i + 1,
+            ...(derivedPrefix() !== null && !resourceStack.some(Boolean) ? { derivedName: `${derivedPrefix()}root` } : {}),
           }));
         }
         continue;
@@ -1963,6 +2065,12 @@ export const rubySpec: RegexLangSpec = {
         // `on: :collection` or the older `:on => :collection`.
         const on = line.match(/(?:\bon:|:on\s*=>)\s*:(collection|member)\b/)?.[1] ?? null;
         const resource = innermostResource();
+        // `module: :staff` on the line puts the controller in that module.
+        const lineModule = line.match(/\bmodule:\s*:?['"]?([\w/]+)/)?.[1];
+        const lineModules = lineModule ? [...(resource?.modules ?? currentModules()), railsModule(lineModule)] : null;
+        // The resource's controller; a controller block's `module:` option re-derives it.
+        const controllerOf = (r: ResourceFrame): string =>
+          lineModules && r.controllerToken ? railsControllerClass(r.controllerToken, lineModules) : r.controllerClass;
         let controller: string | null = null;
         let action: string | null = null;
         let handler: string | null = null;
@@ -1973,7 +2081,7 @@ export const rubySpec: RegexLangSpec = {
           action = target[2];
         } else if (explicitAction && resource) {
           // `get 'preview/:token', action: :preview_status` inside a resources block.
-          handler = `${resource.controllerClass}#${explicitAction}`;
+          handler = `${controllerOf(resource)}#${explicitAction}`;
         } else if (rawPath.includes("/")) {
           // Implicit `controller/action` convention (e.g. `get 'absences/vacation_days'`).
           const segs = rawPath.split("/").filter((s) => s && !s.startsWith(":") && !s.startsWith("*"));
@@ -1982,18 +2090,21 @@ export const rubySpec: RegexLangSpec = {
             controller = segs.slice(0, -1).join("/");
           }
         } else if (resource) {
-          handler = `${resource.controllerClass}#${explicitAction ?? rawPath.replace(/^\//, "")}`;
+          handler = `${controllerOf(resource)}#${explicitAction ?? rawPath.replace(/^\//, "")}`;
         }
 
         // Framework-internal controllers have no project code — skip the route.
         if (controller && FRAMEWORK_CONTROLLER_RE.test(controller)) continue;
-        if (controller && action) handler = `${railsControllerClass(controller, currentModules())}#${action}`;
+        if (controller && action) handler = `${railsControllerClass(controller, lineModules ?? currentModules())}#${action}`;
 
         // In a collection or member scope a canonical action is the scope's own
         // path: `delete :destroy` → `DELETE /inbox_members`, `get :show, on: :member` → `/x/:id`.
         const inScope = (on !== null && resource !== null) || scopeStack[scopeStack.length - 1] === true;
+        // `get :badge, path: 'crest'` serves the action under another segment.
+        const pathOption = verbMatch[3] ? line.match(/(?:\bpath:|:path\s*=>)\s*['"]([^'"]+)['"]/)?.[1] : undefined;
+        const segment = pathOption ?? rawPath;
         const relPath =
-          inScope && verbMatch[3] && CANONICAL_ACTIONS.has(verbMatch[3]) ? "" : rawPath.startsWith("/") ? rawPath : "/" + rawPath;
+          inScope && verbMatch[3] && CANONICAL_ACTIONS.has(verbMatch[3]) ? "" : segment.startsWith("/") ? segment : "/" + segment;
         const path =
           on && resource
             ? resource.base + (on === "member" ? resource.memberPath : "") + relPath
@@ -2001,6 +2112,13 @@ export const rubySpec: RegexLangSpec = {
 
         // `as: :league_table` names the helper `league_table_path` (under a namespace, `admin_league_table`).
         const asName = line.match(/(?:\bas:|:as\s*=>)\s*(?::(\w+)|['"](\w+)['"])/)?.slice(1).find(Boolean);
+        // A route nothing names, outside a resource, is named for its static path: `get 'gates/a'` → `gates_a`.
+        const parents = derivedPrefix();
+        const staticPath = segment.replace(/^\/+|\/+$/g, "");
+        const derived =
+          !asName && parents !== null && resource === null && on === null && !pathOption && /^[a-z][\w-]*(?:\/[a-z][\w-]*)*$/i.test(staticPath)
+            ? `${parents}${staticPath.replace(/[/-]/g, "_")}`
+            : null;
         routes.push(withGuards({
           path,
           httpMethod: verbMatch[1].toUpperCase(),
@@ -2010,6 +2128,7 @@ export const rubySpec: RegexLangSpec = {
           middleware: [],
           line: i + 1,
           ...(asName ? { name: currentNamePrefix() + asName } : {}),
+          ...(derived ? { derivedName: derived } : {}),
         }));
         continue;
       }

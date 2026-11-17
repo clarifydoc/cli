@@ -44,6 +44,8 @@ import { lineAt } from "../shared/text-scan.js";
 const ERB_TAG_RE = /<%(=|-|#)?([\s\S]*?)-?%>/g;
 /** A Rails route helper named in the arguments: `edit_user_path`, `users_url`. */
 const ROUTE_HELPER_RE = /(?<![.\w])([a-z_][a-z0-9_]*_(?:path|url))\b/;
+/** The `_path` / `_url` suffix of a route helper used as a request target. */
+const HELPER_TARGET_RE = /_(?:path|url)$/;
 /** A literal app path as an argument: `"/super_admin/sign_in"`. */
 const LITERAL_PATH_RE = /["'](\/[^"'\s#?]*)[^"']*["']/;
 /** `method: :delete`, `method: "patch"`, `data: { turbo_method: :delete }`, `"data-turbo-method": "delete"`. */
@@ -131,9 +133,12 @@ export function extractErbView(analysis: FileAnalysis, source: string): void {
   };
   const element = (kind: InteractiveElementInfo["element"], event: string, request: Request, line: number, helper: string): void => {
     const handler = handlerOf(request);
-    elements.push({ element: kind, event, handler, line, request });
+    // A route helper is a route named, not spelled: `route:club_players`, which the screen flow and the
+    // navigation pass resolve through the name the router registered (or Rails derives).
+    const wire: Request = HELPER_TARGET_RE.test(request.target) ? { method: request.method, target: `route:${request.target.replace(HELPER_TARGET_RE, "")}` } : request;
+    elements.push({ element: kind, event, handler, line, request: wire });
     component(request.target, helper, kind === "link" ? "navigation" : kind === "form" ? "container" : "action", line, [`${event}: ${handler}`]);
-    if (kind === "link" && request.method === "GET") navigatesTo.add(request.target);
+    if (kind === "link" && request.method === "GET") navigatesTo.add(wire.target);
   };
 
   ERB_TAG_RE.lastIndex = 0;

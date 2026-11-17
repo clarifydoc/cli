@@ -5,15 +5,23 @@ import type { Confidence, FileAnalysis, ProjectAnalysis, SymbolLink } from "../t
 import { GIT_SAFE_CONFIG, GIT_SAFE_DIFF } from "./git-safe.js";
 
 /** New-side line ranges a diff changed, per project-relative file (1-based, inclusive). */
-export type ChangedHunks = Map<string, Array<[number, number]>>;
+export type ChangedHunks = Map<string, Array<[number, number]>> & {
+  /**
+   * Lines a diff deleted outright (no line added in their place), per file, as OLD-side
+   * ranges. They are charged to the function that held them in the analyzed (old) file,
+   * never to a neighbour on the new side — see `symbolsInHunks`.
+   */
+  deleted?: Map<string, Array<[number, number]>>;
+};
 
 /**
  * Parse `git diff -U0` output into changed line ranges of the NEW side (or,
  * with `side: "old"`, of the old one — for an edit not made yet, judged
- * against the analysis of the file as it is). A pure deletion (`+12,0`)
- * marks the line it was deleted before, so the function it sat in still
- * counts as changed; a pure insertion on the old side marks the line it
- * follows.
+ * against the analysis of the file as it is). A pure deletion on the new
+ * side (`+12,0`) has no new line to mark — git's `12` is the line BEFORE the
+ * gap, which may be the previous function's last line — so it is kept apart
+ * as the old-side lines removed (`deleted`); a pure insertion on the old
+ * side marks the line it follows.
  */
 export function parseUnifiedHunks(diff: string, side: "new" | "old" = "new"): ChangedHunks {
   const out: ChangedHunks = new Map();
@@ -29,6 +37,15 @@ export function parseUnifiedHunks(diff: string, side: "new" | "old" = "new"): Ch
     const start = Number(side === "old" ? m[1] : m[3]);
     const countText = side === "old" ? m[2] : m[4];
     const count = countText === undefined ? 1 : Number(countText);
+    if (count === 0 && side === "new") {
+      const oldStart = Number(m[1]);
+      const oldCount = m[2] === undefined ? 1 : Number(m[2]);
+      if (oldCount > 0) {
+        const deleted = (out.deleted ??= new Map());
+        (deleted.get(file) ?? deleted.set(file, []).get(file)!).push([oldStart, oldStart + oldCount - 1]);
+      }
+      continue;
+    }
     const range: [number, number] = count === 0 ? [Math.max(1, start), Math.max(1, start)] : [start, start + count - 1];
     (out.get(file) ?? out.set(file, []).get(file)!).push(range);
   }
@@ -55,7 +72,10 @@ export function symbolsInHunks(
 ): { symbols: ChangedSymbol[]; moduleLevel: string[] } {
   const symbols = new Map<string, ChangedSymbol>();
   const moduleLevel = new Set<string>();
-  for (const [file, ranges] of hunks) {
+  // A file whose diff only deletes lines has no entry in `hunks`: its deletions still count.
+  const files = new Set([...hunks.keys(), ...(hunks.deleted?.keys() ?? [])]);
+  for (const file of files) {
+    const ranges = [...(hunks.get(file) ?? [])];
     const a = analyses.get(file);
     if (!a) {
       moduleLevel.add(file);
@@ -65,6 +85,8 @@ export function symbolsInHunks(
       ...a.functions.filter((f) => f.name !== "<setup>" && f.endLine >= f.line).map((f) => ({ file, symbol: f.name, line: f.line, endLine: f.endLine })),
       ...a.classes.flatMap((c) => c.methods.filter((m) => m.endLine >= m.line).map((m) => ({ file, symbol: `${c.name}.${m.name}`, line: m.line, endLine: m.endLine }))),
     ];
+    // Lines deleted outright belong to the function that held them in the analyzed file.
+    for (const [s, e] of hunks.deleted?.get(file) ?? []) ranges.push([s, e]);
     for (const [s, e] of ranges) {
       const hit = spans
         .filter((sp) => sp.line <= e && sp.endLine >= s)

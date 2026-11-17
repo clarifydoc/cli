@@ -8,6 +8,8 @@ import { withInheritedGuards, type GuardAttr } from "../../shared/route-metadata
 export const PY_ROUTER_CLASS = "py:router-class";
 export interface PyRouterClassFact {
   guards: GuardAttr[];
+  /** The callables of those dependencies, as written in the class's own file (`RouteInfo.inheritedMiddleware`). */
+  calls?: string[];
 }
 
 /** `router = ClubRouter(prefix=…)`: a router built by a project class, and the lines of the routes and mounts declared on it. */
@@ -54,6 +56,7 @@ export const fastapiInheritedGuards: RouteResolver = {
   priority: 25,
   resolve(analyses: FileAnalysis[], ctx: ProjectContext): void {
     const routerClasses = new Map<ClassRef, GuardAttr[]>();
+    const routerCalls = new Map<ClassRef, string[]>();
     const viewClasses = new Map<ClassRef, PyViewClassFact>();
     const users: Array<{ analysis: FileAnalysis; ctors: PyRouterCtorFact[]; views: Array<{ owner: string; fact: PyViewClassFact }> }> = [];
     const refIn = (file: string, name: string) => ctx.classes.classesIn(file).find((c) => c.cls.name === name) ?? null;
@@ -63,7 +66,10 @@ export const fastapiInheritedGuards: RouteResolver = {
       for (const f of a.routeFacts ?? []) {
         if (f.kind === PY_ROUTER_CLASS && f.owner) {
           const ref = refIn(a.filePath, f.owner);
-          if (ref) routerClasses.set(ref, (f.data as PyRouterClassFact).guards);
+          if (ref) {
+            routerClasses.set(ref, (f.data as PyRouterClassFact).guards);
+            routerCalls.set(ref, (f.data as PyRouterClassFact).calls ?? []);
+          }
         } else if (f.kind === PY_ROUTER_CTOR) {
           ctors.push(f.data as PyRouterCtorFact);
         } else if (f.kind === PY_VIEW_CLASS && f.owner) {
@@ -81,6 +87,7 @@ export const fastapiInheritedGuards: RouteResolver = {
 
     for (const { analysis, ctors, views } of users) {
       const byLine = new Map<number, GuardAttr[]>();
+      const inheritedByLine = new Map<number, { file: string; calls: string[] }>();
       const add = (lines: readonly number[], guards: readonly GuardAttr[]) => {
         if (guards.length === 0) return;
         for (const line of lines) {
@@ -93,7 +100,12 @@ export const fastapiInheritedGuards: RouteResolver = {
         if (!ref) continue;
         // The nearest class that builds the router with a dependencies list decides.
         const owner = chainOf(ref).find((r) => routerClasses.has(r));
-        if (owner) add(c.lines, routerClasses.get(owner)!);
+        if (owner) {
+          add(c.lines, routerClasses.get(owner)!);
+          // What the dependencies read is the route's: their names resolve in the router class's own file.
+          const calls = routerCalls.get(owner) ?? [];
+          if (calls.length > 0) for (const line of c.lines) inheritedByLine.set(line, { file: owner.filePath, calls });
+        }
       }
       const depsByLine = new Map<number, string[]>();
       const calls = new Map<string, Omit<CallInfo, "line"> | null>();
@@ -118,11 +130,13 @@ export const fastapiInheritedGuards: RouteResolver = {
         add(v.fact.lines, guards);
         for (const line of v.fact.lines) depsByLine.set(line, deps);
       }
-      if (byLine.size === 0 && depsByLine.size === 0) continue;
+      if (byLine.size === 0 && depsByLine.size === 0 && inheritedByLine.size === 0) continue;
       analysis.routes = analysis.routes.map((r) => {
         if (r.kind !== "api") return r;
         const guards = byLine.get(r.line);
-        const route = guards ? withInheritedGuards(r, guards) : r;
+        const withGuards = guards ? withInheritedGuards(r, guards) : r;
+        const mounted = inheritedByLine.get(r.line);
+        const route = mounted ? { ...withGuards, inheritedMiddleware: [...(withGuards.inheritedMiddleware ?? []), mounted] } : withGuards;
         const deps = (depsByLine.get(r.line) ?? []).map((k) => ({ ...calls.get(k)!, line: r.line }) as CallInfo);
         const fresh = deps.filter((d) => !route.calls.some((c) => c.name === d.name));
         return fresh.length > 0 ? { ...route, calls: [...route.calls, ...fresh] } : route;

@@ -44,15 +44,23 @@ type Row = ProjectAnalysis["routeMap"][number];
  * (`/api/users/:id`). The anchor in the route's file with its method whose
  * path the composed one ends with — exact first, then the longest.
  */
-export function routeAnchor(r: Pick<Row, "httpMethod" | "path" | "filePath">, links: readonly SymbolLink[]): string | null {
+export function routeAnchor(r: Pick<Row, "httpMethod" | "path" | "filePath"> & { registrar?: string | null }, links: readonly SymbolLink[]): string | null {
   const prefix = `route:${(r.httpMethod ?? "USE").toUpperCase()} `;
   // A registrar's route symbol carries ` @<registrar>` after the path (`routeSymbolName`); the path is what a mount prefixes.
+  // A registrar's row takes only its own registrar's symbols and any other row only the unsuffixed ones, so two
+  // registrars of one file declaring one method and path keep their own anchors.
+  const suffix = r.registrar ? ` @${r.registrar}` : "";
   const symbolOf = new Map<string, string>();
-  for (const l of links) if (l.sourceFile === r.filePath && l.sourceSymbol.startsWith(prefix)) symbolOf.set(routeSymbolPath(l.sourceSymbol.slice(prefix.length)), l.sourceSymbol);
+  for (const l of links) {
+    if (l.sourceFile !== r.filePath || !l.sourceSymbol.startsWith(prefix)) continue;
+    const rest = l.sourceSymbol.slice(prefix.length);
+    if (suffix ? !rest.endsWith(suffix) : routeSymbolPath(rest) !== rest) continue;
+    symbolOf.set(routeSymbolPath(rest), l.sourceSymbol);
+  }
   const exact = symbolOf.get(r.path);
   if (exact) return exact;
-  const suffix = [...symbolOf.keys()].filter((p) => p !== "/" && r.path.endsWith(p)).sort((a, b) => b.length - a.length)[0];
-  return symbolOf.get(suffix ?? "/") ?? null;
+  const tail = [...symbolOf.keys()].filter((p) => p !== "/" && r.path.endsWith(p)).sort((a, b) => b.length - a.length)[0];
+  return symbolOf.get(tail ?? "/") ?? null;
 }
 
 /** The routes a subject names: `GET /x` by method and path, exact first, then normalized, then a substring. */

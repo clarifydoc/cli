@@ -483,10 +483,33 @@ public class Svc {
     expect(at(10)).toEqual(["EF: ExecuteDeleteAsync Clubs write"]);
     expect(at(11)).toEqual(["EF: ExecuteDelete Clubs write"]);
     expect(at(12)).toEqual(["EF: ToListAsync Clubs read"]);
-    // the same-named helper of another class is over Players; a helper that is no query, and another object's call, are nothing
+    // the same-named helper of another class is over Players; a helper that is no query is nothing
     expect(at(16)).toEqual(["EF: ExecuteDeleteAsync Players write"]);
     expect(at(19)).toEqual([]);
-    expect(at(21)).toEqual([]);
+    // another object's helper names no set here: the project pass types it from the receiver's declared class
+    expect(at(21)).toEqual(["EF: ExecuteDeleteAsync undefined write"]);
+    expect(rows.find((d) => d.line === 21)?.entityProducer).toEqual({ type: "ClubRepository", method: "ClubsQuery" });
+  });
+
+  it("states a bulk write on what a field's class method returns, through query composition only", async () => {
+    const rows = await rowsOf(`namespace X;
+public class Svc {
+  private readonly ClubRepository _repo;
+  public Task A() => _repo.Active().ExecuteUpdateAsync(s => s);
+  public Task B() => _repo.Active().Where(c => c.Id > 0).AsNoTracking().ExecuteDeleteAsync();
+  public Task C(CarRepository cars) => cars.Active().ExecuteDelete();
+  public Task D() => _repo.Active().ToList().ExecuteDeleteAsync();
+  public Task E() => _other.Active().ExecuteDeleteAsync();
+  public Task F() => _repo.Active().Count();
+}`);
+    const at = (n: number) => rows.filter((d) => d.line === n).map((d) => d.entityProducer);
+    expect(at(4)).toEqual([{ type: "ClubRepository", method: "Active" }]);
+    expect(at(5)).toEqual([{ type: "ClubRepository", method: "Active" }]);
+    expect(at(6)).toEqual([{ type: "CarRepository", method: "Active" }]);
+    // a materialized list, an undeclared receiver and a read name no producer
+    expect(at(7)).toEqual([]);
+    expect(at(8)).toEqual([]);
+    expect(at(9)).toEqual([]);
   });
 
   it("takes a parameter declared as a set for that set in its own member only (real-repo FP)", async () => {

@@ -25,6 +25,7 @@ export const pythonManifest: LanguagePluginManifest = {
   projectCommands: pythonProjectCommands,
   testSetupRuns: djangoTestSetupRuns,
   language: "python",
+  directoryIndexStems: ["__init__"],
   shebangInterpreter: /^python\d*(?:\.\d+)*$/,
   callPathsFromHead: true,
   // A function sees the module's typed names unless it rebinds them (`FunctionInfo.boundNames`).

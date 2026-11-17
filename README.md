@@ -147,6 +147,7 @@ clarifydoc analyze ./my-app --include "**/*.ts" "**/*.tsx" --max-files 50 --no-p
 
 ```bash
 clarifydoc impact <path>               # What changed files reach: screens, routes, entities, tests to run
+clarifydoc impact <path> --brief       # Only the top three review priorities: file:line, risk, callers, tests that reach it
 clarifydoc diff <base> <head>          # What changed in the API surface (and the import cycles introduced) between two analyses; --fail-on breaking
 clarifydoc lsp-update <analysis-dir>   # Resolve more calls with real language servers (Docker) on an existing analysis
 clarifydoc report <analysis-dir>       # (Re)generate the HTML report from project-summary.json
@@ -162,6 +163,7 @@ clarifydoc mcp [path]                  # Serve the analysis to an AI agent over 
 clarifydoc ask routes path=/api/users  # Call one MCP tool from a shell or CI (--list for all)
 clarifydoc install --hooks --skills    # Wire ClarifyDoc into agent hosts (MCP entry, hooks, skills)
 clarifydoc install --git-hooks         # Refresh the analysis in the background after commit, merge, checkout
+                                       # (a file whose clarifydoc markers are unbalanced or reversed is left as it is, and install says why)
 ```
 
 `lsp-update` writes `lsp-enhancement.json` alongside `project-summary.json` (`--emit-queries <file>` writes the

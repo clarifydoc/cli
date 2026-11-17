@@ -3126,9 +3126,9 @@ function resolveLinkHelpers(screens: ScreenInfo[], analyses: FileAnalysis[], raw
  * segment with every parameter alike, so the screen graph can follow it.
  * A path no screen is mounted at takes the client route's own spelling.
  */
-function canonicalNavigationTargets(
+export function canonicalNavigationTargets(
   screens: ScreenInfo[],
-  routes: ReadonlyArray<{ path: string; name?: string; projectId?: string; kind: string }>,
+  routes: ReadonlyArray<{ path: string; name?: string; derivedName?: string; projectId?: string; kind: string }>,
   projectOf: (file: string) => string | undefined,
 ): void {
   // Paths a screen can be at are the client router's; names are any route's (a Laravel or Django page by name).
@@ -3137,10 +3137,16 @@ function canonicalNavigationTargets(
   // the screen's own sub-project's first; a name two routes answer to stays as written.
   const named = new Map<string, Array<{ path: string; projectId?: string }>>();
   for (const r of routes) if (r.name) (named.get(r.name) ?? named.set(r.name, []).get(r.name)!).push(r);
+  // The name a framework derives for a route nothing names, read after every stated one.
+  const derivedNamed = new Map<string, Array<{ path: string; projectId?: string }>>();
+  for (const r of routes) if (r.derivedName && !r.name) (derivedNamed.get(r.derivedName) ?? derivedNamed.set(r.derivedName, []).get(r.derivedName)!).push(r);
   const pathOfName = (name: string, project: string | undefined): string | null => {
-    const all = named.get(name) ?? [];
-    const own = all.filter((r) => (r.projectId ?? "root") === (project ?? "root"));
-    const paths = new Set((own.length > 0 ? own : all).map((r) => r.path));
+    // The caller's own sub-project first (a stated name, then the derived one), only then another's.
+    const stated = named.get(name) ?? [];
+    const derived = derivedNamed.get(name) ?? [];
+    const inOwn = (rs: typeof stated) => rs.filter((r) => (r.projectId ?? "root") === (project ?? "root"));
+    const own = inOwn(stated).length > 0 ? inOwn(stated) : inOwn(derived);
+    const paths = new Set((own.length > 0 ? own : stated.length > 0 ? stated : derived).map((r) => r.path));
     return paths.size === 1 ? [...paths][0]! : null;
   };
   const key = (p: string) =>

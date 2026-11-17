@@ -21,18 +21,18 @@ describe("ERB views", () => {
 <% end %>
 <%# link_to 'Hidden', secret_path %>`);
     expect(a.interactiveElements.map((e) => [e.element, e.event, e.handler, e.request?.method, e.request?.target])).toEqual([
-      ["link", "click", "players_path", "GET", "players_path"],
-      ["button", "click", "delete_player_path", "DELETE", "player_path"],
-      ["form", "submit", "patch_player_path", "PATCH", "player_path"],
+      ["link", "click", "players_path", "GET", "route:players"],
+      ["button", "click", "delete_player_path", "DELETE", "route:player"],
+      ["form", "submit", "patch_player_path", "PATCH", "route:player"],
       ["button", "onclick", "track", undefined, undefined],
     ]);
     expect(a.subComponents.map((s) => [s.name, s.importSource])).toEqual([["form", "./_form.html"], ["header", "../shared/_header.html"]]);
-    expect(a.screens[0]).toMatchObject({ name: "players#edit", formType: "RailsView", caption: "Edit player", navigatesTo: ["players_path"] });
+    expect(a.screens[0]).toMatchObject({ name: "players#edit", formType: "RailsView", caption: "Edit player", navigatesTo: ["route:players"] });
   });
 
   it("posts a model form to the plural helper outside an edit view, and keeps partials and layouts off the screen list", () => {
     const form = view("app/views/players/_form.html.erb", `<%= form_for @player do |f| %><% end %>`);
-    expect(form.interactiveElements[0]!.request).toEqual({ method: "POST", target: "players_path" });
+    expect(form.interactiveElements[0]!.request).toEqual({ method: "POST", target: "route:players" });
     expect(form.screens).toEqual([]);
     expect(view("app/views/layouts/application.html.erb", `<%= yield %>`).screens).toEqual([]);
   });

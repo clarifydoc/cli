@@ -48,6 +48,11 @@ const EF_WRITE_METHODS = new Set([
   "ExecuteUpdate", "ExecuteUpdateAsync", "ExecuteDelete", "ExecuteDeleteAsync",
 ]);
 
+/** The bulk writes that run on a query: they name no set of their own, the query before them does. */
+const BULK_WRITE_METHODS = new Set(["ExecuteUpdate", "ExecuteUpdateAsync", "ExecuteDelete", "ExecuteDeleteAsync"]);
+/** Query operators that only compose a query, so the helper behind them is still what is being written. */
+const QUERY_COMPOSERS = new Set(["Where", "OrderBy", "OrderByDescending", "ThenBy", "ThenByDescending", "Include", "ThenInclude", "AsNoTracking", "AsTracking", "AsQueryable", "Take", "Skip", "IgnoreQueryFilters", "TagWith"]);
+
 /** `{ access }` when the table classifies the leaf, `{}` when it does not. */
 function access(leaf: string, table: Parameters<typeof dbAccessFor>[1]): { access?: "read" | "write" } {
   const a = dbAccessFor(leaf, table);
@@ -867,6 +872,12 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     if (FRAMEWORK_CONTEXT_TYPE.test(parameterType(node, root) ?? "")) return null;
     if (parts.slice(1, -1).some((seg) => FRAMEWORK_CONTEXT_MEMBERS.has(seg.replace(/\(.*$/, "")))) return null;
     const looksLikeEf = contextNamed(root) || parts.slice(1, -2).some((seg) => contextNamed(seg.replace(/\(.*$/, "")));
+    // `_repo.Active().ExecuteUpdateAsync(…)`: a bulk write on the query another class's method returns — its entity is
+    // the method's declared `IQueryable<Club>`, which the project pass reads (`DataSourceInfo.entityProducer`).
+    if (!looksLikeEf && BULK_WRITE_METHODS.has(method)) {
+      const producer = this.queryProducer(fn, node);
+      if (producer) return this.ds({ kind: "database", name: `EF: ${method}`, target: null, entityProducer: producer, access: "write", line: node.startPosition.row + 1 });
+    }
     if (looksLikeEf || method === "SaveChanges" || method === "SaveChangesAsync" ||
         method === "FromSqlRaw" || method === "FromSqlInterpolated" || method === "FromSql" ||
         method === "ExecuteSqlRaw" || method === "ExecuteSqlInterpolated") {
@@ -891,6 +902,32 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         ...efAccess(method, node),
         line: node.startPosition.row + 1,
       });
+    }
+    return null;
+  }
+
+  /**
+   * The type and method a chain starts from when it starts at `<receiver>.<Method>(…)` on a field, property or
+   * parameter of a declared type, through nothing but query composition (`Where`, `OrderBy`, `AsNoTracking`…) —
+   * `_repo.Active().Where(…).ExecuteUpdateAsync` is `ClubRepository`'s `Active`. Null for any other start.
+   */
+  private queryProducer(fn: Node, at: Node): { type: string; method: string } | null {
+    let node: Node | null = fn.type === "member_access_expression" ? fn.childForFieldName("expression") : null;
+    while (node?.type === "invocation_expression") {
+      const f: Node | null = node.childForFieldName("function");
+      if (f?.type !== "member_access_expression") return null;
+      const expr = f.childForFieldName("expression");
+      const nameNode = f.childForFieldName("name");
+      const name = nameNode?.type === "generic_name" ? nameNode.namedChildren[0]?.text : nameNode?.text;
+      if (!expr || !name) return null;
+      if (expr.type === "identifier" || expr.type === "this_expression" || (expr.type === "member_access_expression" && expr.childForFieldName("expression")?.type === "this_expression")) {
+        const receiver = expr.type === "identifier" ? expr.text : expr.type === "member_access_expression" ? expr.childForFieldName("name")?.text : null;
+        const declared = receiver ? parameterType(at, receiver) ?? memberDeclaredType(at, receiver) : null;
+        const type = declared?.replace(/<[\s\S]*$/, "").trim().split(".").pop() ?? "";
+        return /^[A-Z]\w*$/.test(type) && !DBCONTEXT_SUFFIX.test(type) ? { type, method: name } : null;
+      }
+      if (!QUERY_COMPOSERS.has(name)) return null;
+      node = expr;
     }
     return null;
   }

@@ -116,12 +116,21 @@ function typeOfPath(file: FileAnalysis, line: number, path: readonly string[], b
     const owner = enclosingClass(file, line);
     held = owner ? { filePath: file.filePath, language: file.language as Language, type: owner.name, ...(enclosingMethod(owner, line)?.isStatic ? { staticSide: true as const } : {}) } : null;
   } else {
-    const found = declaredTypeOf(file, line, head!);
+    // A loop variable the template binds (`v-for="club in clubs"`), read in one of its expressions: its collection is
+    // a name of the script's own scope (the file's `<setup>`) or another loop variable.
+    const loop = templateLoopAt(file, line, head!);
+    const found: ReturnType<typeof declaredTypeOf> | { from: string[]; template: true; sourceType?: string; call?: undefined; awaited?: undefined } = loop
+      ? { from: loop.source.split("."), template: true as const, ...(loop.sourceType ? { sourceType: loop.sourceType } : {}) }
+      : declaredTypeOf(file, line, head!);
     if (!found) return null;
     if (typeof found === "string") held = { filePath: file.filePath, language: file.language as Language, type: found };
     else {
       // A loop or callback element of a field or member chain: the element of the collection that chain declares.
       let source = found.call ? callResult(file, line, found.from, byFile, ctx, depth + 1) : typeOfPath(file, line, found.from, byFile, ctx, depth + 1);
+      if (!source && "template" in found) {
+        const setup = file.functions.find((f) => f.name === "<setup>");
+        source = (found.sourceType ? { filePath: file.filePath, language: file.language as Language, type: found.sourceType } : null) ?? (setup ? typeOfPath(file, setup.line, found.from, byFile, ctx, depth + 1) : null);
+      }
       // `for (const c of await repo.all())`: the result a declared `Promise<Club[]>` resolves to.
       if (source && found.awaited) source = { ...source, type: awaitedType(source.type.trim(), pluginFor(source.language)?.asyncResultTypes) };
       const element = source ? pluginFor(source.language)?.collectionElementOf?.(source.type.trim()) : null;
@@ -133,6 +142,16 @@ function typeOfPath(file: FileAnalysis, line: number, path: readonly string[], b
     held = memberType(held, member, ctx);
   }
   return held;
+}
+
+/**
+ * The collection a template's loop variable `name` ranges over where `line` is in the template, when every loop
+ * of that name there states the same one (`FileAnalysis.templateLoops`). A name the template's loops bind
+ * hides the script's of that name, so it is answered first.
+ */
+function templateLoopAt(file: FileAnalysis, line: number, name: string): { source: string; sourceType?: string } | null {
+  const hits = (file.templateLoops ?? []).filter((l) => l.name === name && l.line <= line && line <= l.endLine);
+  return hits.length > 0 && hits.every((l) => l.source === hits[0]!.source && l.sourceType === hits[0]!.sourceType) ? hits[0]! : null;
 }
 
 /** The method of `owner` whose body contains `line`. */

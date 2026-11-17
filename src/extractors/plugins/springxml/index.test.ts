@@ -315,3 +315,33 @@ describe("CXF servers declared in Spring XML", () => {
     ]);
   });
 });
+
+describe("beans written with a namespace prefix", () => {
+  // A file whose default namespace is the security schema spells the beans' own with `beans:`.
+  const XML = `<beans:beans xmlns="http://www.springframework.org/schema/security"
+    xmlns:beans="http://www.springframework.org/schema/beans"
+    xmlns:jaxrs="http://cxf.apache.org/jaxrs">
+  <beans:bean id="clubService" class="com.example.league.ClubService"/>
+  <beans:bean id="plain"/>
+  <http auto-config="true"/>
+  <jaxrs:server address="/league">
+    <jaxrs:serviceBeans><beans:ref bean="clubService"/></jaxrs:serviceBeans>
+  </jaxrs:server>
+</beans:beans>`;
+
+  it("reads a prefixed bean as a bean, and one without a class as nothing", () => {
+    expect(springxmlSpec.extractStringConstants!(XML.split("\n"))).toEqual({ clubService: "com.example.league.ClubService" });
+  });
+
+  it("is not skipped by the plugin's preprocess", () => {
+    expect(springxmlMeta.preprocess!(XML, "src/main/resources/security.xml")).toBeNull();
+  });
+
+  it("serves a prefixed bean through a jaxrs:server", () => {
+    const facts: import("../../../types/analysis.js").RouteFact[] = [];
+    springxmlSpec.extractRoutes!(XML.split("\n"), [], "src/main/resources/security.xml", [], facts);
+    expect(facts.filter((f) => f.kind === "cxf:server-address").map((f) => f.data)).toEqual([
+      { path: "/league", types: ["com.example.league.ClubService"] },
+    ]);
+  });
+});

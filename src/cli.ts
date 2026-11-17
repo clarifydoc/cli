@@ -284,6 +284,7 @@ program
   .option("--files <files...>", "Explicit changed-file list, project-relative (skips git)")
   .option("--json", "Print the raw JSON result", false)
   .option("--md", "Print a markdown summary (PR-comment ready)", false)
+  .option("--brief", "Print only the top three review priorities (file:line, risk, callers, tests that reach it); with --md as Markdown, with --json added as `priorities`", false)
   .option("--author <name>", "The change's author, left out of the suggested reviewers (default: git config user.name)")
   .option("--analysis-dir <dir>", "Exact directory containing project-summary.json (overrides --output)")
   .option("--baseline <dir>", "An analysis of the base (another checkout's or worktree's): also diff the API surface against it")
@@ -340,7 +341,12 @@ program
       let surface: import("./core/surface-diff.js").SurfaceDiff | undefined;
       const sd = options.baseline ? await import("./core/surface-diff.js") : null;
       if (sd) surface = sd.diffSurface(await loadAnalysisAt(options.baseline, options.output), summary);
-      if (options.json) console.log(JSON.stringify(surface ? { ...impact, surface } : impact, null, 2));
+      if (options.brief) {
+        const { reviewPriorities, renderImpactBrief } = await import("./core/impact-diff.js");
+        const priorities = reviewPriorities(summary, impact);
+        if (options.json) console.log(JSON.stringify({ ...impact, priorities }, null, 2));
+        else console.log(renderImpactBrief(impact, priorities, options.md));
+      } else if (options.json) console.log(JSON.stringify(surface ? { ...impact, surface } : impact, null, 2));
       else if (options.md) console.log(renderImpactMarkdown(impact) + (surface ? `\n${sd!.renderSurfaceMarkdown(surface, { base: "baseline", head: "working tree" })}` : ""));
       else console.log(renderImpactText(impact) + (surface ? `\n${sd!.renderSurfaceText(surface)}` : ""));
     } catch (err) {

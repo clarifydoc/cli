@@ -4,6 +4,7 @@ import { genericResolveCallName } from "../../shared/call-graph.js";
 import { csharpReceiverTypeOf } from "./local-types.js";
 import { csharpArgOriginsOf } from "./arg-origins.js";
 import { csharpArgKinds, csharpOverloadTypeKey } from "./arg-kinds.js";
+import { csharpHangfireArgs } from "./hangfire-triggers.js";
 
 /**
  * `Foo x = new();` — a target-typed construction names its class only in the
@@ -76,7 +77,7 @@ export const csharpCallHooks: CallExtractionHooks = {
   // What each argument is, so the linker tells overloads of one arity apart.
   argKindsOf: csharpArgKinds,
   overloadTypeKey: csharpOverloadTypeKey,
-  argsOf: csharpTableArgs,
+  argsOf: (node) => csharpTableArgs(node) ?? csharpHangfireArgs(node),
   // Where each argument comes from: a parameter, a request value, a literal (named arguments by name).
   argOriginsOf: csharpArgOriginsOf,
 };

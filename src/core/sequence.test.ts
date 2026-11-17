@@ -91,3 +91,15 @@ describe("sequence frames", () => {
     expect(body.slice(3, 9)).toEqual(["alt if (ok)", "a_ts->>a_ts: one()", "else", "a_ts->>a_ts: two()", "end", "a_ts->>a_ts: three()"]);
   });
 });
+
+describe("routeAnchor with registrars", () => {
+  const link = (sourceSymbol: string) => ({ sourceFile: "api/routes.go", sourceSymbol }) as unknown as Parameters<typeof routeAnchor>[1][number];
+  const links = [link("route:GET /items @registerClubs"), link("route:GET /items @registerPlayers"), link("route:GET /items")];
+  it("gives each registrar's row its own anchor", () => {
+    const row = { httpMethod: "GET", path: "/items", filePath: "api/routes.go" };
+    expect(routeAnchor({ ...row, registrar: "registerClubs" }, links)).toBe("route:GET /items @registerClubs");
+    expect(routeAnchor({ ...row, registrar: "registerPlayers" }, links)).toBe("route:GET /items @registerPlayers");
+    expect(routeAnchor(row, links)).toBe("route:GET /items");
+    expect(routeAnchor({ ...row, registrar: "registerCars" }, links)).toBeNull();
+  });
+});

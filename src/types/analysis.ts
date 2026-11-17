@@ -500,6 +500,13 @@ export interface FileAnalysis {
    */
   slotFunctions?: SlotFunction[];
   /**
+   * The loop variables a template binds (`v-for="club in clubs"`), each with the collection expression as written
+   * and the lines of the template they are read in: what types a URL hole that reads a member of one
+   * (`${club.kind}` in an expression of the template). Only a plain name or member chain as the collection;
+   * `sourceType` the type the script states for it (`const clubs: Club[]`, a `defineProps<{ clubs: Club[] }>` member).
+   */
+  templateLoops?: Array<{ name: string; source: string; sourceType?: string; line: number; endLine: number }>;
+  /**
    * Calls on an app-wide event bus (a `mitt()` / `EventEmitter` instance a module
    * holds): what each emits and listens to, by event as written, and the calls of
    * project functions that may wrap a listener (`useBusListener(EVENT, reload)`).
@@ -1184,6 +1191,12 @@ export interface CallInfo {
    */
   boundLocally?: true;
   /**
+   * The head of a dotted call is a parameter, local, loop or catch binding at this site (`function run(cache) {
+   * cache.get(k) }` beside a module-level `const cache = { get() {} }`): the call is on that value, so the member
+   * of the file's own namesake object, found by the full name, is not its definition.
+   */
+  receiverRebound?: true;
+  /**
    * The name is a struct built by a literal, not called (Go `Club{…}`, Rust `Club { … }`): it constructs the
    * struct itself and runs no function of the name — never a `new`/`New` associated function.
    */
@@ -1675,7 +1688,7 @@ export interface FunctionInfo {
    * as `{paramName}`, and any unresolvable runtime reference (env base, closure
    * variable) as `{}`. A project-level pass substitutes a call site's literal
    * args so an `axios.get(requestUri('teamtalk','v4'))` api-call gets a
-   * concrete URL that joins to the backend route. Optional; only JS/TS sets it.
+   * concrete URL that joins to the backend route. Optional; JS/TS, Python and Rust set it.
    */
   urlTemplate?: string;
   /**
@@ -1875,6 +1888,12 @@ export interface ClassInfo {
    * builds, or a binding of that type says otherwise. Core resolves it through the registrations.
    */
   staticProxyOf?: { token?: string; type?: string; constant?: string };
+  /**
+   * The name another language of the family writes between this class and the members its source folds onto it:
+   * a Kotlin NAMED companion (`companion object Factory` → Java `Club.Factory.create()`). Unset for the default
+   * `Companion`, which the manifest's `classMemberHolders` names for every class.
+   */
+  memberHolder?: string;
   /**
    * The class's own type parameters in order (`class Handler<TRequest, TKey>` →
    * `["TRequest", "TKey"]`): what lets a consumer substitute a subclass's
@@ -2251,6 +2270,13 @@ export interface RouteInfo {
    * `{% url 'clubs:detail' %}`, `{ name: 'clubs' }`) is read as `route:<name>` and reaches it.
    */
   name?: string;
+  /**
+   * The name a framework gives the route when no name is stated, as its routing rules derive it
+   * (Rails `resources :clubs` → `clubs`, `club`, `new_club`, `club_players`; a plain `get 'standings'`
+   * → `standings`). Only a URL helper built from the name (`redirect_to clubs_path`) reads it, after
+   * every stated `name`; a route with a `name` carries none.
+   */
+  derivedName?: string;
 }
 
 /** A construction with a string argument (see `FileAnalysis.instantiations`). */
@@ -2864,7 +2890,9 @@ export interface DataSourceInfo {
    * For `database`: the object written is what this method of this project type
    * returns (`systemConfigFetcher.getConfigMap().flatMap(cm -> client.update(cm))`,
    * `SystemConfigFetcher#getConfigMap`). `entity` stays empty; the plugin's project
-   * pass takes the method's declared return type (a `Mono<X>` / `Optional<X>` unwrapped).
+   * pass takes the method's declared return type (a `Mono<X>` / `Optional<X>` unwrapped). C#: a bulk write
+   * (`ExecuteUpdateAsync`, `ExecuteDelete`) on the query another class's method returns
+   * (`_repo.Active().ExecuteUpdateAsync(…)`), typed by that method's declared `IQueryable<X>`.
    */
   entityProducer?: { type: string; method: string };
   /**
@@ -3039,8 +3067,11 @@ export interface DataSourceInfo {
    * `fieldOf`: set while `field` is a MEMBER of the struct type it names (a struct
    * literal used as the condition: `Where(&Club{ID: id})`), until a project pass
    * replaces `field` with the column the type's tag or naming convention gives it.
+   * `fieldParam`: the column is chosen at run time — `field` names the parameter (index `fieldParam` of the function
+   * holding the statement) a generic repository takes its column from (`filter_by(**{key: value})`), a row only the
+   * project pass that reads a call handing that parameter a string literal turns into a column.
    */
-  whereFields?: Array<{ field: string; origin: CallArgOrigin["origin"]; transform?: string; fieldOf?: string }>;
+  whereFields?: Array<{ field: string; origin: CallArgOrigin["origin"]; transform?: string; fieldOf?: string; fieldParam?: number }>;
   /**
    * For `database`: an object whose fields ARE the statement's filter, each
    * compared with the column of its name — a condition the function is handed
@@ -3458,7 +3489,17 @@ export interface StoreWatch {
    * are (`*`: read through). `table` is the object it is written in (`getters`, or the variable's name). A watcher on
    * `store.getters['clubs/total']` carries the read `@getter:clubs/total` and runs when a mutation writes what the getter reads.
    */
-  getterReads?: Array<{ name: string; table: string; paths: string[] }>;
+  getterReads?: Array<{
+    name: string;
+    table: string;
+    paths: string[];
+    /** The getters it reads off its second parameter (`getters.total`, as written): the module's own, resolved with the store. */
+    getters?: string[];
+    /** The state it reads off `rootState`, from the root state. */
+    rootPaths?: string[];
+    /** The getters it reads off `rootGetters` (`rootGetters['season/year']`): full keys. */
+    rootGetters?: string[];
+  }>;
   /**
    * The computeds a setup store or composable returns and the state each reads (`total` → `clubs*`, `*` for what is read through):
    * a watcher on `total` in another file runs when something writes `clubs`. `store` is the store class or composable name
@@ -4176,6 +4217,11 @@ export interface ReachedEffect {
   distance: number;
   /** EXTRACTED at distance 0; INFERRED transitively; AMBIGUOUS if a heuristic link is on the path. */
   confidence: Confidence;
+  /**
+   * Reached only through a component's bound emit / callback (`SymbolLink.viaUsage`): the effect is
+   * a parent's handler's, which the shared child's own screen does not list.
+   */
+  viaBinding?: true;
 }
 
 /**

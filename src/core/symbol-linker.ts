@@ -2532,11 +2532,12 @@ function projectImportsOf(ctx: LinkContext, analysis: FileAnalysis): readonly st
  * then each enclosing one, innermost first (`League.Clubs.Web` sees
  * `League.Clubs`'s types before `League`'s), then the global package and the
  * packages the file and its project import. The first level declaring the
- * name decides: one file, or the parts of one type split across files. Null
- * when no level decides — two imported packages declaring it, or none of the
+ * name decides: one file, or the parts of one type split across files. Where
+ * several imported packages declare it, `member` (the called member) picks the
+ * one class that declares it. Null when no level decides — or none of the
  * files in reach — and the caller's other rules apply.
  */
-function nestedPackageFile(ctx: LinkContext, source: FileAnalysis, typeName: string, files: readonly string[]): string | null {
+function nestedPackageFile(ctx: LinkContext, source: FileAnalysis, typeName: string, files: readonly string[], member?: string): string | null {
   if (files.length < 2 || !manifestFor(source.language as Language)?.nestedPackageLookup) return null;
   ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
   const packageOf = (f: string) => ctx.analysisByFile!.get(f)?.packageName ?? "";
@@ -2552,7 +2553,14 @@ function nestedPackageFile(ctx: LinkContext, source: FileAnalysis, typeName: str
   if (global.length > 0) return decide(global);
   const imported = new Set([...source.imports.filter((i) => i.isNamespace).map((i) => i.source), ...projectImportsOf(ctx, source)]);
   const hits = files.filter((f) => imported.has(packageOf(f)));
-  return new Set(hits.map(packageOf)).size === 1 ? decide(hits) : null;
+  if (new Set(hits.map(packageOf)).size === 1) return decide(hits);
+  // Several imported packages declare the name: the one class that declares the called member (its bases and parts
+  // searched as for any member) is the one meant; none or several leave the call undecided. Out-of-scope files never count.
+  if (member && hits.length > 1) {
+    const declaring = hits.filter((f) => findMethodInClass(ctx, typeName, f, member, source.filePath) !== null);
+    if (declaring.length === 1) return declaring[0]!;
+  }
+  return null;
 }
 
 /** True when the analysis imports `file` — by path, by package, or by the package of the sub-project that holds it. */
@@ -2656,7 +2664,18 @@ function importPath(ctx: LinkContext, source: string, fromFile: string): string 
     if (file === null) return null;
     if (file !== undefined) return ctx.filePathMap.get(file) === file ? file : null;
   }
-  return resolveTarget(source, fromFile, ctx.filePathMap);
+  const target = resolveTarget(source, fromFile, ctx.filePathMap);
+  // Where types live in nested namespaces (`nestedPackageLookup`), a file found by the name of its type is the
+  // import's only when the namespace it declares is the one the source names: `using static Fx.Tools.Parts;`
+  // never opens the `Parts` of another namespace.
+  if (target && source.includes(".") && language && manifestFor(language)?.nestedPackageLookup) {
+    ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+    const declared = ctx.analysisByFile.get(target)?.packageName;
+    // A namespace import whose last segment is also a type's file (`using League.Lineup.Scout;` beside `Scout.cs`)
+    // names the namespace itself: the file stays.
+    if (declared && source !== declared && !source.startsWith(`${declared}.`)) return null;
+  }
+  return target;
 }
 
 /**
@@ -2832,7 +2851,13 @@ function callableAtLine(analysis: FileAnalysis, line: number): string | null {
 function compiledNameMember(ctx: LinkContext, analysis: FileAnalysis, sourceFile: string, parts: string[], mkLink: MkLink, line: number): SymbolLink | null {
   const head = parts[0]!;
   const holders = manifestFor(analysis.language as Language)?.classMemberHolders;
-  if (parts.length === 3 && holders?.includes(parts[1]!) && ctx.classNameIndex.has(head)) {
+  // A class that names its own holder (a Kotlin named companion, `ClassInfo.memberHolder`) is reached through that
+  // name alone; the manifest's holders (`Companion`, `INSTANCE`) are for the classes that name none.
+  const holds = (f: string): boolean => {
+    const own = ctx.classAt.get(memberKey(f, head))?.memberHolder;
+    return own ? own === parts[1] : !!holders?.includes(parts[1]!);
+  };
+  if (parts.length === 3 && ctx.classNameIndex.has(head) && ctx.classNameIndex.get(head)!.some(holds)) {
     const declares = (ctx.classNameIndex.get(head) ?? []).some((f) => ctx.classAt.get(memberKey(f, head))?.properties.some((p) => p.name === parts[1]));
     return declares ? null : classNameMember(ctx, analysis, sourceFile, [head, parts[2]!], mkLink, line);
   }
@@ -2917,6 +2942,7 @@ function classNameMember(
   const writtenName = className;
   const simpleName = simpleClassName(analysis, className);
   let candidateFiles = classNameIndex.get(simpleName);
+  const plainLookup = candidateFiles !== undefined;
   let declaredClass = simpleName;
   // `League::Club.find` where constants are looked up lexically: the class declared at that path
   // (`class Club` in `module League`), whatever other class bears its last name.
@@ -2927,7 +2953,11 @@ function classNameMember(
   }
   // A class an import renames (`use App\Models\Player as Footballer;` … `Footballer::find(1)`):
   // the module's class, never another one that happens to be called `Footballer`.
-  const imported = importedTypeRef(ctx, className, sourceFile, analysis.projectId);
+  // Where types live in nested namespaces (`nestedPackageLookup`), an import whose last segment is the name but
+  // which resolves to no type's file is a namespace import (`using League.Models.Scout;`): it binds no name, so
+  // `Scout.Clean()` is still the class the lookup below finds (`League.Lineup.Scout`, in scope through its own import).
+  const importedRef = importedTypeRef(ctx, className, sourceFile, analysis.projectId);
+  const imported = importedRef && !importedRef.typeFile && manifestFor(analysis.language as Language)?.nestedPackageLookup ? null : importedRef;
   if (imported) {
     candidateFiles = imported.typeFile ? [imported.typeFile] : undefined;
     declaredClass = imported.typeName;
@@ -3004,6 +3034,21 @@ function classNameMember(
       const other = extensionFamily(f);
       return other === null || other === family;
     });
+  }
+  // A class name several namespaces declare, in a language whose types live in nested namespaces: the one the
+  // compiler finds from here. Where no level of the lookup decides, the call stays unlinked — never the namesake
+  // that merely sits nearest. (Parts of one type, split across files of one namespace, are not namesakes.)
+  if (candidateFiles && candidateFiles.length > 1 && plainLookup && !path && !imported && manifestFor(analysis.language as Language)?.nestedPackageLookup) {
+    ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+    // The index also lists files that merely hold a member of that name (a method `Seed`): they are no class of the
+    // name and no namesake of it — where some file declares the class, only those take part.
+    const declaring = candidateFiles.filter((f) => ctx.classAt.has(memberKey(f, simpleName)));
+    if (declaring.length > 0 && declaring.length < candidateFiles.length) candidateFiles = declaring;
+    if (new Set(candidateFiles.map((f) => ctx.analysisByFile!.get(f)?.packageName ?? "")).size > 1) {
+      const decided = nestedPackageFile(ctx, analysis, simpleName, candidateFiles, methodName);
+      if (!decided) return null;
+      candidateFiles = [decided];
+    }
   }
   if (candidateFiles?.length) {
     const sameProject = candidateFiles
@@ -3776,6 +3821,23 @@ function buildMemberTypes(
           member: rawName,
           consumer: cls.name,
         };
+        // `LeagueCore::Valve`, read as a nested class path: no class bears that name, but `Valve` is declared in
+        // the namespace `LeagueCore` — the one such file (its declaration, not a part), else the one the includes reach.
+        if (!point.typeFile && path === undefined && typeName?.includes("::") && !classToFiles.has(typeName)) {
+          const cut = typeName.lastIndexOf("::");
+          const leaf = typeName.slice(cut + 2);
+          const qualifier = typeName.slice(0, cut);
+          const inNamespace = declaredFirst(leaf, inSpace((classToFiles.get(leaf) ?? []).filter((f) => {
+            const decl = declAt.get(memberKey(f, leaf));
+            return !!decl?.namespace && !decl.fileLocal && (decl.namespace === qualifier || decl.namespace.endsWith(`::${qualifier}`));
+          }), a.filePath));
+          const seen = closureOf(a.filePath);
+          const reached = inNamespace.length === 1 ? inNamespace : inNamespace.filter((f) => seen.has(f));
+          if (reached.length === 1) {
+            point.typeName = leaf;
+            point.typeFile = reached[0]!;
+          }
+        }
         // `other::Valve` beside the file's own anonymous-namespace `Valve`: not that class.
         if (point.typeFile && type && declaredInOtherNamespace({ typeName: point.typeName, typeFile: point.typeFile }, type, point.typeName, (n) => classToFiles.has(n), (f, n) => declAt.get(memberKey(f, n)))) {
           const other = fileOf(point.typeName, a.filePath, true);
@@ -5012,6 +5074,9 @@ function resolveCallToDefinitionBody(
   const isQualified = parts.length > 1;
   // `Shape::Kind::make()` names an associated item of a type, which no import or module path binds.
   if (isQualified && !reference && isAssociatedTypePath(ctx, analysis, call)) return null;
+  // `crate::Util::tune()` where `Util` is no type but a module file of the project: a function of that module.
+  const throughModule = isQualified && !reference ? capitalizedModuleCall(ctx, analysis, call) : null;
+  if (throughModule) return resolveCallToDefinition(sourceFile, sourceSymbol, throughModule, analysis, ctx, reference);
   const leafName = parts[parts.length - 1]!;
   // Where members need `this.`/`self.`/`$this->` (JS/TS, Python, PHP), a bare
   // call in a body is a function — `redirect()` in a PHP controller is the
@@ -5147,14 +5212,23 @@ function resolveCallToDefinitionBody(
     }
     // An import naming a module by its DECLARED name rather than a path
     // (Elixir `alias MyApp.Accounts.User`): `User.get(…)` is that module's.
+    const nestedLookup = !!manifestFor(analysis.language as Language)?.nestedPackageLookup;
     if (!targetFile) {
       // `use function App\Support\money;` — the import names a function, not a file.
       const fn = !isQualified && call.target.includes("\\") ? namespacedFunction(ctx, analysis, [call.target.replace(/^\\/, "")]) : null;
       if (fn) return mkLink(fn.file, fn.def.name, fn.def.line, "EXTRACTED", "direct");
-      return declaredModuleMember(ctx, analysis, call.target, parts, mkLink)
+      const hit = declaredModuleMember(ctx, analysis, call.target, parts, mkLink)
         ?? packagedTypeMember(ctx, analysis, call.target, parts, mkLink) ?? aliasedNamespaceMember(ctx, analysis, call.target, parts, mkLink)
         ?? throughDeclaredType()
-        ?? (parts.length === 2 ? aliasedClassMember(ctx, analysis, parts[0]!, leafName, mkLink) : null);
+        ?? (parts.length === 2 ? aliasedClassMember(ctx, analysis, parts[0]!, leafName, mkLink) : null)
+        // Where types live in nested namespaces (`nestedPackageLookup`), the call's `target` is the first import whose last
+        // segment is the head — a NAMESPACE (`using League.Models.Scout;`) that is no type's file. The head is then the
+        // class the compiler's lookup finds (`using League.Services.Lineup;` brings `Scout` in), as for a call with no target.
+        ?? (nestedLookup ? namespaceHeadMember(ctx, analysis, parts, mkLink, call.line) : null);
+      if (hit || !nestedLookup || !isQualified) return hit;
+      // A qualified call whose import names no file goes on with the name rules below (class by name, type argument, …)
+      // like a call without a target — never into a file it merely shares a name with.
+      targetFile = sourceFile;
     }
   } else if (call.kind === "internal") {
     // Internal calls resolve within the same file
@@ -5178,8 +5252,23 @@ function resolveCallToDefinitionBody(
   // `import { addPlayer as signPlayer }`: the call names the local alias, the module defines the export.
   // `const { remove: removeCar } = useGarage()`: the call names the local, the factory's module defines the member.
   const exported = !isQualified && call.kind === "cross-file" ? analysis.imports.find((i) => i.aliases?.[call.name])?.aliases?.[call.name] ?? call.member : undefined;
-  let def = isQualified ? fileSymbols.get(call.name) : symbolIn(ctx, targetFile, exported ?? call.name);
+  // A receiver the call site rebinds (`function run(cache) { cache.get(k) }`) is no namesake object's member.
+  let def = isQualified ? (call.receiverRebound && targetFile === sourceFile ? undefined : fileSymbols.get(call.name)) : symbolIn(ctx, targetFile, exported ?? call.name);
   if (bareIsFunction && def?.name.includes(".")) def = undefined;
+  // Two same-named members in one file where one is declared inside another function (a local object's `actions.get`
+  // beside a module object's): the index holds one of them. The caller sees the declarations whose enclosing
+  // functions all enclose the call; of those the innermost is its member, two alike are no answer.
+  if (def && isQualified && targetFile === sourceFile && !call.receiverRebound) {
+    const twins = analysis.functions.filter((f) => f.name === call.name);
+    const enclosing = (f: { line: number; endLine: number }) => analysis.functions.filter((o) => o.line < f.line && f.endLine <= o.endLine);
+    if (twins.length > 1 && twins.some((t) => enclosing(t).length > 0)) {
+      const seen = twins.filter((t) => enclosing(t).every((o) => o.line <= call.line && call.line <= o.endLine));
+      const depth = (t: { line: number; endLine: number }) => enclosing(t).length;
+      const best = Math.max(0, ...seen.map(depth));
+      const top = seen.filter((t) => depth(t) === best);
+      def = top.length === 1 ? { ...def, line: top[0]!.line, endLine: top[0]!.endLine } : undefined;
+    }
+  }
   // `store::kick()` names the module's own item — never `impl Db { fn kick(&self) }` of that module.
   if (call.moduleMember) {
     if (def && memberClassOf(ctx, targetFile, def) !== null) def = undefined;
@@ -5572,6 +5661,11 @@ function resolveCallToDefinitionBody(
   if (!def && isQualified && !cutNameNamesNoType(analysis, call)) {
     const link = classNameMember(ctx, analysis, sourceFile, parts, mkLink, call.line, isPathCall(analysis, call) ? call : undefined);
     if (link) return link;
+    // `Lineup.Scout.IsHomeKit()` written through the tail of the class's namespace, which the caller's own namespace completes.
+    if (parts.length >= 3 && manifestFor(analysis.language as Language)?.nestedPackageLookup && !shadowedLocally(analysis, sourceSymbol, parts[0]!)) {
+      const viaNamespace = namespaceHeadMember(ctx, analysis, parts, mkLink, call.line);
+      if (viaNamespace) return viaNamespace;
+    }
   }
 
   // ── Strategy 5: Constructor resolution ──
@@ -8262,6 +8356,27 @@ function importedTypeRef(ctx: LinkContext, typeName: string, sourceFile: string,
   return { typeName: exported, typeFile: typeFileFor(ctx, exported, sourceFile, projectId) };
 }
 
+/**
+ * `nestedPackageLookup` (C#): a call whose `target` names a namespace, not a type's file. `Scout.IsHomeKit()` is the class
+ * the compiler's lookup finds (`classNameMember`); `Lineup.Scout.IsHomeKit()` writes the class through the tail of its
+ * namespace, which the caller's own namespace or one of its imports completes (`League.Services` + `Lineup`,
+ * `using League` + `Services.Lineup`): the one class of that name declared in exactly that namespace — never a
+ * namesake of another, and nothing when the written qualifier is no namespace of the project.
+ */
+function namespaceHeadMember(ctx: LinkContext, analysis: FileAnalysis, parts: string[], mkLink: MkLink, line: number): SymbolLink | null {
+  if (parts.length === 2) return ctx.classNameIndex.has(parts[0]!) ? classNameMember(ctx, analysis, analysis.filePath, parts, mkLink, line) : null;
+  const className = parts[parts.length - 2]!;
+  const qualifier = parts.slice(0, -2).join(".");
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  const own = analysis.packageName?.split(".") ?? [];
+  const roots = [...own.map((_, i) => own.slice(0, own.length - i).join(".")), "", ...analysis.imports.filter((i) => i.isNamespace).map((i) => i.source)];
+  const wanted = new Set(roots.map((r) => (r ? `${r}.${qualifier}` : qualifier)));
+  const hits = (ctx.classNameIndex.get(className) ?? []).filter((f) => wanted.has(ctx.analysisByFile!.get(f)?.packageName ?? "\0") && ctx.projectOf.get(f) === analysis.projectId);
+  if (hits.length !== 1) return null;
+  const hit = findMethodInClass(ctx, className, hits[0]!, parts[parts.length - 1]!, analysis.filePath);
+  return hit ? mkLink(hit.file, hit.symbol, hit.line, "INFERRED", "class-name") : null;
+}
+
 /** `ScoreCalc.Add()` where `ScoreCalc` aliases a class (`using ScoreCalc = League.Scoring.Calc;`): that class's member. */
 function aliasedClassMember(ctx: LinkContext, analysis: FileAnalysis, head: string, leafName: string, mkLink: MkLink): SymbolLink | null {
   const target = dealias(ctx, head, analysis.filePath);
@@ -8388,8 +8503,13 @@ function buildTypePaths(analyses: readonly FileAnalysis[]): Map<string, Array<{ 
 
 /** The name `file` declares the class at path `written` under (`Club` for `League::Club` in `module League`), else `written`. */
 function declaredTypeName(ctx: LinkContext, file: string, written: string): string {
-  if (!written.includes("::") || ctx.classAt.has(memberKey(file, written)) || !ctx.typePaths) return written;
+  if (!written.includes("::") || ctx.classAt.has(memberKey(file, written))) return written;
+  // `LeagueCore::Valve` where the file declares `Valve` in namespace `LeagueCore`: the class as declared.
   const path = written.replace(/^::/, "");
+  const cut = path.lastIndexOf("::");
+  const inNamespace = cut > 0 ? ctx.classAt.get(memberKey(file, path.slice(cut + 2)))?.namespace : undefined;
+  if (inNamespace && (inNamespace === path.slice(0, cut) || inNamespace.endsWith(`::${path.slice(0, cut)}`))) return path.slice(cut + 2);
+  if (!ctx.typePaths) return written;
   const names = new Set<string>();
   for (const [p, decls] of ctx.typePaths) {
     if (p !== path && !p.endsWith(`::${path}`)) continue;
@@ -8461,6 +8581,23 @@ function isAssociatedTypePath(ctx: LinkContext, analysis: FileAnalysis, call: Ca
   const segs = call.receiverType.trim().split(rule.separator);
   return segs.length > 1 && call.name.startsWith(`${segs[segs.length - 1]}.`) &&
     segs.slice(0, -1).some((s) => rule.typeSegment!.test(s) && !namesModuleFile(ctx, analysis, s));
+}
+
+/**
+ * A path call whose type segment is capitalized (`crate::Util::tune()`) but names no type of the project while a
+ * file of the caller's sub-project is the module of that name (`Util.rs`): the call of a module function, read as
+ * the lowercase spelling is (`target` the written path, `member` the function). Only a written path, never a bare
+ * `Util::tune()` an import of a foreign type could bind, and never where a project type bears the name.
+ */
+function capitalizedModuleCall(ctx: LinkContext, analysis: FileAnalysis, call: CallInfo): CallInfo | null {
+  const rule = manifestFor(analysis.language as Language)?.pathCallTypesNeedScope;
+  if (call.kind !== "internal" || !rule?.typeSegment || !isPathCall(analysis, call)) return null;
+  const segs = call.receiverType!.trim().split(rule.separator);
+  const head = segs[segs.length - 1]!;
+  if (segs.length < 2 || !rule.typeSegment.test(head) || ctx.classFiles.has(head) || !namesModuleFile(ctx, analysis, head)) return null;
+  const member = call.name.slice(head.length + 1);
+  const { receiverType: _receiverType, ...rest } = call;
+  return { ...rest, name: `${segs.join(rule.separator)}${rule.separator}${member}`, kind: "cross-file", target: segs.join(rule.separator), member, moduleMember: true, confidence: "EXTRACTED" };
 }
 
 const moduleStemMemo = new WeakMap<LinkContext, Map<string, Set<string>>>();
@@ -8639,7 +8776,9 @@ function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, pro
   if (importsShareScope(languageOf(sourceFile)) && declOf(sourceFile, typeName) && !declOf(sourceFile, typeName)!.extension) return sourceFile;
   // Classes of one name in several namespaces: the one the source can see, else none.
   const namespaced = namespacedTypeRef(ctx, typeName, sourceFile, undefined);
-  if (namespaced !== undefined) return namespaced?.typeName === typeName ? namespaced.typeFile : null;
+  // (A name written through a namespace that reads as a class path — `LeagueCore::Valve` — is the class `Valve` of
+  // that namespace: `declaredTypeName` names it so once its file is known.)
+  if (namespaced !== undefined) return namespaced && (namespaced.typeName === typeName || typeName.endsWith(`::${namespaced.typeName}`)) ? namespaced.typeFile : null;
   // The one file the source imports that declares it, though the import names no type: `#include
   // "league/iterator.h"` means its `Iterator`, not the one another header nests in its own class.
   if (source) {
@@ -9620,6 +9759,8 @@ function methodAlongAncestors(
     }
     const elsewhere = classLevelOnly && side === "class" ? null : methodBesideClass(ctx, name, file, method, nearFile);
     if (elsewhere) return elsewhere;
+    const outOfLine = classLevelOnly && side === "class" ? null : outOfLineNamespaceMember(ctx, name, file, method);
+    if (outOfLine) return outOfLine;
     const promoted = promotedMethod(ctx, name, file, method, seen);
     if (promoted !== undefined) return promoted;
     const mixedIn = mixins ? viaMixins(side === "instance" ? "include" : "extend") : null;
@@ -9904,6 +10045,26 @@ function methodBesideClass(
   if (!hit) return null;
   const def = symbolIn(ctx, hit, qualified);
   return def ? { file: hit, symbol: def.name, line: def.line } : null;
+}
+
+/**
+ * A member defined outside its class body whose qualifier the extractor read as a namespace (`void garage::park(int) {…}`):
+ * the extractor cannot tell that qualifier from a namespace, so the definition is a free function of namespace
+ * `garage`. It is the member of the project class of that name when the file defining it includes the file declaring
+ * the class — and exactly one function says so.
+ */
+function outOfLineNamespaceMember(ctx: LinkContext, className: string, classFile: string, method: string): { file: string; symbol: string; line: number } | null {
+  const language = ctx.languageOf.get(classFile);
+  if (!language || !typesSpanFiles(language) || !importsShareScope(language) || !hasFunctionNamespaces(ctx, language)) return null;
+  const cls = ctx.classAt.get(memberKey(classFile, className));
+  if (!cls || cls.extension || cls.kind === "enum" || className.includes("::")) return null;
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  const caller = ctx.analysisByFile.get(classFile);
+  if (!caller) return null;
+  const qualified = cls.namespace ? `${cls.namespace}::${className}::${method}` : `${className}::${method}`;
+  namespacedFunction(ctx, caller, [qualified]); // builds the index
+  const hits = (ctx.namespacedFunctions?.get(`${caller.language}\0${namespaceKey(qualified)}`) ?? []).filter((h) => h.file !== classFile && includeClosure(ctx, h.file).has(classFile));
+  return hits.length === 1 ? { file: hits[0]!.file, symbol: hits[0]!.def.name, line: hits[0]!.def.line } : null;
 }
 
 /** The one non-interface declaration of `name` in `nearFile`'s type space (an interface's base may be an interface). */

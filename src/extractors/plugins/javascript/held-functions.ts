@@ -117,6 +117,16 @@ function jsxPropFunction(fn: Node, expression: Node, line: number): string | nul
   return `<${tag}:${name.text}@${line}>`;
 }
 
+/** `Tag:prop` for an array written in a prop's `{…}` of a project component's tag (no `on…` prop: that is an event), else null. */
+function jsxArrayHolder(expression: Node): string | null {
+  const attr = expression.parent;
+  if (attr?.type !== "jsx_attribute") return null;
+  const name = attr.namedChild(0);
+  const tag = attr.parent?.childForFieldName("name")?.text ?? "";
+  if (name?.type !== "property_identifier" || /^on[A-Z]/.test(name.text) || !/^[A-Z][\w$]*$/.test(tag)) return null;
+  return projectComponent(expression.tree, tag) ? `${tag}:${name.text}` : null;
+}
+
 /** Whether the file declares `tag` or imports it from a path of the project (`./x`, `../x`, `@/x`, `~/x`, `#x`). */
 function projectComponent(tree: Tree, tag: string): boolean {
   for (const stmt of tree.rootNode.namedChildren) {
@@ -169,6 +179,8 @@ function pairName(pair: Node, line: number, imported: () => ReadonlySet<string>)
   }
   if (object.parent?.type !== "array" || NOT_CALLBACK_KEYS.has(key)) return null;
   const holder = arrayHolder(object.parent);
+  // A function under a prop's array that returns markup (`cell: () => <b />`) renders, it is no handler to follow.
+  if (holder?.includes(":") && pair.childForFieldName("value")?.descendantsOfType(["jsx_element", "jsx_self_closing_element", "jsx_fragment"]).length) return null;
   return holder ? `<${holder}[].${key}@${line}>` : null;
 }
 
@@ -183,6 +195,8 @@ function arrayHolder(array: Node): string | null {
       return identifierText(p.childForFieldName("name") ?? p.childForFieldName("property"));
     }
     if (p.type === "pair" && p.childForFieldName("value")?.id === at.id) return keyText(p.childForFieldName("key"));
+    // `<ActionBar actions={[{ run: () => award() }]} />`: the array a project component's tag hands down under a prop.
+    if (p.type === "jsx_expression" && hop === 0) return jsxArrayHolder(p);
     if (p.type === "parenthesized_expression" || p.type === "as_expression" || p.type === "satisfies_expression") {
       at = p;
       continue;

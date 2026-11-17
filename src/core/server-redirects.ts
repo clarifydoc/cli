@@ -76,6 +76,10 @@ export function attachServerRedirects(
   const byName = new Map<string, Array<RouteInfo & { filePath: string; projectId?: string }>>();
   for (const r of api) if (r.name) (byName.get(r.name) ?? byName.set(r.name, []).get(r.name)!).push(r);
 
+  // The name a framework derives when none is stated (`RouteInfo.derivedName`): a URL helper only.
+  const byDerived = new Map<string, Array<RouteInfo & { filePath: string; projectId?: string }>>();
+  for (const r of api) if (r.derivedName && !r.name) (byDerived.get(r.derivedName) ?? byDerived.set(r.derivedName, []).get(r.derivedName)!).push(r);
+
   const resolveName = (name: string, controller: string | undefined, route: RouteInfo & { filePath: string; projectId?: string }, file: string, helper = false): string | null => {
     // A name a route states (`as:`, `->name()`, `name=`, `Name = `) is exactly that route: a verb-less name joins the GET row.
     const named = (byName.get(name) ?? []).filter((r) => (r.projectId ?? "root") === (route.projectId ?? "root"));
@@ -84,8 +88,13 @@ export function attachServerRedirects(
       const paths = new Set((gets.length > 0 ? gets : named).map((r) => r.path));
       return paths.size === 1 ? [...paths][0]! : null;
     }
-    // A URL helper names a route only through its registered name, never a handler's leaf.
-    if (helper) return null;
+    // A URL helper names a route only through its registered name (or the one its framework derives), never a handler's leaf.
+    if (helper) {
+      const derived = (byDerived.get(name) ?? []).filter((r) => (r.projectId ?? "root") === (route.projectId ?? "root"));
+      const gets = derived.filter((r) => !r.httpMethod || r.httpMethod === "GET");
+      const paths = new Set((gets.length > 0 ? gets : derived).map((r) => r.path));
+      return paths.size === 1 ? [...paths][0]! : null;
+    }
     const parts = name.split(/[.:]/);
     const leaf = parts.pop()!;
     const qualifier = (controller ?? parts.join(".")).toLowerCase();

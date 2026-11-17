@@ -191,6 +191,7 @@ export function detectDuplicates(analyses: FileAnalysis[]): DuplicateGroup[] {
 
   for (const a of authored) {
     for (const fn of a.functions) {
+      if (fn.synthetic) continue;
       if (IDIOMATIC_NAMES.has(fn.name)) continue;
       if (fn.name.length < 3) continue;
       if (fn.name.startsWith("_") && fn.name.endsWith("_")) continue;
@@ -234,7 +235,7 @@ export function detectDuplicates(analyses: FileAnalysis[]): DuplicateGroup[] {
 
   for (const a of authored) {
     for (const fn of a.functions) {
-      if (fn.name === "<setup>") continue;
+      if (fn.name === "<setup>" || fn.synthetic) continue;
       if (fn.endLine - fn.line < 5) continue; // skip very short functions
       if (fn.calls.length < 2) continue; // need some structure to compare
 

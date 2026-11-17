@@ -167,11 +167,17 @@ export function buildScreenFlow(input: {
   // Routes by the name their framework registers (`RouteInfo.name`).
   const byRouteName = new Map<string, Array<RouteInfo & { filePath: string; projectId?: string }>>();
   for (const r of routes) if (r.name) (byRouteName.get(r.name) ?? byRouteName.set(r.name, []).get(r.name)!).push(r);
+  // The name a framework derives for a route nothing names (`RouteInfo.derivedName`): read after every stated one.
+  const byDerivedName = new Map<string, Array<RouteInfo & { filePath: string; projectId?: string }>>();
+  for (const r of routes) if (r.derivedName && !r.name) (byDerivedName.get(r.derivedName) ?? byDerivedName.set(r.derivedName, []).get(r.derivedName)!).push(r);
   /** The paths a route name stands for: its own sub-project's routes, the verb's first. */
   const pathsNamed = (name: string, method: string, project: string | undefined): string[] => {
-    const all = byRouteName.get(name) ?? [];
-    const own = all.filter((r) => (r.projectId ?? "root") === (project ?? "root"));
-    const rows = own.length > 0 ? own : all.filter((r) => related(project, r.projectId));
+    // The caller's own sub-project first (a stated name, then the derived one), only then another's.
+    const stated = byRouteName.get(name) ?? [];
+    const derived = byDerivedName.get(name) ?? [];
+    const inOwn = (rs: typeof stated) => rs.filter((r) => (r.projectId ?? "root") === (project ?? "root"));
+    const own = inOwn(stated).length > 0 ? inOwn(stated) : inOwn(derived);
+    const rows = own.length > 0 ? own : (stated.length > 0 ? stated : derived).filter((r) => related(project, r.projectId));
     const verb = rows.filter((r) => !r.httpMethod || r.httpMethod === method.toUpperCase());
     return [...new Set((verb.length > 0 ? verb : rows).map((r) => r.path))];
   };

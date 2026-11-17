@@ -1,14 +1,14 @@
 import type { PackageScope } from "../../../types/analysis.js";
 import type { DeclaredPackage, PackageManagerSpec, ProjectReference, SelfNameContext } from "../../../types/language-plugin.js";
 import { declared } from "../shared/declared-package.js";
-import { withoutXmlComments } from "../shared/xml-scan.js";
+import { withoutRootPrefix, withoutXmlComments } from "../shared/xml-scan.js";
 
 /** Maven: `pom.xml` `<dependency>` blocks as `group:artifact`. */
 function parsePom(raw: string, declaredIn: string): DeclaredPackage[] {
   const out: DeclaredPackage[] = [];
   // What the project depends on: not what a comment shows, a `<dependencyManagement>`
   // pins for its children, or a build plugin needs to run.
-  const text = withoutXmlComments(raw)
+  const text = withoutRootPrefix(withoutXmlComments(raw), "project")
     .replace(/<dependencyManagement>[\s\S]*?<\/dependencyManagement>/gi, "")
     .replace(/<plugin>[\s\S]*?<\/plugin>/gi, "");
   // `${jackson.version}` from the POM's own `<properties>`.
@@ -151,7 +151,7 @@ const FOREIGN_POM_SECTIONS = /<(parent|dependencies|dependencyManagement|build|r
  * filled from the POM's `<properties>` or the parent's, else no name.
  */
 export function pomSelfName(raw: string): string | null {
-  const text = withoutXmlComments(raw);
+  const text = withoutRootPrefix(withoutXmlComments(raw), "project");
   const own = text.replace(FOREIGN_POM_SECTIONS, "");
   const parent = /<parent>([\s\S]*?)<\/parent>/i.exec(text)?.[1] ?? "";
   const tag = (body: string, name: string) => new RegExp(`<${name}>\\s*([^<]+?)\\s*</${name}>`, "i").exec(body)?.[1];

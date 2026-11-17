@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import "../../registry.js";
-import { parseGradle, parseVersionCatalog } from "./package-manifests.js";
+import { parseGradle, parseVersionCatalog, mavenPackageManager, pomSelfName } from "./package-manifests.js";
 import { collectExternalPackages } from "../../../core/dependency-inventory.js";
 
 const CATALOG = `[versions]
@@ -68,5 +68,42 @@ dependencies {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("a POM written with a namespace prefix", () => {
+  const pom = (p: string) => `<?xml version="1.0"?>
+<${p}project xmlns${p ? ":m" : ""}="http://maven.apache.org/POM/4.0.0">
+  <${p}groupId>com.example.league</${p}groupId>
+  <${p}artifactId>league-api</${p}artifactId>
+  <${p}properties><${p}club.version>2.1</${p}club.version></${p}properties>
+  <${p}dependencies>
+    <${p}dependency>
+      <${p}groupId>com.example.club</${p}groupId>
+      <${p}artifactId>club-core</${p}artifactId>
+      <${p}version>\${club.version}</${p}version>
+    </${p}dependency>
+    <${p}dependency>
+      <${p}groupId>com.example.referee</${p}groupId>
+      <${p}artifactId>referee-test</${p}artifactId>
+      <${p}scope>test</${p}scope>
+    </${p}dependency>
+  </${p}dependencies>
+  <${p}dependencyManagement><${p}dependencies><${p}dependency>
+    <${p}groupId>com.example.garage</${p}groupId><${p}artifactId>garage-bom</${p}artifactId>
+  </${p}dependency></${p}dependencies></${p}dependencyManagement>
+</${p}project>`;
+  const parse = (text: string) => mavenPackageManager.manifests[0]!.parse(text, { declaredIn: "pom.xml" } as never) as Array<{ name: string; version: string | null; scope: string }>;
+  const rows = (text: string) => parse(text).map((d) => `${d.name}@${d.version ?? ""} ${d.scope}`);
+
+  it("reads the same packages as the unprefixed POM, the managed one left out", () => {
+    const plain = rows(pom(""));
+    expect(plain).toEqual(["com.example.club:club-core@2.1 prod", "com.example.referee:referee-test@ dev"]);
+    expect(rows(pom("m:"))).toEqual(plain);
+  });
+
+  it("reads the package the project publishes", () => {
+    expect(pomSelfName(pom("m:"))).toBe("com.example.league:league-api");
+    expect(pomSelfName(pom(""))).toBe("com.example.league:league-api");
   });
 });

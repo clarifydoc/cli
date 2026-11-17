@@ -247,6 +247,28 @@ async def ping():
     expect(routes[2]!.params).toBeUndefined();
   });
 
+  it("names the callables of router-level and decorator dependencies as middleware calls, guards or not", async () => {
+    const routes = await routesOf(`
+router = APIRouter(dependencies=[Depends(load_season)])
+
+@router.delete("/clubs/{club_id}", dependencies=[Depends(check_club_permission), Security(get_authorizer(), scopes=["x"])])
+async def delete_club(club_id: int):
+    ...
+
+@router.get("/cars")
+async def cars(_=Depends(check_car_permission)):
+    ...
+
+@public.get("/garage")
+async def garage():
+    ...
+`);
+    expect(routes[0]!.middlewareCalls).toEqual(["load_season", "check_club_permission", "get_authorizer"]);
+    // A parameter's Depends is already a call of the route, not a middleware call.
+    expect(routes[1]!.middlewareCalls).toEqual(["load_season"]);
+    expect(routes[2]!.middlewareCalls).toBeUndefined();
+  });
+
   it("leaves a route without declarations untouched", async () => {
     const [route] = await routesOf(`
 @app.get("/health")
