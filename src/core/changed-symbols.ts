@@ -12,6 +12,12 @@ export type ChangedHunks = Map<string, Array<[number, number]>> & {
    * never to a neighbour on the new side — see `symbolsInHunks`.
    */
   deleted?: Map<string, Array<[number, number]>>;
+  /**
+   * Ranges `symbolsInHunks` matches against the stored (old) analysis when the diff
+   * was parsed for the new side: deletes/edits as their old-side lines, a pure
+   * insertion as the line it follows. The Map itself stays new-side for patch coverage.
+   */
+  old?: Map<string, Array<[number, number]>>;
 };
 
 /**
@@ -20,8 +26,9 @@ export type ChangedHunks = Map<string, Array<[number, number]>> & {
  * against the analysis of the file as it is). A pure deletion on the new
  * side (`+12,0`) has no new line to mark — git's `12` is the line BEFORE the
  * gap, which may be the previous function's last line — so it is kept apart
- * as the old-side lines removed (`deleted`); a pure insertion on the old
- * side marks the line it follows.
+ * as the old-side lines removed (`deleted`); every hunk that touches old lines
+ * also records those ranges on `old` for symbol matching. A pure insertion on
+ * the old side marks the line it follows.
  */
 export function parseUnifiedHunks(diff: string, side: "new" | "old" = "new"): ChangedHunks {
   const out: ChangedHunks = new Map();
@@ -34,12 +41,22 @@ export function parseUnifiedHunks(diff: string, side: "new" | "old" = "new"): Ch
     }
     const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
     if (!m || !file) continue;
+    const oldStart = Number(m[1]);
+    const oldCount = m[2] === undefined ? 1 : Number(m[2]);
     const start = Number(side === "old" ? m[1] : m[3]);
     const countText = side === "old" ? m[2] : m[4];
     const count = countText === undefined ? 1 : Number(countText);
+    // When reading the new side, record old-side ranges for symbol matching:
+    // deletes/edits as the lines they touched; a pure insertion as the line it follows.
+    if (side === "new") {
+      const old = (out.old ??= new Map());
+      const match: [number, number] =
+        oldCount > 0
+          ? [oldStart, oldStart + oldCount - 1]
+          : [Math.max(1, oldStart), Math.max(1, oldStart)];
+      (old.get(file) ?? old.set(file, []).get(file)!).push(match);
+    }
     if (count === 0 && side === "new") {
-      const oldStart = Number(m[1]);
-      const oldCount = m[2] === undefined ? 1 : Number(m[2]);
       if (oldCount > 0) {
         const deleted = (out.deleted ??= new Map());
         (deleted.get(file) ?? deleted.set(file, []).get(file)!).push([oldStart, oldStart + oldCount - 1]);
@@ -64,7 +81,10 @@ export interface ChangedSymbol {
  * The functions and methods whose spans the changed lines touch — the
  * innermost one for each hunk. Lines outside every span (imports, module
  * code, a whole new file) change the file, not a symbol: they are returned
- * as `moduleLevel`, and the file-level impact covers them.
+ * as `moduleLevel`, and the file-level impact covers them. When the hunks
+ * carry old-side ranges (`old` / `deleted` from `parseUnifiedHunks`), those
+ * are matched — never the new-side Map — so a function below a deletion is
+ * not judged at a shifted new-side line that lands in the neighbour above.
  */
 export function symbolsInHunks(
   analyses: ReadonlyMap<string, Pick<FileAnalysis, "functions" | "classes">>,
@@ -73,9 +93,12 @@ export function symbolsInHunks(
   const symbols = new Map<string, ChangedSymbol>();
   const moduleLevel = new Set<string>();
   // A file whose diff only deletes lines has no entry in `hunks`: its deletions still count.
-  const files = new Set([...hunks.keys(), ...(hunks.deleted?.keys() ?? [])]);
+  const files = new Set([...hunks.keys(), ...(hunks.deleted?.keys() ?? []), ...(hunks.old?.keys() ?? [])]);
   for (const file of files) {
-    const ranges = [...(hunks.get(file) ?? [])];
+    // Prefer old-side ranges when the parser recorded them; fall back to the Map
+    // (new-side, or a hand-built range list) for pure insertions and older callers.
+    const oldSide = [...(hunks.old?.get(file) ?? []), ...(hunks.deleted?.get(file) ?? [])];
+    const ranges = oldSide.length > 0 ? oldSide : [...(hunks.get(file) ?? [])];
     const a = analyses.get(file);
     if (!a) {
       moduleLevel.add(file);
@@ -85,8 +108,6 @@ export function symbolsInHunks(
       ...a.functions.filter((f) => f.name !== "<setup>" && f.endLine >= f.line).map((f) => ({ file, symbol: f.name, line: f.line, endLine: f.endLine })),
       ...a.classes.flatMap((c) => c.methods.filter((m) => m.endLine >= m.line).map((m) => ({ file, symbol: `${c.name}.${m.name}`, line: m.line, endLine: m.endLine }))),
     ];
-    // Lines deleted outright belong to the function that held them in the analyzed file.
-    for (const [s, e] of hunks.deleted?.get(file) ?? []) ranges.push([s, e]);
     for (const [s, e] of ranges) {
       const hit = spans
         .filter((sp) => sp.line <= e && sp.endLine >= s)

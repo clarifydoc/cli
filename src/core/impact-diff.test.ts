@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { computeImpactDiff, measuredTestsFor, renderImpactMarkdown, renderImpactText } from "./impact-diff.js";
+import { parseUnifiedHunks, symbolsInHunks } from "./changed-symbols.js";
 import type { BlastRadiusInfo, ProjectAnalysis, TraceImpactInfo } from "../types/analysis.js";
 
 // ─── fixture ────────────────────────────────────────────────────────────────
@@ -269,6 +270,37 @@ describe("patch coverage", () => {
     expect(r.patchCoverage).toEqual({ uncoveredLines: 3, files: [{ file: "srv/service.ts", changedLines: 6, uncovered: "4-5,16" }] });
     expect(renderImpactText(r)).toContain("Changed lines no test runs: 3");
     expect(renderImpactMarkdown(r)).toContain("`srv/service.ts:4-5,16`");
+  });
+});
+
+describe("changed symbols below a deletion (E-222)", () => {
+  const analysis = {
+    functions: [
+      { name: "a", line: 1, endLine: 10 },
+      { name: "b", line: 12, endLine: 20 },
+    ],
+    classes: [],
+  } as never;
+
+  it("keeps b when a deletion above shifts its new-side line into a's old span", () => {
+    // Delete old 3–6 of a; edit old 13 of b (new-side line 9 after the shift).
+    const diff = ["--- a/club.ts", "+++ b/club.ts", "@@ -3,4 +3,0 @@", "@@ -13 +9 @@"].join("\n");
+    const hunks = parseUnifiedHunks(diff);
+    // New-side alone would charge a for the edit at line 9 and miss b.
+    expect([...hunks]).toEqual([["club.ts", [[9, 9]]]]);
+    const found = symbolsInHunks(new Map([["club.ts", analysis]]), hunks);
+    expect(found.symbols.map((s) => s.symbol).sort()).toEqual(["a", "b"]);
+    const r = computeImpactDiff(summary, ["club.ts"], {
+      symbols: { changed: found.symbols, moduleLevel: found.moduleLevel, hunks },
+    });
+    expect(r.symbolImpact!.changed.map((s) => s.symbol).sort()).toEqual(["a", "b"]);
+  });
+
+  it("does not mark b when only a is edited (decoy)", () => {
+    const diff = ["--- a/club.ts", "+++ b/club.ts", "@@ -9 +9 @@"].join("\n");
+    const found = symbolsInHunks(new Map([["club.ts", analysis]]), parseUnifiedHunks(diff));
+    expect(found.symbols.map((s) => s.symbol)).toEqual(["a"]);
+    expect(found.symbols.some((s) => s.symbol === "b")).toBe(false);
   });
 });
 

@@ -18,6 +18,8 @@ describe("parseUnifiedHunks", () => {
     const hunks = parseUnifiedHunks(diff);
     expect([...hunks]).toEqual([["src/a.ts", [[3, 6], [22, 22]]]]);
     expect([...hunks.deleted!]).toEqual([["src/a.ts", [[30, 32]]]]);
+    // Old-side ranges for symbol matching (edits + the pure deletion).
+    expect([...hunks.old!]).toEqual([["src/a.ts", [[3, 4], [20, 20], [30, 32]]]]);
   });
 });
 
