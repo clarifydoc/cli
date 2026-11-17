@@ -237,6 +237,13 @@ describe("CommonJS module shapes", () => {
     expect(await exportsOf(`module.exports = function () {};`, "javascript")).toEqual([]);
   });
 
+  it("states `exports.build = build` over a required name as a source-less re-export", async () => {
+    const src = `const { build } = require("./thing");\nconst maker = require("./maker");\nexports.build = build;\nexports.forge = maker;\nexports.park = () => {};\n`;
+    expect((await exportsOf(src, "javascript")).map(brief)).toEqual(["build re-export", "forge re-export maker"]);
+    // A local declaration is no barrel entry; ESM barrels stay on their own path.
+    expect(await exportsOf(`function build() {}\nexports.build = build;`, "javascript")).toEqual([]);
+  });
+
   it("keeps which member a renamed destructured require binds", async () => {
     const src = `const { getClub: fetchClub, listClubs } = require("./api");`;
     const tree = await parseSource(src, "javascript" as any, "x.js");

@@ -52,3 +52,41 @@ describe("CommonJS barrel re-export", () => {
     expect(summary.symbolLinks.filter((l) => l.targetFile === "decoy.js" && l.sourceFile === "main.js")).toEqual([]);
   });
 });
+
+/**
+ * `exports.build = build` after a destructured `require` is the same barrel fact as
+ * `module.exports = { build }` — a call through it reaches the definition, never a namesake.
+ */
+const EXPORTS_DOT: Record<string, string> = {
+  "package.json": `{"name":"league"}\n`,
+  "thing.js": `function build() { return 1; }\nmodule.exports = { build };\n`,
+  "decoy.js": `function build() { return 2; }\nmodule.exports = { build };\n`,
+  "barrel.js": `const { build } = require('./thing');\nexports.build = build;\n`,
+  "main.js": `const { build } = require('./barrel');\nfunction run() { build(); }\n`,
+};
+
+describe("CommonJS barrel — exports.member = name", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "cd-cjs-exports-dot-"));
+    for (const [rel, text] of Object.entries(EXPORTS_DOT)) {
+      await mkdir(dirname(join(dir, "repo", rel)), { recursive: true });
+      await writeFile(join(dir, "repo", rel), text);
+    }
+    await analyze({ projectRoot: join(dir, "repo"), outputDir: join(dir, "out"), lsp: false, gitHistory: false });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 120_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("follows exports.build through the barrel to its definition", () => {
+    const l = summary.symbolLinks.find((x) => x.sourceFile === "main.js" && x.sourceSymbol === "run" && x.callName === "build");
+    expect(l ? `${l.targetFile}::${l.targetSymbol}` : null).toBe("thing.js::build");
+  });
+
+  it("never links the namesake beside the barrel", () => {
+    expect(summary.symbolLinks.filter((l) => l.targetFile === "decoy.js" && l.sourceFile === "main.js")).toEqual([]);
+  });
+});

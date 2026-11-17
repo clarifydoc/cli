@@ -594,14 +594,42 @@ function cjsDefaultName(node: Node | null): string | null {
 }
 
 /**
- * `module.exports = { build, make: maker }` where each value is a name the file binds from a
- * `require` (`const { build } = require("./thing")`, `const maker = require("./maker")`): a
- * `re-export` row without a source, which the linker follows through the import, as `export { build }`.
+ * CommonJS barrel re-exports over names the file binds from a `require`
+ * (`const { build } = require("./thing")`, `const maker = require("./maker")`):
+ * `module.exports = { build, forge: maker }` and `exports.build = build` /
+ * `module.exports.build = build`. Each is a `re-export` row without a source,
+ * which the linker follows through the import, as `export { build }`.
  */
 function cjsBarrelExports(assign: Node | null, program: Node, line: number, exports: ExportInfo[]): void {
-  if (assign?.type !== "assignment_expression" || assign.childForFieldName("left")?.text.replace(/\s+/g, "") !== "module.exports") return;
+  if (assign?.type !== "assignment_expression") return;
+  const required = requiredNames(program);
+  if (required.size === 0) return;
+  const left = assign.childForFieldName("left")?.text.replace(/\s+/g, "") ?? "";
   const right = assign.childForFieldName("right");
-  if (right?.type !== "object") return;
+  if (left === "module.exports") {
+    if (right?.type !== "object") return;
+    for (const p of right.namedChildren) {
+      if (p.type === "shorthand_property_identifier") {
+        if (required.has(p.text)) exports.push({ name: p.text, kind: "re-export", line });
+      } else if (p.type === "pair") {
+        const key = p.childForFieldName("key");
+        const value = p.childForFieldName("value");
+        if (value?.type !== "identifier" || !required.has(value.text) || !key || (key.type !== "property_identifier" && key.type !== "string")) continue;
+        const name = stripQuotes(key.text);
+        exports.push({ name, kind: "re-export", line, ...(name !== value.text ? { sourceName: value.text } : {}) });
+      }
+    }
+    return;
+  }
+  // `exports.build = build` / `module.exports.build = build`
+  const member = /^(?:module\.)?exports\.([A-Za-z_$][\w$]*)$/.exec(left);
+  if (!member || right?.type !== "identifier" || !required.has(right.text)) return;
+  const name = member[1]!;
+  exports.push({ name, kind: "re-export", line, ...(name !== right.text ? { sourceName: right.text } : {}) });
+}
+
+/** Local names bound at module scope from a `require(…)`. */
+function requiredNames(program: Node): Set<string> {
   const required = new Set<string>();
   for (const stmt of program.children) {
     if (stmt.type !== "lexical_declaration" && stmt.type !== "variable_declaration") continue;
@@ -613,18 +641,7 @@ function cjsBarrelExports(assign: Node | null, program: Node, line: number, expo
       else if (target?.type === "object_pattern") for (const n of patternBindings(target).specifiers) required.add(n);
     }
   }
-  if (required.size === 0) return;
-  for (const p of right.namedChildren) {
-    if (p.type === "shorthand_property_identifier") {
-      if (required.has(p.text)) exports.push({ name: p.text, kind: "re-export", line });
-    } else if (p.type === "pair") {
-      const key = p.childForFieldName("key");
-      const value = p.childForFieldName("value");
-      if (value?.type !== "identifier" || !required.has(value.text) || !key || (key.type !== "property_identifier" && key.type !== "string")) continue;
-      const name = stripQuotes(key.text);
-      exports.push({ name, kind: "re-export", line, ...(name !== value.text ? { sourceName: value.text } : {}) });
-    }
-  }
+  return required;
 }
 
 export function requiredSource(node: Node): string | null {
