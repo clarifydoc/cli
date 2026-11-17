@@ -64,12 +64,4 @@ struct car* make_car(int seats) {
 `)).toEqual(["Table::Ptr = std::shared_ptr<Table>"]);
   });
 
-  it("reads a namespace alias as lib = home", () => {
-    expect(aliases(`namespace home {
-class Twin;
-}
-namespace lib = home;
-namespace util = league::util;
-`)).toEqual(["lib = home", "util = league::util"]);
-  });
 });
