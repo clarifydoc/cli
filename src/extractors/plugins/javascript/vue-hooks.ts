@@ -131,9 +131,11 @@ export function vuePreprocess(
       // `modal.open(ConfirmBox, { onConfirm: saveClub })`: callbacks the script hands a component it opens.
       const optionCallbacks = extractOptionCallbacks(blankExceptScripts(raw), analysis);
       if (optionCallbacks.length > 0) analysis.functionProps = [...(analysis.functionProps ?? []), ...optionCallbacks];
-      // `:on-confirm="saveClub"`: the page passes its own function (JSX's `onConfirm={saveClub}`), onto `<setup>`.
+      // `:on-confirm="saveClub"`: onto `<setup>` as JSX's `onConfirm={saveClub}` — only for `<script setup>`,
+      // where the handler is a free function. An Options API page's methods already are the page's; inventing
+      // `<setup>` there would make a typed module local sit on it.
       const passed = vuePassedFunctionProps(analysis.functionProps ?? []);
-      if (passed.length > 0) {
+      if (passed.length > 0 && /<script\b[^>]*\bsetup\b/i.test(raw)) {
         let setup = analysis.functions.find((f) => f.name === "<setup>");
         if (!setup) {
           setup = { name: "<setup>", params: [], returnType: null, isAsync: false, isExported: false, decorators: [], calls: [], line: 1, endLine: 1 };

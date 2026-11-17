@@ -363,6 +363,7 @@ describe("functions handed down under any prop name, from a mixin, or bound", ()
 
   it("joins a Vue child's prop call to the parent's mixin method, and the parent's own calls of it — never an import's namesake", () => {
     expect(linksFrom("vue/src/components/StadiumForm.vue")).toEqual(["submit -this.onSave-> vue/src/mixins/stadiumActions.js:saveStadium via vue/src/StadiumPage.vue:22"]);
+    // `@click="saveStadium"` still lands on <setup> via markup expressions; `:on-save` alone does not invent it (see symbol-linker-receiver-cut).
     expect(linksFrom("vue/src/StadiumPage.vue")).toEqual([
       "<setup> -saveStadium-> vue/src/mixins/stadiumActions.js:saveStadium",
       "refresh -formatDate-> vue/src/dates.js:formatDate",
