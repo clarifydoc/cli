@@ -24,6 +24,8 @@ export const dartManifest: LanguagePluginManifest = {
   // Read by the `tree-sitter:dart` front end only (meta.treeSitter): the wasm `npm run setup` builds.
   grammar: { variants: { dart: { pkg: "tree-sitter-dart", wasm: "tree-sitter-dart.wasm" } } },
   extensions: [".dart"],
+  // `await repo.find(1)` yields what the `Future<Club>` the callee declares holds.
+  asyncResultTypes: ["Future", "FutureOr"],
   // One type spans files here: `part` files and `extension`s add to a type from other files.
   typesSpanFiles: true,
   // Flutter: `integration_test/` and `test_driver/` beside `test/`.
