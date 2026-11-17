@@ -175,8 +175,12 @@ function templatesOf(fn: FunctionInfo): string[] {
 interface HelperLookup {
   /** Helpers by bare name across the project; null = two different ones (ambiguous). */
   global: Map<string, UrlBuilder | null>;
+  /** Bare names a class method states (or blanks): only these may fill `receiver.name(…)`. */
+  memberNames: Set<string>;
   /** The same index per sub-project, by the file's `projectId`: a namesake of another sub-project is no candidate for a call no import resolves. */
   byProject?: Map<string, Map<string, UrlBuilder | null>>;
+  /** Per-sub-project member names, paired with `byProject`. */
+  memberNamesByProject?: Map<string, Set<string>>;
   projectOf?: Map<string, string>;
   /** File-local helpers by their dotted name — a route table's `routes.tagsSlug`. */
   local: Map<string, Map<string, UrlBuilder>>;
@@ -212,8 +216,9 @@ function buildFileIndex(analyses: FileAnalysis[]): Map<string, Map<string, UrlBu
   return out;
 }
 
-function buildIndex(analyses: FileAnalysis[]): Map<string, UrlBuilder | null> {
+function buildIndex(analyses: FileAnalysis[]): { helpers: Map<string, UrlBuilder | null>; memberNames: Set<string> } {
   const index = new Map<string, UrlBuilder | null>();
+  const memberNames = new Set<string>();
   const blankMembers = new Set<string>();
   const statedByMember = new Set<string>();
   for (const a of analyses) {
@@ -230,12 +235,14 @@ function buildIndex(analyses: FileAnalysis[]): Map<string, UrlBuilder | null> {
         // Only against a templated member: a free function of the same name is another lookup (the caller's file / import).
         if (isMember) {
           blankMembers.add(fn.name);
+          memberNames.add(fn.name);
           if (statedByMember.has(fn.name)) index.set(fn.name, null);
         }
         continue;
       }
       if (isMember) {
         statedByMember.add(fn.name);
+        memberNames.add(fn.name);
         if (blankMembers.has(fn.name)) index.set(fn.name, null);
       }
       const existing = index.get(fn.name);
@@ -246,16 +253,16 @@ function buildIndex(analyses: FileAnalysis[]): Map<string, UrlBuilder | null> {
       }
     }
   }
-  return index;
+  return { helpers: index, memberNames };
 }
 
 // `${ requestUri('x','v4') }` (template substitution) or a bare `requestUri('x','v4')`,
 // either optionally behind a receiver chain (`configService.APIUrl('x')`,
-// `this.api.url('x')`) that is consumed with the call — the receiver only
-// names where the helper lives. The arg group allows one level of nested
-// parens so a helper whose argument embeds another call —
-// `requestUri(`x/${periodParams(p)}`, 'v1')` — is matched whole instead of
-// truncating at the inner `)`.
+// `this.api.url('x')`). A class-method helper may match by bare name through a
+// receiver; a free helper never does (`other.club_url(id)` keeps its own URL).
+// The arg group allows one level of nested parens so a helper whose argument
+// embeds another call — `requestUri(`x/${periodParams(p)}`, 'v1')` — is matched
+// whole instead of truncating at the inner `)`.
 const ARG = "((?:[^()]|\\([^()]*\\))*)";
 const RECEIVER = "((?:[A-Za-z_$][\\w$]*\\s*\\.\\s*)*)";
 const HELPER_CALL_RE = new RegExp(
@@ -282,8 +289,9 @@ interface CallSite {
 /**
  * The helper a call names: a dotted helper of the call's own file
  * (`routes.tagsSlug(…)`), then — for `this.m(…)` — the method along the
- * calling class's chain, then a helper of that bare name anywhere (unless two
- * differ).
+ * calling class's chain, then — for a receiver call — a class-method helper of
+ * that bare name (never a free function: `other.club_url(id)` must not take a
+ * project `club_url` template), else a bare call's free helper.
  */
 function lookupHelper(lookup: HelperLookup, site: CallSite, receiver: string, name: string): UrlBuilder | null {
   const recv = receiver.replace(/\s+/g, "").replace(/\.$/, "");
@@ -309,6 +317,15 @@ function lookupHelper(lookup: HelperLookup, site: CallSite, receiver: string, na
     if (here === undefined && lookup.declared?.get(site.file)?.has(name)) return null; // declared here, states no URL
     const from = lookup.imported?.(site.file, name);
     if (from) return lookup.byFile.get(from.file)?.get(from.exported) ?? null;
+  }
+  // A receiver call only takes a class-method helper by bare name (`configService.APIUrl`),
+  // never a free `club_url` filling `api.club_url(id)` / `other.club_url(id)`.
+  if (recv) {
+    const project = lookup.projectOf?.get(site.file);
+    const projectMembers = project !== undefined ? lookup.memberNamesByProject?.get(project) : undefined;
+    if (projectMembers ? !projectMembers.has(name) && !lookup.memberNames.has(name) : !lookup.memberNames.has(name)) {
+      return null;
+    }
   }
   // No import resolves it: the helper of that name the caller's own sub-project states, before the project-wide name.
   const project = lookup.projectOf?.get(site.file);
@@ -613,7 +630,8 @@ function resolveTargets(target: string, lookup: HelperLookup, site: CallSite): s
  * helpers.
  */
 export function resolveUrlBuilders(apiCalls: ApiCall[], analyses: FileAnalysis[], ctx?: ProjectContext): number {
-  const lookup: HelperLookup = { global: buildIndex(analyses), local: localHelpers(analyses) };
+  const built = buildIndex(analyses);
+  const lookup: HelperLookup = { global: built.helpers, memberNames: built.memberNames, local: localHelpers(analyses) };
   keepHelperBases(lookup, analyses);
   const perProject = new Map<string, FileAnalysis[]>();
   lookup.projectOf = new Map();
@@ -626,11 +644,13 @@ export function resolveUrlBuilders(apiCalls: ApiCall[], analyses: FileAnalysis[]
   }
   if (perProject.size > 1) {
     lookup.byProject = new Map();
+    lookup.memberNamesByProject = new Map();
     for (const [id, list] of perProject) {
       const index = buildIndex(list);
       // The same base-keeping the project-wide index got, on this project's own builders.
-      keepHelperBases({ global: index, local: lookup.local }, list);
-      lookup.byProject.set(id, index);
+      keepHelperBases({ global: index.helpers, memberNames: index.memberNames, local: lookup.local }, list);
+      lookup.byProject.set(id, index.helpers);
+      lookup.memberNamesByProject.set(id, index.memberNames);
     }
   }
   lookup.byFile = buildFileIndex(analyses);

@@ -149,8 +149,8 @@ describe("resolveUrlBuilders", () => {
   });
 
   it("indexes class methods and consumes the receiver of a `service.method(...)` call", () => {
-    // `configService.APIUrl("logout.json")` — the helper is a method on a
-    // service singleton; the receiver only says where it lives.
+    // `configService.APIUrl("logout.json")` — the helper is a class method;
+    // a free helper of that name would not fill a receiver call.
     const configService = analysis([]);
     configService.classes = [
       {
@@ -175,10 +175,25 @@ describe("resolveUrlBuilders", () => {
   it("fans a branching helper out into target + targetAlternatives, primary first", () => {
     const roleUri = fn("roleUri", "/api/staff/{sub}", [{ name: "sub", type: "string", defaultValue: null }]);
     roleUri.urlTemplateAlternatives = ["/api/{sub}"];
-    const calls = [apiCall('configService.roleUri("referees.json")')];
+    const calls = [apiCall('roleUri("referees.json")')];
     expect(resolveUrlBuilders(calls, [analysis([roleUri])])).toBe(1);
     expect(calls[0]!.target).toBe("/api/staff/referees.json");
     expect(calls[0]!.targetAlternatives).toEqual(["/api/referees.json"]);
+  });
+
+  it("does not fill a receiver call from a free helper of the same name (decoy)", () => {
+    // `api.club_url(id)` / `other.club_url(id)` must not take a project `club_url`
+    // function's template — only a bare `club_url(id)` (or a class method) may.
+    const clubUrl = fn("club_url", "/api/clubs/{id}", [{ name: "id", type: "string", defaultValue: null }]);
+    const calls = [
+      apiCall("api.club_url(id)"),
+      apiCall("other.club_url(id)"),
+      apiCall("club_url(id)"),
+    ];
+    expect(resolveUrlBuilders(calls, [analysis([clubUrl])])).toBe(1);
+    expect(calls[0]!.target).toBe("api.club_url(id)");
+    expect(calls[1]!.target).toBe("other.club_url(id)");
+    expect(calls[2]!.target).toBe("/api/clubs/{}");
   });
 
   it("leaves a call whose path argument is a bare variable unresolved", () => {
