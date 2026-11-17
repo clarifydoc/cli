@@ -196,9 +196,10 @@ describe("resolveUrlBuilders", () => {
     expect(calls[2]!.target).toBe("/api/clubs/{}");
   });
 
-  it("fills a free helper called through a namespace import (real-repo FP)", () => {
-    // `import * as url from './util/url'; url.apiPath(site, '/query')` — the
-    // free helper of that module, not a same-named decoy elsewhere.
+  it("fills a free helper called through a module binding (real-repo FP)", () => {
+    // `import * as url from './util/url'` and stem-named `import { url } from './url'`
+    // (file stem matches the binding, module does not export `url`) — that module's
+    // helper only; a same-named decoy elsewhere and a non-module receiver stay raw.
     const apiPath = fn("apiPath", "/api/stats/{}{path}/", [
       { name: "site", type: "object", defaultValue: null },
       { name: "path", type: "string", defaultValue: "''" },
@@ -210,20 +211,29 @@ describe("resolveUrlBuilders", () => {
     const helpers: FileAnalysis = {
       ...analysis([apiPath]),
       filePath: "util/url.ts",
+      exports: [{ name: "apiPath", kind: "function", line: 1 }],
     };
     const decoyFile: FileAnalysis = {
       ...analysis([decoy]),
       filePath: "util/decoy.ts",
     };
-    const caller: FileAnalysis = {
+    const nsCaller: FileAnalysis = {
       ...analysis([]),
       filePath: "svc.ts",
       imports: [{ source: "./util/url", specifiers: ["url"], isDefault: false, isNamespace: true, isType: false, line: 1 }],
     };
-    const calls = [apiCall("url.apiPath(site, '/query')"), apiCall("other.apiPath(site, '/query')")];
-    expect(resolveUrlBuilders(calls, [helpers, decoyFile, caller])).toBe(1);
-    expect(calls[0]!.target).toBe("/api/stats/{}/query/");
-    expect(calls[1]!.target).toBe("other.apiPath(site, '/query')");
+    const stemCaller: FileAnalysis = {
+      ...analysis([]),
+      filePath: "other-svc.ts",
+      imports: [{ source: "./util/url", specifiers: ["url"], isDefault: false, isNamespace: false, isType: false, line: 1 }],
+    };
+    const nsCalls = [apiCall("url.apiPath(site, '/query')"), apiCall("other.apiPath(site, '/query')")];
+    expect(resolveUrlBuilders(nsCalls, [helpers, decoyFile, nsCaller])).toBe(1);
+    expect(nsCalls[0]!.target).toBe("/api/stats/{}/query/");
+    expect(nsCalls[1]!.target).toBe("other.apiPath(site, '/query')");
+    const stemCall = [{ ...apiCall("url.apiPath(site, '/export')"), filePath: "other-svc.ts" }];
+    expect(resolveUrlBuilders(stemCall, [helpers, decoyFile, stemCaller])).toBe(1);
+    expect(stemCall[0]!.target).toBe("/api/stats/{}/export/");
   });
 
   it("leaves a call whose path argument is a bare variable unresolved", () => {

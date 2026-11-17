@@ -955,7 +955,7 @@ function passThroughHelpers(analyses: readonly FileAnalysis[]): Set<string> {
  * a member the module exports: a namespace import (`import * as urls`), or a binding whose declared name is the
  * module file's own name (`mod urls`, `from . import urls as u`) that the module does not export as a member.
  */
-function bindsModule(byFile: ReadonlyMap<string, FileAnalysis>, file: string, head: string, source: string): boolean {
+export function bindsModule(byFile: ReadonlyMap<string, FileAnalysis>, file: string, head: string, source: string): boolean {
   const imp = byFile.get(file)?.imports.find((i) => i.specifiers.includes(head));
   if (!imp || imp.isDefault) return false;
   if (imp.isNamespace) return true;
