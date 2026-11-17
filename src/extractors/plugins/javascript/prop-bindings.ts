@@ -76,8 +76,9 @@ const unreadOf = new WeakMap<Tree, Unread[]>();
 
 /** The prop bindings of the file `propBindings` just read whose value could not be read, once per component and prop. */
 export function unreadPropBindings(tree: Tree): Unread[] {
-  const seen = new Set<string>();
-  return (unreadOf.get(tree) ?? []).filter((u) => !seen.has(`${u.component}\0${u.prop}`) && !!seen.add(`${u.component}\0${u.prop}`));
+  const first = new Map<string, Unread>();
+  for (const u of unreadOf.get(tree) ?? []) if (!first.has(`${u.component}\0${u.prop}`)) first.set(`${u.component}\0${u.prop}`, u);
+  return [...first.values()];
 }
 
 /**

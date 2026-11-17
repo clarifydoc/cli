@@ -24,7 +24,7 @@ const SINGLE_KEY = /^([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)$/;
 const PLAIN_NAME = /^[A-Za-z_$][\w$]*$/;
 
 /** The module a named import of `name` comes from, in the file's import list. */
-export function importOfName(imports: readonly ImportInfo[], name: string): { source: string; name: string } | undefined {
+function importOfName(imports: readonly ImportInfo[], name: string): { source: string; name: string } | undefined {
   for (const imp of imports) {
     if (imp.isType || imp.executes || imp.isDefault || imp.isNamespace || !imp.specifiers.includes(name)) continue;
     return { source: imp.source, name: imp.aliases?.[name] ?? name };
@@ -46,8 +46,7 @@ export function importedBindings(imports: readonly ImportInfo[]): Map<string, { 
 }
 
 /** A name a template hands a child that the file imports: a dispatch map there, for the resolver to read (`FunctionPropBinding.mapImport`). */
-export function importedMapProps(bindings: readonly FunctionPropBinding[], imports: readonly ImportInfo[]): FunctionPropBinding[] {
-  const bound = importedBindings(imports);
+export function importedMapProps(bindings: readonly FunctionPropBinding[], bound: ReadonlyMap<string, { source: string; name: string }>): FunctionPropBinding[] {
   return bindings.flatMap((b) => {
     const from = bound.get(b.handler);
     return from ? [{ ...b, mapImport: from }] : [];

@@ -602,13 +602,17 @@ export function propLiterals(analyses: FileAnalysis[], filePathMap: Map<string, 
   /** Child + prop keys some user binds to a value that is no name: the set a binding reads is then not the whole set. */
   const unreadBy = new Set<string>();
   for (const parent of analyses) {
-    if (!parent.propBindings?.length) continue;
+    if (!parent.propBindings?.length && !parent.unreadPropBindings?.length) continue;
     const subByKey = new Map<string, string>([...(autoImported.get(parent.projectId ?? "") ?? []), ...globals]);
     for (const sub of parent.subComponents ?? []) if (sub.importSource && !sub.global) subByKey.set(tagKey(sub.name), sub.importSource);
-    for (const b of parent.propBindings) {
-      const src = subByKey.get(tagKey(b.component));
+    const childOf = (component: string): string | null => {
+      const src = subByKey.get(tagKey(component));
       const child = src ? resolveTarget(src, parent.filePath, filePathMap) : null;
-      if (!child || !byPath.has(child)) continue;
+      return child && byPath.has(child) ? child : null;
+    };
+    for (const b of parent.propBindings ?? []) {
+      const child = childOf(b.component);
+      if (!child) continue;
       const k = `${child}\0${b.prop}`;
       // A value of another origin (a route parameter, a parameter of the user's own) is bound, and is no literal.
       if (b.origin.kind !== "literal" && b.origin.kind !== "prop" && b.origin.kind !== "constant") {
@@ -617,16 +621,10 @@ export function propLiterals(analyses: FileAnalysis[], filePathMap: Map<string, 
       }
       (bound.get(k) ?? bound.set(k, []).get(k)!).push({ parent: parent.filePath, binding: b });
     }
-  }
-  // Bindings whose value the user's file did not show at all (`:kind="row.kind"`).
-  for (const parent of analyses) {
-    if (!parent.unreadPropBindings?.length) continue;
-    const subByKey = new Map<string, string>([...(autoImported.get(parent.projectId ?? "") ?? []), ...globals]);
-    for (const sub of parent.subComponents ?? []) if (sub.importSource && !sub.global) subByKey.set(tagKey(sub.name), sub.importSource);
-    for (const u of parent.unreadPropBindings) {
-      const src = subByKey.get(tagKey(u.component));
-      const child = src ? resolveTarget(src, parent.filePath, filePathMap) : null;
-      if (child && byPath.has(child)) unreadBy.add(`${child}\0${u.prop}`);
+    // Bindings whose value the user's file did not show at all (`:kind="row.kind"`).
+    for (const u of parent.unreadPropBindings ?? []) {
+      const child = childOf(u.component);
+      if (child) unreadBy.add(`${child}\0${u.prop}`);
     }
   }
   const walk = (child: string, prop: string, depth: number, seen: Set<string>, out: Map<string, Usage[]>, state: { unread: boolean }, via?: Usage): void => {

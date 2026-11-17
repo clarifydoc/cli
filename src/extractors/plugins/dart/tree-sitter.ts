@@ -57,7 +57,7 @@ interface Walk {
  */
 export function readDartTree(root: TSNode, text: string): ParsedStructure {
   const topLevel: PatternCallName[] = [];
-  const walk: Walk = { text, topLevel, functions: [], callRefs: new Map(), file: fileScopeOf(root, text), root, getters: getterNames(root), locals: new Map() };
+  const walk: Walk = { text, topLevel, functions: [], callRefs: new Map(), file: fileScopeOf(root, text), root, getters: /\bget\s/.test(text) ? getterNames(root) : new Set(), locals: new Map() };
   visit(root, topLevel, walk, null);
   walk.functions.sort((a, b) => a.span.line - b.span.line);
   const classNodes = new Map<string, TSNode>();
@@ -343,7 +343,7 @@ function isReadPosition(parent: TSNode, id: TSNode): boolean {
  * Never a name the function declares itself (parameter, variable), nor a field of the class.
  */
 function getterRead(id: TSNode, owner: PatternCallName[] | null, walk: Walk, cls: ClassScope | null): void {
-  if (!owner || owner === walk.topLevel || !walk.getters.has(id.text)) return;
+  if (walk.getters.size === 0 || !owner || owner === walk.topLevel || !walk.getters.has(id.text)) return;
   if (walk.locals.get(owner)?.has(id.text) || cls?.fields.has(id.text)) return;
   owner.push({ name: id.text, leafName: id.text, line: id.startPosition.row + 1, column: id.startPosition.column });
 }

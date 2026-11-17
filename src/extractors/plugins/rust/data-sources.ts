@@ -171,6 +171,9 @@ function urlOfLocal(lines: string[], i: number, name: string | undefined): strin
   return null;
 }
 
+/** A file's lines joined once, for the helper lookups of all its request calls. */
+const joinedText = new WeakMap<string[], string>();
+
 /**
  * `club_url(&self.base, id)` handed to a client verb, the helper `fn club_url(base: &str, id: u32) -> String`
  * this file declares with a lone `format!` as its body: its template with the arguments in place (a literal as
@@ -190,7 +193,8 @@ function urlOfHelperCall(lines: string[], line: string, verbAt: number): string 
   if (end < 0) return null;
   const args = splitTopLevel(rest.slice(0, end)).map((a) => a.trim().replace(/^&\s*(?:mut\s+)?/, ""));
   const name = call[1]!;
-  const text = lines.join("\n");
+  let text = joinedText.get(lines);
+  if (text === undefined) joinedText.set(lines, (text = lines.join("\n")));
   const head = new RegExp(`(?:^|\\n)[ \\t]*(?:pub(?:\\([^)]*\\))?\\s+)?(?:async\\s+)?fn\\s+${name}\\s*(?:<[^>]*>)?\\s*\\(`).exec(text);
   // One declaration of the name only: a namesake in an `impl` or another module is no telling which one a call means.
   if (!head || text.slice(head.index + head[0].length).search(new RegExp(`\\bfn\\s+${name}\\s*[(<]`)) >= 0) return null;

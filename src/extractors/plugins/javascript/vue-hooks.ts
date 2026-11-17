@@ -96,7 +96,7 @@ export function vuePreprocess(
         // `<ClubTable :actions="clubActions" />` with `clubActions` imported: a dispatch map there, which the resolver reads.
         if (analysis.imports.length > 0) {
           const imported = importedBindings(analysis.imports);
-          const handed = importedMapProps(extractVueFunctionProps(sfc.template, raw, (name) => imported.has(name) && !own.has(name) && !maps.has(name)), analysis.imports);
+          const handed = importedMapProps(extractVueFunctionProps(sfc.template, raw, (name) => imported.has(name) && !own.has(name) && !maps.has(name)), imported);
           if (handed.length > 0) analysis.functionProps = [...(analysis.functionProps ?? []), ...handed];
         }
         // `<slot :save="saveAll" />`: what a parent's scoped slot calls.

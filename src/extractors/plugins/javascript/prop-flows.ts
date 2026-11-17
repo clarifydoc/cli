@@ -3,7 +3,8 @@ import type { ClassInfo, FileAnalysis, FunctionInfo, PropFlows, SymbolLink } fro
 import type { DispatchResolver } from "../../dispatch/base.js";
 import { buildFilePathMap, resolveTarget } from "../../shared/link-scoring.js";
 import { attributesAfter } from "./prop-bindings.js";
-import { reactiveCellsOf } from "./reactive-cells.js";
+import { innermost, reactiveCellsOf } from "./reactive-cells.js";
+import { enclosingFunctionNode } from "../../shared/node-helpers.js";
 import { destructuredProps } from "../../shared/destructuring.js";
 import { autoImportedComponents, globalComponentFiles, spansOf, tagKey, type SymbolSpan } from "./dispatch.js";
 
@@ -37,20 +38,13 @@ export function propFlows(tree: Tree, _sourceText: string, rawSource: string, fi
     if (bindings.length > 0) out.bindings = bindings;
   }
   const known = knownNames(tree, functions);
-  if (!filePath.endsWith(".vue") && rawSource.includes("<")) {
-    const bindings = jsxValueBindings(tree, functions, known);
+  if (!filePath.endsWith(".vue") && /<[A-Z]/.test(rawSource)) {
+    const bindings = jsxValueBindings(tree, functions, known, rawSource.includes("useState"));
     if (bindings.length > 0) out.bindings = bindings;
   }
   const argLocals = typedLocalArguments(tree, functions, known);
   if (argLocals.length > 0) out.argLocals = argLocals;
   return out.watchers || out.bindings || out.argLocals ? out : null;
-}
-
-const FUNCTION_NODES = ["function_declaration", "function_expression", "arrow_function", "method_definition", "generator_function_declaration", "function"];
-
-function enclosingFunction(n: Node): Node | null {
-  for (let p = n.parent; p; p = p.parent) if (FUNCTION_NODES.includes(p.type)) return p;
-  return null;
 }
 
 /** `Club`, `Club | null | undefined` → `Club`; anything else (a union of classes, a generic, an object type) is none. */
@@ -89,7 +83,7 @@ function useStateValue(call: Node): { type?: string; factory?: string } | null {
  * React: `<ClubPanel api={api} />` binds a prop to a local of the parent. A local from `const [api] = useState(…)` states
  * what it holds (`state`); any other local is typed by the importing pass from the parent's own typed locals.
  */
-function jsxValueBindings(tree: Tree, functions: ReadonlyArray<{ name: string; line: number; endLine: number }>, known: ReadonlySet<string>): NonNullable<PropFlows["bindings"]> {
+function jsxValueBindings(tree: Tree, functions: ReadonlyArray<{ name: string; line: number; endLine: number }>, known: ReadonlySet<string>, readsState: boolean): NonNullable<PropFlows["bindings"]> {
   const out: NonNullable<PropFlows["bindings"]> = [];
   for (const el of tree.rootNode.descendantsOfType(["jsx_opening_element", "jsx_self_closing_element"])) {
     const tag = el?.childForFieldName("name")?.text ?? "";
@@ -114,7 +108,7 @@ function jsxValueBindings(tree: Tree, functions: ReadonlyArray<{ name: string; l
         out.push({ component: tag, prop: name.text, line, local: "", writes: [] });
         continue;
       }
-      const state = useStateOf(expr);
+      const state = readsState ? useStateOf(expr) : null;
       out.push({ component: tag, prop: name.text, line, local: expr.text, writes: [], ...(state ? { state } : {}), ...(fn ? { function: fn } : {}) });
     }
   }
@@ -139,7 +133,7 @@ function knownNames(tree: Tree, functions: ReadonlyArray<{ name: string }>): Set
  * the name — a render helper or a `.map` callback reads its component's state — when exactly one does.
  */
 function useStateOf(ident: Node): { type?: string; factory?: string } | null {
-  for (let scope = enclosingFunction(ident); scope; scope = enclosingFunction(scope)) {
+  for (let scope = enclosingFunctionNode(ident); scope; scope = enclosingFunctionNode(scope)) {
     const found: Node[] = [];
     for (const d of scope.descendantsOfType("variable_declarator")) {
       const target = d?.childForFieldName("name");
@@ -258,15 +252,6 @@ function refWrites(tree: Tree, local: string, functions: ReadonlyArray<{ name: s
     if (fn && !out.some((w) => w.function === fn && w.line === line)) out.push({ function: fn, line, spelling: local });
   }
   return out;
-}
-
-function innermost(functions: ReadonlyArray<{ name: string; line: number; endLine: number }>, line: number): string | null {
-  let best: { name: string; line: number; endLine: number } | null = null;
-  for (const f of functions) {
-    if (f.line > line || f.endLine < line) continue;
-    if (!best || f.endLine - f.line < best.endLine - best.line || (f.endLine - f.line === best.endLine - best.line && f.line > best.line)) best = f;
-  }
-  return best?.name ?? null;
 }
 
 type Binding = NonNullable<PropFlows["bindings"]>[number];

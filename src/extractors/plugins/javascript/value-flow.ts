@@ -544,9 +544,7 @@ class Flow {
   }
 
   private callName(call: Node): string | null {
-    const name = javascriptCallHooks.resolveCallName?.(call) ?? null;
-    // A call spelled as a chain or an expression (`rows.map(…).sort`) names no callee the linker could join.
-    return name && name.length <= 100 && /^(?:new )?[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\[\](?:\.[A-Za-z_$][\w$]*)*)?$/.test(name) ? name : null;
+    return joinableCallName(javascriptCallHooks.resolveCallName?.(call) ?? null);
   }
 
   private call(node: Node): void {
@@ -624,13 +622,13 @@ class Flow {
       }
       return;
     }
-    const callName = this.callName(node);
+    const written = javascriptCallHooks.resolveCallName?.(node) ?? null;
+    const callName = joinableCallName(written);
     const place = this.placeOf(callee);
     if (callName && place) this.memberCalls.push({ cell: place, name: callName, line });
     else if (!place) {
       // `board.action?.onClick()`: a member of a member, read through the declared types (core drops it when none says so).
       // The call keeps its optional-chain spelling, as its call row does.
-      const written = javascriptCallHooks.resolveCallName?.(node) ?? null;
       const nested = written && /^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)+$/.test(written) && written.length <= 100 ? this.nestedPlace(callee) : null;
       if (nested) this.facts.push({ kind: "invoke", cell: nested, call: written!, line });
     }
@@ -740,4 +738,9 @@ export function moduleValueFlowOf(tree: Tree, sourceText: string): ValueFlowFact
   if (!/[=(]/.test(sourceText)) return [];
   const { facts } = moduleFlowOf(tree);
   return facts;
+}
+
+/** A call spelled as a chain or an expression (`rows.map(…).sort`) names no callee the linker could join. */
+function joinableCallName(name: string | null): string | null {
+  return name && name.length <= 100 && /^(?:new )?[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\[\](?:\.[A-Za-z_$][\w$]*)*)?$/.test(name) ? name : null;
 }

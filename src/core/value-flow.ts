@@ -269,10 +269,18 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
     return l?.type ?? null;
   };
 
+  // The types a file's module-level code declares its names with, indexed on first use (`ownerOf` asks per fact).
+  const moduleTypes = new Map<string, Map<string, string>>();
   /** The declared type of a module-level name of `file` (a top-level `const board: Board = …`), from the file's `<setup>`. */
   const moduleTypeOf = (file: string, name: string): string | null => {
-    const setup = analysisAt.get(file)?.functions.find((f) => f.name === "<setup>");
-    return setup?.localTypes?.find((x) => x.name === name && x.type && !x.aliasOf)?.type ?? null;
+    let types = moduleTypes.get(file);
+    if (!types) {
+      types = new Map();
+      const setup = analysisAt.get(file)?.functions.find((f) => f.name === "<setup>");
+      for (const x of setup?.localTypes ?? []) if (x.type && !x.aliasOf && !types.has(x.name)) types.set(x.name, x.type);
+      moduleTypes.set(file, types);
+    }
+    return types.get(name) ?? null;
   };
 
   const fieldCell = (file: string, cls: string, member: string): number => {
