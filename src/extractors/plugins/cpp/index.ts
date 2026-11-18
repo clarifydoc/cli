@@ -16,20 +16,43 @@ import { CPP_CODE, definitionAt } from "../shared/c-family-code.js";
 import { callChainPatterns } from "../shared/call-chains.js";
 
 /**
- * A nested class constructed by direct initialisation, `Rank::Iterator it(2);` or `Table::Iterator it{2};`: the
- * constructor call `Rank::Iterator(2)` names, read the same way (the owner is the receiver, or the whole path when it
- * has several segments). A statement ending in `;` only, so a method definition's `Club::Player pick(int id) {` is none.
- * The grammar reads the statement as a declaration, so the spec also lists it as a `declarationCallPatterns` entry.
+ * A class constructed by direct initialisation — `Club c(3);`, `Rank::Iterator it(2);`, `Table::Iterator it{2};`:
+ * the constructor call the type names (`Club`, `Rank.Iterator`, …). A one-segment type is the call itself (as
+ * `new Club(` is); a nested path keeps the owner as the receiver, or the whole path when it has several segments.
+ * A statement ending in `;` only, so a method definition's `Club::Player pick(int id) {` is none. Refused after
+ * `->` (a trailing return type: `auto stop() -> Gear override {`) or `class`/`struct` (a class-head's `final`:
+ * `class Garage final {`), and a brace body that holds a statement (not an aggregate initializer). The grammar reads
+ * the statement as a declaration, so the spec also lists it as a `declarationCallPatterns` entry.
  */
 const DIRECT_INIT_CALL: CallPattern = {
-  pattern: /(?<![\w:])((?:[a-z_]\w*\s*::\s*)*)((?:[A-Z]\w*\s*::\s*)+[A-Z]\w*)(?:<[^<>;()]*>)?\s+[A-Za-z_]\w*\s*[({][^;]*[)}]\s*;/g,
-  buildName: (m) => {
+  pattern: /(?<![\w:])((?:[a-z_]\w*\s*::\s*)*)((?:[A-Z]\w*\s*::\s*)*[A-Z]\w*)(?:<[^<>;()]*>)?\s+[A-Za-z_]\w*\s*[({][^;]*[)}]\s*;/g,
+  buildName: (m, line) => {
+    const before = (line ?? "").slice(0, m.index);
+    if (/->\s*$/.test(before) || /\b(?:class|struct|union|enum)\s+$/.test(before)) return { name: "", leafName: "" };
+    // `Gear override { return shift(); }`: a function body, not `Club c{3};`.
+    if (/\{/.test(m[0]!) && /\b(?:return|void|auto|if|for|while|switch|class|struct|try|throw)\b/.test(m[0]!)) {
+      return { name: "", leafName: "" };
+    }
     const segments = m[2]!.replace(/\s+/g, "").split("::");
     const leaf = segments.pop()!;
     const owner = segments.join("::");
+    if (segments.length === 0) return { name: leaf, leafName: leaf };
     return segments.length > 1
       ? { name: `${owner}::${leaf}`, leafName: leaf }
       : { name: `${owner}.${leaf}`, leafName: leaf, receiverType: m[1]!.replace(/\s+/g, "") + owner };
+  },
+};
+
+/**
+ * A call through a field path of three or more names — `kit.actions.Go(`, `g->doors.lock(` (spelled `g?.doors.lock`
+ * for the scan): named whole, so the baseline does not keep only the last two with `receiverCut` and refuse to type
+ * the cut head as a binding of the caller.
+ */
+const FIELD_PATH_CALL: CallPattern = {
+  pattern: /(?<![\w.:>])([A-Za-z_]\w*(?:\??\.[A-Za-z_]\w*){2,})\s*\(/g,
+  buildName: (m) => {
+    const name = m[1]!.replace(/\?\./g, ".");
+    return { name, leafName: name.split(".").pop()! };
   },
 };
 
@@ -187,6 +210,7 @@ export const cppSpec: RegexLangSpec = {
       },
     },
     DIRECT_INIT_CALL,
+    FIELD_PATH_CALL,
     // A method on a call's result, named as the chain: `Router::instance().addPath(p)` is `Router.instance().addPath`,
     // `Router::instance()->addPath(p)` too (`?.` is how the call scan's lines spell `->`, see c-family-code.ts).
     ...callChainPatterns(CPP_CHAIN_HEAD, cppChainHead, 3, String.raw`(?:\??\.|->)`),

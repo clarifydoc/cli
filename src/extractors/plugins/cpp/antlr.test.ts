@@ -158,7 +158,7 @@ void replay(Match *m) {
 }
 END_NAMESPACE
 `;
-    expect(read(source).functions).toEqual([["replay", 2, ["BENCHMARK_LOOP", "rewind", "m.final", "cast", "SET_SOURCE_PATH", "finish"]]]);
+    expect(read(source).functions).toEqual([["replay", 2, ["BENCHMARK_LOOP", "rewind", "m.final", "Item", "cast", "SET_SOURCE_PATH", "finish"]]]);
   });
 
   it("reads an all-caps parameter name, and casts inside a macro's arguments", () => {

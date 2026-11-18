@@ -65,8 +65,8 @@ describe.each(Object.entries(readers))("C++ receivers (%s)", (reader, read) => {
   it("names a call through `->` on its receiver, which the linker types by its declaration", () => {
     expect(linksOf(read, { "src/coach.h": coachH, "src/coach.cc": coachCc, "src/team.h": teamH, "src/team.cc": teamCc })).toEqual([
       "Team.a@3 p.drill -> Coach.drill",
-      // The parser names a member path whole; the line scan by its last two names.
-      `Team.b@10 ${reader === "antlr" ? "this." : ""}coach_.drill -> Coach.drill`,
+      // A three-name field path (`this->coach_->drill`) is named whole on both readers.
+      "Team.b@10 this.coach_.drill -> Coach.drill",
       "Team.b@11 physio_.drill -> Physio.drill",
       "Team.b@7 local.drill -> Coach.drill",
       "Team.b@9 sp.drill -> Physio.drill",

@@ -28,7 +28,7 @@ describe("C++ edge cases: contextual keywords as names", () => {
   final.play(override);
 }
 `;
-    expect(read(source)).toEqual({ errors: 0, functions: [["host", ["Garage.OverrideCar", "findCar", "override.park", "final.play"]]] });
+    expect(read(source)).toEqual({ errors: 0, functions: [["host", ["Garage.OverrideCar", "findCar", "Club", "override.park", "final.play"]]] });
   });
 
   it("still takes them as specifiers after a declarator, a trailing return type and a class's name", () => {
@@ -142,7 +142,7 @@ void load() {
   Result data(Status::Won, Lazy(false));
 }
 `;
-    expect(read(source)).toEqual({ errors: 0, functions: [["load", ["CAR_IF_CONSTEXPR", "one", "two", "Lazy"]]] });
+    expect(read(source)).toEqual({ errors: 0, functions: [["load", ["CAR_IF_CONSTEXPR", "one", "two", "Result", "Lazy"]]] });
   });
 });
 
