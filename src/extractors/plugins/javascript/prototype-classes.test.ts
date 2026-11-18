@@ -106,3 +106,73 @@ Cart.prototype.start = function () { return 2; };
     expect(links).toEqual(["c.start -> Vehicle.start", "t.start -> Vehicle.start"]);
   });
 });
+
+describe("Ctor['prototype'] = { … } and Object.defineProperty(Ctor.prototype, …)", () => {
+  it("reads bracket prototype assignment into the constructor's class, never a namesake decoy", async () => {
+    const SRC = `function Car() {}
+Car['prototype'] = {
+  park: function (spot) { return this.wash(spot); },
+  wash(spot) { return spot; },
+};
+`;
+    const { classes } = await read(SRC);
+    expect(classes.map((c) => `${c.name}: ${c.methods.map((m) => m.name).join(",")}`)).toEqual(["Car: park,wash"]);
+
+    const car = createEmptyAnalysis("src/car.js", "javascript") as FileAnalysis;
+    Object.assign(car, await read(SRC));
+    const decoy = createEmptyAnalysis("decoy/car.js", "javascript") as FileAnalysis;
+    Object.assign(decoy, await read(`function Car() {}
+Car.prototype.park = function () { return "away"; };
+`));
+    const main = createEmptyAnalysis("src/main.js", "javascript") as FileAnalysis;
+    main.imports = [{ source: "./car", specifiers: ["Car"], isDefault: true, isNamespace: false, isType: false, line: 1 }];
+    main.functions = [{
+      name: "run", params: [], returnType: null, isAsync: false, isExported: false, decorators: [], line: 3, endLine: 6,
+      localTypes: [{ name: "c", type: "Car" }],
+      calls: [{ name: "c.park", kind: "internal", target: null, line: 5 }],
+    }];
+    const links = buildSymbolLinks([car, decoy, main])
+      .filter((l) => l.sourceSymbol === "run" && l.callName === "c.park")
+      .map((l) => `${l.targetFile}::${l.targetSymbol}`);
+    expect(links).toEqual(["src/car.js::Car.park"]);
+  });
+
+  it("reads Object.defineProperty on a constructor prototype into the class, never a namesake decoy", async () => {
+    const SRC = `function Car() {}
+function park(spot) { return this.wash(spot); }
+function wash(spot) { return spot; }
+Object.defineProperty(Car.prototype, "park", { value: park });
+Object.defineProperty(Car.prototype, "wash", { value: wash });
+`;
+    const { classes } = await read(SRC);
+    expect(classes.map((c) => `${c.name}: ${c.methods.map((m) => m.name).join(",")}`)).toEqual(["Car: park,wash"]);
+
+    const car = createEmptyAnalysis("src/car.js", "javascript") as FileAnalysis;
+    Object.assign(car, await read(SRC));
+    const decoy = createEmptyAnalysis("decoy/car.js", "javascript") as FileAnalysis;
+    Object.assign(decoy, await read(`function Car() {}
+Car.prototype.park = function () { return "away"; };
+`));
+    const main = createEmptyAnalysis("src/main.js", "javascript") as FileAnalysis;
+    main.imports = [{ source: "./car", specifiers: ["Car"], isDefault: true, isNamespace: false, isType: false, line: 1 }];
+    main.functions = [{
+      name: "run", params: [], returnType: null, isAsync: false, isExported: false, decorators: [], line: 3, endLine: 6,
+      localTypes: [{ name: "c", type: "Car" }],
+      calls: [{ name: "c.park", kind: "internal", target: null, line: 5 }],
+    }];
+    const links = buildSymbolLinks([car, decoy, main])
+      .filter((l) => l.sourceSymbol === "run" && l.callName === "c.park")
+      .map((l) => `${l.targetFile}::${l.targetSymbol}`);
+    expect(links).toEqual(["src/car.js::Car.park"]);
+  });
+
+  it("ignores Object.defineProperty when Object is a shadowed parameter", async () => {
+    const SRC = `function Car() {}
+function shadowObject(Object) {
+  Object.defineProperty(Car.prototype, "park", { value: function () { return 1; } });
+}
+`;
+    const { classes } = await read(SRC);
+    expect(classes.filter((c) => c.name === "Car").flatMap((c) => c.methods.map((m) => m.name))).toEqual([]);
+  });
+});
