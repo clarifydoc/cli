@@ -26,8 +26,9 @@ import type { ClassInfo, EntityRelation, FileAnalysis, FunctionInfo, Language, P
  *     SQLAlchemy `backref` inverse side). We capture the owning side and record
  *     the inverse field name (`inverseField`) for project-level correlation,
  *     but do not synthesize a separate reverse `EntityRelation`.
- *   - pydantic `BaseModel`, `dataclass`/attrs, and plain classes are NOT
- *     entities — a genuine ORM marker is required.
+ *   - pydantic `BaseModel`, `dataclass`/attrs, plain classes, and SQLModel
+ *     classes without `table=True` (read/write schemas) are NOT entities — a
+ *     nested `league: LeagueRead` field on a schema is never a relation.
  *   - Inner `Meta` classes, hybrid_property / synonym computed fields, and
  *     per-column constraint flags (unique=, db_index=, cascade=, lazy=,
  *     viewonly=) are not surfaced.
@@ -108,7 +109,7 @@ export class PythonEntityExtractor extends EntityExtractor {
             this.extractDjango(cls, members, properties, classRelations, targets, ambiguous);
             break;
           case "sqlalchemy":
-            this.extractSqlAlchemy(cls, members, properties, classRelations, targets);
+            this.extractSqlAlchemy(cls, members, properties, classRelations, targets, declLine);
             break;
           case "pony-orm":
             this.extractPony(cls, members, properties, classRelations, targets);
@@ -191,6 +192,16 @@ export class PythonEntityExtractor extends EntityExtractor {
     // Flask-SQLAlchemy: `class User(db.Model)` with `db.Column(...)` fields.
     if (/\bdb\.Model\b/.test(base) || /=\s*(?:db|sa)\.Column\s*\(/.test(bodyText)) {
       return { id: "sqlalchemy" };
+    }
+
+    // SQLModel: only `table=True` (or an explicit `__tablename__`) maps a table.
+    // A bare `class ClubRead(SQLModel):` with nested `league: LeagueRead` is a
+    // serializer-style schema — never an entity, and never a relation source.
+    if (/\bSQLModel\b/.test(base) || /\bSQLModel\b/.test(declLine)) {
+      if (/\btable\s*=\s*True\b/.test(declLine) || /\b__tablename__\s*=/.test(bodyText)) {
+        return { id: "sqlalchemy" };
+      }
+      return null;
     }
 
     // `models.Model` is shared by Django and Tortoise — disambiguate via imports.
@@ -313,23 +324,31 @@ export class PythonEntityExtractor extends EntityExtractor {
     properties: PropertyInfo[],
     relations: EntityRelation[],
     targets: Set<string>,
+    declLine: string,
   ): void {
+    // SQLModel `table=True` classes use Field / Relationship and bare typed
+    // attributes; classic declarative uses Column / mapped_column / relationship.
+    const sqlmodel = /\bSQLModel\b/.test(declLine) && (/\btable\s*=\s*True\b/.test(declLine) || members.some((m) => /^\s*__tablename__\s*=/.test(m)));
     for (const raw of members) {
       // Capture an optional `: <annotation>` and the RHS call separately so we
       // can use the SQLAlchemy 2.0 `Mapped[...]` annotation for cardinality.
-      const m = raw.match(/^\s*([A-Za-z_]\w*)\s*(?::\s*([^=]+?))?\s*=\s*([\s\S]*)$/);
+      // SQLModel also writes bare columns as `name: str` with no `=`.
+      const m = raw.match(/^\s*([A-Za-z_]\w*)\s*(?::\s*([^=]+?))?\s*(?:=\s*([\s\S]*))?$/);
       if (!m) continue;
       const field = m[1]!;
       const annotation = (m[2] ?? "").trim();
-      // `db.Column(db.Integer, db.ForeignKey("users.id"))` (Flask-SQLAlchemy) and
-      // `sa.Column(sa.String)` read as their bare SQLAlchemy names.
-      const rhs = (m[3] ?? "").trim().replace(/\b(?:db|sa|sqlalchemy|orm)\.(?=[A-Za-z_])/g, "");
+      // `db.Column(db.Integer, db.ForeignKey("users.id"))` (Flask-SQLAlchemy),
+      // `sa.Column(sa.String)`, and `sqlmodel.Field` / `Relationship` read as
+      // their bare names.
+      const rhs = (m[3] ?? "").trim().replace(/\b(?:db|sa|sqlalchemy|orm|sqlmodel)\.(?=[A-Za-z_])/g, "");
+      if (!rhs && !annotation) continue;
 
-      // ── relationship(...) ── (classic or 2.0 `Mapped[...] = relationship(...)`)
-      const relM = rhs.match(/^relationship\s*\(([\s\S]*)\)\s*$/);
+      // ── relationship(...) / Relationship(...) ── (classic, 2.0 Mapped, or
+      // SQLModel's serializer-style `league: Optional["League"] = Relationship(...)`)
+      const relM = rhs.match(/^[Rr]elationship\s*\(([\s\S]*)\)\s*$/);
       if (relM) {
         const args = relM[1] ?? "";
-        // Target: positional/`argument=` arg, else from the Mapped[...] annotation.
+        // Target: positional/`argument=` arg, else from the Mapped[...] / list[X] annotation.
         const target = this.firstTarget(args) ?? this.coreType(annotation);
         if (!target) continue;
 
@@ -397,6 +416,38 @@ export class PythonEntityExtractor extends EntityExtractor {
           }
         }
         continue;
+      }
+
+      // ── SQLModel Field(...) ── columns; `foreign_key="league.id"` is many-to-one.
+      const fieldM = rhs.match(/^Field\s*\(([\s\S]*)\)\s*$/);
+      if (fieldM) {
+        const args = fieldM[1] ?? "";
+        const type = this.coreType(annotation);
+        properties.push(this.column(field, type));
+        const fk = this.kwargString(args, "foreign_key");
+        if (fk) {
+          const table = (fk.split(".")[0] ?? "").trim();
+          const target = this.tableToEntity(table);
+          if (target) {
+            relations.push(
+              this.relation(cls.name, field, target, "many-to-one", {
+                foreignKey: field,
+                optional: /\bdefault\s*=\s*None\b/.test(args) || /^Optional\b/.test(annotation) || /\|\s*None\b/.test(annotation),
+                orm: "sqlalchemy",
+                confidence: "INFERRED",
+              }),
+            );
+            targets.add(target);
+          }
+        }
+        continue;
+      }
+
+      // SQLModel bare column: `name: str` (no call). A nested schema-typed
+      // annotation without Relationship is the decoy — never a relation.
+      if (sqlmodel && annotation && !rhs) {
+        const type = this.coreType(annotation);
+        if (type && this.isScalarType(type)) properties.push(this.column(field, type));
       }
     }
   }
@@ -797,12 +848,16 @@ export class PythonEntityExtractor extends EntityExtractor {
     );
   }
 
-  /** The entities this class's `ForeignKey("clubs.id")` columns point at. */
+  /** The entities this class's `ForeignKey("clubs.id")` / `foreign_key=` columns point at. */
   private fkTargets(members: string[]): Set<string> {
     const out = new Set<string>();
     for (const m of members) {
       for (const fk of m.matchAll(/ForeignKey\s*\(\s*["']([^"']+)["']/g)) {
         const t = this.tableToEntity((fk[1]!.split(".").slice(0, -1).pop() ?? fk[1]!));
+        if (t) out.add(t);
+      }
+      for (const fk of m.matchAll(/foreign_key\s*=\s*["']([^"']+)["']/g)) {
+        const t = this.tableToEntity((fk[1]!.split(".")[0] ?? "").trim());
         if (t) out.add(t);
       }
     }

@@ -25,6 +25,44 @@ async function analyze(src: string, rel = "app/models.py"): Promise<FileAnalysis
 
 const entities = (a: FileAnalysis) => a.classes.filter((c) => c.decorators?.includes("entity")).map((c) => c.name);
 
+describe("Python entities — SQLModel Relationship (nested serializer-style)", () => {
+  it("reads table=True Relationship fields as relations; nested schema fields stay out", async () => {
+    const a = await analyze(`from typing import Optional
+from sqlmodel import Field, Relationship, SQLModel
+
+class League(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    clubs: list["Club"] = Relationship(back_populates="league")
+
+class Club(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    league_id: Optional[int] = Field(default=None, foreign_key="league.id")
+    league: Optional["League"] = Relationship(back_populates="clubs")
+
+# Decoy: same nested field shape on a non-table SQLModel schema — not an entity,
+# and league: LeagueRead must not become a ClubRead -> LeagueRead relation.
+class LeagueRead(SQLModel):
+    id: int
+    name: str
+
+class ClubRead(SQLModel):
+    id: int
+    name: str
+    league: Optional[LeagueRead] = None
+`);
+    expect(entities(a).sort()).toEqual(["Club", "League"]);
+    const rels = (a.entityRelations ?? []).map((r) => `${r.fromEntity}.${r.fromField} -> ${r.toEntity} (${r.cardinality})`);
+    expect(rels).toEqual(expect.arrayContaining([
+      "Club.league -> League (many-to-one)",
+      "League.clubs -> Club (one-to-many)",
+    ]));
+    expect(rels.some((r) => r.includes("ClubRead") || r.includes("LeagueRead"))).toBe(false);
+    expect(rels.filter((r) => r.startsWith("Club.league_id")).length).toBeLessThanOrEqual(1);
+  });
+});
+
 describe("Python entities — SQLAlchemy bases and Flask-SQLAlchemy", () => {
   it("does not take the declarative base for an entity", async () => {
     const a = await analyze(`from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
