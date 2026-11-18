@@ -19,6 +19,7 @@ import {
   type CellFacts,
   type TemplateStatement,
 } from "./reactive-cells.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /**
  * Watchers of state a store holds. A component reads a store through the instance its factory hands it
@@ -84,7 +85,7 @@ function vuexGetterKey(store: Node): string | null {
 
 /** The file declares `name` itself: a function, or a variable. */
 function declaresName(text: string, name: string): boolean {
-  const id = name.replace(/\$/g, "\\$&");
+  const id = escapeRegex(name);
   return new RegExp(`(?:\\bfunction\\*?\\s+${id}\\b|\\b(?:const|let|var)\\s+${id}(?![\\w$]))`).test(text);
 }
 

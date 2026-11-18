@@ -1,5 +1,6 @@
 import type { Node } from "web-tree-sitter";
 import { literalString, stripQuotes } from "../../shared/node-helpers.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /**
  * A DynamoDB table access: SDK v2's DocumentClient (`docClient.get({ TableName, Key }).promise()`),
@@ -37,7 +38,7 @@ function tableOf(value: Node | null, source: string): Pick<DynamoAccess, "table"
   if (env) return { env: env[1] ?? env[2]! };
   if (value.type === "identifier") {
     const raw = value.text;
-    const name = raw.replace(/[$]/g, "\\$&");
+    const name = escapeRegex(raw);
     // One declaration only: the scan is not scope-aware, so a name declared twice names nothing.
     const decls = [...source.matchAll(new RegExp(`(?:const|let|var)\\s+${name}\\s*(?::[^=]+)?=\\s*([^;\\n]+)`, "g"))];
     const decl = decls.length === 1 ? decls[0]![1]!.trim() : undefined;

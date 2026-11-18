@@ -7,6 +7,7 @@
  * statement with comments and strings blanked; nothing is resolved here, a name is stated as written.
  */
 import type { CallInfo, ClassInfo, FileAnalysis, FunctionInfo, ValueCell, ValueFlowFact } from "../../../types/analysis.js";
+import { stripTypeArguments } from "./path-utils.js";
 
 /** The cell name core reads as the file's own module binding named by the fact's `member` (`MODULE_CELL` in core/value-flow.ts; the link tests here fail if the two drift). */
 const MODULE_CELL = "<module>";
@@ -253,32 +254,107 @@ function headLength(t: string): number {
   }
 }
 
-const FP_DECL = /^((?:[\w:<>,*&\s]|\([^()]*\))*?)\(\s*[*^]\s*([A-Za-z_]\w*)\s*(\[[^\]]*\])?\s*\)\s*\([^()]*(?:\([^()]*\)[^()]*)*\)\s*(?:=\s*([\s\S]+))?$/;
-const DECL = /^((?:[A-Za-z_][\w:]*(?:\s*<[^;=]*?>)?[\s*&]+)+?)([A-Za-z_]\w*)\s*((?:\[[^\]]*\]\s*)*)(?:=(?!=)\s*([\s\S]+)|(\{[\s\S]*\})|(\([\s\S]*\)))?$/;
-
 /** A statement that declares one name: `void (*fp)(int) = save`, `handler_t hs[] = { a, b }`, `std::function<void()> f = g`. */
 function parseDecl(t: string, ctorForm = false): Decl | null {
   const text = t.trim();
   if (text === "") return null;
   const first = /^[A-Za-z_]\w*/.exec(text)?.[0];
   if (!first || NOT_A_TYPE.has(first)) return null;
-  const fp = FP_DECL.exec(text);
-  if (fp && /^[\w:<>,*&\s]*$/.test(fp[1]!) && fp[1]!.trim() !== "") return { name: fp[2]!, type: fp[1]!.trim(), fp: true, array: !!fp[3], init: fp[4]?.trim() ?? null, brace: null };
-  const m = DECL.exec(text);
-  if (!m) return null;
-  const type = m[1]!.trim();
+
+  // Function pointer: `T (*name)(args)` / `T (*name[])(args)` — prefix has no parentheses (linear scan).
+  const fpHead = /\(\s*[*^]\s*([A-Za-z_]\w*)\s*(\[[^\]]*\])?\s*\)\s*\(/.exec(text);
+  if (fpHead && fpHead.index !== undefined) {
+    const prefix = text.slice(0, fpHead.index);
+    if (/^[\w:<>,*&\s]+$/.test(prefix) && prefix.trim() !== "") {
+      const argsOpen = fpHead.index + fpHead[0].length - 1;
+      const argsClose = matching(text, argsOpen, text.length);
+      if (argsClose >= 0) {
+        const rest = text.slice(argsClose + 1).trim();
+        const init = rest.startsWith("=") ? rest.slice(1).trim() || null : null;
+        return { name: fpHead[1]!, type: prefix.trim(), fp: true, array: !!fpHead[2], init, brace: null };
+      }
+    }
+  }
+
+  // Ordinary declaration: split off `=…` / `{…}` / `(…)` at top level (angles nest), then read `type name[]`.
+  let headEnd = text.length;
+  let init: string | null = null;
+  let brace: string | null = null;
+  let parenInit: string | null = null;
+  let depth = 0;
+  let angle = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (c === '"' || c === "'") {
+      for (i++; i < text.length && text[i] !== c; i++) if (text[i] === "\\") i++;
+      continue;
+    }
+    if (c === "<") angle++;
+    else if (c === ">" && angle > 0) angle--;
+    else if (angle > 0) continue;
+    else if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth = Math.max(0, depth - 1);
+    else if (depth === 0 && c === "=" && text[i + 1] !== "=") {
+      headEnd = i;
+      init = text.slice(i + 1).trim();
+      break;
+    } else if (depth === 0 && c === "{") {
+      headEnd = i;
+      brace = text.slice(i).trim();
+      break;
+    } else if (depth === 0 && c === "(") {
+      headEnd = i;
+      parenInit = text.slice(i).trim();
+      break;
+    }
+  }
+  const head = text.slice(0, headEnd).trim();
+  // `c->on_sign = save_club` / `c.on_sign = …` is an assignment, not a declaration (the old type
+  // pattern required `*&`/space before the name, so a `->` / `.` head never matched).
+  if (memberAccessHead(head)) return null;
+  const decl = /^([\s\S]*?)([A-Za-z_]\w*)\s*((?:\[[^\[\]]*\]\s*)*)$/.exec(head);
+  if (!decl || decl[1]!.trim() === "") return null;
+  const type = decl[1]!.trim();
   // `struct Club;`, `class Club`: a forward declaration names a type, it declares no variable.
   if (/^(?:struct|class|union|enum|typename)$/.test(type)) return null;
+  // A type ends with a space, `*` or `&` (as the previous regex required), never a bare `TypeName`.
+  if (!/[\s*&]$/.test(decl[1]!)) return null;
   // `Club c(3)` constructs; at file scope `int f(int)` declares a function.
-  if (m[6] !== undefined && !ctorForm) return null;
+  if (parenInit !== null && !ctorForm) return null;
   const words = type.split(/[\s*&]+/).filter(Boolean);
   if (words.some((w) => NOT_A_TYPE.has(w))) return null;
-  return { name: m[2]!, type, fp: false, array: (m[3] ?? "").includes("["), init: m[4]?.trim() ?? null, brace: m[5]?.trim() ?? null };
+  return {
+    name: decl[2]!,
+    type,
+    fp: false,
+    array: (decl[3] ?? "").includes("["),
+    // Ctor args `Club c(3)` are not an initializer expression (same as before).
+    init: parenInit !== null ? null : init,
+    brace,
+  };
+}
+
+/** Whether `head` names a member through `->` or `.` outside brackets (an assignment target, not a type). */
+function memberAccessHead(head: string): boolean {
+  let depth = 0;
+  let angle = 0;
+  for (let i = 0; i < head.length; i++) {
+    const c = head[i]!;
+    if (c === "(" || c === "[") depth++;
+    else if (c === ")" || c === "]") depth = Math.max(0, depth - 1);
+    else if (c === "<") angle++;
+    else if (c === ">" && angle > 0) angle--;
+    else if (depth === 0 && angle === 0) {
+      if (c === "-" && head[i + 1] === ">") return true;
+      if (c === "." && head[i - 1] !== "." && head[i + 1] !== ".") return true;
+    }
+  }
+  return false;
 }
 
 /** The struct or class name a declaration's type names, without storage words, pointers and template arguments. */
 function typeKey(type: string): string | null {
-  const text = type.replace(STORAGE, " ").replace(/<[^<>]*(?:<[^<>]*>[^<>]*)*>/g, "").replace(/[*&]/g, " ").replace(/\s+/g, " ").trim();
+  const text = stripTypeArguments(type.replace(STORAGE, " ")).replace(/[*&]/g, " ").replace(/\s+/g, " ").trim();
   const words = text.split(" ").filter((w) => !/^(?:unsigned|signed|long|short|int|char)$/.test(w));
   if (words.length !== 1 || !/^[A-Za-z_][\w:]*$/.test(words[0]!)) return null;
   const name = words[0]!.replace(/^::/, "");

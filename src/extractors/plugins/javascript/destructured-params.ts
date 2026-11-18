@@ -3,6 +3,7 @@
 // gives them, so a body's `table.nextPage()` is typed and a `${id}` hole is a placeholder like any parameter's.
 import type { Node } from "web-tree-sitter";
 import type { FunctionInfo, ParamInfo } from "../../functions-classes/base.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
 
@@ -249,7 +250,7 @@ export function destructuredParamTypes(params: readonly ParamInfo[], namedTypes:
     let anchored = false;
     for (const { binding, path } of patternPaths(p.name)) {
       if (out.some((l) => l.name === binding)) continue;
-      if (body && new RegExp(`\\b(?:const|let|var)\\s+${binding.replace(/\$/g, "\\$")}\\b`).test(body.text)) continue;
+      if (body && new RegExp(`\\b(?:const|let|var)\\s+${escapeRegex(binding)}\\b`).test(body.text)) continue;
       // Walk the path through the object types the annotation states.
       let level: ReadonlyMap<string, string> | undefined = members;
       let memberType: string | undefined;

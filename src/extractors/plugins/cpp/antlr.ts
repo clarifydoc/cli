@@ -51,6 +51,7 @@ import { namesTemplateParameter } from "./classes.js";
 import { cppOverloadTypeKey } from "./arg-kinds.js";
 import { ITERATOR_INIT } from "../shared/c-family-locals.js";
 import { cppCollectionElement, cppCollectionElementOf, cppMapTypes } from "./collection-element.js";
+import { stripTypeArguments } from "../shared/path-utils.js";
 
 /** How many calls deep a chain is named. */
 const CHAIN_DEPTH = 8;
@@ -600,7 +601,7 @@ function withoutTemplateTypes(d: Declared, templates: string[] | undefined): Dec
 
 /** The class a type spelled by a name stands for, its last name (`const league::Club&` → `Club`); null when it is no plain name. */
 function valueTypeName(seq: string): string | null {
-  const words = seq.replace(/\b(?:const|volatile|static|register|mutable|constexpr)\b/g, " ").replace(/&/g, " ").replace(/<.*>/s, "").trim();
+  const words = stripTypeArguments(seq.replace(/\b(?:const|volatile|static|register|mutable|constexpr)\b/g, " ").replace(/&/g, " ")).trim();
   // A library's container or string is no project class, whatever a project class of the same last name declares.
   if (!/^[A-Za-z_]\w*(?:\s*::\s*[A-Za-z_]\w*)*$/.test(words) || /^(?:std|boost|absl)\s*::/.test(words)) return null;
   return words.split("::").at(-1)!.trim();

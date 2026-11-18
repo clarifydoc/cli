@@ -1,5 +1,6 @@
 import type { Node } from "web-tree-sitter";
 import { requiredSource } from "./imports-exports.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /**
  * `(await import("./x"))`, `await import("./x")`, `import("./x")`, `require("./x")` and `await loadClub()` where
@@ -169,7 +170,7 @@ export function isMemberLoaderBody(importCall: Node): boolean {
   const holder = fn.type === "function_declaration" ? fn : fn.parent?.type === "variable_declarator" ? fn.parent : null;
   const name = holder?.childForFieldName("name");
   if (name?.type !== "identifier") return false;
-  const id = name.text.replace(/[$]/g, "\\$");
+  const id = escapeRegex(name.text);
   const text = treeText(importCall.tree);
   // `(await load()).default` reads the module's default export: the loader is not member-only.
   if (new RegExp(`await\\s+${id}\\s*\\(\\s*\\)\\s*\\)\\s*\\.default\\b`).test(text)) return false;
@@ -179,7 +180,7 @@ export function isMemberLoaderBody(importCall: Node): boolean {
   const mention = new RegExp(`(?<![\\w$.])${id}(?![\\w$])`, "g");
   for (const m of text.matchAll(mention)) {
     const before = text.slice(Math.max(0, m.index - 12), m.index);
-    const after = text.slice(m.index + id.length);
+    const after = text.slice(m.index + name.text.length);
     if (/(?:const|let|var|function)\s+$/.test(before)) continue;
     if (/^\s*\(\s*\)/.test(after) && (/await\s+$/.test(before) || /^\s*\(\s*\)\s*\.then\b/.test(after))) continue;
     return false;

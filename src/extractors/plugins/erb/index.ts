@@ -102,7 +102,8 @@ function postsToOwnPage(helper: string, args: string, urlArg: string | undefined
   const written = args.replace(/\s*(?:do\b|\{)\s*(?:\|[^|]*\|)?[\s\S]*$/, "").replace(/^\s*\(|\)\s*$/g, "").trim();
   if (/\b(?:url|model|action|controller|builder):/.test(written)) return false;
   // Only keyword options: a positional argument, a splat (`**opts`) or a variable may name the target.
-  if (written !== "" && (written.includes("**") || !/^(?:[a-z_]+:\s*[^,]+,?\s*)+$/.test(written))) return false;
+  // One `key: value` then `, key: value` repeats — commas required between pairs (no `,?` under `+`).
+  if (written !== "" && (written.includes("**") || !/^[a-z_]+:\s*[^,]+(?:,\s*[a-z_]+:\s*[^,]+)*$/.test(written))) return false;
   const verb = METHOD_OPTION_RE.exec(written)?.[1];
   return verb === undefined || verb.toLowerCase() === "post";
 }

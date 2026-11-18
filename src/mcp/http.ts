@@ -224,7 +224,8 @@ export async function serveHttp(server: McpServer, options: HttpOptions = {}): P
     }
     if (token) {
       const auth = req.headers.authorization ?? "";
-      const given = /^Bearer\s+(.+)$/i.exec(auth)?.[1];
+      // One non-space token after `Bearer` — no `.+` that backtracks against `$` on long Authorization headers.
+      const given = /^Bearer\s+(\S+)/i.exec(auth)?.[1];
       if (!tokenMatches(given, token)) {
         return send(res, 401, { error: "unauthorized" }, { "www-authenticate": "Bearer" });
       }

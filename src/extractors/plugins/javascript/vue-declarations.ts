@@ -143,6 +143,30 @@ export function readVueDeclarations(script: string): VueDeclarations {
   return out;
 }
 
+/** Index past leading whitespace and line/block comments; a linear scan (no nested comment quantifier). */
+function afterTrivia(s: string): number {
+  let i = 0;
+  while (i < s.length) {
+    const c = s.charCodeAt(i);
+    if (c <= 32) {
+      i++;
+      continue;
+    }
+    if (c === 47 /* / */ && s.charCodeAt(i + 1) === 47 /* / */) {
+      const n = s.indexOf("\n", i + 2);
+      i = n < 0 ? s.length : n + 1;
+      continue;
+    }
+    if (c === 47 && s.charCodeAt(i + 1) === 42 /* * */) {
+      const n = s.indexOf("*/", i + 2);
+      i = n < 0 ? s.length : n + 2;
+      continue;
+    }
+    break;
+  }
+  return i;
+}
+
 /** The literal `name` of the default-exported options object (`export default { name: 'ClubBadge' }`, `defineComponent({ … })`, `Vue.extend({ … })`), at its top level only. */
 function optionsName(script: string): string | undefined {
   const m = /export\s+default\s+(?:(?:defineComponent|Vue\.extend)\s*\(\s*)?\{/.exec(script);
@@ -151,7 +175,7 @@ function optionsName(script: string): string | undefined {
   const end = closeOf(script, open);
   if (end < 0) return undefined;
   for (const piece of topLevel(script.slice(open + 1, end - 1))) {
-    const hit = /^(?:\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)*name\s*:\s*(['"])([\w-]+)\1\s*$/.exec(piece);
+    const hit = /^name\s*:\s*(['"])([\w-]+)\1\s*$/.exec(piece.slice(afterTrivia(piece)));
     if (hit) return hit[2];
   }
   return undefined;

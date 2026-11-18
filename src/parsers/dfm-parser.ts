@@ -586,12 +586,51 @@ function constraintsOf(props: Map<string, string>): ScreenConstraints | null {
   return Object.keys(out).length ? out : null;
 }
 
-/** A Pascal string literal as written in a form: quoted parts, `''` for a quote, `#229` / `#$E5` for a character. */
-const PASCAL_STRING_RE = /^(?:'(?:[^']|'')*'|#\$[0-9a-fA-F]+|#\d+)+$/;
+/** Whether `s` is a Pascal string literal (quoted parts, `''`, `#229` / `#$E5`); a linear scan, no nested quantifier. */
+function isPascalStringLiteral(s: string): boolean {
+  let i = 0;
+  let saw = false;
+  while (i < s.length) {
+    if (s[i] === "'") {
+      saw = true;
+      i++;
+      for (;;) {
+        if (i >= s.length) return false;
+        if (s[i] === "'") {
+          if (s[i + 1] === "'") {
+            i += 2;
+            continue;
+          }
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    if (s[i] === "#") {
+      saw = true;
+      i++;
+      if (s[i] === "$") {
+        i++;
+        const start = i;
+        while (i < s.length && /[0-9a-fA-F]/.test(s[i]!)) i++;
+        if (i === start) return false;
+      } else {
+        const start = i;
+        while (i < s.length && s[i]! >= "0" && s[i]! <= "9") i++;
+        if (i === start) return false;
+      }
+      continue;
+    }
+    return false;
+  }
+  return saw;
+}
 
 /** A property's value as text: a Pascal string literal decoded, anything else (an identifier, a number) as written. */
 function stripQuotes(s: string): string {
-  if (!PASCAL_STRING_RE.test(s)) return s.replace(/^'(.*)'$/, "$1");
+  if (!isPascalStringLiteral(s)) return s.replace(/^'(.*)'$/, "$1");
   return s.replace(/'((?:[^']|'')*)'|#\$([0-9a-fA-F]+)|#(\d+)/g, (_m, quoted: string | undefined, hex: string | undefined, dec: string | undefined) =>
     quoted !== undefined ? quoted.replace(/''/g, "'") : String.fromCodePoint(parseInt(hex ?? dec!, hex ? 16 : 10)),
   );

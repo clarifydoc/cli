@@ -7,6 +7,7 @@ import { innermost, reactiveCellsOf } from "./reactive-cells.js";
 import { enclosingFunctionNode } from "../../shared/node-helpers.js";
 import { destructuredProps } from "../../shared/destructuring.js";
 import { autoImportedComponents, globalComponentFiles, spansOf, tagKey, type SymbolSpan } from "./dispatch.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /**
  * How a prop's value moves between components, from both sides (`FileAnalysis.propFlows`):
@@ -653,7 +654,7 @@ export class JsContextTypeResolver implements DispatchResolver {
         }
         // Only the markup calls it (`@click="league.relegate()"`).
         if (inFunctions) continue;
-        const inMarkup = new RegExp(`^(?:void\\s+|await\\s+)?${v.name.replace(/\$/g, "\\$")}\\.([A-Za-z_$][\\w$]*)\\s*\\(`);
+        const inMarkup = new RegExp(`^(?:void\\s+|await\\s+)?${escapeRegex(v.name)}\\.([A-Za-z_$][\\w$]*)\\s*\\(`);
         for (const el of a.interactiveElements ?? []) {
           const m = el.handler ? inMarkup.exec(el.handler.trim()) : null;
           if (m) link("<template>", el.line, `${v.name}.${m[1]}`, m[1]!);

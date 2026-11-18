@@ -1,6 +1,7 @@
 import type { Node } from "web-tree-sitter";
 import { stripQuotes } from "../../shared/node-helpers.js";
 import { CONVEX_PREFIX } from "./routes/convex.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /**
  * The Convex side of the data-source extractor (the caller gates on the file
@@ -93,7 +94,7 @@ function idTable(call: Node, idArg: Node): string | null {
   const name = idArg.type === "member_expression" ? idArg.childForFieldName("property")?.text : idArg.type === "identifier" ? idArg.text : null;
   if (!name || !/^[\w$]+$/.test(name)) return null;
   const text = decl.text;
-  const esc = name.replace(/\$/g, "\\$");
+  const esc = escapeRegex(name);
   const validator = new RegExp(`\\b${esc}\\s*:\\s*v\\s*\\.\\s*(?:optional\\s*\\(\\s*)?id\\s*\\(\\s*["'](\\w+)["']`).exec(text)?.[1];
   if (validator) return validator;
   const typed = new RegExp(`\\b${esc}\\s*\\??\\s*:\\s*Id\\s*<\\s*["'](\\w+)["']\\s*>`).exec(text)?.[1];

@@ -1,6 +1,7 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 import { readSupabaseTables } from "./supabase-types.js";
 import type { ClassInfo, EntityRelation, Language, PropertyInfo } from "../../../types/analysis.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /**
  * Decorator name → cardinality map for TypeORM / MikroORM relation decorators.
@@ -136,7 +137,7 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
           targets.add(id);
         }
       }
-      const declared = ctx.lines.findIndex((l) => new RegExp(`\\b${name.replace(/\$/g, "\\$")}\\b["']?\\s*:\\s*defineTable`).test(l));
+      const declared = ctx.lines.findIndex((l) => new RegExp(`\\b${escapeRegex(name)}\\b["']?\\s*:\\s*defineTable`).test(l));
       entities.push(this.entity({ name, orm: "convex", properties, implementsList: [...targets], line: declared >= 0 ? declared + 1 : 1 }));
     }
   }

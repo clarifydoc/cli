@@ -1,5 +1,6 @@
 import type { TypeAliasInfo } from "../../../types/analysis.js";
 import { blankStringLiterals } from "./regex-base.js";
+import { stripTypeArguments } from "./path-utils.js";
 
 /** `using Ride = Car;`, `using CarPtr = std::shared_ptr<Car>;` (not a `using namespace` or `using a::b;`). */
 const USING_ALIAS = /^\s*using\s+([A-Za-z_]\w*)\s*(?:\[\[[^\]]*\]\]\s*)?=\s*(?:typename\s+)?([^;{}]+);/;
@@ -17,7 +18,7 @@ const NAMESPACE_HEAD = /^\s*(?:inline\s+)?namespace\b|^\s*extern\s+"C(?:\+\+)?"\
  */
 function pointeeOf(type: string): string {
   const m = /^((?:(?:const|volatile)\s+)*[A-Za-z_][\w:]*(?:\s*<.*>)?(?:\s*::\s*[A-Za-z_]\w*)*)\s*(?:(?:const|volatile)\s*)*(?:\*|&&?)\s*(?:(?:const|volatile)\s*)*$/.exec(type);
-  if (!m || /[*&]/.test(m[1]!.replace(/<.*>/, ""))) return type;
+  if (!m || /[*&]/.test(stripTypeArguments(m[1]!))) return type;
   return m[1]!.replace(/^(?:(?:const|volatile)\s+)+/, "");
 }
 

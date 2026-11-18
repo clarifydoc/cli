@@ -1,5 +1,6 @@
 import type { FileAnalysis, Language, RouteFact, RouteInfo } from "../../../types/analysis.js";
 import type { RouteResolver } from "../../route-resolvers/base.js";
+import { escapeRegex } from "./path-utils.js";
 
 /**
  * Thrift servers whose handler class the generated code never names. Java, Kotlin and C# state it
@@ -35,7 +36,7 @@ type Dialect = "go" | "python" | "js";
 
 /** `x := &clubHandler{}`, `x := NewClubHandler()` / `x = ClubHandler()` / `const x = new ClubHandler()` → the type name. */
 function typeOfVariable(text: string, name: string, dialect: Dialect): string | null {
-  const id = name.replace(/\$/g, "\\$");
+  const id = escapeRegex(name);
   const re =
     dialect === "go" ? new RegExp(String.raw`\b${id}\s*(?::=|=(?!=))\s*&?(?:[\w]+\.)?(?:New(?=[A-Z]\w*\s*\()|(?!New[A-Z]\w*\s*\())(\w+)\s*[({]`)
     : dialect === "python" ? new RegExp(String.raw`^\s*${id}\s*=(?!=)\s*(?:[\w]+\.)*(\w+)\s*\(`, "m")
@@ -134,7 +135,7 @@ export function thriftHandlerFacts(
         continue;
       }
       const ident = /^[\w$]+$/.exec(m[2]!.trim())?.[0];
-      if (ident && new RegExp(String.raw`\b(?:const|let|var)\s+${ident.replace(/\$/g, "\\$")}\s*(?::[^=]+)?=\s*\{`).test(text)) {
+      if (ident && new RegExp(String.raw`\b(?:const|let|var)\s+${escapeRegex(ident)}\s*(?::[^=]+)?=\s*\{`).test(text)) {
         out.push({ kind: THRIFT_HANDLER, line, data: { service: m[1]!, handler: "", holder: ident } satisfies ThriftHandlerFact });
         continue;
       }
