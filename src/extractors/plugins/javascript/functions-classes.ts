@@ -1863,9 +1863,9 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     this.protoMemo = { tree, classes };
     if (!this.prototypes) return classes;
     const root = tree.rootNode;
-    const isFn = (n: Node | null): n is Node =>
-      n?.type === "function_expression" || n?.type === "arrow_function" || n?.type === "function_declaration"
-      || n?.type === "method_definition";
+    const isFn = (n: Node | null | undefined): boolean =>
+      !!n && (n.type === "function_expression" || n.type === "arrow_function" || n.type === "function_declaration"
+        || n.type === "method_definition");
     // Constructors: function declarations and `var X = function` in the file.
     const ctors = new Map<string, Node>();
     const fnDecls = new Map<string, Node>();
@@ -1903,7 +1903,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         if (member?.type === "pair") {
           const key = member.childForFieldName("key");
           const value = member.childForFieldName("value");
-          if (key && (key.type === "property_identifier" || key.type === "identifier") && isFn(value)) add(owner, key.text, value, true);
+          if (key && (key.type === "property_identifier" || key.type === "identifier") && isFn(value)) add(owner, key.text, value!, true);
         } else if (member?.type === "method_definition") {
           const key = member.childForFieldName("name");
           if (key) add(owner, key.text, member, true);
@@ -2015,7 +2015,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         const left = assign?.type === "assignment_expression" ? assign.childForFieldName("left") : null;
         const right = assign?.childForFieldName("right") ?? null;
         const m = left?.type === "member_expression" ? /^this\.([A-Za-z_$][\w$]*)$/.exec(left.text.replace(/\s+/g, "")) : null;
-        if (m && isFn(right)) add(owner, m[1]!, right, false);
+        if (m && isFn(right)) add(owner, m[1]!, right!, false);
       }
     }
     for (const [owner, list] of members) {
