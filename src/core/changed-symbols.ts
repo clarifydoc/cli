@@ -480,9 +480,10 @@ export async function judgeSignatures(
  * cannot read are skipped.
  */
 export async function analyzeWorkingFiles(projectRoot: string, files: readonly string[], contents?: ReadonlyMap<string, string | null>): Promise<Map<string, Spans>> {
-  const [{ analyzeFile }, { getLanguageForFile }, { mkdtemp, rm, mkdir, writeFile }, { tmpdir }, { existsSync }] = await Promise.all([
+  const [{ analyzeFile }, { getLanguageForFile }, { isShebangScriptPlace, shebangScriptAt }, { mkdtemp, rm, mkdir, writeFile }, { tmpdir }, { existsSync }] = await Promise.all([
     import("./file-analyzer.js"),
     import("../parsers/language-map.js"),
+    import("./file-discovery.js"),
     import("fs/promises"),
     import("os"),
     import("fs"),
@@ -491,8 +492,20 @@ export async function analyzeWorkingFiles(projectRoot: string, files: readonly s
   const scratch = await mkdtemp(join(tmpdir(), "clarifydoc-after-"));
   try {
     for (const f of files) {
-      const language = getLanguageForFile(f);
-      if (!language) continue;
+      let language = getLanguageForFile(f);
+      if (!language) {
+        // An extension-less script, by its `#!` line where discovery reads one: the proposed text, else the working tree.
+        if (!isShebangScriptPlace(f)) continue;
+        const proposed = contents?.get(f);
+        const gone = contents?.has(f) ? proposed === null || proposed === undefined : !existsSync(join(projectRoot, f));
+        // Deleted: whatever it held is gone (a file the analysis never read had nothing to lose).
+        if (gone) {
+          out.set(f, { functions: [], classes: [] });
+          continue;
+        }
+        language = shebangScriptAt(projectRoot, f, proposed ?? undefined);
+        if (!language) continue;
+      }
       // Proposed content is parsed from a scratch copy; null proposes deleting the file.
       let absolutePath = join(projectRoot, f);
       if (contents?.has(f)) {

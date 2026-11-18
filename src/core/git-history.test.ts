@@ -284,6 +284,31 @@ describe("isFixCommit", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("counts a fix in an analysed extension-less script, never in an unread extension-less file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rvd-git-fixscript-"));
+    try {
+      git(dir, ["init", "-q"]);
+      const step = (files: Record<string, string>, msg: string) => {
+        for (const [file, body] of Object.entries(files)) {
+          mkdirSync(join(dir, file, ".."), { recursive: true });
+          writeFileSync(join(dir, file), body);
+          git(dir, ["add", file]);
+        }
+        git(dir, ["commit", "-q", "-m", msg, "--author", "a <t@t>"], { GIT_COMMITTER_NAME: "a", GIT_AUTHOR_NAME: "a" });
+      };
+      step({ "bin/serve": "#!/usr/bin/env python3\nkick_off()\n", "LICENSE": "x\n", "tests/test_serve.py": "1\n" }, "feat: serve");
+      // The script alone: a fix in code, though no extension says so — the analysis read it by its `#!` line.
+      step({ "bin/serve": "#!/usr/bin/env python3\nkick_off(1)\n" }, "fix: serve exits cleanly");
+      // An extension-less file the analysis never read, and a test: no fix for anyone.
+      step({ "LICENSE": "y\n", "tests/test_serve.py": "2\n" }, "fix: licence year and a flaky test");
+      const res = (await collectGitHistory(dir, ["bin/serve", "tests/test_serve.py"])) as { churn: FileChurnInfo[] };
+      expect(res.churn.find((c) => c.file === "bin/serve")!.fixes).toBe(1);
+      expect(res.churn.find((c) => c.file === "tests/test_serve.py")!.fixes).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("collectGitHistory on a shallow clone", () => {

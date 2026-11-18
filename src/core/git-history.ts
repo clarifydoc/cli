@@ -166,23 +166,23 @@ export async function collectGitHistory(
   };
   const pairs = new Map<string, number>();
   let commitFiles: string[] = [];
-  // A fix counts when the commit changed code: every path it touched (analysed or not), and the analysed files' tallies.
-  let commitPaths: string[] = [];
+  // A fix counts when the commit changed code: any path it touched (analysed or not), and the analysed files' tallies.
+  let commitCode = false;
   let fixTallies: Array<{ file: string; acc: Acc }> = [];
   // Ages are measured from the newest commit in the window, so the same history always weighs the same.
   let newest: number | undefined;
   const flushCommit = () => {
-    if (fix && commitPaths.some(isCodePath)) {
+    if (fix && commitCode) {
       const at = Date.parse(date);
       const weight = Number.isFinite(at) && newest !== undefined ? 0.5 ** ((newest - at) / 86_400_000 / FIX_HALF_LIFE_DAYS) : 1;
       for (const { file, acc } of fixTallies) {
-        if (!isCodePath(file)) continue;
+        if (!isAnalyzedCode(file)) continue;
         acc.fixes++;
         acc.fixWeight += weight;
         acc.lastFix ??= date;
       }
     }
-    commitPaths = [];
+    commitCode = false;
     fixTallies = [];
     const unique = [...new Set(commitFiles)].sort(byOrdinal);
     commitFiles = [];
@@ -236,12 +236,11 @@ export async function collectGitHistory(
     } else {
       path = follow(path);
     }
-    commitPaths.push(path);
-    if (prefix) {
-      if (!path.startsWith(prefix)) continue;
-      path = path.slice(prefix.length);
-    }
-    const file = canonical.get(path) ?? lower.get(path.toLowerCase());
+    const inProject = !prefix || path.startsWith(prefix);
+    const rel = prefix && inProject ? path.slice(prefix.length) : path;
+    const file = inProject ? canonical.get(rel) ?? lower.get(rel.toLowerCase()) : undefined;
+    // An analysed file has a language whatever its name (an extension-less script, by its `#!` line).
+    if ((file || getLanguageForFile(path)) && isAnalyzedCode(path)) commitCode = true;
     if (!file) continue; // deleted since, or outside the analyzed set
 
     let acc = byFile.get(file);
@@ -308,9 +307,12 @@ export async function collectGitHistory(
 /** A fix older by this many days than the newest commit weighs half as much. */
 const FIX_HALF_LIFE_DAYS = 180;
 
-/** A path a fix in code touched: source a plugin reads, neither a test nor documentation. */
-function isCodePath(path: string): boolean {
-  return !!getLanguageForFile(path) && !isTestFile(path) && !isProsePath(path);
+/**
+ * A path a fix in code touched, once it is known to be source a plugin reads (by extension, by name, or an
+ * analysed extension-less script read by its `#!` line): neither a test nor documentation.
+ */
+function isAnalyzedCode(file: string): boolean {
+  return !isTestFile(file) && !isProsePath(file);
 }
 
 /**

@@ -375,20 +375,30 @@ const SHEBANG_SCRIPT_DIRS: ReadonlySet<string> = new Set(["bin", "script", "scri
 const SHEBANG_SCRIPT_GLOBS = SHEBANG_INTERPRETERS.length > 0 ? ["*", ...[...SHEBANG_SCRIPT_DIRS].map((d) => `**/${d}/*`)] : [];
 
 /**
- * The language discovery reads one extension-less file in, by the same rule as its script walk — where it
- * sits, its name and its `#!` line — or null when discovery would pass it over. For a caller that holds a
- * path rather than a walk (freshness naming a script added since an analysis).
+ * Whether discovery looks for an extension-less script at this path — the root or a script directory, a name
+ * with no dot and nothing credential-like — before reading a byte of it.
  */
-export function shebangScriptAt(root: string, relativePath: string): Language | null {
-  if (SHEBANG_SCRIPT_GLOBS.length === 0) return null;
+export function isShebangScriptPlace(relativePath: string): boolean {
+  if (SHEBANG_SCRIPT_GLOBS.length === 0) return false;
   const slash = relativePath.lastIndexOf("/");
   const name = relativePath.slice(slash + 1);
   if (slash >= 0) {
     const dir = relativePath.slice(0, slash);
-    if (!SHEBANG_SCRIPT_DIRS.has(dir.slice(dir.lastIndexOf("/") + 1))) return null;
+    if (!SHEBANG_SCRIPT_DIRS.has(dir.slice(dir.lastIndexOf("/") + 1))) return false;
   }
-  if (!name || name.includes(".") || SCRIPT_CREDENTIAL_NAME.test(name) || isSensitive(relativePath)) return null;
-  return shebangScriptLanguage(resolve(root, relativePath));
+  return !!name && !name.includes(".") && !SCRIPT_CREDENTIAL_NAME.test(name) && !isSensitive(relativePath);
+}
+
+/**
+ * The language discovery reads one extension-less file in, by the same rule as its script walk — where it
+ * sits, its name and its `#!` line — or null when discovery would pass it over. For a caller that holds a
+ * path rather than a walk (freshness naming a script added since an analysis, the working-tree parse of a
+ * change). `text` judges a proposed version instead of the file on disk.
+ */
+export function shebangScriptAt(root: string, relativePath: string, text?: string): Language | null {
+  if (!isShebangScriptPlace(relativePath)) return null;
+  if (text === undefined) return shebangScriptLanguage(resolve(root, relativePath));
+  return Buffer.byteLength(text) > MAX_SHEBANG_SCRIPT_BYTES ? null : shebangHeadLanguage(text.slice(0, 1024));
 }
 
 /** Names that look like credentials are never admitted as scripts, whatever their first line says. */
@@ -411,16 +421,21 @@ function shebangScriptLanguage(abs: string): Language | null {
     fd = openSync(abs, "r");
     const buf = Buffer.alloc(1024);
     const n = readSync(fd, buf, 0, 1024, 0);
-    if (n < 2 || buf[0] !== 0x23 || buf[1] !== 0x21) return null;
-    const lines = buf.subarray(0, n).toString("utf8").split(/\r?\n/);
-    // A generated script (autoconf's `configure`, a build tool's wrapper) says so in its first lines.
-    if (lines.slice(1, 6).some((l) => /\b(?:generated|auto-?generated)\b/i.test(l))) return null;
-    return getLanguageForShebang(lines[0]!);
+    return shebangHeadLanguage(buf.subarray(0, n).toString("utf8"));
   } catch {
     return null;
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
+}
+
+/** The language a script's first bytes name in its `#!` line, unless its first lines say it is generated. */
+function shebangHeadLanguage(head: string): Language | null {
+  if (!head.startsWith("#!")) return null;
+  const lines = head.split(/\r?\n/);
+  // A generated script (autoconf's `configure`, a build tool's wrapper) says so in its first lines.
+  if (lines.slice(1, 6).some((l) => /\b(?:generated|auto-?generated)\b/i.test(l))) return null;
+  return getLanguageForShebang(lines[0]!);
 }
 
 function readText(path: string): string {

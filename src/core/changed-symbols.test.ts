@@ -244,6 +244,30 @@ describe("what a signature change leaves broken besides its callers", () => {
     expect(signatureChanges(before, half, [], { overrides })[0]!.staleOverrides?.map((o) => o.symbol)).toEqual(["SportsCar.start", "Truck.start"]);
   });
 
+  it("parses an extension-less script by its #! line, where discovery would read one", async () => {
+    const { mkdtemp, mkdir, writeFile, rm } = await import("fs/promises");
+    const { tmpdir } = await import("os");
+    const { join } = await import("path");
+    const { analyzeWorkingFiles } = await import("./changed-symbols.js");
+    const root = await mkdtemp(join(tmpdir(), "clarifydoc-script-"));
+    try {
+      await mkdir(join(root, "bin"), { recursive: true });
+      await mkdir(join(root, "src"), { recursive: true });
+      const script = "#!/usr/bin/env python3\n\ndef kick_off():\n    return 1\n";
+      await writeFile(join(root, "bin/serve"), script);
+      await writeFile(join(root, "bin/README"), "def kick_off():\n    return 1\n"); // no #! line
+      await writeFile(join(root, "src/lineup"), script); // not where discovery reads scripts
+      const names = (m: Map<string, { functions: Array<{ name: string }> }>) =>
+        Object.fromEntries([...m].map(([f, s]) => [f, s.functions.map((fn) => fn.name).filter((n) => n !== "<setup>")]));
+      expect(names(await analyzeWorkingFiles(root, ["bin/serve", "bin/README", "src/lineup"]))).toEqual({ "bin/serve": ["kick_off"] });
+      // A proposed version is judged by its own first line, and a proposed deletion empties the script.
+      const proposed = new Map<string, string | null>([["bin/fixtures", script.replace("kick_off", "fixtures")], ["bin/serve", null]]);
+      expect(names(await analyzeWorkingFiles(root, ["bin/fixtures", "bin/serve"], proposed))).toEqual({ "bin/fixtures": ["fixtures"], "bin/serve": [] });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("skips a deleted file without trying to parse it", async () => {
     const { mkdtemp, rm } = await import("fs/promises");
     const { tmpdir } = await import("os");
