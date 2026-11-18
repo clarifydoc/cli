@@ -371,7 +371,25 @@ export async function discoverFiles(
 }
 
 /** Where an extension-less script is admitted: the root and the usual script directories at any depth. */
-const SHEBANG_SCRIPT_GLOBS = SHEBANG_INTERPRETERS.length > 0 ? ["*", "**/bin/*", "**/script/*", "**/scripts/*"] : [];
+const SHEBANG_SCRIPT_DIRS: ReadonlySet<string> = new Set(["bin", "script", "scripts"]);
+const SHEBANG_SCRIPT_GLOBS = SHEBANG_INTERPRETERS.length > 0 ? ["*", ...[...SHEBANG_SCRIPT_DIRS].map((d) => `**/${d}/*`)] : [];
+
+/**
+ * The language discovery reads one extension-less file in, by the same rule as its script walk — where it
+ * sits, its name and its `#!` line — or null when discovery would pass it over. For a caller that holds a
+ * path rather than a walk (freshness naming a script added since an analysis).
+ */
+export function shebangScriptAt(root: string, relativePath: string): Language | null {
+  if (SHEBANG_SCRIPT_GLOBS.length === 0) return null;
+  const slash = relativePath.lastIndexOf("/");
+  const name = relativePath.slice(slash + 1);
+  if (slash >= 0) {
+    const dir = relativePath.slice(0, slash);
+    if (!SHEBANG_SCRIPT_DIRS.has(dir.slice(dir.lastIndexOf("/") + 1))) return null;
+  }
+  if (!name || name.includes(".") || SCRIPT_CREDENTIAL_NAME.test(name) || isSensitive(relativePath)) return null;
+  return shebangScriptLanguage(resolve(root, relativePath));
+}
 
 /** Names that look like credentials are never admitted as scripts, whatever their first line says. */
 const SCRIPT_CREDENTIAL_NAME = /^id_|key|secret|token|passw|credential|htpasswd/i;

@@ -244,7 +244,8 @@ const FRESHNESS_STAT_CAP = 5000;
  *
  * Added files come from git, not from re-running discovery (most of an
  * analysis): a file git lists, in a directory the analysis covers and a
- * language it reads, written after the manifest was, and not one discovery
+ * language it reads (by extension, or an extension-less script by its `#!`
+ * line where discovery looks for one), written after the manifest was, and not one discovery
  * refuses: a file the analysis read and its plugin refused (`skipped`, however
  * recently touched — a `package.json` is no API spec), or a newer one that the
  * same plugin, the sensitive-name rule or `.clarifydoc-ignore` would refuse.
@@ -295,16 +296,17 @@ export async function assessFreshness(
     const written = listed ? await stat(join(outputDir, MANIFEST_NAME)).then((x) => x.mtimeMs, () => Infinity) : Infinity;
     if (listed && Number.isFinite(written)) {
       const dirs = new Set(keys.map((k) => k.slice(0, k.lastIndexOf("/") + 1)));
-      const refuses = discoveryRefusal(projectRoot);
+      const reads = discoveryReads(projectRoot);
       let stats = 0;
       for (const rel of listed) {
         if (added.length >= ADDED_CAP || stats >= cap) break;
         if (manifest.entries[rel] || manifest.skipped?.[rel] || !dirs.has(rel.slice(0, rel.lastIndexOf("/") + 1))) continue;
+        // No language by extension: an extension-less name may still be a script its `#!` line names.
         const language = getLanguageForFile(rel);
-        if (!language) continue;
+        if (!language && rel.slice(rel.lastIndexOf("/") + 1).includes(".")) continue;
         stats++;
         const m = await stat(join(resolve(projectRoot), rel)).then((x) => x.mtimeMs, () => 0);
-        if (m > written && !(await refuses(rel, language))) added.push(rel);
+        if (m > written && (await reads(rel, language))) added.push(rel);
       }
     }
   }
@@ -324,40 +326,46 @@ export async function assessFreshness(
 const ADDED_CAP = 200;
 
 /**
- * Whether discovery would refuse a file the manifest has never seen: a credential-looking name (never
- * opened), a `.clarifydoc-ignore` match, or its plugin's `preprocess` returning `{ skip }` (a `.json`
- * that is no API spec). Discovery and the registry load on the first candidate only — most checks
- * find none. A plugin that throws refuses nothing: the file is named, as before.
+ * Whether discovery would read a file the manifest has never seen. A file with no language by extension
+ * is read only as a script its `#!` line names, where discovery looks for one (`shebangScriptAt`). Any
+ * file is refused for a credential-looking name (never opened), a `.clarifydoc-ignore` match, or its
+ * plugin's `preprocess` returning `{ skip }` (a `.json` that is no API spec). Discovery and the registry
+ * load on the first candidate only — most checks find none. A plugin that throws refuses nothing: the
+ * file is named, as before.
  */
-function discoveryRefusal(projectRoot: string): (rel: string, language: Language) => Promise<boolean> {
+function discoveryReads(projectRoot: string): (rel: string, language: Language | null) => Promise<boolean> {
   const root = resolve(projectRoot);
   let rules: Promise<{
+    script: (rel: string) => Language | null;
     sensitive: (rel: string, language: Language) => boolean;
     ignored: (abs: string) => boolean;
     pluginFor: (language: Language) => { preprocess?: LanguagePluginMeta["preprocess"] } | undefined;
   }> | undefined;
-  return async (rel, language) => {
+  return async (rel, byExtension) => {
     rules ??= Promise.all([import("./file-discovery.js"), import("./clarifydoc-ignore.js"), import("../extractors/registry.js")]).then(
       ([discovery, ignore, registry]) => {
         const patterns = ignore.loadIgnorePatterns(root);
         return {
+          script: (path: string) => discovery.shebangScriptAt(root, path),
           sensitive: discovery.isSensitive,
           ignored: (abs: string) => ignore.isIgnored(abs, root, patterns),
           pluginFor: registry.pluginFor,
         };
       },
     );
-    const { sensitive, ignored, pluginFor } = await rules;
-    if (sensitive(rel, language)) return true;
+    const { script, sensitive, ignored, pluginFor } = await rules;
+    const language = byExtension ?? script(rel);
+    if (!language) return false;
+    if (sensitive(rel, language)) return false;
     const abs = join(root, rel);
-    if (ignored(abs)) return true;
+    if (ignored(abs)) return false;
     const preprocess = pluginFor(language)?.preprocess;
-    if (!preprocess) return false;
+    if (!preprocess) return true;
     try {
       const pre = preprocess(await readFile(abs, "utf-8"), rel, { absolutePath: abs, projectRoot: root });
-      return !!pre && "skip" in pre;
+      return !(pre && "skip" in pre);
     } catch {
-      return false;
+      return true;
     }
   };
 }
