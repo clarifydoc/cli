@@ -6,6 +6,7 @@ import { routeHandlers, type Span } from "./route-handlers.js";
  *
  *   res.redirect("/login")                    redirect(url_for("table"))
  *   return "redirect:/clubs";                 return RedirectToAction("Index", "Clubs");
+ *                                             return CreatedAtRoute("GetGame", …);
  *   redirect_to "/garage"                     header("Location: /match/" . $id);
  *
  * A path counts when it is the literal of a call named for redirecting, a
@@ -132,7 +133,7 @@ export function attachServerRedirects(
   return count;
 }
 
-const REDIRECT_LINE = /redirect|\bLocation\b/i;
+const REDIRECT_LINE = /redirect|\bLocation\b|\bCreatedAt(?:Action|Route)\b/i;
 const LIT = String.raw`["'\x60]([^"'\x60\n]*)["'\x60]`;
 /** The literal a call named for redirecting is handed, after a status code or a keyword (`res.redirect(302, "/x")`, `RedirectResponse(url="/x")`). */
 const REDIRECT_CALL = new RegExp(String.raw`[\w.:$]*redirect[\w$]*\s*!?\s*\(\s*(?:[^()"'\x60;]{0,60}?,\s*)?(?:\w+\s*[=:]\s*)?(?:~p)?${LIT}`, "gi");
@@ -172,11 +173,13 @@ function appPath(raw: string): string | null {
 }
 
 /** A route named rather than spelled: `url_for("table")`, `RedirectToAction("Index", "Clubs")`, `action: "list"`. */
+const ACTION_REDIRECT = /\baction\s*(?::|=>|=)\s*[:"']?(\w+)/g;
 const NAMED = [
+  /\bCreatedAtRoute\s*\(\s*["']([\w.:-]+)["']/g,
   /\b(?:url_for|reverse|reverse_lazy|toRoute|to_route|RedirectToRoute|RedirectToRoutePermanent)\s*\(\s*["']([\w.:-]+)["']/g,
   /\bredirect\s*\(\s*\)\s*->\s*route\s*\(\s*["']([\w.:-]+)["']/g,
   /\bRedirectToAction\s*\(\s*(?:"(\w+)"|nameof\(\s*(?:\w+\.)*(\w+)\s*\))(?:\s*,\s*(?:"(\w+)"|nameof\(\s*(\w+)\s*\)))?/g,
-  /\baction\s*(?::|=>|=)\s*[:"']?(\w+)/g,
+  ACTION_REDIRECT,
 ];
 const CONTROLLER_ARG = /\bcontroller\s*(?::|=>|=)\s*[:"']?(\w+)/;
 
@@ -193,7 +196,7 @@ export function redirectNames(line: string): Array<{ name: string; controller?: 
     for (const m of line.matchAll(re)) {
       const name = m[1] ?? m[2];
       if (!name) continue;
-      const controller = (m[3] ?? m[4] ?? (re === NAMED[3] ? keyed : undefined))?.replace(/Controller$/, "");
+      const controller = (m[3] ?? m[4] ?? (re.source.startsWith("\\baction") ? keyed : undefined))?.replace(/Controller$/, "");
       out.push(controller ? { name, controller } : { name });
     }
   }
