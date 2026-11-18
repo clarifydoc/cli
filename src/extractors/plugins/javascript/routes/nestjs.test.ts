@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import "../../../registry.js"; // side effect: registers tree-sitter grammars
 import { parseSource } from "../../../../parsers/parser-manager.js";
-import { collectNestGlobalGuards, extractNestjsRoutes, type NestGlobalGuardsFact } from "./nestjs.js";
+import { collectNestAppGuards, collectNestGlobalGuards, extractNestjsRoutes, type NestGlobalGuardsFact } from "./nestjs.js";
 import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 
 async function routesOf(src: string): Promise<RouteInfo[]> {
@@ -196,5 +196,59 @@ new DecoyService().useGlobalGuards();
   app.useGlobalGuards(new AuthGuard(reflector, app.get(AuthService)));
 `);
     expect((facts[0]!.data as NestGlobalGuardsFact).calls).toEqual(["AuthGuard.canActivate"]);
+  });
+});
+
+describe("NestJS APP_GUARD providers", () => {
+  async function factsOf(src: string, file = "app.module.ts"): Promise<RouteFact[]> {
+    const tree = await parseSource(src, "typescript" as any, file);
+    const facts: RouteFact[] = [];
+    collectNestAppGuards(tree.rootNode, src, facts);
+    return facts;
+  }
+
+  it("records useClass, useExisting, and useValue registrations", async () => {
+    const facts = await factsOf(`import { Module } from "@nestjs/common";
+import { APP_GUARD } from "@nestjs/core";
+import { AuthGuard } from "./auth.guard";
+import { MaintenanceAuthGuard } from "./maintenance.guard";
+
+@Module({
+  providers: [
+    { provide: APP_GUARD, useClass: AuthGuard },
+    { provide: APP_GUARD, useExisting: MaintenanceAuthGuard },
+    { provide: APP_GUARD, useValue: new AuthGuard() },
+  ],
+})
+export class AppModule {}
+`);
+    expect(facts.map((f) => (f.data as NestGlobalGuardsFact).guards[0]!.text)).toEqual([
+      "APP_GUARD(AuthGuard)",
+      "APP_GUARD(MaintenanceAuthGuard)",
+      "APP_GUARD(AuthGuard)",
+    ]);
+    expect(facts.every((f) => (f.data as NestGlobalGuardsFact).calls[0] === `${(f.data as NestGlobalGuardsFact).guards[0]!.policies[0]}.canActivate`)).toBe(true);
+  });
+
+  it("follows spreads into module-level provider arrays", async () => {
+    const facts = await factsOf(`import { Module } from "@nestjs/common";
+import { APP_GUARD } from "@nestjs/core";
+import { AuthGuard } from "./auth.guard";
+
+const apiMiddleware = [{ provide: APP_GUARD, useClass: AuthGuard }];
+
+@Module({ providers: [...apiMiddleware] })
+export class ApiModule {}
+`);
+    expect(facts).toHaveLength(1);
+    expect((facts[0]!.data as NestGlobalGuardsFact).guards[0]!.text).toBe("APP_GUARD(AuthGuard)");
+  });
+
+  it("ignores providers that do not use APP_GUARD", async () => {
+    const facts = await factsOf(`import { Module } from "@nestjs/common";
+@Module({ providers: [{ provide: "X", useClass: AuthGuard }] })
+export class AppModule {}
+`);
+    expect(facts).toEqual([]);
   });
 });

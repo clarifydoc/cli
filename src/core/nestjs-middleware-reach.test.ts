@@ -55,10 +55,22 @@ export class ClubsController {
 }
 `;
 
-const MODULE = `import { Module } from "@nestjs/common";
+const MODULE_BOOTSTRAP = `import { Module } from "@nestjs/common";
 import { ClubsController } from "./clubs.controller";
 
 @Module({ controllers: [ClubsController] })
+export class AppModule {}
+`;
+
+const MODULE_APP_GUARD = `import { Module } from "@nestjs/common";
+import { APP_GUARD } from "@nestjs/core";
+import { ClubsController } from "./clubs.controller";
+import { HeaderGuard } from "./header.guard";
+
+@Module({
+  controllers: [ClubsController],
+  providers: [{ provide: APP_GUARD, useClass: HeaderGuard }],
+})
 export class AppModule {}
 `;
 
@@ -107,7 +119,7 @@ describe("NestJS @UseGuards middleware reach", () => {
       "src/header.guard.ts": GUARD,
       "decoy/header.guard.ts": DECOY,
       "src/clubs.controller.ts": GUARDED_CONTROLLER,
-      "src/app.module.ts": MODULE,
+      "src/app.module.ts": MODULE_BOOTSTRAP,
     });
     const route = (analysis.routeMap ?? []).find((r) => r.path === "/clubs/:id");
     expect(route?.middleware).toContain("UseGuards(HeaderGuard)");
@@ -133,7 +145,7 @@ describe("NestJS useGlobalGuards middleware reach", () => {
       "src/header.guard.ts": GUARD,
       "decoy/header.guard.ts": DECOY,
       "src/clubs.controller.ts": CONTROLLER,
-      "src/app.module.ts": MODULE,
+      "src/app.module.ts": MODULE_BOOTSTRAP,
       "src/main.ts": MAIN,
       "src/not-a-guard.ts": NOT_A_GUARD,
     });
@@ -142,6 +154,31 @@ describe("NestJS useGlobalGuards middleware reach", () => {
     expect(route?.auth?.policies).toContain("HeaderGuard");
     expect(route?.inheritedMiddleware).toEqual([
       { file: "src/main.ts", calls: ["HeaderGuard.canActivate"] },
+    ]);
+    const flows = (analysis.dataFlows ?? [])
+      .map((f) => `${f.entryLabel} ${f.resource}${f.viaMiddleware ? " (middleware)" : ""}`)
+      .sort();
+    expect(flows).toEqual([
+      "GET /clubs/:id clubs",
+      "GET /clubs/:id sessions (middleware)",
+    ]);
+    expect(flows.some((f) => f.includes("decoy_tokens"))).toBe(false);
+  });
+
+  it("joins APP_GUARD providers to every route, never a namesake guard elsewhere", async () => {
+    const { analysis } = await runCarets({
+      "package.json": PKG,
+      "src/db.ts": DB,
+      "src/header.guard.ts": GUARD,
+      "decoy/header.guard.ts": DECOY,
+      "src/clubs.controller.ts": CONTROLLER,
+      "src/app.module.ts": MODULE_APP_GUARD,
+    });
+    const route = (analysis.routeMap ?? []).find((r) => r.path === "/clubs/:id");
+    expect(route?.middleware).toContain("APP_GUARD(HeaderGuard)");
+    expect(route?.auth?.policies).toContain("HeaderGuard");
+    expect(route?.inheritedMiddleware).toEqual([
+      { file: "src/app.module.ts", calls: ["HeaderGuard.canActivate"] },
     ]);
     const flows = (analysis.dataFlows ?? [])
       .map((f) => `${f.entryLabel} ${f.resource}${f.viaMiddleware ? " (middleware)" : ""}`)

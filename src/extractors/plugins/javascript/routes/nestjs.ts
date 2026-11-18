@@ -21,11 +21,12 @@ import { CONSTANT_REF } from "./path-helpers.js";
  * `@Roles(...)`, `@Public()` on the class (inherited) or the method,
  * `@Version(...)` on either (the method's wins), and the parameter decorators
  * `@Body() / @Query() / @Param() / @Headers() / @UploadedFile() / @Req()`,
- * which are CHILDREN of the parameter node. App-wide
- * `app.useGlobalGuards(new HeaderGuard())` (a NestFactory app only) is a
- * `nest-global-guards` fact whose guards and `canActivate` calls the project
- * resolver puts on every Nest route of the same sub-project as
- * `inheritedMiddleware`.
+ * which are CHILDREN of the parameter node. App-wide guards are
+ * `nest-global-guards` facts the project resolver puts on every Nest API route
+ * of the same sub-project: `app.useGlobalGuards(…)` (NestFactory bootstrap only),
+ * or `{ provide: APP_GUARD, useClass|useExisting|useValue: … }` in a `@Module`
+ * `providers` array — each names `inheritedMiddleware` at the registering file
+ * so `Class.canActivate` resolves through that file's imports.
  */
 
 const HTTP_DECORATORS = new Set(["Get", "Post", "Put", "Patch", "Delete", "All", "Head", "Options"]);
@@ -342,6 +343,33 @@ export interface NestGlobalGuardsFact {
   calls: string[];
 }
 
+/** The value of one key in an object literal (`pair` or `property` node). */
+function objectField(obj: Node, key: string): Node | null {
+  for (const pair of obj.namedChildren) {
+    if (pair.type !== "pair" && pair.type !== "property") continue;
+    const keyNode = pair.childForFieldName("key");
+    if (!keyNode) continue;
+    const keyText =
+      keyNode.type === "string" || keyNode.type === "template_string"
+        ? stripQuotes(keyNode.text)
+        : keyNode.text.replace(/^['"]|['"]$/g, "");
+    if (keyText !== key) continue;
+    return pair.childForFieldName("value") ?? null;
+  }
+  return null;
+}
+
+function isAppGuardToken(node: Node | null): boolean {
+  return node?.type === "identifier" && node.text === "APP_GUARD";
+}
+
+/** `useClass: AuthGuard`, `useExisting: X`, or `useValue: new X()`. */
+function providerGuardClass(value: Node | null): string | null {
+  if (!value) return null;
+  if (value.type === "identifier" && /^[A-Z]/.test(value.text)) return value.text;
+  return globalGuardClass(value);
+}
+
 /**
  * The guard class a `@UseGuards` or `useGlobalGuards` argument names:
  * `HeaderGuard`, `new HeaderGuard()`, `AuthGuard('jwt')`. Anything else names none.
@@ -402,6 +430,80 @@ export function collectNestGlobalGuards(root: Node, sourceText: string, facts: R
             data: { guards, calls } satisfies NestGlobalGuardsFact,
           });
         }
+      }
+    }
+    for (const child of node.namedChildren) walk(child);
+  };
+  walk(root);
+}
+
+function pushAppGuardFact(obj: Node, facts: RouteFact[]): void {
+  if (!isAppGuardToken(objectField(obj, "provide"))) return;
+  const cls =
+    providerGuardClass(objectField(obj, "useClass"))
+    ?? providerGuardClass(objectField(obj, "useExisting"))
+    ?? providerGuardClass(objectField(obj, "useValue"));
+  if (!cls) return;
+  facts.push({
+    kind: NEST_GLOBAL_GUARDS,
+    line: obj.startPosition.row + 1,
+    data: {
+      guards: [{ text: `APP_GUARD(${cls})`, policies: [cls] }],
+      calls: [`${cls}.canActivate`],
+    } satisfies NestGlobalGuardsFact,
+  });
+}
+
+/** Module-level `const providers = […]` arrays, for `providers: [...providers]` spreads. */
+function moduleLevelArrays(root: Node): Map<string, Node> {
+  const map = new Map<string, Node>();
+  const walk = (node: Node): void => {
+    if (node.type === "lexical_declaration" || node.type === "variable_declaration") {
+      for (const decl of node.namedChildren) {
+        if (decl.type !== "variable_declarator") continue;
+        const name = decl.childForFieldName("name")?.text;
+        const value = decl.childForFieldName("value");
+        if (name && value?.type === "array") map.set(name, value);
+      }
+    }
+    for (const child of node.namedChildren) walk(child);
+  };
+  walk(root);
+  return map;
+}
+
+function walkProviderArray(arr: Node, facts: RouteFact[], constArrays: Map<string, Node>, seen: Set<string>): void {
+  for (const entry of arr.namedChildren) {
+    if (entry.type === "object") pushAppGuardFact(entry, facts);
+    else if (entry.type === "spread_element") {
+      const spread = entry.namedChildren.find((c) => c.type !== "..." && c.type !== "spread");
+      const id = spread?.type === "identifier" ? spread.text : null;
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        const nested = constArrays.get(id);
+        if (nested) walkProviderArray(nested, facts, constArrays, seen);
+      }
+    }
+  }
+}
+
+/**
+ * `{ provide: APP_GUARD, useClass: AuthGuard }` (and `useExisting` / `useValue`)
+ * in a `@Module({ providers: […] })` or a `const` array spread into it — same
+ * effect as `useGlobalGuards` for that sub-project. A namesake guard class the
+ * module file does not import is not a guard (resolved via `inheritedMiddleware`
+ * like bootstrap globals).
+ */
+export function collectNestAppGuards(root: Node, sourceText: string, facts: RouteFact[]): void {
+  if (!/\bAPP_GUARD\b/.test(sourceText) || !/@Module\b/.test(sourceText)) return;
+  const constArrays = moduleLevelArrays(root);
+  const walk = (node: Node): void => {
+    if (node.type === "decorator") {
+      const d = decoratorCall(node);
+      if (d?.name === "Module") {
+        const config = callArgs(d.call)[0];
+        const providers = config?.type === "object" ? objectField(config, "providers") : null;
+        if (providers?.type === "array") walkProviderArray(providers, facts, constArrays, new Set());
       }
     }
     for (const child of node.namedChildren) walk(child);
