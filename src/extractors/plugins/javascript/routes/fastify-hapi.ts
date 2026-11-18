@@ -12,6 +12,7 @@ import {
   inlineHandlerParams,
   isRoutePath,
   joinPrefix,
+  middlewareCalleeNames,
   receiverName,
   validatedBody,
 } from "./express.js";
@@ -94,12 +95,14 @@ function routesOfObject(obj: Node): RouteInfo[] {
 
   // Fastify hooks that run before the handler (`preHandler: [fastify.authenticate]`), hapi `pre`.
   const middleware: string[] = [];
+  const middlewareNodes: Node[] = [];
   const guards: GuardAttr[] = [];
   for (const key of ["onRequest", "preValidation", "preHandler"]) {
     const v = pairs.get(key) ?? opts.get(key);
     for (const m of v?.type === "array" ? v.namedChildren : v ? [v] : []) {
       if (m.type !== "identifier" && m.type !== "member_expression" && m.type !== "call_expression") continue;
       middleware.push(m.text.replace(/\s+/g, " "));
+      middlewareNodes.push(m);
       const g = guardFromMiddleware(m);
       if (g) guards.push(g);
     }
@@ -119,6 +122,7 @@ function routesOfObject(obj: Node): RouteInfo[] {
   if (body) params = [{ name: "body", type: body, binding: "body", inferred: true }, ...params.filter((p) => p.binding !== "body")];
 
   return methods.map((method) => {
+    const callsNamed = middlewareCalleeNames(middlewareNodes);
     const route: RouteInfo = {
       path,
       httpMethod: method,
@@ -128,6 +132,7 @@ function routesOfObject(obj: Node): RouteInfo[] {
       middleware: [...middleware],
       line: obj.startPosition.row + 1,
       ...(responses ? { responses } : {}),
+      ...(callsNamed.length > 0 ? { middlewareCalls: callsNamed } : {}),
     };
     return applyRouteMeta(route, { guards, params, filters: middleware.filter((m) => !guards.some((g) => g.text === m)) });
   });

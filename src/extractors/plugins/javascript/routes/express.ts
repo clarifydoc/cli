@@ -416,10 +416,11 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
 
             // Middleware in source order; the auth idioms among them also
             // become guards for `auth`.
+            const middlewareArgNodes = routeMiddlewareNodes(middlewareNodes);
             const middleware: string[] = [];
             const guards: GuardAttr[] = [];
             const formFields: string[] = [];
-            for (const m of middlewareNodes) {
+            for (const m of middlewareArgNodes) {
               if (m.type !== "identifier" && m.type !== "member_expression" && m.type !== "call_expression") continue;
               middleware.push(collapse(m.text));
               const guard = guardFromMiddleware(m);
@@ -465,11 +466,9 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
                 ...(lastArgIsFn ? { handlerEndLine: last!.endPosition.row + 1 } : {}),
                 ...(responses ? { responses } : {}),
               };
-              const names = middlewareCalleeNames(middlewareNodes);
-              if (method === "use") {
-                route.mount = true;
-                if (names.length > 0) route.middlewareCalls = names;
-              } else if (names.length > 0) route.middlewareCalls = names;
+              if (method === "use") route.mount = true;
+              const names = middlewareCalleeNames(middlewareArgNodes);
+              if (names.length > 0) route.middlewareCalls = names;
               if (mountModule !== null) route.mountModule = mountModule;
               routeMeta.set(route, { receiver, guards, params, ...(constant !== null || factoryHandler ? { needsRouter: true as const } : {}), ...(pathParam ? { pathParam } : {}) });
               routes.push(route);
@@ -506,8 +505,8 @@ export function applyRouterLevelGuards(root: Node, routes: RouteInfo[], sourceTe
   /** `scope`: the plugin function a Fastify hook sits in — it guards the routes written inside it, nothing outside. */
   const routerGuards: Array<{ receiver: string; line: number; guard: GuardAttr; scope?: { from: number; to: number } }> = [];
   const routerFilters: Array<{ receiver: string; line: number; text: string }> = [];
-  /** The functions every `receiver.use(…)` names, guard or not: what they read at request time is each later route's. */
-  const routerCalls: Array<{ receiver: string; line: number; names: string[] }> = [];
+  /** The functions every `receiver.use(…)` or `addHook(…)` names, guard or not: what they read at request time is each later route's. */
+  const routerCalls: Array<{ receiver: string; line: number; names: string[]; scope?: { from: number; to: number } }> = [];
   for (const stmt of root.namedChildren) {
     const call = stmt.type === "expression_statement" ? stmt.namedChildren[0] : null;
     if (!call || call.type !== "call_expression") continue;
@@ -526,7 +525,7 @@ export function applyRouterLevelGuards(root: Node, routes: RouteInfo[], sourceTe
       else if (filterKind(collapse(arg.text))) routerFilters.push({ receiver, line: call.startPosition.row + 1, text: collapse(arg.text) });
     }
   }
-  if (sourceText === undefined || sourceText.includes("addHook")) collectFastifyHooks(root, routerGuards);
+  if (sourceText === undefined || sourceText.includes("addHook")) collectFastifyHooks(root, routerGuards, routerCalls);
 
   for (const route of routes) {
     const meta = routeMeta.get(route);
@@ -548,7 +547,19 @@ export function applyRouterLevelGuards(root: Node, routes: RouteInfo[], sourceTe
     applyRouteMeta(route, { params: meta.params, inheritedFilters, filters: ownFilters });
     // Router-level middleware first (registration order), then the route's own: the functions the symbol linker resolves.
     if (!route.mount) {
-      const calls = [...new Set([...routerCalls.filter((c) => c.receiver === meta.receiver && c.line < route.line).flatMap((c) => c.names), ...(route.middlewareCalls ?? [])])];
+      const calls = [
+        ...new Set([
+          ...routerCalls
+            .filter(
+              (c) =>
+                c.receiver === meta.receiver &&
+                c.line < route.line &&
+                (!c.scope || (route.line >= c.scope.from && route.line <= c.scope.to)),
+            )
+            .flatMap((c) => c.names),
+          ...(route.middlewareCalls ?? []),
+        ]),
+      ];
       if (calls.length > 0) route.middlewareCalls = calls;
     }
   }
@@ -581,7 +592,7 @@ function dropUnprovenConstantRoutes(routes: RouteInfo[], sourceText: string): vo
  * factory of `limit(10)` / `auth.session(db)` — the call the middleware is built by. Anything else (an inline function,
  * an object) names none; one no project function matches is simply never linked.
  */
-function middlewareCalleeNames(nodes: readonly Node[]): string[] {
+export function middlewareCalleeNames(nodes: readonly Node[]): string[] {
   const names: string[] = [];
   for (const n of nodes) {
     const target = n.type === "call_expression" ? n.childForFieldName("function") : n;
@@ -604,28 +615,65 @@ function composedMiddleware(arg: Node): Node[] {
 
 const FASTIFY_GUARD_HOOKS = new Set(["onRequest", "preParsing", "preValidation", "preHandler"]);
 
+/** A Fastify shorthand route's options object: `{ preHandler: fn }` or `[fn, …]`. */
+function fastifyRouteOptionHooks(obj: Node): Node[] {
+  if (obj.type !== "object") return [];
+  const out: Node[] = [];
+  for (const pair of obj.namedChildren) {
+    if (pair.type !== "pair") continue;
+    const key = stripQuotes(pair.childForFieldName("key")?.text ?? "");
+    if (!FASTIFY_GUARD_HOOKS.has(key)) continue;
+    const v = pair.childForFieldName("value");
+    for (const m of v?.type === "array" ? v.namedChildren : v ? [v] : []) {
+      if (m.type === "identifier" || m.type === "member_expression" || m.type === "call_expression") out.push(m);
+    }
+  }
+  return out;
+}
+
+/** Middleware nodes on a registration, with Fastify route option hooks flattened in. */
+function routeMiddlewareNodes(nodes: readonly Node[]): Node[] {
+  return nodes.flatMap((m) => (m.type === "object" ? fastifyRouteOptionHooks(m) : [m]));
+}
+
 /**
  * Fastify's `instance.addHook('preHandler', guard)` — in any plugin function, since that is
  * where Fastify code writes it — guards the routes registered on that instance after it, inside
  * the function it sits in. Only a hook named for checking the caller counts (`guardFromMiddleware`).
  */
-function collectFastifyHooks(root: Node, out: Array<{ receiver: string; line: number; guard: GuardAttr; scope?: { from: number; to: number } }>): void {
+function collectFastifyHooks(
+  root: Node,
+  routerGuards: Array<{ receiver: string; line: number; guard: GuardAttr; scope?: { from: number; to: number } }>,
+  routerCalls: Array<{ receiver: string; line: number; names: string[]; scope?: { from: number; to: number } }>,
+): void {
   const walk = (node: Node): void => {
     if (node.type === "call_expression") {
       const fn = node.childForFieldName("function");
       if (fn?.type === "member_expression" && fn.childForFieldName("property")?.text === "addHook") {
         const [name, hook] = node.childForFieldName("arguments")?.namedChildren ?? [];
         const receiver = receiverName(fn);
-        const guard = hook ? guardFromMiddleware(hook) : null;
-        if (receiver && name?.type === "string" && FASTIFY_GUARD_HOOKS.has(stripQuotes(name.text)) && guard) {
+        if (receiver && name?.type === "string" && FASTIFY_GUARD_HOOKS.has(stripQuotes(name.text)) && hook) {
           let scope: Node | null = node.parent;
           while (scope && !/^(?:arrow_function|function_expression|function_declaration|function|method_definition|generator_function)$/.test(scope.type)) scope = scope.parent;
-          out.push({
-            receiver,
-            line: node.startPosition.row + 1,
-            guard,
-            ...(scope ? { scope: { from: scope.startPosition.row + 1, to: scope.endPosition.row + 1 } } : {}),
-          });
+          const scopeRange = scope ? { from: scope.startPosition.row + 1, to: scope.endPosition.row + 1 } : undefined;
+          const names = middlewareCalleeNames([hook]);
+          if (names.length > 0) {
+            routerCalls.push({
+              receiver,
+              line: node.startPosition.row + 1,
+              names,
+              ...(scopeRange ? { scope: scopeRange } : {}),
+            });
+          }
+          const guard = guardFromMiddleware(hook);
+          if (guard) {
+            routerGuards.push({
+              receiver,
+              line: node.startPosition.row + 1,
+              guard,
+              ...(scopeRange ? { scope: scopeRange } : {}),
+            });
+          }
         }
       }
     }

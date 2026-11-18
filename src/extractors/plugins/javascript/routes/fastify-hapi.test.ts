@@ -35,6 +35,7 @@ describe("Fastify", () => {
     expect(rows(routes)).toEqual(["PUT /matches/:id", "PATCH /matches/:id", "GET /clubs"]);
     expect(routes[0]!.handler).toBe("updateMatch");
     expect(routes[0]!.auth?.policies).toEqual(["fastify.authenticate"]);
+    expect(routes[0]!.middlewareCalls).toEqual(["fastify.authenticate"]);
   });
 
   it("serves a plugin function the file declares under the prefix it is registered with", async () => {
@@ -151,6 +152,9 @@ describe("route guards declared once for a scope", () => {
       });
     `);
     expect(auth(routes)).toEqual(["GET /clubs requireAdmin", "POST /clubs requireAdmin", "GET /players -", "GET /fixtures -"]);
+    const calls = (path: string) => routes.find((r) => r.path === path && r.httpMethod === "GET")?.middlewareCalls;
+    expect(calls("/clubs")).toEqual(["requireAdmin"]);
+    expect(calls("/players")).toBeUndefined();
   });
 
   it("an app-level onRequest guard covers the routes after it; a hook that checks nobody guards nothing", async () => {
