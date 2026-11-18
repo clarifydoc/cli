@@ -1536,6 +1536,33 @@ describe("JS MQTT topics held in constants", () => {
       client.subscribe(live);
       client.subscribe(topicFor(id));`)).toEqual([]);
   });
+
+  it("keeps template-literal hole text, fills a known constant, and leaves a Class.member for the project pass", async () => {
+    const src = `
+      import mqtt from 'mqtt';
+      const DIVISION = 'premier';
+      const SCORE_TOPIC = \`league/\${clubId}/score\`;
+      class ClubTopics { static readonly TOPIC = 'club/scores'; }
+      class LeagueTopics { static readonly TOPIC = 'league/scores'; }
+      class GarageTopics { static readonly TOPIC = 'garage/bays'; }
+      const client = mqtt.connect('mqtt://broker');
+      function send(clubId: string) {
+        client.publish(\`league/\${clubId}/score\`, '1-0');
+        client.publish(\`league/\${DIVISION}/score\`, '1-0');
+        client.publish(SCORE_TOPIC, '1-0');
+        client.publish(ClubTopics.TOPIC, '1-0');
+        client.publish(LeagueTopics.TOPIC, 'x');
+      }`;
+    const tree = await parseSource(src, "typescript" as any, "x.ts");
+    const rows = new JavaScriptDataSourceExtractor().extract(tree, src).filter((d) => d.kind.startsWith("queue"));
+    expect(rows.map((d) => `${d.target ?? "∅"}|${d.targetRef ?? ""}`)).toEqual([
+      "league/${clubId}/score|",
+      "league/premier/score|",
+      "league/${clubId}/score|",
+      "∅|ClubTopics.TOPIC",
+      "∅|LeagueTopics.TOPIC",
+    ]);
+  });
 });
 
 describe("JS MQTT message handlers", () => {

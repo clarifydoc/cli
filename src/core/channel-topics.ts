@@ -1,4 +1,7 @@
 import type { DataSourceInfo, FileAnalysis } from "../types/analysis.js";
+import type { ModuleValueLookup } from "../types/project.js";
+
+const MQTT_HOLE = /\$\{([^{}]*)\}/g;
 
 /**
  * Events sent within a topic (`DataSourceInfo.topic`) meet only where their
@@ -87,7 +90,11 @@ function bindChannelTopics(analyses: readonly FileAnalysis[]): number {
   return changed;
 }
 
-/** Whether an MQTT topic filter (`league/+/score`, `league/#`, `$share/g/league/#`) covers a topic name. */
+/**
+ * Whether an MQTT topic filter (`league/+/score`, `league/#`, `$share/g/league/#`) covers a topic name.
+ * A publish topic that still holds a `${…}` hole in a level (`league/${clubId}/score`) matches `+` there —
+ * the hole is one level, as a filter's `+` is.
+ */
 export function mqttFilterMatches(filter: string, topic: string): boolean {
   const f = filter.replace(/^\$share\/[^/]+\//, "").split("/");
   const t = topic.split("/");
@@ -96,9 +103,39 @@ export function mqttFilterMatches(filter: string, topic: string): boolean {
   for (let i = 0; i < f.length; i++) {
     if (f[i] === "#") return i === f.length - 1;
     if (i >= t.length) return false;
+    // `+` matches any one level — including a template hole left as `${clubId}`.
     if (f[i] !== "+" && f[i] !== t[i]) return false;
   }
   return f.length === t.length;
+}
+
+/**
+ * An MQTT row whose `target` still holds `${…}` holes takes the values the file's string constants and the
+ * module-value lookup know (`league/${DIVISION}/score` → `league/premier/score`). What nothing states stays a
+ * hole so `mqttFilterMatches` can still meet a `+` filter. In memory only. Returns the number of rows filled.
+ */
+export function resolveMqttTopicHoles(analyses: readonly FileAnalysis[], lookup: ModuleValueLookup): number {
+  let n = 0;
+  for (const a of analyses) {
+    for (const row of a.dataSources ?? []) {
+      if (row.topicSyntax !== "mqtt" || !row.target || !row.target.includes("${")) continue;
+      let filledHere = false;
+      const filled = row.target.replace(MQTT_HOLE, (hole, inner: string) => {
+        const name = inner.trim();
+        if (!/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(name)) return hole;
+        const fromConsts = a.stringConstants?.[name];
+        const v = fromConsts ?? lookup(a.filePath, name);
+        if (v === null || v === undefined || v.includes("${") || v.includes("/")) return hole;
+        filledHere = true;
+        return v;
+      });
+      if (filledHere && filled !== row.target) {
+        row.target = filled;
+        n++;
+      }
+    }
+  }
+  return n;
 }
 
 /**

@@ -170,7 +170,7 @@ import { expandTypedMemberHoles } from "./typed-member-holes.js";
 import { expandChannelFactories } from "./channel-factories.js";
 import { expandEntityParameters } from "./entity-parameters.js";
 import { bindMixinSelfAccess, captureMixinReceivers } from "./mixin-self.js";
-import { joinMqttTopicFilters, scopeChannelTopics } from "./channel-topics.js";
+import { joinMqttTopicFilters, resolveMqttTopicHoles, scopeChannelTopics } from "./channel-topics.js";
 import { resolveQueueEnvTargets } from "./queue-env-targets.js";
 import type { ProjectContext } from "../types/project.js";
 import { buildComponentLaunches, buildFormLaunches, markStartupScreens } from "./component-launches.js";
@@ -2131,6 +2131,9 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // An event sent within a topic meets only the handlers of channels joined on that topic.
   const topicRows = scopeChannelTopics(allAnalyses);
   if (topicRows > 0 && verbose) progress.detail(`  Channel events kept apart by topic: ${topicRows} row(s)`);
+  // An MQTT topic that still holds `${…}` holes takes values the file's constants name.
+  const mqttHoleRows = resolveMqttTopicHoles(allAnalyses, moduleValue);
+  if (mqttHoleRows > 0 && verbose) progress.detail(`  MQTT topic holes filled: ${mqttHoleRows} row(s)`);
   // An MQTT publish meets the wildcard filters (`league/+/score`) that cover its topic.
   const filterRows = joinMqttTopicFilters(allAnalyses);
   if (filterRows > 0 && verbose) progress.detail(`  MQTT publishes joined to topic filters: ${filterRows} row(s)`);

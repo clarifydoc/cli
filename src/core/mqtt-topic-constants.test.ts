@@ -74,3 +74,55 @@ describe("MQTT topics named by a constant another module declares", () => {
     ).toEqual(["Pub.SendScore queue-publish league/scores", "Sub.Listen queue-consume league/scores"]);
   });
 });
+
+describe("MQTT template-literal topics and same-named class constants", () => {
+  it("keeps template hole text, fills a known constant hole, and joins a + filter; a decoy garage topic stays apart", async () => {
+    expect(
+      await mqttRows({
+        "src/pub.ts": `import mqtt from 'mqtt';
+const DIVISION = 'premier';
+const client = mqtt.connect('mqtt://b');
+export function sendScore(clubId: string) { client.publish(\`league/\${clubId}/score\`, '1-0'); }
+export function sendDivision() { client.publish(\`league/\${DIVISION}/score\`, '1-0'); }
+export function sendDecoy(clubId: string) { client.publish(\`garage/\${clubId}/score\`, 'x'); }
+`,
+        "src/sub.ts": `import mqtt from 'mqtt';
+const client = mqtt.connect('mqtt://b');
+export function listen() { client.subscribe(['league/+/score', 'league/premier/score']); }
+`,
+      }),
+    ).toEqual([
+      "listen queue-consume league/+/score",
+      "listen queue-consume league/premier/score",
+      "sendDecoy queue-publish garage/${clubId}/score",
+      "sendDivision queue-publish league/+/score",
+      "sendDivision queue-publish league/premier/score",
+      "sendScore queue-publish league/${clubId}/score",
+      "sendScore queue-publish league/+/score",
+    ].sort());
+  });
+
+  it("tells same-named TOPIC constants in two classes of one file apart by declaring class; a decoy class is unused", async () => {
+    expect(
+      await mqttRows({
+        "src/pub.ts": `import mqtt from 'mqtt';
+class ClubTopics { static readonly TOPIC = 'club/scores'; }
+class LeagueTopics { static readonly TOPIC = 'league/scores'; }
+class GarageTopics { static readonly TOPIC = 'garage/bays'; }
+const client = mqtt.connect('mqtt://b');
+export function sendClub() { client.publish(ClubTopics.TOPIC, '1-0'); }
+export function sendLeague() { client.publish(LeagueTopics.TOPIC, 'x'); }
+`,
+        "src/sub.ts": `import mqtt from 'mqtt';
+const client = mqtt.connect('mqtt://b');
+export function listen() { client.subscribe(['club/scores', 'league/scores']); }
+`,
+      }),
+    ).toEqual([
+      "listen queue-consume club/scores",
+      "listen queue-consume league/scores",
+      "sendClub queue-publish club/scores",
+      "sendLeague queue-publish league/scores",
+    ].sort());
+  });
+});

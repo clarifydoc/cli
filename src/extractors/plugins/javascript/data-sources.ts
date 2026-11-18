@@ -13,7 +13,7 @@ import { resolveUrlBuilders } from "./url-builders.js";
 import { dropCollectionLookups } from "./collection-lookups.js";
 import { confirmImportedClients } from "./imported-clients.js";
 import { extractCalls } from "../../shared/call-graph.js";
-import { literalString as sharedLiteralString, stripQuotes } from "../../shared/node-helpers.js";
+import { literalString as sharedLiteralString, stripQuotes, unwrapExpression } from "../../shared/node-helpers.js";
 import { escapeRegex } from "../shared/path-utils.js";
 import { foldValue, toAppRelativeUrl } from "../../shared/value-resolver.js";
 import { astToValueExpr, buildScope } from "./value-capture.js";
@@ -693,18 +693,27 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     return out;
   }
 
-  /** A name as an MQTT topic: this file's constant, else a name a project module exports (the project pass reads its value). */
+  /**
+   * A name as an MQTT topic: this file's constant, else a name a project module exports or a
+   * `Class.member` of this file (the project pass reads its value from the declaring class).
+   */
   private namedTopic(ref: string): MqttTopic | null {
     const value = this.constantString(ref);
     if (value) return { target: value };
+    if (!/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(ref)) return null;
     const head = ref.split(".")[0]!;
-    return /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(ref) && (this.imports ??= importEvidence(this.sourceText)).projectNames.has(head) ? { target: null, ref } : null;
+    const imported = (this.imports ??= importEvidence(this.sourceText)).projectNames.has(head);
+    // Two classes of one file may share a field name (`ClubTopics.TOPIC` / `LeagueTopics.TOPIC`): keep the
+    // declaring class in `targetRef` so core's class index tells them apart — never a bare leaf guess.
+    const classMember = ref.includes(".") && /^[A-Z]/.test(head);
+    return imported || classMember ? { target: null, ref } : null;
   }
 
   /**
-   * The string a name the file declares once stands for: `const TOPIC = 'league/scores'`, or a
-   * key of a `const TOPICS = { score: 'league/scores' }` object (`TOPICS.score`). Null when the name
-   * is declared twice, assigned something else or not a plain literal.
+   * The string a name the file declares once stands for: `const TOPIC = 'league/scores'`, a
+   * template that keeps its `${…}` holes, or a key of a `const TOPICS = { score: 'league/scores' }`
+   * object (`TOPICS.score`). Null when the name is declared twice, assigned something else or not a
+   * plain literal / template.
    */
   private constantString(ref: string): string | null {
     const [head, key] = ref.split(".") as [string, string | undefined];
@@ -714,13 +723,41 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     if (found.length !== 1 || new RegExp(String.raw`(?<![\w$.])${escapeRegex(head)}\s*=[^=]`).test(this.sourceText.replace(decl, ""))) return null;
     if (!/(?<![\w$.])const\s/.test(found[0]![0])) return null;
     const init = found[0]![1]!.trim();
-    if (key === undefined) return /^(['"\x60])([^'"\x60$]*)\1(?:\s+as\s+const)?[,;]?$/.exec(init)?.[2] ?? null;
+    if (key === undefined) return this.topicLiteralText(init);
     const body = new RegExp(String.raw`${escapeRegex(head)}\s*(?::[^=;]+)?=\s*\{([^}]*)\}`).exec(this.sourceText)?.[1];
-    return body ? new RegExp(String.raw`(?:^|[,{\s])${escapeRegex(key)}\s*:\s*(['"\x60])([^'"\x60$]*)\1`).exec(body)?.[2] ?? null : null;
+    if (!body) return null;
+    const quoted = new RegExp(String.raw`(?:^|[,{\s])${escapeRegex(key)}\s*:\s*(['"])([^'"$]*)\1`).exec(body)?.[2];
+    if (quoted !== undefined) return quoted;
+    return new RegExp(String.raw`(?:^|[,{\s])${escapeRegex(key)}\s*:\s*\`([^\`]*)\``).exec(body)?.[1] ?? null;
   }
 
-  /** An MQTT topic argument: a literal, a constant the file declares, or an imported name. */
+  /** A quoted topic string, or a template that keeps its `${…}` holes (`league/${clubId}/score`). */
+  private topicLiteralText(init: string): string | null {
+    const plain = /^(['"])([^'"$]*)\1(?:\s+as\s+const)?[,;]?$/.exec(init);
+    if (plain) return plain[2]!;
+    return /^`([^`]*)`(?:\s+as\s+const)?[,;]?$/.exec(init)?.[1] ?? null;
+  }
+
+  /**
+   * An MQTT topic argument: a literal (a template keeps `${…}` holes, filling ones this file's
+   * constants name), a constant the file declares, a `Class.member`, or an imported name.
+   */
   private mqttTopic(node: Node | null): MqttTopic | null {
+    const n = unwrapExpression(node);
+    if (n?.type === "template_string") {
+      let out = "";
+      for (const part of n.children) {
+        if (part.type === "`") continue;
+        if (part.type === "template_substitution") {
+          const inner = part.namedChild(0);
+          const hit = inner?.type === "identifier" ? this.constantString(inner.text) : null;
+          out += hit ?? part.text;
+        } else {
+          out += part.text;
+        }
+      }
+      return out.length > 0 ? { target: out } : null;
+    }
     const lit = literalString(node);
     if (lit) return { target: lit };
     return node && (node.type === "identifier" || node.type === "member_expression") && !declaredParamInScope(node.text.split(".")[0]!, node) ? this.namedTopic(node.text) : null;

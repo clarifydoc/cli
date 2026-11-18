@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { DataSourceInfo, FileAnalysis } from "../types/analysis.js";
-import { joinMqttTopicFilters, mqttFilterMatches, scopeChannelTopics } from "./channel-topics.js";
+import { joinMqttTopicFilters, mqttFilterMatches, resolveMqttTopicHoles, scopeChannelTopics } from "./channel-topics.js";
+import type { ModuleValueLookup } from "../types/project.js";
 
 const row = (kind: "queue-publish" | "queue-consume", target: string, line: number, topic?: string): DataSourceInfo =>
   ({ kind, name: "Phoenix.Channel", target, calls: [], line, ...(topic ? { topic } : {}) });
@@ -91,6 +92,9 @@ describe("MQTT topic filters", () => {
     expect(mqttFilterMatches("league/#", "garage/premier")).toBe(false);
     expect(mqttFilterMatches("$share/pit/league/+", "league/premier")).toBe(true);
     expect(mqttFilterMatches("#", "$SYS/uptime")).toBe(false);
+    // A template-literal topic that kept its hole text meets `+` at that level; a decoy garage topic does not.
+    expect(mqttFilterMatches("league/+/score", "league/${clubId}/score")).toBe(true);
+    expect(mqttFilterMatches("league/+/score", "garage/${clubId}/score")).toBe(false);
   });
 
   it("repeats a publish at the filters covering it, and only for rows marked mqtt", () => {
@@ -108,5 +112,22 @@ describe("MQTT topic filters", () => {
       "listen.js:4 league/+/score",
     ]);
     expect(joinMqttTopicFilters(files)).toBe(0);
+  });
+
+  it("fills a known hole in an MQTT topic and leaves an unknown one; a decoy garage topic stays apart", () => {
+    const lookup = ((from: string, expr: string) => (from.endsWith("send.js") && expr === "DIVISION" ? "premier" : null)) as ModuleValueLookup;
+    const files = [
+      file("send.js", [
+        mqtt("queue-publish", "league/${DIVISION}/score", 3),
+        mqtt("queue-publish", "garage/${DIVISION}/score", 4),
+        mqtt("queue-publish", "league/${clubId}/score", 5),
+      ]),
+    ];
+    expect(resolveMqttTopicHoles(files, lookup)).toBe(2);
+    expect(targets(files)).toEqual([
+      "send.js:3 league/premier/score",
+      "send.js:4 garage/premier/score",
+      "send.js:5 league/${clubId}/score",
+    ]);
   });
 });
