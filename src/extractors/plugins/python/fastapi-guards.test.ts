@@ -167,6 +167,8 @@ def list_fixtures():
       "DELETE /admin/seasons/{season_id} [get_admin_user] Depends(get_admin_user)",
       "GET /fixtures [verify_token] Depends(verify_token)",
     ]);
+    const season = out.flatMap((a) => a.routes).find((r) => r.path === "/admin/seasons/{season_id}")!;
+    expect(season.inheritedMiddleware).toEqual([{ file: "league/routes/base/routers.py", calls: ["get_admin_user"] }]);
   });
 
   it("adds a class-based view's class-level dependencies from the view and each base, a subclass shadowing its base", async () => {

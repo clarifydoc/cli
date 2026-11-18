@@ -149,4 +149,20 @@ describe("resolveRouterMounts — mount-level guards", () => {
     expect(api.routes[0]!.middleware).toEqual([]);
     expect(api.routes[0]!.auth).toBeUndefined();
   });
+
+  it("hands mount middlewareCalls and inheritedMiddleware to mounted routes, resolved in the mounting file", () => {
+    const mount: RouteInfo = {
+      ...use("/league", "leagueRoutes"),
+      middlewareCalls: ["verifyCoach"],
+      inheritedMiddleware: [{ file: "middleware/coach_gate.py", calls: ["require_coach"] }],
+    };
+    const server = file("server.js", [mount]);
+    const league = file("routes/league.js", [route("GET", "/fixtures", "listFixtures")]);
+    resolveRouterMounts([server, league], importIndex({ "server.js": { leagueRoutes: "routes/league.js" } }));
+    expect(league.routes[0]!.inheritedMiddleware).toEqual([
+      { file: "middleware/coach_gate.py", calls: ["require_coach"] },
+      { file: "server.js", calls: ["verifyCoach"] },
+    ]);
+  });
+
 });

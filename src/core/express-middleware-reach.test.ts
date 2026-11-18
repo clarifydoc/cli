@@ -51,9 +51,10 @@ module.exports = router;
 `;
 
 const APP = `const express = require("express");
+const { requireSession } = require("./auth");
 const routes = require("./routes");
 const app = express();
-app.use("/api", routes);
+app.use("/api", requireSession, routes);
 `;
 
 describe("Express middleware reach", () => {
@@ -72,6 +73,7 @@ describe("Express middleware reach", () => {
       "GET /api/cars/:id sessions (middleware)",
       "GET /api/clubs/:id clubs (middleware)",
       "GET /api/clubs/:id sessions (middleware)",
+      "GET /api/early sessions (middleware)",
       "GET /api/ping sessions (middleware)",
     ]);
   });

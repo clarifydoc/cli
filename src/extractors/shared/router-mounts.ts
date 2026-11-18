@@ -33,6 +33,11 @@ import { joinRoutePath } from "./route-paths.js";
  * → `authRouter`, or `api.py` → `articles/api.py` → `articles_resource.py`), and
  * a router mounted at several prefixes yields one route per prefix.
  *
+ * Mount-level middleware reach propagates too: `middlewareCalls` on a mount row
+ * and `inheritedMiddleware` a resolver stamped on the mount (e.g. FastAPI router
+ * class dependencies before `include_router`) merge onto every route of the
+ * mounted file, with mount `middlewareCalls` resolved in the mounting file.
+ *
  * The resolved mount routes themselves are dropped — they are wiring, not
  * endpoints, so leaving them would inflate the route map with non-routes.
  *
@@ -51,6 +56,24 @@ interface Mount {
   mountingFile: string;
   prefix: string;
   route: RouteInfo;
+}
+
+/** A mount site along the chain that contributes guards or middleware reach. */
+interface MountGuard {
+  mountingFile: string;
+  route: RouteInfo;
+}
+
+function pushInheritedMiddleware(
+  inherited: Array<{ file: string; calls: string[] }>,
+  file: string,
+  calls: string[],
+): void {
+  const uniq = [...new Set(calls)];
+  if (uniq.length === 0) return;
+  const row = inherited.find((e) => e.file === file);
+  if (row) row.calls = [...new Set([...row.calls, ...uniq])];
+  else inherited.push({ file, calls: uniq });
 }
 
 export function resolveRouterMounts(analyses: FileAnalysis[], importIndex: ImportIndex): number {
@@ -113,36 +136,53 @@ export function resolveRouterMounts(analyses: FileAnalysis[], importIndex: Impor
     return result;
   };
 
-  // 2b. Guards declared on the mount (`app.use('/admin', requireAuth, adminRouter)`)
-  //     protect every route of the mounted router — the only place Express
-  //     mount-level auth is visible. Collected along the whole mount chain.
-  const guardMemo = new Map<string, RouteInfo[]>();
+  // 2b. Guards and middleware reach declared on the mount
+  //     (`app.use('/admin', requireAuth, adminRouter)`, FastAPI
+  //     `include_router(child, dependencies=[…])`, or `inheritedMiddleware` on
+  //     a mount row) apply to every route of the mounted router. Collected along
+  //     the whole mount chain; `middlewareCalls` on a mount resolve in the
+  //     mounting file.
+  const mountContributes = (route: RouteInfo) =>
+    route.middleware.length > 0 ||
+    !!route.auth ||
+    (route.inheritedMiddleware?.length ?? 0) > 0 ||
+    (route.middlewareCalls?.length ?? 0) > 0;
+  const guardMemo = new Map<string, MountGuard[]>();
   const guardStack = new Set<string>();
-  const mountGuards = (file: string): RouteInfo[] => {
+  const mountGuards = (file: string): MountGuard[] => {
     const cached = guardMemo.get(file);
     if (cached) return cached;
     const incoming = mountsByTarget.get(file);
     if (!incoming || guardStack.has(file)) return [];
     guardStack.add(file);
-    const out: RouteInfo[] = [];
+    const out: MountGuard[] = [];
     for (const m of incoming) {
       out.push(...mountGuards(m.mountingFile));
-      if (m.route.middleware.length > 0 || m.route.auth) out.push(m.route);
+      if (mountContributes(m.route)) out.push({ mountingFile: m.mountingFile, route: m.route });
     }
     guardStack.delete(file);
     guardMemo.set(file, out);
     return out;
   };
-  const inheritGuards = (r: RouteInfo, mounts: RouteInfo[]): RouteInfo => {
+  const inheritGuards = (r: RouteInfo, mounts: MountGuard[]): RouteInfo => {
     if (mounts.length === 0) return r;
-    const middleware = [...mounts.flatMap((m) => m.middleware), ...r.middleware];
-    const auths = mounts.map((m) => m.auth).filter((a): a is NonNullable<typeof a> => !!a);
-    if (auths.length === 0) return { ...r, middleware };
+    const middleware = [...mounts.flatMap((m) => m.route.middleware), ...r.middleware];
+    const inheritedMiddleware = [...(r.inheritedMiddleware ?? [])];
+    for (const m of mounts) {
+      for (const entry of m.route.inheritedMiddleware ?? []) pushInheritedMiddleware(inheritedMiddleware, entry.file, entry.calls);
+      if (m.route.middlewareCalls?.length) pushInheritedMiddleware(inheritedMiddleware, m.mountingFile, m.route.middlewareCalls);
+    }
+    const auths = mounts.map((m) => m.route.auth).filter((a): a is NonNullable<typeof a> => !!a);
     const uniq = (xs: string[]) => [...new Set(xs)];
     const own = r.auth;
-    return {
+    const base: RouteInfo = {
       ...r,
       middleware,
+      ...(inheritedMiddleware.length > 0 ? { inheritedMiddleware } : {}),
+    };
+    if (auths.length === 0) return base;
+    return {
+      ...base,
       auth: {
         policies: uniq([...auths.flatMap((a) => a.policies), ...(own?.policies ?? [])]),
         roles: uniq([...auths.flatMap((a) => a.roles), ...(own?.roles ?? [])]),

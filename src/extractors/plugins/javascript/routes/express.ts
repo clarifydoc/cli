@@ -465,11 +465,11 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
                 ...(lastArgIsFn ? { handlerEndLine: last!.endPosition.row + 1 } : {}),
                 ...(responses ? { responses } : {}),
               };
-              if (method === "use") route.mount = true;
-              else {
-                const names = middlewareCalleeNames(middlewareNodes);
+              const names = middlewareCalleeNames(middlewareNodes);
+              if (method === "use") {
+                route.mount = true;
                 if (names.length > 0) route.middlewareCalls = names;
-              }
+              } else if (names.length > 0) route.middlewareCalls = names;
               if (mountModule !== null) route.mountModule = mountModule;
               routeMeta.set(route, { receiver, guards, params, ...(constant !== null || factoryHandler ? { needsRouter: true as const } : {}), ...(pathParam ? { pathParam } : {}) });
               routes.push(route);

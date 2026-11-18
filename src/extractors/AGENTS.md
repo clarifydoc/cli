@@ -175,7 +175,9 @@ per-file extractor cannot see it, so it emits the mount as an api route marked
 `mount: true` (`httpMethod: null`, `handler` = the router identifier), and
 [shared/router-mounts.ts](shared/router-mounts.ts) resolves that identifier
 through the import index after per-file analysis, prefixes the target file's
-routes and drops the mount. It is language-agnostic — reading only
+routes, merges mount-level `middleware`/`auth`, `middlewareCalls` and
+`inheritedMiddleware` onto every mounted route (`middlewareCalls` resolve in
+the mounting file), and drops the mount. It is language-agnostic — reading only
 `FileAnalysis.routes` — so a new framework joins by emitting mounts in that
 shape. The marker is required: a null-method route with an identifier handler
 is also an "any method" endpoint (Compojure `ANY`, Express `all`), and only
