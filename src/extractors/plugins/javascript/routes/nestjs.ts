@@ -3,7 +3,7 @@ import type { FileAnalysis, RouteFact, RouteInfo, RouteParamBinding, RouteParamI
 import type { ProjectContext } from "../../../../types/project.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";
 import { stripQuotes } from "../../../shared/node-helpers.js";
-import { applyRouteMeta, boundParam, inferredParam, withInheritedGuards, type GuardAttr } from "../../../shared/route-metadata.js";
+import { applyRouteMeta, boundParam, guardMiddlewareCalls, inferredParam, withInheritedGuards, type GuardAttr } from "../../../shared/route-metadata.js";
 import { collectClassGuardFacts, inheritedClassGuards } from "../../shared/class-guards.js";
 import { CONSTANT_REF } from "./path-helpers.js";
 
@@ -170,7 +170,10 @@ function guardOf(dec: Node): GuardAttr | null {
   if (d.name === "UseGuards") {
     const schemes: string[] = [];
     const policies: string[] = [];
+    const classes: string[] = [];
     for (const arg of callArgs(d.call)) {
+      const cls = guardClassArg(arg);
+      if (cls) classes.push(cls);
       if (arg.type === "call_expression") {
         // `AuthGuard('jwt')` — the strategy is the scheme; `AuthGuard()` is a policy by name.
         const callee = arg.childForFieldName("function")?.text ?? arg.text;
@@ -185,7 +188,7 @@ function guardOf(dec: Node): GuardAttr | null {
         policies.push(arg.text);
       }
     }
-    return { text, schemes, policies };
+    return { text, schemes, policies, ...(classes.length > 0 ? { classes } : {}) };
   }
   return null;
 }
@@ -340,16 +343,27 @@ export interface NestGlobalGuardsFact {
 }
 
 /**
- * The class a global-guard argument names: `new HeaderGuard()`, `HeaderGuard`,
- * or `app.get(AuthGuard)`. Anything else names none.
+ * The guard class a `@UseGuards` or `useGlobalGuards` argument names:
+ * `HeaderGuard`, `new HeaderGuard()`, `AuthGuard('jwt')`. Anything else names none.
  */
-function globalGuardClass(arg: Node): string | null {
+function guardClassArg(arg: Node): string | null {
   if (arg.type === "new_expression") {
     const ctor = arg.childForFieldName("constructor");
     const name = ctor?.type === "identifier" ? ctor.text : ctor?.type === "member_expression" ? ctor.childForFieldName("property")?.text : null;
     return name && /^[A-Z]/.test(name) ? name : null;
   }
   if (arg.type === "identifier" && /^[A-Z]/.test(arg.text)) return arg.text;
+  if (arg.type === "call_expression") {
+    const callee = arg.childForFieldName("function");
+    if (callee?.type === "identifier" && /^[A-Z]/.test(callee.text)) return callee.text;
+  }
+  return null;
+}
+
+/** `app.get(AuthGuard)` from a NestFactory bootstrap — not a `@UseGuards` shape. */
+function globalGuardClass(arg: Node): string | null {
+  const direct = guardClassArg(arg);
+  if (direct) return direct;
   if (arg.type === "call_expression") {
     const callee = arg.childForFieldName("function");
     const prop = callee?.type === "member_expression" ? callee.childForFieldName("property")?.text : null;
@@ -502,6 +516,8 @@ export function visitNestjsRoute(node: Node, routes: RouteInfo[], facts?: RouteF
       inheritedFilters: scope.filters,
       filters: [...filters],
     });
+    const middlewareCalls = guardMiddlewareCalls([...scope.guards, ...guards]);
+    if (middlewareCalls.length > 0) route.middlewareCalls = middlewareCalls;
     routes.push(route);
   }
 }

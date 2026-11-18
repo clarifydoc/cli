@@ -2,7 +2,7 @@ import type { Node } from "web-tree-sitter";
 import type { FileAnalysis, Language, RouteFact, RouteInfo } from "../../../types/analysis.js";
 import type { ClassRef, ProjectContext } from "../../../types/project.js";
 import type { RouteResolver } from "../../route-resolvers/base.js";
-import { withInheritedGuards, type GuardAttr } from "../../shared/route-metadata.js";
+import { guardMiddlewareCalls, withInheritedGuards, type GuardAttr } from "../../shared/route-metadata.js";
 
 /**
  * Class-level guards a controller inherits from a base class in another file —
@@ -70,17 +70,34 @@ export function inheritedClassGuards(id: string, languages: readonly Language[])
       if (guarded.size === 0 || pending.length === 0) return;
       for (const { analysis, ref, lines } of pending) {
         let guards: GuardAttr[] | undefined;
+        let guardFile: string | undefined;
         const seen = new Set<ClassRef>([ref]);
         for (let cur = ref, depth = 0; depth < 8 && !guards; depth++) {
           const st = ctx.classes.supertypes(cur).find((s) => s.written === cur.cls.extends);
           if (!st?.ref || seen.has(st.ref)) break;
           seen.add(st.ref);
-          guards = guarded.get(st.ref);
+          const g = guarded.get(st.ref);
+          if (g) {
+            guards = g;
+            guardFile = st.ref.filePath;
+          }
           cur = st.ref;
         }
         if (!guards) continue;
+        const calls = guardMiddlewareCalls(guards);
         const at = new Set(lines);
-        analysis.routes = analysis.routes.map((r) => (r.kind === "api" && at.has(r.line) ? withInheritedGuards(r, guards!) : r));
+        analysis.routes = analysis.routes.map((r) => {
+          if (r.kind !== "api" || !at.has(r.line)) return r;
+          let route = withInheritedGuards(r, guards!);
+          if (calls.length > 0 && guardFile) {
+            const entry = { file: guardFile, calls };
+            const existing = route.inheritedMiddleware ?? [];
+            if (!existing.some((e) => e.file === entry.file && e.calls.join("\0") === entry.calls.join("\0"))) {
+              route = { ...route, inheritedMiddleware: [...existing, entry] };
+            }
+          }
+          return route;
+        });
       }
     },
   };

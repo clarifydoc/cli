@@ -18,6 +18,13 @@ export interface GuardAttr {
   policies?: string[];
   roles?: string[];
   schemes?: string[];
+  /** Guard classes from `@UseGuards(…)` — each runs `canActivate` before the route. */
+  classes?: string[];
+}
+
+/** `HeaderGuard` → `HeaderGuard.canActivate`, deduped in decorator order. */
+export function guardMiddlewareCalls(guards: readonly GuardAttr[]): string[] {
+  return [...new Set(guards.flatMap((g) => (g.classes ?? []).map((c) => `${c}.canActivate`)))];
 }
 
 /**
