@@ -196,16 +196,32 @@ describe("discoverFiles — secret-looking names and skipped source directories"
     }
   });
 
-  it("does not read a linked script", async () => {
+  it("does not read a linked script, and records the refusal", async () => {
     write("elsewhere/club", "#!/usr/bin/env ruby\nputs 1\n");
+    write("elsewhere/notes", "Club notes\n");
+    write("elsewhere/kit/boots", "#!/usr/bin/env ruby\nputs 1\n");
+    const outside = mkdtempSync(join(tmpdir(), "clarifydoc-outside-"));
+    writeFileSync(join(outside, "transfer"), "#!/usr/bin/env ruby\nputs 1\n");
     mkdirSync(join(root, "bin"), { recursive: true });
     try {
-      symlinkSync(join(root, "elsewhere", "club"), join(root, "bin", "club"));
+      symlinkSync(join(root, "elsewhere", "club"), join(root, "bin", "club")); // a script inside the root
+      symlinkSync(join(outside, "transfer"), join(root, "bin", "transfer")); // leaves the root: never opened
+      symlinkSync(join(root, "elsewhere", "gone"), join(root, "bin", "gone")); // dangling
+      // Decoys: a linked non-script inside the root, and a linked directory — no file was refused.
+      symlinkSync(join(root, "elsewhere", "notes"), join(root, "bin", "notes"));
+      symlinkSync(join(root, "elsewhere", "kit"), join(root, "kit"));
     } catch {
+      rmSync(outside, { recursive: true, force: true });
       return; // no symlink permission (Windows)
     }
-    const files = (await discoverFiles(root)).files.map((f) => f.relativePath);
-    expect(files).not.toContain("bin/club");
+    try {
+      const r = await discoverFiles(root);
+      const files = r.files.map((f) => f.relativePath);
+      for (const no of ["bin/club", "bin/transfer", "bin/gone", "bin/notes", "kit/boots"]) expect(files, no).not.toContain(no);
+      expect(r.skippedSymlinks).toEqual(["bin/club", "bin/gone", "bin/transfer"]);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it("reads a JVM package named like build output, never a build tool's output (real-repo FP)", async () => {

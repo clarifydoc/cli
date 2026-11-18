@@ -5298,7 +5298,8 @@ export interface ProjectAnalysis {
   skippedSensitive?: string[];
   /**
    * Symlinked source paths discovery refused to read — the link leaves the
-   * project root, dangles, or names a non-file. Linked directories are never
+   * project root, dangles, or names a non-file, or it is an extension-less
+   * script (only a regular file is read as one). Linked directories are never
    * descended at all.
    */
   skippedSymlinks?: string[];

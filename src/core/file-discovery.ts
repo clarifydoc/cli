@@ -309,15 +309,25 @@ export async function discoverFiles(
     }
   }
 
+  const skippedSymlinks: string[] = [];
+  let realRoot: string | undefined;
+
   // Extension-less scripts whose `#!` line names an interpreter a plugin declares.
   const shebangLanguage = new Map<string, Language>();
   if (!options.include?.length && SHEBANG_SCRIPT_GLOBS.length > 0) {
     const seen = new Set(entries);
     const lifted = ignore.filter((p) => p !== "**/bin/**");
-    for (const e of await glob(SHEBANG_SCRIPT_GLOBS, { cwd: root, ignore: lifted, prune })) {
+    const scriptLinks = new LinkedFiles();
+    for (const e of await glob(SHEBANG_SCRIPT_GLOBS, { cwd: root, ignore: lifted, links: scriptLinks, prune })) {
       const name = e.slice(e.lastIndexOf("/") + 1);
       if (seen.has(e) || name.includes(".") || SCRIPT_CREDENTIAL_NAME.test(name) || isSensitive(e)) continue;
       const abs = resolve(root, e);
+      // Only a regular file is read as a script; a linked one is recorded where it would have been refused or read.
+      if (scriptLinks.has(abs)) {
+        realRoot ??= realpathSync(root);
+        if (refusedScriptLink(abs, realRoot)) skippedSymlinks.push(e);
+        continue;
+      }
       const language = shebangScriptLanguage(abs);
       if (!language) continue;
       shebangLanguage.set(e, language);
@@ -328,8 +338,6 @@ export async function discoverFiles(
 
   let results: DiscoveredFile[] = [];
   const skippedSensitive: string[] = [];
-  const skippedSymlinks: string[] = [];
-  let realRoot: string | undefined;
 
   for (const relativePath of entries) {
     const absolutePath = resolve(root, relativePath);
@@ -456,6 +464,25 @@ function linksToFileInside(linkPath: string, realRoot: string): boolean {
   } catch {
     return false; // dangling link, or a loop the OS refuses to resolve
   }
+}
+
+/**
+ * Whether a linked extension-less file in a script place is a refused script: a link that leaves the
+ * root or dangles (its target never opened — the extension walk records those alike), or one inside the
+ * root whose target's `#!` line names a declared interpreter. A linked directory, or an inside link to
+ * something that is no script, was never a script to refuse.
+ */
+function refusedScriptLink(linkPath: string, realRoot: string): boolean {
+  let target: string;
+  try {
+    target = realpathSync(linkPath);
+    if (statSync(target).isDirectory()) return false;
+  } catch {
+    return true; // dangling link, or a loop the OS refuses to resolve
+  }
+  const prefix = realRoot.endsWith(sep) ? realRoot : realRoot + sep;
+  if (!target.startsWith(prefix)) return true;
+  return shebangScriptLanguage(target) !== null;
 }
 
 /** The lowercased extension including the dot, or empty when there is none. */

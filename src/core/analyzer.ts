@@ -764,7 +764,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
     progress.detail(`Skipped ${skippedSensitive.length} sensitive file(s)`);
   }
   if (skippedSymlinks.length > 0) {
-    progress.detail(`Skipped ${skippedSymlinks.length} symlink(s) that leave the project root or point at nothing`);
+    progress.detail(`Skipped ${skippedSymlinks.length} symlink(s) that leave the project root, point at nothing or link a script`);
   }
 
   if (dryRun) {
