@@ -146,6 +146,31 @@ describe("assessFreshness through git", () => {
     expect(banner).toMatch(/^⚠ Stale: 1 added, HEAD [0-9a-f]{8} → [0-9a-f]{8} since this analysis — clarifydoc_analyze refreshes it\.$/);
     expect((await assessFreshness(out, root, { git: false })).added).toEqual([]);
   });
+
+  it("never names a file discovery refuses, however recently it was written", async () => {
+    await git("init", "-q");
+    writeFileSync(join(root, ".gitignore"), ".clarifydoc/\n");
+    writeFileSync(join(root, "package.json"), '{ "name": "league" }\n');
+    await seed({ "main.ts": "import './src/a';\n", "src/a.ts": "export const a = 1;\n" });
+    // The analysis read package.json and its plugin refused it: the manifest keeps it under `skipped`.
+    const { loadManifestRaw } = await import("./manifest.js");
+    const { createHash } = await import("crypto");
+    const { statSync } = await import("fs");
+    const body = '{ "name": "league" }\n';
+    const m = (await loadManifestRaw(out))!;
+    await saveManifest(out, { ...m, skipped: { "package.json": { mtime: statSync(join(root, "package.json")).mtimeMs, sha256: createHash("sha256").update(body).digest("hex") } } });
+
+    await new Promise((r) => setTimeout(r, 30));
+    writeFileSync(join(root, "package.json"), '{ "name": "league", "version": "2.0.0" }\n'); // touched since
+    writeFileSync(join(root, "src/tsconfig.json"), '{ "compilerOptions": {} }\n'); // new, and no API spec
+    writeFileSync(join(root, "src/credentials.json"), '{ "token": "x" }\n'); // new, never read by discovery
+    writeFileSync(join(root, "src/b.ts"), "export const b = 2;\n"); // new source: still named
+    await git("add", "-A");
+
+    const f = await assessFreshness(out, root);
+    expect(f.added).toEqual(["src/b.ts"]);
+    expect(f.changed).toEqual([]);
+  });
 });
 
 describe("compareExtractorVersions", () => {

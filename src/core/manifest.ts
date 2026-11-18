@@ -6,6 +6,8 @@ import { getLanguageForFile } from "../parsers/language-map.js";
 import { headCommit, listGitFiles } from "./source-revision.js";
 import { featureStamp } from "./feature-flags.js";
 import { byOrdinal } from "./ordinal.js";
+import type { Language } from "../types/analysis.js";
+import type { LanguagePluginMeta } from "../types/language-plugin.js";
 
 /**
  * Bump whenever extractor logic changes in a way that would produce different
@@ -242,8 +244,10 @@ const FRESHNESS_STAT_CAP = 5000;
  *
  * Added files come from git, not from re-running discovery (most of an
  * analysis): a file git lists, in a directory the analysis covers and a
- * language it reads, written after the manifest was — so a file discovery
- * skipped on purpose (a non-source XML, an excluded path) never reads as new.
+ * language it reads, written after the manifest was, and not one discovery
+ * refuses: a file the analysis read and its plugin refused (`skipped`, however
+ * recently touched — a `package.json` is no API spec), or a newer one that the
+ * same plugin, the sensitive-name rule or `.clarifydoc-ignore` would refuse.
  * `git: false` skips that and the HEAD comparison.
  */
 export async function assessFreshness(
@@ -291,13 +295,16 @@ export async function assessFreshness(
     const written = listed ? await stat(join(outputDir, MANIFEST_NAME)).then((x) => x.mtimeMs, () => Infinity) : Infinity;
     if (listed && Number.isFinite(written)) {
       const dirs = new Set(keys.map((k) => k.slice(0, k.lastIndexOf("/") + 1)));
+      const refuses = discoveryRefusal(projectRoot);
       let stats = 0;
       for (const rel of listed) {
         if (added.length >= ADDED_CAP || stats >= cap) break;
-        if (manifest.entries[rel] || !dirs.has(rel.slice(0, rel.lastIndexOf("/") + 1)) || !getLanguageForFile(rel)) continue;
+        if (manifest.entries[rel] || manifest.skipped?.[rel] || !dirs.has(rel.slice(0, rel.lastIndexOf("/") + 1))) continue;
+        const language = getLanguageForFile(rel);
+        if (!language) continue;
         stats++;
         const m = await stat(join(resolve(projectRoot), rel)).then((x) => x.mtimeMs, () => 0);
-        if (m > written) added.push(rel);
+        if (m > written && !(await refuses(rel, language))) added.push(rel);
       }
     }
   }
@@ -315,6 +322,45 @@ export async function assessFreshness(
 
 /** Added files reported before the list stops. */
 const ADDED_CAP = 200;
+
+/**
+ * Whether discovery would refuse a file the manifest has never seen: a credential-looking name (never
+ * opened), a `.clarifydoc-ignore` match, or its plugin's `preprocess` returning `{ skip }` (a `.json`
+ * that is no API spec). Discovery and the registry load on the first candidate only — most checks
+ * find none. A plugin that throws refuses nothing: the file is named, as before.
+ */
+function discoveryRefusal(projectRoot: string): (rel: string, language: Language) => Promise<boolean> {
+  const root = resolve(projectRoot);
+  let rules: Promise<{
+    sensitive: (rel: string, language: Language) => boolean;
+    ignored: (abs: string) => boolean;
+    pluginFor: (language: Language) => { preprocess?: LanguagePluginMeta["preprocess"] } | undefined;
+  }> | undefined;
+  return async (rel, language) => {
+    rules ??= Promise.all([import("./file-discovery.js"), import("./clarifydoc-ignore.js"), import("../extractors/registry.js")]).then(
+      ([discovery, ignore, registry]) => {
+        const patterns = ignore.loadIgnorePatterns(root);
+        return {
+          sensitive: discovery.isSensitive,
+          ignored: (abs: string) => ignore.isIgnored(abs, root, patterns),
+          pluginFor: registry.pluginFor,
+        };
+      },
+    );
+    const { sensitive, ignored, pluginFor } = await rules;
+    if (sensitive(rel, language)) return true;
+    const abs = join(root, rel);
+    if (ignored(abs)) return true;
+    const preprocess = pluginFor(language)?.preprocess;
+    if (!preprocess) return false;
+    try {
+      const pre = preprocess(await readFile(abs, "utf-8"), rel, { absolutePath: abs, projectRoot: root });
+      return !!pre && "skip" in pre;
+    } catch {
+      return false;
+    }
+  };
+}
 
 /**
  * Determine the cache state of a file relative to a previous manifest entry.
