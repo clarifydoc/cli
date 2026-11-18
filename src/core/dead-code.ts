@@ -288,8 +288,10 @@ export interface ReachabilityInput {
  *
  * Roots of the walk, in two tiers:
  *   - ANCHORS — entry points: the plugin's manifest entries, files a framework
- *     loads by convention, and scripts a page of another language loads
- *     (`index.html`'s `<script src="/src/main.ts">`).
+ *     loads by convention, scripts a page of another language loads
+ *     (`index.html`'s `<script src="/src/main.ts">`), and handlers a serverless
+ *     descriptor routed onto (`RouteInfo.resolvedBy === "serverless-handler-anchor"`,
+ *     or `entryPoints` with framework `sam` / `serverless`).
  *   - PASSIVE roots — tests, ambient declarations, generated code, files a
  *     tool runs (the model's `passiveReason`: migrations, scripts, configs)
  *     and every file of a language that is not judged. They keep what they reach alive
@@ -354,6 +356,16 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
       const root = input.projectRoots.get(projectOf(a)) ?? "";
       const rel = root && a.filePath.startsWith(root + "/") ? a.filePath.slice(root.length + 1) : a.filePath;
       reason = model.entryReason(a, rel, input.frameworks, () => input.readSource(a.filePath)) ?? undefined;
+      // Platform-invoked handlers: a serverless/SAM/Azure descriptor named this
+      // file (route-anchor moved the route or entry onto it). Nothing imports it,
+      // so the model would otherwise find no entry and skip the whole project.
+      if (!reason && a.routes.some((r) => r.resolvedBy === "serverless-handler-anchor")) {
+        reason = "serverless handler";
+      }
+      if (!reason) {
+        const ep = a.entryPoints?.find((e) => e.framework === "sam" || e.framework === "serverless");
+        if (ep) reason = `serverless ${ep.kind}`;
+      }
       if (reason) entryReason.set(a.filePath, reason);
       // Run by a tool (a migration, a script, a config): alive, not judged,
       // and no evidence of where the program starts.

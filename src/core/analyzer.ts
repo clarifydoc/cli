@@ -1942,10 +1942,19 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
     : {};
   if (testNavigations.length) progress.detail(`  Browser test navigations: ${testNavigations.length}, ${testNavigations.filter((n) => n.screens).length} to a screen`);
   if (layerSplit.conflicts.length) progress.detail(`  Layers: ${layerSplit.conflicts.length} file(s) placed by path in a layer their content contradicts`);
+  // Runtime import graph for `noCycles` (and later health/pressure): a cycle only
+  // `import type` or `import()` closes is not a runtime init hazard.
+  const typeOnly = typeOnlyEdges(typeOnlyImports, symbolLinks);
   const layerViolations = [
     ...detectLayerViolations(allAnalyses, componentGraph, fileLayerMap),
     // The team's own rules (`.clarifydoc/config.json` `rules`), beside the built-in order.
-    ...detectRuleViolations(allAnalyses, componentGraph, fileLayerMap, architecture.rules),
+    ...detectRuleViolations(
+      allAnalyses,
+      componentGraph,
+      fileLayerMap,
+      architecture.rules,
+      runtimeGraph(componentGraph, typeOnly, dynamicImportEdges),
+    ),
   ].filter(
     (v) => !isUnauthored(v.sourceFile) && !isUnauthored(v.targetFile),
   );
@@ -2341,8 +2350,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   });
   // Import cycles, computed once for refactor pressure, the health grade and
   // the suggestions: the runtime graph (a cycle only `import type` closes is
-  // none) over authored, non-test files.
-  const typeOnly = typeOnlyEdges(typeOnlyImports, symbolLinks);
+  // none) over authored, non-test files. `typeOnly` was built above for `noCycles`.
   const isCycleCandidate = (f: string): boolean => !isUnauthored(f) && fileLayerMap[f] !== "test";
   const cycleGraph: Record<string, string[]> = {};
   for (const [src, targets] of Object.entries(componentGraph)) {

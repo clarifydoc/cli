@@ -339,6 +339,30 @@ describe("detectRuleViolations — the team's own import rules", () => {
     const files = detectRuleViolations([], cyclic, {}, [rule({ from: ["src/features/**"], noCycles: true })]);
     expect(pairs(files)).toEqual(["src/features/club/api.ts → src/features/match/api.ts", "src/features/match/api.ts → src/features/club/api.ts"]);
   });
+
+  it("noCycles: ignores a cycle that only type-only or lazy edges close", async () => {
+    const { detectRuleViolations } = await import("./layer-analyzer.js");
+    const { runtimeGraph } = await import("./import-kinds.js");
+    const full = {
+      "src/club.ts": ["src/league.ts"],
+      "src/league.ts": ["src/club.ts"],
+    };
+    const typeOnly = { "src/club.ts": ["src/league.ts"], "src/league.ts": ["src/club.ts"] };
+    const lazy = { "src/club.ts": ["src/league.ts"], "src/league.ts": ["src/club.ts"] };
+    const ruleNo = [rule({ name: "no cycles", from: ["src/**"], noCycles: true })];
+    expect(detectRuleViolations([], full, {}, ruleNo, runtimeGraph(full, typeOnly))).toEqual([]);
+    expect(detectRuleViolations([], full, {}, ruleNo, runtimeGraph(full, undefined, lazy))).toEqual([]);
+    // A value-import edge still left after subtracting type-only must fire.
+    const mixed = {
+      "src/club.ts": ["src/league.ts"],
+      "src/league.ts": ["src/club.ts", "src/garage.ts"],
+    };
+    const mixedTypeOnly = { "src/league.ts": ["src/garage.ts"] };
+    expect(pairs(detectRuleViolations([], mixed, {}, ruleNo, runtimeGraph(mixed, mixedTypeOnly)))).toEqual([
+      "src/club.ts → src/league.ts",
+      "src/league.ts → src/club.ts",
+    ]);
+  });
 });
 
 describe("layers from what a file does — several labels, disagreements recorded", () => {

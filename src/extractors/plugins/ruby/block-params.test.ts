@@ -96,6 +96,45 @@ end
   });
 });
 
+describe("Ruby: block parameter shadows a typed formal", () => {
+  const CLUB = `class Club
+  def save
+    1
+  end
+
+  def archive
+    1
+  end
+end
+`;
+  const DECOY = `class Decoy
+  def archive
+    2
+  end
+end
+`;
+  const SVC = `class Svc
+  # @param club [Club]
+  def train(club)
+    club.save
+    decoys = []
+    decoys.each do |club|
+      club.archive
+    end
+  end
+end
+`;
+  it("does not give the outer formal's type to calls on the rebound block parameter", () => {
+    const links = buildSymbolLinks([
+      read(CLUB, "app/models/club.rb"),
+      read(DECOY, "app/models/decoy.rb"),
+      read(SVC, "app/services/svc.rb"),
+    ]);
+    expect(targets(links, "app/services/svc.rb", "club.save")).toEqual(["app/models/club.rb::Club.save"]);
+    expect(targets(links, "app/services/svc.rb", "club.archive")).toEqual([]);
+  });
+});
+
 describe("Ruby: anonymous subclasses in a spec", () => {
   const BASE = `class Club
   def close

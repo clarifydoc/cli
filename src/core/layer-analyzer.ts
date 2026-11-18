@@ -287,13 +287,18 @@ function importLineOf(analyses: readonly FileAnalysis[], sourceFile: string, tar
  * project file it does not name; a rule over `each` elements with neither
  * keeps the elements apart. An edge within one `each` element never breaks a
  * rule, and `except` lifts any rule for the files it names on either end. A
- * `noCycles` rule reports every edge of a cycle among its files or elements.
+ * `noCycles` rule reports every edge of a cycle among its files or elements on
+ * the runtime import graph (pass `cycleGraph` — typically
+ * `runtimeGraph(componentGraph, typeOnlyEdges, dynamicImportEdges)` — so a
+ * cycle only `import type` or `import()` closes is not a violation).
  */
 export function detectRuleViolations(
   analyses: readonly FileAnalysis[],
   componentGraph: Record<string, string[]>,
   fileLayerMap: Record<string, ArchLayer>,
   rules: ReadonlyArray<DependencyRule>,
+  /** Import graph for `noCycles` (defaults to `componentGraph`). */
+  cycleGraph: Record<string, string[]> = componentGraph,
 ): LayerViolation[] {
   if (rules.length === 0) return [];
   const out: LayerViolation[] = [];
@@ -331,7 +336,7 @@ export function detectRuleViolations(
     const unit = (file: string): string | null => (covers(rule, file) ? (rule.each ? elementOf(file, rule.each) : file) : null);
     const edges: Array<{ sourceFile: string; targetFile: string; from: string; to: string }> = [];
     const graph = new Map<string, Set<string>>();
-    for (const [sourceFile, targets] of Object.entries(componentGraph)) {
+    for (const [sourceFile, targets] of Object.entries(cycleGraph)) {
       const from = unit(sourceFile);
       if (from === null) continue;
       for (const targetFile of targets) {

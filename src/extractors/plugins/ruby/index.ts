@@ -601,20 +601,54 @@ function rewriteConstantLocals(lines: readonly string[], fn: FunctionInfo): void
  * The parameters of the method's blocks (`team.players.each { |player| … }`): each is a local of unknown
  * type (`untypedLocals`, so the linker never guesses its calls by name), or — where the iterated
  * collection is a typed association or model query — the first element of it (`localTypes[].from`).
- * Returns the names so typed.
+ * A block that rebinds a method parameter (`def train(club); … each { |club| … }`) does not become a
+ * function-wide local (that would also strip the outer formal's type): calls inside that block are
+ * `boundLocally`, so Strategy 2 refuses the formal for them. Returns the names typed by an iterated
+ * collection.
  */
 function addBlockParamTypes(lines: readonly string[], fn: FunctionInfo, associations: ReadonlySet<string>, bound: ReadonlySet<string>): Set<string> {
   const heads = new Set<string>([...associations].filter((n) => !bound.has(n)));
   for (const l of fn.localTypes ?? []) if (l.type || MODEL_FINDER_CHAIN.test(l.from ?? "")) heads.add(l.name);
   const elements = new Set<string>();
-  for (const p of blockParamsOf(bodyLines(lines, fn), heads, (chain) => MODEL_FINDER_CHAIN.test(chain))) {
-    // A name the method states otherwise (a parameter, an assigned local) is that, not the block's.
-    if (fn.params.some((x) => x.name === p.name) || fn.localTypes?.some((l) => l.name === p.name)) continue;
-    if (p.from) {
-      (fn.localTypes ??= []).push({ name: p.name, type: "", from: p.from });
-      elements.add(p.name);
+  const params = blockParamsOf(bodyLines(lines, fn), heads, (chain) => MODEL_FINDER_CHAIN.test(chain));
+  const formalNames = new Set(fn.params.map((x) => x.name));
+  const seen = new Set<string>();
+  for (const p of params) {
+    // A typed local the method assigns is that, not the block's (locals rebound as block params are
+    // already dropped by the DI pass).
+    if (fn.localTypes?.some((l) => l.name === p.name && !l.field)) continue;
+    // A method parameter the block rebinds must not become a function-wide untyped/from local —
+    // that would also strip the outer formal's type from `club.save` above the block. Those sites
+    // are marked `boundLocally` below instead.
+    if (formalNames.has(p.name)) continue;
+    if (!seen.has(p.name)) {
+      seen.add(p.name);
+      if (p.from) {
+        (fn.localTypes ??= []).push({ name: p.name, type: "", from: p.from });
+        elements.add(p.name);
+      }
+      if (!fn.untypedLocals?.includes(p.name)) (fn.untypedLocals ??= []).push(p.name);
     }
-    (fn.untypedLocals ??= []).push(p.name);
+  }
+  // Calls on a name a block rebinds from a formal: mark them so Strategy 2 does not take the formal.
+  const shadowed = params.filter((p) => formalNames.has(p.name));
+  if (shadowed.length > 0) {
+    const ends = rubyBlockEndsOf(lines);
+    for (const p of shadowed) {
+      // `ends` stores the exclusive 0-based index after the closer; same-line `{ |x| … }` has no entry.
+      const afterClose = ends.get(p.openLine);
+      for (const c of fn.calls) {
+        const head = c.name.split(".")[0]!;
+        if (head !== p.name && head !== `@${p.name}`) continue;
+        if (afterClose !== undefined) {
+          // Body lines are openLine+1 .. closer-1 (0-based) → 1-based openLine+2 .. afterClose-1.
+          if (c.line < p.openLine + 2 || c.line > afterClose - 1) continue;
+        } else if (c.line !== p.openLine + 1) {
+          continue;
+        }
+        c.boundLocally = true;
+      }
+    }
   }
   return elements;
 }

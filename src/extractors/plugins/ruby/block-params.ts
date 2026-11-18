@@ -28,6 +28,8 @@ export interface BlockParam {
   name: string;
   /** The first element of the iterated collection as a call chain (`team.players().first()`), when the collection is typed. */
   from?: string;
+  /** 0-based line of the `{` / `do` that opens the block (for marking calls inside it). */
+  openLine: number;
 }
 
 /** `team.players(x).where(y)` → `team.players().where()`: the head as written, every later step a call, arguments dropped. */
@@ -49,15 +51,18 @@ function asCallChain(chain: string): string {
 /**
  * Block parameters of the function, each with the element chain it can be typed by. `typedHeads`
  * are the names whose type the function states (a typed local, an association reader of the
- * class) and `finder` tells a class-level model query from any other chain.
+ * class) and `finder` tells a class-level model query from any other chain. Several blocks may
+ * bind the same name (each with its own `openLine`).
  */
 export function blockParamsOf(
   codeLines: ReadonlyArray<readonly [number, string]>,
   typedHeads: ReadonlySet<string>,
   isFinderChain: (callChain: string) => boolean,
 ): BlockParam[] {
-  const out = new Map<string, BlockParam>();
-  for (const [, text] of codeLines) {
+  const out: BlockParam[] = [];
+  /** name → the `from` every opening of that name agrees on (else dropped). */
+  const fromOf = new Map<string, string | undefined>();
+  for (const [line, text] of codeLines) {
     const code = text.replace(/\s#.*$/, "");
     if (!code.includes("|")) continue;
     for (const m of code.matchAll(BLOCK_RE)) {
@@ -67,11 +72,18 @@ export function blockParamsOf(
       const head = recv.split(".")[0]!.replace(/[?!]$/, "");
       const steps = chain.split(".").length;
       const typed = /^[A-Z]/.test(head) ? isFinderChain(chain) : typedHeads.has(head) && steps >= 2;
-      const next: BlockParam = typed ? { name, from: `${chain}.first()` } : { name };
-      const prev = out.get(name);
+      const from = typed ? `${chain}.first()` : undefined;
+      const prev = fromOf.get(name);
       // One name, one reading: a name iterated over two collections is typed by neither.
-      out.set(name, prev && prev.from !== next.from ? { name } : prev ?? next);
+      if (fromOf.has(name) && prev !== from) fromOf.set(name, undefined);
+      else if (!fromOf.has(name)) fromOf.set(name, from);
+      out.push({ name, openLine: line, ...(from ? { from } : {}) });
     }
   }
-  return [...out.values()];
+  for (const p of out) {
+    const agreed = fromOf.get(p.name);
+    if (agreed) p.from = agreed;
+    else delete p.from;
+  }
+  return out;
 }

@@ -20,9 +20,11 @@ import { normalize, dirOf, readText } from "../shared/reachability-kit.js";
  *
  *   1. Where does execution start? package.json `main`/`module`/`browser`/
  *      `bin`/`exports` and script paths in `scripts` (mapped from `dist/` back
- *      to `src/`), `wrangler.toml` `main`, `serverless.yml` handlers — plus
- *      files frameworks and tools load by CONVENTION (`*.config.ts`, Next.js
- *      pages, SvelteKit `+page.svelte`, Storybook stories, workers, …).
+ *      to `src/`), `wrangler.toml` `main`, `serverless.yml` / SAM `template.yaml`
+ *      handlers — plus files frameworks and tools load by CONVENTION
+ *      (`*.config.ts`, Next.js pages, SvelteKit `+page.svelte`, Storybook
+ *      stories, workers, …). Core also anchors files a descriptor's route
+ *      resolver moved a route onto (`resolvedBy: serverless-handler-anchor`).
  *   2. What does an import specifier load? Relative paths with the bundler's
  *      extension/index probing; tsconfig `paths` (already rewritten to
  *      project-relative paths at extraction); workspace packages; known
@@ -430,6 +432,25 @@ async function loadJsReachability(ctx: ReachabilityLoadContext): Promise<Reachab
       // `handler: src/handlers/users.list` — the module, minus the export name.
       for (const m of sls.matchAll(/^\s*handler:\s*["']?([\w@$\-./]+)\.[\w$]+["']?\s*$/gm)) {
         addEntry(root, m[1]!, `${name} handler`);
+      }
+    }
+    // AWS SAM `template.yaml`: `Handler: src/handler.handler` or `CodeUri: src/` +
+    // `Handler: clubs.list` (module relative to CodeUri). Same module path as above.
+    for (const name of ["template.yaml", "template.yml"]) {
+      const sam = await readText(join(ctx.projectRoot, root, name));
+      if (!sam || !/AWS::Serverless::Function\b/.test(sam)) continue;
+      let codeUri = "";
+      for (const line of sam.split("\n")) {
+        const uri = /^\s*CodeUri:\s*["']?([\w@$\-./]+)["']?\s*$/.exec(line);
+        if (uri) {
+          codeUri = uri[1]!.replace(/\/?$/, "/");
+          continue;
+        }
+        const h = /^\s*Handler:\s*["']?([\w@$\-./]+)\.[\w$]+["']?\s*$/.exec(line);
+        if (!h) continue;
+        const mod = h[1]!;
+        const underUri = codeUri && !mod.includes("/") ? `${codeUri}${mod}` : mod;
+        addEntry(root, underUri, `${name} handler`);
       }
     }
   }

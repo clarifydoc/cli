@@ -153,6 +153,27 @@ describe("analyzeReachability", () => {
     expect(r.judgedFiles).toBe(2);
   });
 
+  it("anchors a handler a serverless descriptor routed onto, and reports a sibling orphan", () => {
+    const r = run(
+      [
+        file({
+          filePath: "src/handler.ts",
+          exports: [exp("handler")],
+          routes: [{
+            path: "/clubs", httpMethod: "GET", kind: "api", handler: "handler", calls: [], line: 1,
+            resolvedBy: "serverless-handler-anchor",
+          } as never],
+        }),
+        file({ filePath: "src/orphan.ts", exports: [exp("unused")] }),
+      ],
+      stubModel([]),
+    );
+    expect(r.skippedProjects ?? []).toEqual([]);
+    expect(r.entries).toEqual([{ filePath: "src/handler.ts", reason: "serverless handler" }]);
+    expect(r.files.map((f) => f.filePath)).toEqual(["src/orphan.ts"]);
+    expect(r.judgedFiles).toBe(2);
+  });
+
   it("keeps test-only code alive, but reports what nothing reaches", () => {
     const r = run(
       [

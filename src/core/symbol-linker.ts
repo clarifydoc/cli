@@ -6976,9 +6976,13 @@ function resolveThroughDeclaredType(
   const receiver = receiverChain(call.name, manifestFor(analysis.language as Language)?.indexerMethod);
   if (!receiver || receiver.length === 0 || receiver.length > MAX_RECEIVER_CHAIN + 1 || receiverCutName(analysis, call)) return null;
   // A parameter a nested block's own untyped declaration hides at this site (`CallInfo.boundLocally` on a dotted
-  // call): its declared type is not the receiver's.
-  if (call.boundLocally && !receiver[0]!.ctor && !receiver[0]!.call
-    && findEnclosingCallable(analysis, sourceSymbol)?.params.some((p) => p.name === receiver[0]!.name)) return null;
+  // call): its declared type is not the receiver's. A typed block element (`localTypes` with type/from) still is.
+  if (call.boundLocally && !receiver[0]!.ctor && !receiver[0]!.call) {
+    const callable = findEnclosingCallable(analysis, sourceSymbol);
+    const head = receiver[0]!.name;
+    if (callable?.params.some((p) => p.name === head)
+      && !callable.localTypes?.some((l) => l.name === head && (l.type || l.from || l.qualifier))) return null;
+  }
   const branches: InjectionPoint[] = [];
   const point = chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, receiver, 0, false, branches);
   if (point) return linkThroughPoint(ctx, analysis, sourceFile, point, leafName, mkLink);
