@@ -1916,10 +1916,12 @@ export interface LanguagePluginManifest {
    */
   serviceConfig?: ServiceConfigSpec;
   /**
-   * Extension-less SOURCE files this language owns, by basename — Play's
-   * `conf/routes`. Discovery globs by extension, so without this such a file
-   * is never analysed; the registry maps the basename to the language and
-   * `getLanguageForFile` checks it before the extension.
+   * SOURCE files this language owns by basename — Play's `conf/routes`, shell
+   * `.bashrc`. Discovery globs by extension, so without this such a file is
+   * never analysed; the registry maps the basename to the language and
+   * `getLanguageForFile` checks it before the extension. A leading-dot name is
+   * path-scoped (`**/.bashrc` beats glob `dot: false`); it does not admit every
+   * hidden file.
    */
   namedFiles?: readonly string[];
   /**

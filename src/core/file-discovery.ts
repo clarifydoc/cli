@@ -220,7 +220,9 @@ export async function discoverFiles(
 
   const sourcePatterns = [
     ...Object.keys(EXTENSION_TO_LANGUAGE).map((ext) => `**/*${ext}`),
-    // Extension-less source files a plugin claims by basename (Play `conf/routes`).
+    // Source files a plugin claims by basename (Play `conf/routes`, shell
+    // `.bashrc`). A leading-dot name is path-scoped: the pattern is `**/.bashrc`,
+    // which beats glob's default `dot: false`, without admitting every hidden file.
     ...[...NAMED_FILE_LANGUAGE.keys()].map((name) => `**/${name}`),
   ];
   const patterns = options.include?.length ? options.include : sourcePatterns;
@@ -242,7 +244,8 @@ export async function discoverFiles(
   };
 
   // Not following links, the walk would drop every linked file; list them
-  // and decide per link below.
+  // and decide per link below. `dot` stays false: only named-file patterns that
+  // themselves start with `.` (above) admit those basenames.
   const links = new LinkedFiles();
   const entries = await glob(patterns, {
     cwd: root,

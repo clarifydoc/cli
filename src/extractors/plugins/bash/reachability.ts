@@ -8,7 +8,8 @@ import { conventionReachability } from "../shared/reachability-kit.js";
  */
 export const bashReachability = conventionReachability({
   extensions: [".sh", ".bash"],
-  importPath: (source) => (/^\.{0,2}\/|\.(?:sh|bash)$/.test(source) ? source : null),
+  // `source ./.bashrc` is recorded as `.bashrc` (leading-dot basename, no slash).
+  importPath: (source) => (/^\.{0,2}\/|^\.[^/]+$|\.(?:sh|bash)$/.test(source) ? source : null),
   names: { functions: true, stem: true },
-  passiveFiles: [[/\.(?:sh|bash)$/, "shell script"]],
+  passiveFiles: [[/\.(?:sh|bash)$|^\.(?:bashrc|zshrc|profile|bash_profile)$/, "shell script"]],
 });

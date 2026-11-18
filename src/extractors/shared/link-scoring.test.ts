@@ -147,6 +147,17 @@ describe("resolveTarget — Python relative modules", () => {
   it("leaves path-form relative specifiers alone", () => {
     expect(resolveTarget("./api", "web/src/page.ts", map)).toBe("web/src/api.ts");
   });
+
+  it("keeps a discovered leading-dot basename as written (shell .bashrc)", () => {
+    const shell = buildFilePathMap([
+      { filePath: "scripts/deploy.sh" },
+      { filePath: ".bashrc" },
+      { filePath: "pkg/graph.py" },
+    ] as any[]);
+    expect(resolveTarget(".bashrc", "scripts/deploy.sh", shell)).toBe(".bashrc");
+    // Without a namesake file in the map, `.graph` is still a relative module.
+    expect(resolveTarget(".graph", "pkg/cli.py", map)).toBe("pkg/graph.py");
+  });
 });
 
 describe("resolveTarget — Python dotted modules", () => {

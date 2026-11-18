@@ -492,6 +492,12 @@ export function resolveImportSource(
     return null;
   }
 
+  // A discovered file whose basename starts with `.` (`.bashrc`): match as written
+  // before `relativeModulePath` rewrites a leading-dot name as a relative module
+  // (`.graph` → `./graph`). Only the path-scoped named-file claim puts these in
+  // `knownFiles`; a decoy hidden file is never admitted and stays unresolved.
+  if (!src.startsWith("./") && !src.startsWith("..") && knownFiles.has(src)) return src;
+
   const joined = normalizeJoin(dir, relativeModulePath(src));
   // `from . import graph` / `from .pkg import mod` name the module in the
   // specifier — tried before the package itself, as for absolute imports.

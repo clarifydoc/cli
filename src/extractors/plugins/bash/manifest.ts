@@ -14,6 +14,10 @@ export const bashManifest: LanguagePluginManifest = {
   family: "shell",
   parsing: "tree-sitter",
   extensions: [".sh", ".bash"],
+  // Shell rc files sourced as `source ./.bashrc` — claimed by basename so discovery
+  // admits them (glob `dot: false` still matches an explicit `**/.bashrc`) without
+  // opening every hidden file.
+  namedFiles: [".bashrc", ".zshrc", ".profile", ".bash_profile"],
   grammar: { variants: { bash: { pkg: "tree-sitter-bash", wasm: "tree-sitter-bash.wasm" } } },
   // `source lib.sh` puts lib.sh's functions in scope by name.
   importsShareScope: true,

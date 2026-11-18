@@ -404,6 +404,14 @@ export function resolveTarget(importSource: string, sourceFile: string, filePath
 function resolveTargetUncached(importSource: string, sourceFile: string, filePathMap: Map<string, string>): string | null {
   // 1. Relative imports (JS/TS/Python relative)
   if (importSource.startsWith(".")) {
+    // A discovered file whose basename starts with `.` (`.bashrc`): match as written
+    // before `relativeModulePath` rewrites a leading-dot name as a relative module
+    // (`.graph` → `./graph`). Only a path-scoped named-file claim puts these in the
+    // map; a decoy hidden file is never admitted and stays unresolved.
+    if (!importSource.startsWith("./") && !importSource.startsWith("..")) {
+      const named = filePathMap.get(importSource);
+      if (named) return named;
+    }
     const sourceDir = posix.dirname(sourceFile);
     const resolved = posix.normalize(posix.join(sourceDir, relativeModulePath(importSource)));
     const match = tryMatch(resolved, filePathMap, sourceFile);
