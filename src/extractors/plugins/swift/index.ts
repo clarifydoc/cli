@@ -5,7 +5,7 @@ import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractClassesWithSpec } from "../shared/regex-base.js";
 import { extractVaporRoutes } from "./routes.js";
 import { addMemberFlowLocals, parseSwiftReturnType } from "./local-flow.js";
-import { SWIFT_CODE, TRAILING_CLOSURE_CALL } from "./code.js";
+import { CONSTRUCTION_CHAIN_CALL, SWIFT_CODE, TRAILING_CLOSURE_CALL } from "./code.js";
 import { extractSwiftDataSources } from "./data-sources.js";
 import { extractSwiftRequestAccess } from "./request-schema.js";
 import {
@@ -329,7 +329,7 @@ export const swiftSpec: RegexLangSpec = {
     },
   ],
 
-  callPatterns: [...swiftDiCallPatterns, TRAILING_CLOSURE_CALL],
+  callPatterns: [...swiftDiCallPatterns, CONSTRUCTION_CHAIN_CALL, TRAILING_CLOSURE_CALL],
   blockEnds: SWIFT_CODE.blockEnds,
   callSourceLines: SWIFT_CODE.callSourceLines,
   extractLocalTypes: extractSwiftLocalTypes,

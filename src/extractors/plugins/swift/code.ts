@@ -45,3 +45,14 @@ export const TRAILING_CLOSURE_CALL: CallPattern = {
     return NOT_A_CALL.has(name.split(".")[0]!) ? { name: "", leafName: "" } : { name, leafName };
   },
 };
+
+/**
+ * A method on a fresh construction: `Club().sign(`, `try await Club(id: 7).squad(`,
+ * `Club()!.save(`. Named as the tree-sitter reader names it (`Club.sign` on
+ * `Club`); the baseline skips the member after `).` and would leave it unlinked.
+ * Nested parentheses in the construction's arguments are not read.
+ */
+export const CONSTRUCTION_CHAIN_CALL: CallPattern = {
+  pattern: /(?<![\w.])([A-Z]\w*)\s*\([^()]*\)\s*[!?]?\s*\.\s*([a-zA-Z_]\w*)\s*\(/g,
+  buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2]!, receiverType: m[1]! }),
+};
