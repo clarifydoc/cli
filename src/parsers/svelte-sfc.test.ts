@@ -26,6 +26,16 @@ describe("Svelte markup handlers", () => {
       "3 on:change save",
     ]);
   });
+
+  it("names a Svelte store method in markup as the store's method (`$table.previousPage` → `table.previousPage`)", () => {
+    expect(events(`<button on:click={() => $table.previousPage()}>prev</button>
+<button onclick={() => { $table.nextPage(); }}>next</button>
+<button on:click={$standings.reload}>decoy</button>`)).toEqual([
+      "1 on:click table.previousPage",
+      "2 onclick table.nextPage",
+      "3 on:click standings.reload",
+    ]);
+  });
 });
 
 describe("SvelteKit form posts", () => {

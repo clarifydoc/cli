@@ -247,10 +247,17 @@ export function extractSvelteInteractiveElements(
   return elements;
 }
 
-/** Normalize a handler expression to a short name (`() => save()` → `save`, `() => { void run({ id }); }` → `run`). */
+/**
+ * Normalize a handler expression to a short name (`() => save()` → `save`, `() => { void run({ id }); }` → `run`).
+ * A Svelte store auto-subscription call (`() => $table.previousPage()`, `$table.nextPage`) becomes the store's
+ * method as the script reader names it (`table.previousPage`) — the `$` is the subscription, not the callee.
+ */
 function cleanHandler(raw: string | null): string | null {
   if (!raw) return null;
   const trimmed = raw.trim();
+  // Arrow / block / bare: `$table.previousPage()` → `table.previousPage` (same spelling as librarySubscriptionCallee).
+  const storeCall = /(?:^|=>\s*|[^A-Za-z0-9_$.])\$([A-Za-z_][\w$]*)\.([A-Za-z_$][\w$]*)\s*(?:\(|$)/.exec(trimmed);
+  if (storeCall) return `${storeCall[1]}.${storeCall[2]}`;
   const arrow = trimmed.match(/=>\s*([a-zA-Z_$][\w$]*)/);
   if (arrow) return arrow[1]!;
   // A block body: the first function it calls.
