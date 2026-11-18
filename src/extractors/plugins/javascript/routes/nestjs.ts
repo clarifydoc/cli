@@ -1,8 +1,9 @@
 import type { Node } from "web-tree-sitter";
 import type { FileAnalysis, RouteFact, RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../../types/analysis.js";
+import type { ProjectContext } from "../../../../types/project.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";
 import { stripQuotes } from "../../../shared/node-helpers.js";
-import { applyRouteMeta, boundParam, inferredParam, type GuardAttr } from "../../../shared/route-metadata.js";
+import { applyRouteMeta, boundParam, inferredParam, withInheritedGuards, type GuardAttr } from "../../../shared/route-metadata.js";
 import { collectClassGuardFacts, inheritedClassGuards } from "../../shared/class-guards.js";
 import { CONSTANT_REF } from "./path-helpers.js";
 
@@ -20,7 +21,11 @@ import { CONSTANT_REF } from "./path-helpers.js";
  * `@Roles(...)`, `@Public()` on the class (inherited) or the method,
  * `@Version(...)` on either (the method's wins), and the parameter decorators
  * `@Body() / @Query() / @Param() / @Headers() / @UploadedFile() / @Req()`,
- * which are CHILDREN of the parameter node.
+ * which are CHILDREN of the parameter node. App-wide
+ * `app.useGlobalGuards(new HeaderGuard())` (a NestFactory app only) is a
+ * `nest-global-guards` fact whose guards and `canActivate` calls the project
+ * resolver puts on every Nest route of the same sub-project as
+ * `inheritedMiddleware`.
  */
 
 const HTTP_DECORATORS = new Set(["Get", "Post", "Put", "Patch", "Delete", "All", "Head", "Options"]);
@@ -325,6 +330,112 @@ export function collectNestClassGuards(root: Node, routes: readonly RouteInfo[],
 
 /** NestJS: a class-level guard a controller inherits from its base class. */
 export const nestInheritedGuards = inheritedClassGuards("nest-inherited-guards", ["typescript", "javascript"]);
+
+/** `app.useGlobalGuards(new HeaderGuard())` in a NestFactory bootstrap file. */
+export const NEST_GLOBAL_GUARDS = "nest-global-guards";
+export interface NestGlobalGuardsFact {
+  guards: GuardAttr[];
+  /** `HeaderGuard.canActivate` — Nest runs that method; resolved in this file. */
+  calls: string[];
+}
+
+/**
+ * The class a global-guard argument names: `new HeaderGuard()`, `HeaderGuard`,
+ * or `app.get(AuthGuard)`. Anything else names none.
+ */
+function globalGuardClass(arg: Node): string | null {
+  if (arg.type === "new_expression") {
+    const ctor = arg.childForFieldName("constructor");
+    const name = ctor?.type === "identifier" ? ctor.text : ctor?.type === "member_expression" ? ctor.childForFieldName("property")?.text : null;
+    return name && /^[A-Z]/.test(name) ? name : null;
+  }
+  if (arg.type === "identifier" && /^[A-Z]/.test(arg.text)) return arg.text;
+  if (arg.type === "call_expression") {
+    const callee = arg.childForFieldName("function");
+    const prop = callee?.type === "member_expression" ? callee.childForFieldName("property")?.text : null;
+    if (prop !== "get") return null;
+    const first = callArgs(arg)[0];
+    return first?.type === "identifier" && /^[A-Z]/.test(first.text) ? first.text : null;
+  }
+  return null;
+}
+
+/**
+ * `app.useGlobalGuards(…)` only when this file bootstraps a Nest app
+ * (`NestFactory` / `@nestjs/core`): a namesake method on another class is not
+ * a guard. Each argument that names a class becomes a policy and a
+ * `Class.canActivate` middleware call, resolved later in this file.
+ */
+export function collectNestGlobalGuards(root: Node, sourceText: string, facts: RouteFact[]): void {
+  if (!/\buseGlobalGuards\b/.test(sourceText)) return;
+  if (!/\bNestFactory\b/.test(sourceText) && !/['"]@nestjs\/core['"]/.test(sourceText)) return;
+  const walk = (node: Node): void => {
+    if (node.type === "call_expression") {
+      const fn = node.childForFieldName("function");
+      if (fn?.type === "member_expression" && fn.childForFieldName("property")?.text === "useGlobalGuards") {
+        const guards: GuardAttr[] = [];
+        const calls: string[] = [];
+        for (const arg of callArgs(node)) {
+          const cls = globalGuardClass(arg);
+          if (!cls) continue;
+          guards.push({ text: `useGlobalGuards(${cls})`, policies: [cls] });
+          calls.push(`${cls}.canActivate`);
+        }
+        if (guards.length > 0) {
+          facts.push({
+            kind: NEST_GLOBAL_GUARDS,
+            line: node.startPosition.row + 1,
+            data: { guards, calls } satisfies NestGlobalGuardsFact,
+          });
+        }
+      }
+    }
+    for (const child of node.namedChildren) walk(child);
+  };
+  walk(root);
+}
+
+/**
+ * Every API route of a sub-project that registered `useGlobalGuards` inherits
+ * those guards: auth/middleware texts, and `inheritedMiddleware` naming the
+ * bootstrap file so each `Class.canActivate` resolves through its imports
+ * (never a namesake class elsewhere). Nest's global guards run on the whole
+ * app; files with no API routes (the bootstrap itself) are skipped.
+ */
+export const nestGlobalGuards: RouteResolver = {
+  id: "nest-global-guards",
+  languages: ["typescript", "javascript"],
+  priority: 26,
+  resolve(analyses: FileAnalysis[], _ctx: ProjectContext): void {
+    const byProject = new Map<string, Array<{ file: string; fact: NestGlobalGuardsFact }>>();
+    for (const a of analyses) {
+      for (const f of a.routeFacts ?? []) {
+        if (f.kind !== NEST_GLOBAL_GUARDS) continue;
+        const key = a.projectId ?? "";
+        (byProject.get(key) ?? byProject.set(key, []).get(key)!).push({ file: a.filePath, fact: f.data as NestGlobalGuardsFact });
+      }
+    }
+    if (byProject.size === 0) return;
+    for (const a of analyses) {
+      const globals = byProject.get(a.projectId ?? []);
+      if (!globals?.length || !a.routes.some((r) => r.kind === "api" && !r.mount)) continue;
+      a.routes = a.routes.map((r) => {
+        if (r.kind !== "api" || r.mount) return r;
+        let route = r;
+        for (const g of globals) {
+          route = withInheritedGuards(route, g.fact.guards);
+          if (g.fact.calls.length === 0) continue;
+          const entry = { file: g.file, calls: g.fact.calls };
+          const existing = route.inheritedMiddleware ?? [];
+          if (!existing.some((e) => e.file === entry.file && e.calls.join("\0") === entry.calls.join("\0"))) {
+            route = { ...route, inheritedMiddleware: [...existing, entry] };
+          }
+        }
+        return route;
+      });
+    }
+  },
+};
 
 /** Inspect a single node for a NestJS HTTP-verb decorator. */
 export function visitNestjsRoute(node: Node, routes: RouteInfo[], facts?: RouteFact[]): void {

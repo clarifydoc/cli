@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import "../../../registry.js"; // side effect: registers tree-sitter grammars
 import { parseSource } from "../../../../parsers/parser-manager.js";
-import { extractNestjsRoutes } from "./nestjs.js";
-import type { RouteInfo } from "../../../../types/analysis.js";
+import { collectNestGlobalGuards, extractNestjsRoutes, type NestGlobalGuardsFact } from "./nestjs.js";
+import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 
 async function routesOf(src: string): Promise<RouteInfo[]> {
   const tree = await parseSource(src, "typescript" as any, "players.controller.ts");
@@ -149,5 +149,44 @@ describe("a comment inside a decorator run", () => {
   validate(@Param('id') id: string) {}
 }`);
     expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler}`)).toEqual(["POST /libraries/:id/validate validate"]);
+  });
+});
+
+describe("NestJS useGlobalGuards facts", () => {
+  async function factsOf(src: string): Promise<RouteFact[]> {
+    const tree = await parseSource(src, "typescript" as any, "main.ts");
+    const facts: RouteFact[] = [];
+    collectNestGlobalGuards(tree.rootNode, src, facts);
+    return facts;
+  }
+
+  it("records HeaderGuard from NestFactory bootstrap, and ignores a namesake method", async () => {
+    const nest = await factsOf(`import { NestFactory } from "@nestjs/core";
+import { HeaderGuard } from "./header.guard";
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  app.useGlobalGuards(new HeaderGuard());
+}
+`);
+    expect(nest).toHaveLength(1);
+    expect(nest[0]!.data as NestGlobalGuardsFact).toEqual({
+      guards: [{ text: "useGlobalGuards(HeaderGuard)", policies: ["HeaderGuard"] }],
+      calls: ["HeaderGuard.canActivate"],
+    });
+
+    const decoy = await factsOf(`export class DecoyService {
+  useGlobalGuards() { return "no"; }
+}
+new DecoyService().useGlobalGuards();
+`);
+    expect(decoy).toEqual([]);
+  });
+
+  it("names AuthGuard from new AuthGuard(…, app.get(…))", async () => {
+    const facts = await factsOf(`import { NestFactory } from "@nestjs/core";
+  const app = await NestFactory.create(AppModule);
+  app.useGlobalGuards(new AuthGuard(reflector, app.get(AuthService)));
+`);
+    expect((facts[0]!.data as NestGlobalGuardsFact).calls).toEqual(["AuthGuard.canActivate"]);
   });
 });
