@@ -71,17 +71,63 @@ export function coffeeImports(lines: string[]): ImportInfo[] {
   return out;
 }
 
-/** A route line whose handler is a function written inline, its body on the lines below: `app.get '/x', (req, res) ->`. */
-const INLINE_HANDLER = new RegExp(String.raw`${FN_VALUE}\s*(?:#.*)?$`);
+/** An inline `->` / `=>` (optional params), anywhere on the line. */
+const ARROW = new RegExp(String.raw`${FN_VALUE}`);
 
 const ROUTER = /^\s*(app|router|server|api|robot\.router)\.(get|post|put|patch|delete|del|all|use)\s*\(?\s*(['"])([^'"]+)\3(.*)$/;
 
 /**
+ * Where an inline Express handler's body starts: on the route line after
+ * `->` / `=>` (one-line `-> res.send 'ok'`), or on a continuation line
+ * (`app.get '/x',` then indented `(req, res) ->`). `bodyStart`/`bodyEnd` are
+ * 0-based exclusive spans of following lines; `inline` is the same-line
+ * tail after the arrow (extractCallsFromBody's `inline`).
+ */
+function coffeeHandlerBody(lines: string[], routeIdx: number): {
+  bodyStart: number;
+  bodyEnd: number;
+  inline?: { line: number; column: number };
+  arrowLine: number;
+} | null {
+  const line = lines[routeIdx]!;
+  const onRoute = ARROW.exec(line);
+  if (onRoute) {
+    const column = onRoute.index + onRoute[0].length;
+    return {
+      bodyStart: routeIdx + 1,
+      bodyEnd: findEndLine(lines, routeIdx, "indent"),
+      inline: { line: routeIdx, column },
+      arrowLine: routeIdx,
+    };
+  }
+  // Continuation: path ends the route line; the arrow is on the next deeper line.
+  if (! /,\s*(?:#.*)?$/.test(line)) return null;
+  const routeIndent = /^\s*/.exec(line)![0].length;
+  for (let j = routeIdx + 1; j < lines.length; j++) {
+    const t = lines[j]!.trim();
+    if (t === "" || t.startsWith("#")) continue;
+    if (/^\s*/.exec(lines[j]!)![0].length <= routeIndent) break;
+    const arrow = ARROW.exec(lines[j]!);
+    if (!arrow) break;
+    const column = arrow.index + arrow[0].length;
+    return {
+      bodyStart: j + 1,
+      bodyEnd: findEndLine(lines, j, "indent"),
+      inline: { line: j, column },
+      arrowLine: j,
+    };
+  }
+  return null;
+}
+
+/**
  * Express / Hubot HTTP routes: `app.get '/users', (req, res) ->`,
- * `router.post '/x', auth, create`, `robot.router.get '/hubot/x', …`. A
- * handler named at the end of the line is the handler; one written inline is
- * the route's own. `app.use '/api', apiRouter` is a mount (method null), which
- * the project pass prefixes onto the mounted router's routes.
+ * `router.post '/x', auth, create`, `robot.router.get '/hubot/x', …`, a
+ * one-line body (`-> res.send 'ok'`), and a continuation-line handler
+ * (`app.get '/x',` then indented `(req, res) ->`). A handler named at the
+ * end of the line is the handler; one written inline is the route's own.
+ * `app.use '/api', apiRouter` is a mount (method null), which the project
+ * pass prefixes onto the mounted router's routes.
  */
 function coffeeRoutes(lines: string[]): RouteInfo[] {
   const routes: RouteInfo[] = [];
@@ -94,13 +140,16 @@ function coffeeRoutes(lines: string[]): RouteInfo[] {
     const last = args[args.length - 1] ?? "";
     const handler = /^[A-Za-z_$][\w$.]*$/.test(last) ? last : null;
     const middleware = args.slice(0, handler ? -1 : undefined).filter((a) => /^[A-Za-z_$][\w$.]*$/.test(a));
+    const body = verb !== "use" ? coffeeHandlerBody(lines, i) : null;
     routes.push({
       path: m[4]!,
       httpMethod: verb === "use" || verb === "all" ? null : verb === "del" ? "DELETE" : verb.toUpperCase(),
       kind: "api",
       handler,
       // An inline handler's body is the route's own: what it calls runs when the route is hit.
-      calls: verb !== "use" && INLINE_HANDLER.test(line) ? extractCallsFromBody(lines, i + 1, findEndLine(lines, i, "indent"), coffeeSpec.lineCommentPrefixes, coffeeSpec.callPatterns) : [],
+      calls: body
+        ? extractCallsFromBody(lines, body.bodyStart, body.bodyEnd, coffeeSpec.lineCommentPrefixes, coffeeSpec.callPatterns, body.inline)
+        : [],
       middleware,
       line: i + 1,
       ...(verb === "use" ? { mount: true as const } : {}),
@@ -110,18 +159,44 @@ function coffeeRoutes(lines: string[]): RouteInfo[] {
 }
 
 /**
- * 1-based spans of the bodies of inline route handlers: they run when the route
- * is hit, not when the file loads — a route registered inside `module.exports =
- * (app) ->` or `db.connect ->` is still the route's own code — so the route
- * carries their calls and `<setup>` leaves them out.
+ * 1-based-as-index spans of the bodies of inline route handlers for
+ * `<setup>`: they run when the route is hit, not when the file loads — a
+ * route registered inside `module.exports = (app) ->` or `db.connect ->` is
+ * still the route's own code — so the route carries their calls and
+ * `<setup>` leaves them out. Same-line tails after `->` are blanked by
+ * {@link coffeeCallSourceLines} instead.
  */
 function coffeeRouteBlocks(lines: string[]): Array<[number, number]> {
   const spans: Array<[number, number]> = [];
   for (let i = 0; i < lines.length; i++) {
     const m = ROUTER.exec(lines[i]!);
-    if (m && m[2] !== "use" && INLINE_HANDLER.test(lines[i]!)) spans.push([i + 1, findEndLine(lines, i, "indent")]);
+    if (!m || m[2] === "use") continue;
+    const body = coffeeHandlerBody(lines, i);
+    if (body) spans.push([body.bodyStart, body.bodyEnd]);
   }
   return spans;
+}
+
+/**
+ * Blank every inline route-handler body before function / `<setup>` call
+ * scans: the route carries those calls, and a named function that registers
+ * the route must not count them again. The text before `->` on the arrow
+ * line stays (the `app.get` that runs now).
+ */
+function coffeeCallSourceLines(lines: readonly string[]): string[] {
+  const out = lines.map((l) => l);
+  for (let i = 0; i < lines.length; i++) {
+    const m = ROUTER.exec(lines[i]!);
+    if (!m || m[2] === "use") continue;
+    const body = coffeeHandlerBody(lines as string[], i);
+    if (!body) continue;
+    for (let j = body.bodyStart; j < Math.min(body.bodyEnd, out.length); j++) out[j] = "";
+    if (body.inline) {
+      const row = out[body.inline.line] ?? "";
+      out[body.inline.line] = row.slice(0, body.inline.column) + row.slice(body.inline.column).replace(/[^\n]/g, " ");
+    }
+  }
+  return out;
 }
 
 const AJAX = /(?:\$|jQuery)\.(ajax|get|post|getJSON)\b\s*\(?\s*(?:['"]([^'"]+)['"]|url\s*:\s*['"]([^'"]+)['"])?(.*)$/;
@@ -362,6 +437,8 @@ export const coffeeSpec: RegexLangSpec = {
   lineCommentPrefixes: ["#"],
   topLevelCalls: true,
   deferredBlocks: coffeeRouteBlocks,
+  // Handler bodies belong to the route, not the function / `<setup>` that registers them.
+  callSourceLines: coffeeCallSourceLines,
   functionPatterns: [
     // `name = (args) ->` / `export name = ->` / `@name = =>`
     { pattern: new RegExp(String.raw`^\s*(?:export\s+)?@?([A-Za-z_$][\w$]*)\s*=\s*${FN_VALUE}`), isExported: () => true },

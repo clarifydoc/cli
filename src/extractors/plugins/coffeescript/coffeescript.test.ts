@@ -141,3 +141,46 @@ describe("CoffeeScript routes registered inside a callback", () => {
     expect(setup).not.toContain("res.send");
   });
 });
+
+describe("CoffeeScript one-line and continuation-line handlers", () => {
+  it("gives a one-line handler's body to the route, not a same-named decoy", () => {
+    const a = analyze([
+      "send = (x) -> console.log x",
+      "app.get '/health', (req, res) -> res.send 'ok'",
+    ].join("\n"));
+    expect(a.routes.find((r) => r.path === "/health")!.calls.map((c) => c.name)).toEqual(["res.send"]);
+    expect(calls(a, "send")).toEqual(["console.log"]);
+    expect(calls(a, "<setup>")).toEqual(["app.get"]);
+  });
+
+  it("reads a continuation-line handler body, not a same-named decoy", () => {
+    const a = analyze([
+      "json = (x) -> console.log x",
+      "app.get '/clubs',",
+      "  (req, res) ->",
+      "    rows = db.query 'SELECT * FROM clubs'",
+      "    res.json rows",
+    ].join("\n"));
+    expect(a.routes.find((r) => r.path === "/clubs")!.calls.map((c) => c.name)).toEqual(["db.query", "res.json"]);
+    expect(calls(a, "json")).toEqual(["console.log"]);
+  });
+});
+
+describe("CoffeeScript route inside a named function", () => {
+  it("does not double-count handler body calls onto the registrar", () => {
+    const a = analyze([
+      "query = (sql) -> console.log sql",
+      "registerClubs = (app) ->",
+      "  app.get '/clubs', (req, res) ->",
+      "    rows = db.query 'SELECT * FROM clubs'",
+      "    res.json rows",
+      "  app.get '/ping', ping",
+    ].join("\n"));
+    expect(a.routes.find((r) => r.path === "/clubs")!.calls.map((c) => c.name)).toEqual(["db.query", "res.json"]);
+    const reg = calls(a, "registerClubs")!;
+    expect(reg.filter((n) => n === "db.query")).toHaveLength(0);
+    expect(reg.filter((n) => n === "res.json")).toHaveLength(0);
+    expect(reg.filter((n) => n === "app.get").length).toBeGreaterThanOrEqual(1);
+    expect(calls(a, "query")).toEqual(["console.log"]);
+  });
+});
