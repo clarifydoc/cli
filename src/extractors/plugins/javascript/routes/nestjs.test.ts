@@ -235,7 +235,12 @@ export class AppModule {}
       "APP_GUARD(MaintenanceAuthGuard)",
       "APP_GUARD(AuthGuard)",
     ]);
-    expect(facts.every((f) => (f.data as NestGlobalGuardsFact).calls[0] === `${(f.data as NestGlobalGuardsFact).guards[0]!.policies[0]}.canActivate`)).toBe(true);
+    for (const f of facts) {
+      const d = f.data as NestGlobalGuardsFact;
+      const policy = d.guards[0]?.policies?.[0];
+      expect(policy).toBeTruthy();
+      expect(d.calls[0]).toBe(`${policy}.canActivate`);
+    }
   });
 
   it("follows spreads into module-level provider arrays", async () => {
