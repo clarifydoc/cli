@@ -92,6 +92,14 @@ describe("NestJS routes — auth", () => {
     expect(routes[0]!.auth).toBeUndefined();
     expect(routes[0]!.middleware).toEqual([]);
   });
+
+  it("names each UseGuards class as middlewareCalls → canActivate", async () => {
+    const routes = await routesOf(CONTROLLER);
+    const findOne = routes.find((r) => r.handler === "findOne")!;
+    expect(findOne.middlewareCalls).toEqual(["AuthGuard.canActivate", "RolesGuard.canActivate"]);
+    const create = routes.find((r) => r.handler === "create")!;
+    expect(create.middlewareCalls).toEqual(["AuthGuard.canActivate", "RolesGuard.canActivate"]);
+  });
 });
 
 describe("NestJS routes — versions", () => {

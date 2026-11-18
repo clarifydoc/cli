@@ -84,6 +84,47 @@ const decoy = new DecoyService();
 decoy.useGlobalGuards();
 `;
 
+const GUARDED_CONTROLLER = `import { Controller, Get, Param, UseGuards } from "@nestjs/common";
+import { pool } from "./db";
+import { HeaderGuard } from "./header.guard";
+
+@Controller("clubs")
+@UseGuards(HeaderGuard)
+export class ClubsController {
+  @Get(":id")
+  async findOne(@Param("id") id: string) {
+    const rows = await pool.query("SELECT * FROM clubs WHERE id = $1", [id]);
+    return rows.rows[0];
+  }
+}
+`;
+
+describe("NestJS @UseGuards middleware reach", () => {
+  it("joins what the guard reads through middlewareCalls on the route, never a namesake import", async () => {
+    const { analysis } = await runCarets({
+      "package.json": PKG,
+      "src/db.ts": DB,
+      "src/header.guard.ts": GUARD,
+      "decoy/header.guard.ts": DECOY,
+      "src/clubs.controller.ts": GUARDED_CONTROLLER,
+      "src/app.module.ts": MODULE,
+    });
+    const route = (analysis.routeMap ?? []).find((r) => r.path === "/clubs/:id");
+    expect(route?.middleware).toContain("UseGuards(HeaderGuard)");
+    expect(route?.auth?.policies).toContain("HeaderGuard");
+    expect(route?.middlewareCalls).toEqual(["HeaderGuard.canActivate"]);
+    expect(route?.inheritedMiddleware).toBeUndefined();
+    const flows = (analysis.dataFlows ?? [])
+      .map((f) => `${f.entryLabel} ${f.resource}${f.viaMiddleware ? " (middleware)" : ""}`)
+      .sort();
+    expect(flows).toEqual([
+      "GET /clubs/:id clubs",
+      "GET /clubs/:id sessions (middleware)",
+    ]);
+    expect(flows.some((f) => f.includes("decoy_tokens"))).toBe(false);
+  });
+});
+
 describe("NestJS useGlobalGuards middleware reach", () => {
   it("joins what the global guard reads to every route, never a namesake or a decoy method", async () => {
     const { analysis } = await runCarets({
