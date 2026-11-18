@@ -190,6 +190,22 @@ async function go() { await fetch(url); }`;
     expect(tpl[0]!.target).toBe("${base}/players");
   });
 
+  it("flattens a nested template literal inside a ${} hole so the outer path stays joinable", async () => {
+    // `` fetch(`/api/${`clubs/${id}`}`) `` — a hole that is itself a template
+    // must splice in place (`/api/clubs/${id}`), never keep the inner backticks
+    // (those break the route join). A same-named decoy path elsewhere is not
+    // this call's target.
+    const SRC = `async function loadClub(id: string) {
+  return fetch(\`/api/\${\`clubs/\${id}\`}\`);
+}
+async function loadGarage(id: string) {
+  const path = \`/api/\${\`garages/\${id}\`}\`;
+  return fetch(path);
+}`;
+    const calls = await apiCallsOf(SRC);
+    expect(calls.map((c) => c.target)).toEqual(["/api/clubs/${id}", "/api/garages/{}"]);
+  });
+
   it("does not treat `<name>Router.post('/x', handler)` route defs as outbound calls", async () => {
     // Express route files name the router `partRouter`/`playerRouter` and pass an
     // imported handler identifier, so neither the literal-`router` name nor the

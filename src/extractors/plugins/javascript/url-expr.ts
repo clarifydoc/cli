@@ -26,7 +26,20 @@ export function renderUrlExpr(node: Node | null): string | null {
       let out = "";
       for (const part of n.children) {
         if (part.type === "`") continue;
-        out += part.type === "template_substitution" ? `\${${part.namedChild(0)?.text ?? ""}}` : part.text;
+        if (part.type !== "template_substitution") {
+          out += part.text;
+          continue;
+        }
+        // A nested template (or string) in the hole is spliced in place so outer
+        // holes stay readable: `` `/api/${`clubs/${id}`}` `` → `/api/clubs/${id}`.
+        const inner = part.namedChild(0);
+        if (inner?.type === "template_string" || inner?.type === "string") {
+          const nested = renderUrlExpr(inner);
+          if (nested === null) return null;
+          out += nested;
+        } else {
+          out += `\${${inner?.text ?? ""}}`;
+        }
       }
       return out;
     }

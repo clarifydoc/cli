@@ -54,11 +54,13 @@ function decodeEscape(raw: string): string | null {
 
 /**
  * A template literal rebuilt from its parts, for writing it into another call: escapes in the literal
- * pieces decoded, whitespace collapsed only inside the `${…}` holes. Null when a decoded literal piece
- * holds a newline, a backtick or `${` (it could not be written back as one template), or a hole
- * nests a template of its own.
+ * pieces decoded, whitespace collapsed only inside the `${…}` holes. A hole that is itself a template
+ * (or a string) is spliced in place — `` `/api/${`clubs/${id}`}` `` becomes `` `/api/clubs/${id}` `` —
+ * so the outer holes stay readable. Null when a decoded literal piece holds a newline, a backtick or
+ * `${` (it could not be written back as one template).
  */
-function rebuiltTemplate(template: Node): string | null {
+function rebuiltTemplate(template: Node, depth = 0): string | null {
+  if (depth > 4) return null;
   let out = "`";
   // The literal text since the last hole: checked whole, so `\$` beside a `{id}` fragment is no hole.
   let literal = "";
@@ -71,6 +73,19 @@ function rebuiltTemplate(template: Node): string | null {
   for (const part of template.children) {
     if (part.type === "`") continue;
     if (part.type === "template_substitution") {
+      const expr = part.namedChild(0);
+      if (expr?.type === "template_string") {
+        const nested = rebuiltTemplate(expr, depth + 1);
+        if (nested === null || !flush()) return null;
+        out += nested.slice(1, -1);
+        continue;
+      }
+      if (expr?.type === "string") {
+        const text = stripQuotes(expr.text);
+        if (/[\n`]|\$\{/.test(text) || !flush()) return null;
+        literal += text;
+        continue;
+      }
       const inner = part.text.slice(2, -1);
       if (inner.includes("`") || !flush()) return null;
       out += `\${${inner.replace(/\s+/g, " ").trim()}}`;
@@ -1207,7 +1222,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
 
   /**
    * The text of the template literal a local is declared with, when nothing else in its
-   * function assigns it and the template nests no literal of its own; else null.
+   * function assigns it; a nested template inside a hole is flattened into the outer. Else null.
    */
   private heldTemplate(id: Node): string | null {
     const value = this.bindings()?.valueOf(id.text, id);
@@ -2858,19 +2873,26 @@ function declaresParam(fnNode: Node, name: string): boolean {
  * Reconstruct a template literal as a URL, substituting `${id}` interpolations
  * found in the const map and reproducing every other part (literal fragments
  * and unresolved `${…}`) verbatim — so a template that references no known URL
- * const yields exactly its original text.
+ * const yields exactly its original text. A hole that is itself a template (or a
+ * string) is spliced in place: `` `/api/${`clubs/${id}`}` `` → `/api/clubs/${id}`.
  */
-function resolveTemplateUrl(tpl: Node, lookup: (name: string) => ResolvedUrl | null): string {
+function resolveTemplateUrl(tpl: Node, lookup: (name: string) => ResolvedUrl | null, depth = 0): string {
   let out = "";
   for (const part of tpl.children) {
     if (part.type === "`") continue;
     if (part.type === "template_substitution") {
       const inner = part.namedChild(0);
-      const hit = inner && inner.type === "identifier" ? lookup(inner.text) : null;
-      if (hit) {
-        out += hit.url;
+      if (depth < 4 && inner?.type === "template_string") {
+        out += resolveTemplateUrl(inner, lookup, depth + 1);
+      } else if (inner?.type === "string") {
+        out += stripQuotes(inner.text);
       } else {
-        out += part.text; // reproduce `${…}` verbatim
+        const hit = inner && inner.type === "identifier" ? lookup(inner.text) : null;
+        if (hit) {
+          out += hit.url;
+        } else {
+          out += part.text; // reproduce `${…}` verbatim
+        }
       }
     } else {
       out += part.text; // string_fragment / escape_sequence
