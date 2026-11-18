@@ -30,3 +30,4 @@ coverage/
 
 # npm tarballs
 clarifydoc-*.tgz
+dist-base/
