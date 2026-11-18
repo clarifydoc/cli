@@ -33,6 +33,7 @@ describe("redirectNames", () => {
     expect(redirectNames(`return RedirectToAction("Index", "Clubs");`)).toEqual([{ name: "Index", controller: "Clubs" }]);
     expect(redirectNames(`return RedirectToAction(nameof(Details));`)).toEqual([{ name: "Details" }]);
     expect(redirectNames(`redirect(action: "list", controller: "garage")`)).toEqual([{ name: "list", controller: "garage" }]);
+    expect(redirectNames(`return CreatedAtRoute("GetFixture", new { id = match.Id }, match);`)).toEqual([{ name: "GetFixture" }]);
   });
 });
 
