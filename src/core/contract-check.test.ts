@@ -47,4 +47,21 @@ describe("checkContracts", () => {
     const s: JsonSchemaNode = { type: "object", properties: { price: { type: "integer" }, at: { type: "string" } } };
     expect(checkContracts([link()], [call(s)], [route(d)])).toEqual([]);
   });
+
+  it("reports a required expected response field the closed route body lacks; Partial-quiet and open schemas stay quiet", () => {
+    const clubLink = link({ method: "GET", url: "/clubs/${id}", routePath: "/clubs/:id", sourceLine: 8, target: "api/clubs.ts", targetLine: 3 });
+    const clubCall = (over: Partial<DataSourceInfo> = {}): DataSourceInfo & { filePath: string } =>
+      ({ kind: "api-call", name: "get", target: "/clubs/${id}", calls: [], line: 8, filePath: "web/api.ts", ...over });
+    const clubRoute = (schema: JsonSchemaNode): RouteInfo & { filePath: string; responseSchema: JsonSchemaNode } => ({
+      path: "/clubs/:id", httpMethod: "GET", kind: "api", handler: "show", calls: [], middleware: [], line: 3, filePath: "api/clubs.ts",
+      params: [{ name: "id", type: "string", binding: "route" }], responseSchema: schema,
+    } as never);
+    const closed: JsonSchemaNode = { type: "object", properties: { crest: {} }, additionalProperties: false };
+    const open: JsonSchemaNode = { type: "object", properties: { crest: {} }, additionalProperties: true };
+    expect(checkContracts([clubLink], [clubCall({ expectedResponseFields: ["badge", "crest"] })], [clubRoute(closed)]).map((f) => [f.kind, f.field]))
+      .toEqual([["missing-expected-response-field", "badge"]]);
+    expect(checkContracts([clubLink], [clubCall({ expectedResponseFields: ["crest"] })], [clubRoute(closed)])).toEqual([]);
+    expect(checkContracts([clubLink], [clubCall({ expectedResponseFields: ["badge"] })], [clubRoute(open)])).toEqual([]);
+    expect(checkContracts([link({ ...clubLink, confidence: "INFERRED" })], [clubCall({ expectedResponseFields: ["badge"] })], [clubRoute(closed)])).toEqual([]);
+  });
 });

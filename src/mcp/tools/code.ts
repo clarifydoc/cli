@@ -321,7 +321,7 @@ async function routeGaps(ctx: ToolContext, loaded: LoadedAnalysis, stats: ApiRou
         `## Request bodies that disagree with their route (${contractRows.length})`,
         "Certain links only; judged where both the call and the route state the field.",
         ...bulletList(contractRows, limit, (c) =>
-          `${c.method ?? "?"} ${c.url} — ${c.kind === "missing-field" ? `does not send required "${c.field}"` : c.kind === "unknown-field" ? `sends undeclared "${c.field}"` : c.kind === "unknown-response-field" ? `reads "${c.field}", which the response does not send` : `sends "${c.field}" as ${c.actual}, route declares ${c.expected}`} (${loc(c.file, c.line)} → ${loc(c.route.file, c.route.line)})`),
+          `${c.method ?? "?"} ${c.url} — ${c.kind === "missing-field" ? `does not send required "${c.field}"` : c.kind === "unknown-field" ? `sends undeclared "${c.field}"` : c.kind === "unknown-response-field" ? `reads "${c.field}", which the response does not send` : c.kind === "missing-expected-response-field" ? `expects "${c.field}", which the response does not send` : `sends "${c.field}" as ${c.actual}, route declares ${c.expected}`} (${loc(c.file, c.line)} → ${loc(c.route.file, c.route.line)})`),
       ]
       : []),
   ]);

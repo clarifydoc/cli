@@ -148,14 +148,16 @@ export function structuralFindings(summary: {
       title: CONTRACT_TITLES[c.kind],
       // A missing required field or a mistyped one fails the request; an extra one is ignored or rejected.
       // A read of a field the response never has is undefined at runtime — likely a bug, not certainly one.
-      level: c.kind === "unknown-field" || c.kind === "unknown-response-field" ? "warning" : "error",
+      level: c.kind === "unknown-field" || c.kind === "unknown-response-field" || c.kind === "missing-expected-response-field" ? "warning" : "error",
       message: c.kind === "missing-field"
         ? `${call} does not send "${c.field}", which ${route} requires.`
         : c.kind === "unknown-field"
           ? `${call} sends "${c.field}", which ${route} does not declare.`
           : c.kind === "unknown-response-field"
             ? `${call} reads "${c.field}" from the response, which ${route} does not send.`
-            : `${call} sends "${c.field}" as ${c.actual}; ${route} declares ${c.expected}.`,
+            : c.kind === "missing-expected-response-field"
+              ? `${call} expects "${c.field}" on the response, which ${route} does not send.`
+              : `${call} sends "${c.field}" as ${c.actual}; ${route} declares ${c.expected}.`,
       file: c.file,
       line: c.line,
       fingerprint: `${call} ${c.kind} ${c.field}`,
@@ -243,6 +245,7 @@ const CONTRACT_TITLES: Record<ContractFinding["kind"], string> = {
   "unknown-field": "Request body sends a field the route does not declare",
   "type-mismatch": "Request body field has the wrong type",
   "unknown-response-field": "Caller reads a response field the route does not send",
+  "missing-expected-response-field": "Caller expects a response field the route does not send",
 };
 
 const ROUTE_MISS_TITLES: Record<NonNullable<ApiRouteLinkStats["misses"]>[number]["reason"], string> = {

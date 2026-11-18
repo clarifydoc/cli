@@ -2,6 +2,7 @@ import { convexDbAccess, convexReference } from "./convex-data.js";
 import { namesConvex } from "./routes/convex.js";
 import { DYNAMO_FILE_RE, dynamoAccess } from "./dynamodb.js";
 import { responseReadsOf, type BodyStyle } from "./response-reads.js";
+import { expectedResponseFieldsOf } from "./expected-response.js";
 import { resolveRtkHooks } from "./rtk-query.js";
 import { resolveKubbClientCalls } from "./kubb.js";
 import type { Node, Tree } from "web-tree-sitter";
@@ -519,11 +520,21 @@ function returnedValues(fn: Node): Node[] {
   return out;
 }
 
+/** How this client's response body is handed to the caller (response-reads.ts). */
+function bodyStyleOf(fnName: string): BodyStyle {
+  return /^(?:fetch|ky)$/i.test(fnName) ? "json" : /^(?:\$fetch|ofetch)$/.test(fnName) ? "direct" : "data";
+}
+
 /** The fields the caller reads off this call's response (response-reads.ts), by how its client hands the body over. */
 function readsFor(node: Node, fnName: string): { responseReads?: string[] } {
-  const style: BodyStyle = /^(?:fetch|ky)$/i.test(fnName) ? "json" : /^(?:\$fetch|ofetch)$/.test(fnName) ? "direct" : "data";
-  const reads = responseReadsOf(node, style);
+  const reads = responseReadsOf(node, bodyStyleOf(fnName));
   return reads ? { responseReads: reads } : {};
+}
+
+/** Required closed members of the response type the call states (`get<ClubDto>`, typed `json()` local). */
+function expectedFor(node: Node, fnName: string): { expectedResponseFields?: string[] } {
+  const fields = expectedResponseFieldsOf(node, bodyStyleOf(fnName));
+  return fields ? { expectedResponseFields: fields } : {};
 }
 
 /** A tRPC client call's verb → the HTTP method its link sends (subscriptions go over a socket). */
@@ -1934,6 +1945,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
               ...(unconfirmed ? { clientUnconfirmed: true as const } : {}),
               ...bodyOf(callName, positional, firstArg),
               ...readsFor(node, fnName),
+              ...expectedFor(node, fnName),
             }));
             emittedApiCall = true;
           }

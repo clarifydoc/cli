@@ -20,10 +20,17 @@ type RouteRow = RouteInfo & { filePath?: string; requestSchema?: JsonSchemaNode;
  *    (`DataSourceInfo.responseReads`) that the route's CLOSED response body
  *    (`routeMap[].responseSchema`: a declared type, or the keys of the literal
  *    it sends) does not have — matched case-insensitively, as serializers
- *    rename `UserName` to `userName`.
+ *    rename `UserName` to `userName`;
+ *  - `missing-expected-response-field`: the call states an expected response
+ *    type (`DataSourceInfo.expectedResponseFields`: required closed members of
+ *    `axios.get<ClubDto>` or a typed json local) that includes a field the
+ *    route's CLOSED response body does not send — same case rule; optional /
+ *    `Partial` members never appear on the call, so they never fire.
  *
  * Path parameters are never body fields. EXTRACTED links only: a guessed
  * link's contract is a guess too. Nested objects are compared one level down.
+ * Open response schemas (`additionalProperties: true`) never fire response
+ * findings.
  */
 export function checkContracts(
   links: readonly ApiRouteLink[],
@@ -31,7 +38,7 @@ export function checkContracts(
   routes: readonly RouteRow[],
 ): ContractFinding[] {
   const callAt = new Map<string, CallRow>();
-  for (const c of calls) if (c.kind === "api-call" && (c.requestBody || c.responseReads)) callAt.set(`${c.filePath}\u0000${c.line}`, c);
+  for (const c of calls) if (c.kind === "api-call" && (c.requestBody || c.responseReads || c.expectedResponseFields)) callAt.set(`${c.filePath}\u0000${c.line}`, c);
   const routeAt = new Map<string, RouteRow>();
   for (const r of routes) if (r.filePath && (r.requestSchema || r.responseSchema)) routeAt.set(`${r.filePath}\u0000${r.line}\u0000${r.path}`, r);
 
@@ -49,9 +56,15 @@ export function checkContracts(
         out.push({ ...at, kind, field, ...(expected ? { expected } : {}), ...(actual ? { actual } : {}) }));
     }
     const answer = route.responseSchema;
-    if (call.responseReads && answer?.type === "object" && answer.properties && (answer.additionalProperties === undefined || answer.additionalProperties === false)) {
-      const sent = new Set(Object.keys(answer.properties).map((k) => k.toLowerCase()));
-      for (const read of call.responseReads) if (!sent.has(read.toLowerCase())) out.push({ ...at, kind: "unknown-response-field", field: read });
+    const closedAnswer = answer?.type === "object" && answer.properties && (answer.additionalProperties === undefined || answer.additionalProperties === false);
+    if (closedAnswer) {
+      const sent = new Set(Object.keys(answer.properties!).map((k) => k.toLowerCase()));
+      if (call.responseReads) {
+        for (const read of call.responseReads) if (!sent.has(read.toLowerCase())) out.push({ ...at, kind: "unknown-response-field", field: read });
+      }
+      if (call.expectedResponseFields) {
+        for (const want of call.expectedResponseFields) if (!sent.has(want.toLowerCase())) out.push({ ...at, kind: "missing-expected-response-field", field: want });
+      }
     }
   }
   return out;

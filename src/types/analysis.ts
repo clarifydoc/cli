@@ -2679,8 +2679,10 @@ export interface ContractFinding {
   /**
    * `unknown-response-field`: the call reads a field off the response that
    * the route's closed response body does not send.
+   * `missing-expected-response-field`: the call's expected response type
+   * requires a field the route's closed response body does not send.
    */
-  kind: "missing-field" | "unknown-field" | "type-mismatch" | "unknown-response-field";
+  kind: "missing-field" | "unknown-field" | "type-mismatch" | "unknown-response-field" | "missing-expected-response-field";
   field: string;
   /** The declared type (`type-mismatch`). */
   expected?: string;
@@ -3059,6 +3061,13 @@ export interface DataSourceInfo {
    * cannot follow.
    */
   responseReads?: string[];
+  /**
+   * For `api-call`: required closed members of the response type the call
+   * states (`axios.get<ClubDto>`, `const body: ClubDto = await res.json()`),
+   * sorted. Optional / `Partial` members are left out. Absent when the call
+   * states no such type, or only optional / open members.
+   */
+  expectedResponseFields?: string[];
   /**
    * For `database`: the fields the statement's filter compares with a value
    * whose origin is known — a parameter of the enclosing function, or a value
