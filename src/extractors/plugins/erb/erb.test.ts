@@ -52,6 +52,14 @@ describe("ERB views", () => {
     expect(own(`<form method="post"><button type="submit">Join</button></form>`)).toBe(1);
   });
 
+  it("reads a long run of option pairs in linear time", () => {
+    const own = (src: string) => view("app/views/clubs/join.html.erb", src).interactiveElements.filter((e) => e.ownViewPost).length;
+    const started = Date.now();
+    // A string shaped to make one regex over the whole option list backtrack exponentially.
+    expect(own(`<%= form_with _:+,_:${" +,_:".repeat(30)} do |f| %><% end %>`)).toBe(0);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
   it("names a route helper the way Rails does", () => {
     expect(railsRouteHelper("/players/:id/edit", "edit")).toBe("edit_player");
     expect(railsRouteHelper("/players/new", "new")).toBe("new_player");

@@ -172,6 +172,9 @@ function toEngine({ cwd, ignore, absolute, dot, caseSensitiveMatch, deep, links,
     absolute: absolute ?? false,
     dot: dot ?? false,
     caseSensitiveMatch: caseSensitiveMatch ?? true,
+    // `+(*)`-style extglobs backtrack exponentially in picomatch ≤ 4.0.7 (GHSA-fc5q-39xc-vjpf, no fixed
+    // release), and `--include` / `--exclude` hand the user's patterns through. No walk needs them.
+    extglob: false,
   };
   if (ignore) options.ignore = [...ignore];
   if (deep !== undefined) options.deep = deep - 1;

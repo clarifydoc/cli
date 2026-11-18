@@ -87,3 +87,15 @@ describe("shared directory listings", () => {
     expect(sharedEntries(join(dir, "matches"))).toBeUndefined();
   });
 });
+
+describe("user patterns", () => {
+  it("reads extglob syntax literally, so a `+(*a)` pattern cannot backtrack exponentially", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "clarifydoc-extglob-"));
+    dirs.push(dir);
+    await writeFile(join(dir, `${"a".repeat(40)}!`), "");
+    const started = Date.now();
+    expect(await glob(["+(*a)"], { cwd: dir })).toEqual([]);
+    expect(globSync(["+(*a)"], { cwd: dir })).toEqual([]);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+});
