@@ -6,6 +6,7 @@ import { FILE_MODULE, OCamlExtractor } from "./functions-classes.js";
 import { OCamlImportExportExtractor } from "./imports-exports.js";
 import { OCamlDataSourceExtractor } from "./data-sources.js";
 import { ocamlRouteExtractor } from "./routes.js";
+import { extractOcamlModuleValues } from "./module-values.js";
 import { opamPackages } from "./packages.js";
 import { ocamlReachability } from "./reachability.js";
 
@@ -15,6 +16,8 @@ export const ocamlMeta: LanguagePluginMeta = {
   ...ocamlManifest,
   // The file is the module of its capitalized name (`order_repo.ml` →
   // `Order_repo`); the extractor cannot see the path, so it is renamed here.
+  // Bare string `let`s become `Paths.clubs` once the file module is named, so
+  // a route at `Paths.clubs` joins through `moduleValues` / `fieldValues`.
   preprocess(rawSource, filePath) {
     return {
       sourceText: rawSource,
@@ -24,6 +27,13 @@ export const ocamlMeta: LanguagePluginMeta = {
         if (!own) return;
         const stem = filePath.split("/").pop()!.replace(/\.mli?$/i, "");
         own.name = stem.charAt(0).toUpperCase() + stem.slice(1);
+        if (!analysis.moduleValues) return;
+        const prefixed: Record<string, string> = { ...analysis.moduleValues };
+        for (const [k, v] of Object.entries(analysis.moduleValues)) {
+          if (k.includes(".")) continue;
+          prefixed[`${own.name}.${k}`] = v;
+        }
+        analysis.moduleValues = prefixed;
       },
     };
   },
@@ -38,6 +48,10 @@ export const ocamlMeta: LanguagePluginMeta = {
     logicalOps: new Set(["&&", "||", "&", "or"]),
     logicalOpNodes: new Set(["infix_expression"]),
     nestingNodes: new Set(["let_binding", "fun_expression", "function_expression"]),
+  },
+  // String `let`s another module's Dream path names (`Paths.clubs`) — see module-values.ts.
+  ast: {
+    moduleValues: (tree) => extractOcamlModuleValues(tree),
   },
   calls: ocamlCallHooks,
 };

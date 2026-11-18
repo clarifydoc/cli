@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { analyzeFile } from "../../../core/file-analyzer.js";
+import { buildImportIndex } from "../../../core/import-index.js";
+import { buildClassIndex } from "../../../core/class-index.js";
+import { buildModuleValueLookup, resolveRouteTemplates } from "../../../core/module-values.js";
 import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -73,6 +76,60 @@ describe("OCaml routes and data access", () => {
       "POST /admin/cars/{id}/close -> Cars.close []",
       "GET /health -> health []",
     ]);
+  });
+
+  it("emits a path held in Paths.clubs as a pathTemplate, and the module's string lets as moduleValues", async () => {
+    const paths = await analyze('let clubs = "/api/clubs"\nlet club = "/api/clubs/:id"\n', "lib/paths.ml");
+    expect(paths.moduleValues).toEqual({
+      clubs: "/api/clubs",
+      club: "/api/clubs/{id}",
+      "Paths.clubs": "/api/clubs",
+      "Paths.club": "/api/clubs/{id}",
+    });
+    expect(paths.classes.find((c) => c.name === "Paths")?.fieldValues).toEqual({
+      clubs: "/api/clubs",
+      club: "/api/clubs/{id}",
+    });
+    const main = await analyze([
+      "let () =",
+      "  Dream.run @@ Dream.router [",
+      "    Dream.get Paths.clubs Cars.list;",
+      "    Dream.get Paths.club Cars.show;",
+      '    Dream.get "/health" health;',
+      "  ]",
+    ].join("\n"), "bin/main.ml");
+    expect(main.routes.map((r) => `${r.httpMethod} ${r.pathTemplate ?? r.path}`)).toEqual([
+      "GET ${Paths.clubs}",
+      "GET ${Paths.club}",
+      "GET /health",
+    ]);
+  });
+
+  it("substitutes Paths.clubs from its module and refuses a same-named decoy elsewhere", async () => {
+    const paths = await analyze('let clubs = "/api/clubs"\n', "lib/paths.ml");
+    const decoy = await analyze('let clubs = "/api/decoy"\n', "lib/other.ml");
+    const main = await analyze([
+      "let () = Dream.run @@ Dream.router [ Dream.get Paths.clubs Cars.list ]",
+    ].join("\n"), "bin/main.ml");
+    const analyses = [paths, decoy, main];
+    const idx = buildImportIndex(analyses);
+    const n = resolveRouteTemplates(analyses, buildModuleValueLookup(analyses, idx, buildClassIndex(analyses, idx)));
+    expect(n).toBe(1);
+    expect(main.routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /api/clubs"]);
+    expect(main.routes[0]!.path).not.toBe("/api/decoy");
+  });
+
+  it("substitutes a nested module Paths.garages in the same file", async () => {
+    const a = await analyze([
+      "module Paths = struct",
+      '  let garages = "/api/garages"',
+      "end",
+      "let () = Dream.run @@ Dream.router [ Dream.get Paths.garages Garage.list ]",
+    ].join("\n"), "lib/shop.ml");
+    expect(a.moduleValues?.["Paths.garages"]).toBe("/api/garages");
+    const idx = buildImportIndex([a]);
+    resolveRouteTemplates([a], buildModuleValueLookup([a], idx, buildClassIndex([a], idx)));
+    expect(a.routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /api/garages"]);
   });
 
   it("reads SQL in strings and ppx_rapper blocks, and HTTP client calls", async () => {

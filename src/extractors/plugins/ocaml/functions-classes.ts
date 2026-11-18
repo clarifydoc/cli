@@ -2,7 +2,7 @@ import type { Node } from "web-tree-sitter";
 import { FunctionClassExtractor } from "../../functions-classes/base.js";
 import type { FunctionInfo, ClassInfo, Language, PropertyInfo } from "../../functions-classes/base.js";
 import { extractCalls } from "../../shared/call-graph.js";
-import { isFunctionBinding } from "./syntax.js";
+import { isFunctionBinding, stringValue } from "./syntax.js";
 
 /**
  * The name the file's own module is extracted under; the plugin's
@@ -90,12 +90,24 @@ function blank(name: string, span: Node): ClassInfo {
   return { name, extends: null, implements: [], decorators: [], methods: [], properties: [], isExported: true, line: span.startPosition.row + 1, endLine: span.endPosition.row + 1 };
 }
 
-/** A module: its function `let`s (each `and` of a `let rec` too) are methods. */
+/** A module: its function `let`s (each `and` of a `let rec` too) are methods; a string `let` is a field value. */
 function moduleClass(name: string, body: Node, span: Node): ClassInfo {
   const cls = blank(name, span);
+  const fieldValues: Record<string, string> = {};
   for (const def of body.namedChildren.filter((c) => c.type === "value_definition")) {
-    for (const binding of def.namedChildren.filter(isFunctionBinding)) cls.methods.push(fn(binding));
+    for (const binding of def.namedChildren.filter((c) => c.type === "let_binding")) {
+      if (isFunctionBinding(binding)) {
+        cls.methods.push(fn(binding));
+        continue;
+      }
+      const n = binding.childForFieldName("pattern")?.type === "value_name" ? binding.childForFieldName("pattern")!.text : null;
+      const raw = stringValue(binding.childForFieldName("body"));
+      if (!n || raw === null) continue;
+      fieldValues[n] = raw.startsWith("/") ? raw.replace(/:(\w+)/g, "{$1}") : raw;
+      cls.properties.push(prop(n, "string"));
+    }
   }
+  if (Object.keys(fieldValues).length > 0) cls.fieldValues = fieldValues;
   return cls;
 }
 

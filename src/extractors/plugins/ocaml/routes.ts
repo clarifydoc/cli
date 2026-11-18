@@ -4,6 +4,12 @@ import type { RouteExtractor } from "../../routes/base.js";
 import { extractCalls } from "../../shared/call-graph.js";
 import { positionalArgs, stringValue, valuePath } from "./syntax.js";
 
+/** A path held in a module constant (`Paths.clubs`) — the project pass fills `${…}` from `moduleValues`. */
+function pathRef(node: Node | null | undefined): string | null {
+  const name = valuePath(node);
+  return name && /^[A-Z][\w']*(?:\.[a-z_][\w']*)+$/.test(name) ? name : null;
+}
+
 const VERBS: Record<string, string | null> = { get: "GET", post: "POST", put: "PUT", patch: "PATCH", delete: "DELETE", head: "HEAD", options: "OPTIONS", any: null, all: null };
 
 /** `/orders/:id` → `/orders/{id}`. */
@@ -30,8 +36,9 @@ function routeVerb(fn: string | null): { verb: string | null; scope: boolean } |
  *  - Dream: `Dream.router [ Dream.get "/orders/:id" handler; … ]`, nested under
  *    `Dream.scope "/admin" [middleware] [ … ]`;
  *  - Opium: `App.empty |> App.get "/orders/:id" handler |> App.run_command`.
- * A named handler is the route's handler; a `fun req -> …` is its own, and
- * its calls are the route's.
+ * A path that is another module's string (`Paths.clubs`) is `pathTemplate`
+ * `${Paths.clubs}` for `resolveRouteTemplates`. A named handler is the
+ * route's handler; a `fun req -> …` is its own, and its calls are the route's.
  */
 export const ocamlRouteExtractor: RouteExtractor = {
   languages: ["ocaml"],
@@ -42,15 +49,22 @@ export const ocamlRouteExtractor: RouteExtractor = {
       const route = routeVerb(valuePath(app.childForFieldName("function")));
       if (!route || route.scope) continue;
       const args = positionalArgs(app);
-      const path = stringValue(args[0]);
-      // A bare `get "/x"` must be Dream's: a route path is the argument.
-      if (path === null || !path.startsWith("/")) continue;
+      const literal = stringValue(args[0]);
+      const ref = literal === null ? pathRef(args[0]) : null;
+      // A bare `get "/x"` must be Dream's: a route path is the argument (literal or `Paths.clubs`).
+      if ((literal === null || !literal.startsWith("/")) && !ref) continue;
+      const prefix = scopePrefix(app);
+      const pathTemplate = ref ? joinPath(prefix, `\${${ref}}`) : null;
+      const path = literal !== null
+        ? ocamlPath(joinPath(prefix, literal))
+        : pathTemplate && pathTemplate.startsWith("/") ? pathTemplate : `/${pathTemplate}`;
       const handler = args[1];
       const inner = handler?.type === "parenthesized_expression" ? handler.namedChildren[0] : handler;
       const named = inner?.type === "value_path" ? valuePath(inner) : null;
       const body = inner && !named && (inner.type === "fun_expression" || inner.type === "function_expression" || inner.type === "application_expression") ? inner : null;
       routes.push({
-        path: ocamlPath(joinPath(scopePrefix(app), path)),
+        path,
+        ...(pathTemplate && pathTemplate.includes("${") ? { pathTemplate } : {}),
         httpMethod: route.verb,
         kind: "api",
         handler: named,

@@ -365,10 +365,11 @@ export function resolveRouteTemplates(analyses: readonly FileAnalysis[], lookup:
   return n;
 }
 
-/** Whether an import source's last segment names the file or a directory it is in (`@app/enums` → `src/enums.ts`, `src/enums/route-key.ts` behind a barrel). */
+/** Whether an import source's last segment names the file or a directory it is in (`@app/enums` → `src/enums.ts`, `src/enums/route-key.ts` behind a barrel). A capitalized module name (`Paths`) matches a lowercase stem (`paths.ml`) — OCaml, F#, … */
 function importNamesFile(source: string, filePath: string): boolean {
   const leaf = source.replace(/\.[^./]+$/, "").split(/[/\\]/).filter((seg) => seg && seg !== "." && seg !== "..").pop();
   if (!leaf) return false;
   const segs = filePath.replace(/\.[^./]+$/, "").split("/");
-  return segs.includes(leaf);
+  const fold = (s: string) => s.toLowerCase();
+  return segs.some((s) => s === leaf || fold(s) === fold(leaf));
 }
