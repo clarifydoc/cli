@@ -348,4 +348,22 @@ public class ClubsController : ControllerBase {
       "GET /api/clubs/plain undefined",
     ]);
   });
+
+  it("expands [controller]/[action] in Name=, and never treats Name= as the path", async () => {
+    const tree = await parseSource(`namespace X;
+[ApiController]
+[Route("api/[controller]")]
+public class ClubsController : ControllerBase {
+    [HttpGet("{id}", Name = "[controller]_[action]")]
+    public IActionResult GetById(int id) => Ok();
+    [HttpPost(Name = "CreateClub")]
+    public IActionResult Create() => Ok();
+}`, "csharp" as any, "C.cs");
+    const routes: RouteInfo[] = [];
+    extractAspnetRoutes(tree.rootNode, routes);
+    expect(routes.map((r) => `${r.httpMethod} ${r.path} ${r.name}`)).toEqual([
+      "GET /api/Clubs/{id} Clubs_GetById",
+      "POST /api/Clubs CreateClub",
+    ]);
+  });
 });

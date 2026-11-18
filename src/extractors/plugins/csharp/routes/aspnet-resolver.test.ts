@@ -431,3 +431,38 @@ public class CarsController : ApiController {
     expect(rows(out)).toEqual([]);
   });
 });
+
+describe("aspnet-controller-inheritance — route names", () => {
+  it("expands [controller]/[action] in Name= on an inherited action, and leaves a decoy's name alone", async () => {
+    const out = await analyze({
+      "Api/Controllers/CrudController.cs": `
+[ApiController]
+[Route("api/[controller]")]
+public abstract class CrudController : ControllerBase {
+  [HttpGet("{id}", Name = "[controller]_[action]")]
+  public virtual IActionResult GetById(int id) => Ok(id);
+
+  [HttpPost]
+  public virtual IActionResult Create() => CreatedAtRoute("Clubs_GetById", new { id = 1 }, null);
+}`,
+      "Api/Controllers/ClubsController.cs": `public class ClubsController : CrudController { }`,
+      "Api/Controllers/PartsController.cs": `public class PartsController : CrudController { }`,
+      // Same leaf action name, its own Name= — must NOT become Clubs_GetById.
+      "Api/Controllers/DecoyController.cs": `
+[ApiController]
+[Route("api/decoy")]
+public class DecoyController : ControllerBase {
+  [HttpGet("{id}", Name = "[controller]_GetById")]
+  public IActionResult GetById(int id) => Ok(id);
+}`,
+    });
+    const named = out.flatMap((a) => a.routes.map((r) => `${r.owner} ${r.httpMethod} ${r.path} ${r.name}`)).sort();
+    expect(named).toEqual([
+      "ClubsController GET /api/Clubs/{id} Clubs_GetById",
+      "ClubsController POST /api/Clubs undefined",
+      "DecoyController GET /api/decoy/{id} Decoy_GetById",
+      "PartsController GET /api/Parts/{id} Parts_GetById",
+      "PartsController POST /api/Parts undefined",
+    ]);
+  });
+});

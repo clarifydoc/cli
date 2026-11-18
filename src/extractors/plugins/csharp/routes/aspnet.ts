@@ -136,6 +136,12 @@ export interface CsActionFact {
   handler: string | null;
   /** `[ActionName("Delete")]` — the `[action]` / `{action}` it answers to, when not the method's name. */
   action?: string;
+  /**
+   * `Name =` on the verb attribute or the `[Route]` beside it, as written — tokens
+   * (`[controller]`, `[action]`) unresolved. The inheritance resolver expands them
+   * for the controller that serves the action (a subclass, not the declaring base).
+   */
+  name?: string;
   template: string | null;
   guards: GuardAttr[];
 }
@@ -381,10 +387,20 @@ function parseMethodRoutes(
   const versions = resolveVersions(scope, mapToVersions);
 
   for (const { verb, template: own, constant, line, name: routeName } of verbAttrs) {
-    actions?.push({ line, verb, handler: methodName, template: own ?? routeAttrTemplate, guards: methodGuards, ...(actionName ? { action: actionName } : {}) });
-    const path = buildPath(scope.prefix, own ?? routeAttrTemplate, scope.controllerName, actionName ?? actionNameOf(methodName));
+    const rawName = routeName ?? routeAttrName;
+    const actionTok = actionName ?? actionNameOf(methodName);
+    actions?.push({
+      line,
+      verb,
+      handler: methodName,
+      template: own ?? routeAttrTemplate,
+      guards: methodGuards,
+      ...(actionName ? { action: actionName } : {}),
+      ...(rawName ? { name: rawName } : {}),
+    });
+    const path = buildPath(scope.prefix, own ?? routeAttrTemplate, scope.controllerName, actionTok);
     const params = parameterBindings(methodNode, path, scope.apiController);
-    const shorter = optionalTailPath(scope.prefix, own ?? routeAttrTemplate, scope.controllerName, actionName ?? actionNameOf(methodName));
+    const shorter = optionalTailPath(scope.prefix, own ?? routeAttrTemplate, scope.controllerName, actionTok);
     const route: RouteInfo = {
       path,
       httpMethod: verb,
@@ -394,8 +410,9 @@ function parseMethodRoutes(
       middleware: guards.map((g) => g.text),
       line,
       ...(shorter && shorter !== path ? { aliases: [shorter] } : {}),
-      // `[HttpGet("{id}", Name = "GetClub")]` (or on the `[Route]` beside it): what `CreatedAtRoute` / `Url.RouteUrl` name.
-      ...((routeName ?? routeAttrName) ? { name: (routeName ?? routeAttrName)! } : {}),
+      // `[HttpGet("{id}", Name = "GetClub")]` (or on the `[Route]` beside it): what `CreatedAtRoute` /
+      // `Url.RouteUrl` name. Tokens expand for this class; a subclass rewrite uses the fact's raw `name`.
+      ...(rawName ? { name: substituteTokens(rawName, scope.controllerName, actionTok) } : {}),
     };
     // A template (or class template) that is a constant declared elsewhere: the project pass reads it.
     const methodConstant = constant ?? (own === null ? routeAttrConstant : null);
@@ -729,15 +746,14 @@ function attributeName(attr: Node): string | null {
 
 /**
  * The route template from an attribute: the first **positional** string
- * argument. Named arguments (`Name = "…"`, `Order = 2`) are wrapped in an
- * `assignment_expression`, so a positional template is the `attribute_argument`
- * whose child is a bare `string_literal`.
+ * argument. Named arguments (`Name = "…"`, `Order = 2`) are skipped — a
+ * `Name =` alone must not become the path.
  */
 function attributeRouteTemplate(attr: Node): string | null {
   const argList = findChildByType(attr, "attribute_argument_list");
   if (!argList) return null;
   for (const arg of argList.children) {
-    if (arg.type !== "attribute_argument") continue;
+    if (arg.type !== "attribute_argument" || isNamedArgument(arg)) continue;
     const str = findChildByType(arg, "string_literal")
       ?? findChildByType(arg, "verbatim_string_literal");
     if (str) return stringLiteralText(str);
@@ -780,8 +796,8 @@ function stringLiteralText(str: Node): string {
   return raw.replace(/^"/, "").replace(/"$/, "").replace(/\\(.)/g, "$1");
 }
 
-/** Resolve `[controller]`/`[action]` tokens in a template segment. */
-function substituteTokens(
+/** Resolve `[controller]`/`[action]` tokens in a template or route `Name =` segment. */
+export function substituteTokens(
   s: string,
   controllerName: string | null,
   methodName: string | null,

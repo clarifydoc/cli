@@ -2,7 +2,7 @@ import type { FileAnalysis, RouteInfo } from "../../../../types/analysis.js";
 import type { ClassRef, ProjectContext } from "../../../../types/project.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";
 import { buildAuth, type GuardAttr } from "../../../shared/route-metadata.js";
-import { actionNameOf, buildPath, optionalTailPath, rebindParams, CS_CONTROLLER_FACT, type CsControllerFact, type CsActionFact } from "./aspnet.js";
+import { actionNameOf, buildPath, optionalTailPath, rebindParams, substituteTokens, CS_CONTROLLER_FACT, type CsControllerFact, type CsActionFact } from "./aspnet.js";
 import { CustomAttributes } from "./aspnet-attributes.js";
 import { areaOfPath, conventionalPath, webApiVerb, CS_CONVENTIONAL_ROUTE_FACT, type CsConventionalPattern } from "./aspnet-conventional.js";
 
@@ -85,11 +85,12 @@ function effectiveFact(raw: CsControllerFact, filePath: string, attrs: CustomAtt
  * at that subclass's route.
  *
  * Per file, the extractor records each controller's base, own template,
- * `[ApiController]`, own guards and actions (`cs:controller` facts); this
- * pass walks each controller's base chain through the class index and
- * rebuilds what it inherits. A base the chain cannot resolve and ASP.NET does
- * not define leaves the rows marked `prefixUnresolved` — honest, and matched
- * by the linker only as a tail.
+ * `[ApiController]`, own guards and actions (`cs:controller` facts, each
+ * action's `Name =` raw); this pass walks each controller's base chain
+ * through the class index and rebuilds what it inherits — path, guards, and
+ * `Name =` with `[controller]`/`[action]` naming the derived class. A base
+ * the chain cannot resolve and ASP.NET does not define leaves the rows
+ * marked `prefixUnresolved` — honest, and matched by the linker only as a tail.
  */
 export const aspnetControllerInheritance: RouteResolver = {
   id: "aspnet-controller-inheritance",
@@ -153,9 +154,10 @@ export const aspnetControllerInheritance: RouteResolver = {
     const rowFor = (source: RouteInfo, action: CsActionFact, at: Controller): RouteInfo => {
       const scope = scopeOf(at);
       const controllerToken = at.ref.cls.name.replace(/Controller$/, "");
-      const path = buildPath(scope.template, action.template, controllerToken, action.action ?? actionNameOf(action.handler));
+      const actionTok = action.action ?? actionNameOf(action.handler);
+      const path = buildPath(scope.template, action.template, controllerToken, actionTok);
       const classGuards = [...scope.guards, ...at.fact.guards];
-      const shorter = optionalTailPath(scope.template, action.template, controllerToken, action.action ?? actionNameOf(action.handler));
+      const shorter = optionalTailPath(scope.template, action.template, controllerToken, actionTok);
       const row: RouteInfo = {
         ...source,
         path,
@@ -163,6 +165,11 @@ export const aspnetControllerInheritance: RouteResolver = {
         middleware: [...classGuards, ...action.guards].map((g) => g.text),
       };
       if (shorter && shorter !== path) row.aliases = [shorter];
+      // `Name = "[controller]_GetById"` on a base action: expand for THIS controller, from the
+      // fact's raw template (the source row may already name the declaring base).
+      const rawName = action.name ?? source.name;
+      if (rawName) row.name = substituteTokens(rawName, controllerToken, actionTok);
+      else delete row.name;
       const auth = buildAuth(classGuards, action.guards);
       if (auth) row.auth = auth;
       else delete row.auth;
