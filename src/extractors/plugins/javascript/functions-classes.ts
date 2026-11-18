@@ -1849,8 +1849,9 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
    * ES5 classes: a constructor function the file declares (`function Club(name)
    * { … }`, `var Club = function () { … }`) with methods assigned to its
    * prototype (`Club.prototype.sign = function …`, `Club.prototype = { sign:
-   * function … }`) or to `this` in its body (`this.rename = function …`). Each
-   * is a class named for the constructor, spanning the constructor, whose
+   * function … }`, `Club['prototype'] = { … }`, `Object.defineProperty(Club.prototype,
+   * "sign", { value: … })`) or to `this` in its body (`this.rename = function …`).
+   * Each is a class named for the constructor, spanning the constructor, whose
    * methods are those members: `new Club().sign()` and a `this.wash()` in a
    * prototype method are calls of that class's members. The prototype
    * assignments were read as functions `Club.sign`, and the `this.` ones not
@@ -1862,14 +1863,19 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     this.protoMemo = { tree, classes };
     if (!this.prototypes) return classes;
     const root = tree.rootNode;
-    const isFn = (n: Node | null): n is Node => n?.type === "function_expression" || n?.type === "arrow_function";
+    const isFn = (n: Node | null): n is Node =>
+      n?.type === "function_expression" || n?.type === "arrow_function" || n?.type === "function_declaration"
+      || n?.type === "method_definition";
     // Constructors: function declarations and `var X = function` in the file.
     const ctors = new Map<string, Node>();
+    const fnDecls = new Map<string, Node>();
     for (const d of root.descendantsOfType(["function_declaration", "variable_declarator"])) {
       if (!d) continue;
       const name = d.childForFieldName("name");
       const fn = d.type === "function_declaration" ? d : d.childForFieldName("value");
-      if (name?.type !== "identifier" || !/^[A-Z]/.test(name.text) || (fn?.type !== "function_declaration" && fn?.type !== "function_expression")) continue;
+      if (name?.type !== "identifier") continue;
+      if (d.type === "function_declaration" && !fnDecls.has(name.text)) fnDecls.set(name.text, d);
+      if (!/^[A-Z]/.test(name.text) || (fn?.type !== "function_declaration" && fn?.type !== "function_expression")) continue;
       if (!ctors.has(name.text)) ctors.set(name.text, fn);
     }
     if (ctors.size === 0) return classes;
@@ -1878,27 +1884,101 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       const list = members.get(owner) ?? members.set(owner, []).get(owner)!;
       if (!list.some((m) => m.name === name)) list.push({ name, node, fromPrototype });
     };
+    /** `X.prototype` or `X['prototype']` / `X["prototype"]` naming a constructor of the file. */
+    const prototypeOwner = (node: Node | null | undefined): string | null => {
+      if (!node) return null;
+      if (node.type === "member_expression") {
+        const obj = node.childForFieldName("object");
+        const prop = node.childForFieldName("property");
+        if (prop?.text === "prototype" && obj?.type === "identifier" && ctors.has(obj.text)) return obj.text;
+      } else if (node.type === "subscript_expression") {
+        const obj = node.childForFieldName("object");
+        const index = node.childForFieldName("index")?.text.replace(/\s+/g, "");
+        if (obj?.type === "identifier" && ctors.has(obj.text) && (index === "'prototype'" || index === '"prototype"')) return obj.text;
+      }
+      return null;
+    };
+    const addObjectMembers = (owner: string, obj: Node) => {
+      for (const member of obj.namedChildren) {
+        if (member?.type === "pair") {
+          const key = member.childForFieldName("key");
+          const value = member.childForFieldName("value");
+          if (key && (key.type === "property_identifier" || key.type === "identifier") && isFn(value)) add(owner, key.text, value, true);
+        } else if (member?.type === "method_definition") {
+          const key = member.childForFieldName("name");
+          if (key) add(owner, key.text, member, true);
+        }
+      }
+    };
+    /** A descriptor's `value` / `get` function, or a `get()` / `set()` method — never a non-function. */
+    const descriptorMethod = (desc: Node | null | undefined): Node | null => {
+      if (desc?.type !== "object") return null;
+      let getter: Node | null = null;
+      for (const member of desc.namedChildren) {
+        if (member?.type === "pair") {
+          const key = member.childForFieldName("key")?.text.replace(/['"]/g, "");
+          const value = member.childForFieldName("value");
+          if (key !== "value" && key !== "get") continue;
+          if (isFn(value)) return value;
+          if (value?.type === "identifier") {
+            const decl = fnDecls.get(value.text);
+            if (decl) return decl;
+          }
+        } else if (member?.type === "method_definition") {
+          const key = member.childForFieldName("name")?.text;
+          if (key === "get") return member;
+          if (key === "set" && !getter) getter = member;
+        }
+      }
+      return getter;
+    };
+    /** `Object` is a parameter of an enclosing function — not the global constructor. */
+    const objectIsShadowed = (call: Node): boolean => {
+      for (let p: Node | null = call.parent; p; p = p.parent) {
+        if (!/^(?:function_declaration|function_expression|arrow_function|method_definition|generator_function_declaration|generator_function)$/.test(p.type)) continue;
+        const params = p.childForFieldName("parameters");
+        for (const param of params?.namedChildren ?? []) {
+          const id = param.type === "identifier" ? param
+            : param.childForFieldName("pattern") ?? param.childForFieldName("name");
+          if (id?.type === "identifier" && id.text === "Object") return true;
+        }
+      }
+      return false;
+    };
     for (const assign of root.descendantsOfType("assignment_expression")) {
       if (assign?.parent?.type !== "expression_statement") continue;
       const left = assign.childForFieldName("left");
       const right = assign.childForFieldName("right");
-      if (left?.type !== "member_expression" || !right) continue;
-      const path = left.text.replace(/\s+/g, "");
-      const single = /^([A-Za-z_$][\w$]*)\.prototype\.([A-Za-z_$][\w$]*)$/.exec(path);
-      if (single && ctors.has(single[1]!) && isFn(right)) add(single[1]!, single[2]!, right, true);
-      const whole = /^([A-Za-z_$][\w$]*)\.prototype$/.exec(path);
-      if (whole && ctors.has(whole[1]!) && right.type === "object") {
-        for (const member of right.namedChildren) {
-          if (member?.type === "pair") {
-            const key = member.childForFieldName("key");
-            const value = member.childForFieldName("value");
-            if (key && (key.type === "property_identifier" || key.type === "identifier") && isFn(value)) add(whole[1]!, key.text, value, true);
-          } else if (member?.type === "method_definition") {
-            const key = member.childForFieldName("name");
-            if (key) add(whole[1]!, key.text, member, true);
-          }
+      if (!left || !right) continue;
+      if (left.type === "member_expression") {
+        const path = left.text.replace(/\s+/g, "");
+        const single = /^([A-Za-z_$][\w$]*)\.prototype\.([A-Za-z_$][\w$]*)$/.exec(path);
+        if (single && ctors.has(single[1]!) && isFn(right)) add(single[1]!, single[2]!, right, true);
+        const whole = prototypeOwner(left);
+        if (whole && right.type === "object") addObjectMembers(whole, right);
+        // `Ctor['prototype'].park = function …`
+        const bracketOwner = prototypeOwner(left.childForFieldName("object"));
+        const prop = left.childForFieldName("property");
+        if (bracketOwner && prop && (prop.type === "property_identifier" || prop.type === "identifier") && isFn(right)
+          && left.childForFieldName("object")?.type === "subscript_expression") {
+          add(bracketOwner, prop.text, right, true);
         }
+      } else if (left.type === "subscript_expression") {
+        const whole = prototypeOwner(left);
+        if (whole && right.type === "object") addObjectMembers(whole, right);
       }
+    }
+    for (const call of root.descendantsOfType("call_expression")) {
+      if (!call || call.childForFieldName("function")?.text !== "Object.defineProperty" || objectIsShadowed(call)) continue;
+      const args = call.childForFieldName("arguments")?.namedChildren ?? [];
+      if (args.length < 3) continue;
+      const owner = prototypeOwner(args[0]);
+      const nameNode = args[1];
+      const name = nameNode?.type === "string" || nameNode?.type === "string_fragment"
+        ? nameNode.text.replace(/^['"]|['"]$/g, "")
+        : null;
+      const method = descriptorMethod(args[2]);
+      if (owner && name && /^[A-Za-z_$][\w$]*$/.test(name) && method) add(owner, name, method, true);
     }
     // Inheritance: `Child.prototype = Object.create(Base.prototype)`, `= new Base()`, `util.inherits(Child, Base)`,
     // `Object.setPrototypeOf(Child.prototype, Base.prototype)` — the constructor's class extends the base.
@@ -1910,7 +1990,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     for (const stmt of root.descendantsOfType("expression_statement")) {
       const expr = stmt?.namedChild(0);
       if (expr?.type === "assignment_expression") {
-        const owner = /^([A-Za-z_$][\w$]*)\.prototype$/.exec(expr.childForFieldName("left")?.text.replace(/\s+/g, "") ?? "")?.[1];
+        const owner = prototypeOwner(expr.childForFieldName("left"));
         const right = expr.childForFieldName("right");
         if (!owner || !ctors.has(owner) || !right) continue;
         const arg = right.type === "call_expression" && right.childForFieldName("function")?.text === "Object.create" ? right.childForFieldName("arguments")?.namedChildren[0]
@@ -1921,7 +2001,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         const callee = expr.childForFieldName("function")?.text;
         const args = expr.childForFieldName("arguments")?.namedChildren ?? [];
         if ((callee === "util.inherits" || callee === "inherits" || callee === "Object.setPrototypeOf") && args.length >= 2) {
-          const owner = args[0]!.text.replace(/\.prototype$/, "");
+          const owner = args[0]!.text.replace(/\.prototype$/, "").replace(/\[['\"]prototype['"]\]$/, "");
           const base = baseOf(args[1]);
           if (ctors.has(owner) && base && base !== owner && !bases.has(owner)) bases.set(owner, base);
         }
@@ -1968,7 +2048,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     this.ctxTree = tree;
     this.pinia = sourceText.includes("defineStore");
     this.alpine = sourceText.includes("Alpine.data(");
-    this.prototypes = sourceText.includes(".prototype") || sourceText.includes("inherits(");
+    this.prototypes = sourceText.includes(".prototype") || sourceText.includes("['prototype']")
+      || sourceText.includes('["prototype"]') || sourceText.includes("defineProperty") || sourceText.includes("inherits(");
     this.ctx = {
       jsdoc: JSDOC_TAG_RE.test(sourceText),
       tokenTypes: collectInjectionTokenTypes(tree.rootNode, sourceText),
