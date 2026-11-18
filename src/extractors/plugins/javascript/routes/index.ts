@@ -7,7 +7,7 @@ import type { RouteExtractor } from "../../../routes/base.js";
 import { visitExpressRoute, applyRouterLevelGuards } from "./express.js";
 import { collectPathHelperCalls } from "./path-helpers.js";
 import { collectRouteArrays, resolveRouteWrappers, visitReactRouterRoute } from "./react-router.js";
-import { collectNestClassGuards, collectNestGlobalGuards, visitNestjsRoute } from "./nestjs.js";
+import { collectNestAppInterceptors, collectNestClassGuards, collectNestGlobalGuards, collectNestGlobalInterceptors, visitNestjsRoute } from "./nestjs.js";
 import { visitVueRouterRoute } from "./vue-router.js";
 import { mayDeclareAngularJsRoutes, visitAngularJsRoute } from "./angularjs.js";
 import { collectTanstackCodeRoutes, visitTanstackFileRoute } from "./tanstack-router.js";
@@ -104,6 +104,8 @@ export const javascriptRouteExtractor: RouteExtractor = {
     if (facts && /\bextends\b|@UseGuards\b/.test(sourceText) && (nestjs.length > 0 || /@(?:UseGuards|Roles|Public)\b/.test(sourceText))) collectNestClassGuards(tree.rootNode, nestjs, facts);
     // `app.useGlobalGuards(new HeaderGuard())` in a NestFactory bootstrap (nest-global-guards resolver).
     if (facts && /\buseGlobalGuards\b/.test(sourceText)) collectNestGlobalGuards(tree.rootNode, sourceText, facts);
+    if (facts && /\buseGlobalInterceptors\b/.test(sourceText)) collectNestGlobalInterceptors(tree.rootNode, sourceText, facts);
+    if (facts && /\bAPP_INTERCEPTOR\b/.test(sourceText)) collectNestAppInterceptors(tree.rootNode, sourceText, facts);
 
     if (maybeTanstack) collectTanstackCodeRoutes(tree.rootNode, sourceText, tanstack);
     // AWS CDK stacks: API Gateway routes wired to Lambdas, placed on their handlers by cdkRouteResolver.
