@@ -11,6 +11,7 @@ import { AZURE_FUNCTIONS_GATE, extractAzureFunctionRoutes } from "./azure-functi
 import { attributeDefFact, attributeUse, type CsAttrUse } from "./aspnet-attributes.js";
 import { CONVENTIONAL_ROUTE_GATE, extractConventionalPatterns, webApiVerb } from "./aspnet-conventional.js";
 import { collectHotChocolateFacts } from "../graphql.js";
+import { filterMiddlewareCalls, filterMiddlewareCallsFromTexts } from "./filter-middleware.js";
 
 /**
  * ASP.NET attribute routing.
@@ -426,8 +427,24 @@ function parseMethodRoutes(
       if (versions.deprecated.length > 0) route.deprecatedVersions = versions.deprecated;
     }
     if (params.length > 0) route.params = params;
-    const filters = [...routeFilters(scope.filters ?? [], true), ...routeFilters(filterAttributes(attrs), false)];
+    const inheritedFilterTexts = scope.filters ?? [];
+    const ownFilterTexts = filterAttributes(attrs);
+    const filters = [...routeFilters(inheritedFilterTexts, true), ...routeFilters(ownFilterTexts, false)];
+    for (const text of [...inheritedFilterTexts, ...ownFilterTexts]) {
+      const collapsed = text.replace(/\s+/g, " ");
+      if (!/^(?:Service|Type)Filter\s*\(/i.test(collapsed) || filters.some((f) => f.text === collapsed)) continue;
+      filters.push({
+        text: collapsed,
+        kind: "other",
+        ...((scope.filters ?? []).some((f) => f.replace(/\s+/g, " ") === collapsed) ? { inherited: true } : {}),
+      });
+    }
     if (filters.length > 0) route.filters = filters;
+    const middlewareCalls = [
+      ...filterMiddlewareCallsFromTexts(scope.filters ?? []),
+      ...filterMiddlewareCalls(attrs),
+    ];
+    if (middlewareCalls.length > 0) route.middlewareCalls = [...new Set(middlewareCalls)];
     const responses = actionResponses(methodNode, attrs);
     if (responses) route.responses = responses;
     routes.push(route);
@@ -518,6 +535,10 @@ function filterAttributes(attrs: Node[]): string[] {
     const name = attributeName(attr);
     if (!name || name === "Authorize" || name === "AllowAnonymous") continue;
     const text = attr.text.replace(/\s+/g, " ");
+    if (name === "ServiceFilter" || name === "TypeFilter") {
+      out.push(text);
+      continue;
+    }
     if (filterKind(text)) out.push(text);
   }
   return out;
