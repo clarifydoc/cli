@@ -31,7 +31,10 @@ import type { ClassInfo, EntityRelation, FileAnalysis, FunctionInfo, Language, P
  *     nested `league: LeagueRead` field on a schema is never a relation.
  *   - Inner `Meta` classes, hybrid_property / synonym computed fields, and
  *     per-column constraint flags (unique=, db_index=, cascade=, lazy=,
- *     viewonly=) are not surfaced.
+ *     viewonly=) are not surfaced. `@declared_attr` methods that return
+ *     `relationship(...)` / `orm.relationship(...)` ARE relations (same as a
+ *     field assignment); a `@declared_attr` whose body returns anything else
+ *     is ignored.
  *   - Inherited fields from abstract base models are not merged (each class is
  *     scanned in isolation).
  */
@@ -347,41 +350,7 @@ export class PythonEntityExtractor extends EntityExtractor {
       // SQLModel's serializer-style `league: Optional["League"] = Relationship(...)`)
       const relM = rhs.match(/^[Rr]elationship\s*\(([\s\S]*)\)\s*$/);
       if (relM) {
-        const args = relM[1] ?? "";
-        // Target: positional/`argument=` arg, else from the Mapped[...] / list[X] annotation.
-        const target = this.firstTarget(args) ?? this.coreType(annotation);
-        if (!target) continue;
-
-        // Cardinality: a `Mapped[list[X]]`/`List[X]` annotation, or a `uselist`
-        // arg, indicates the collection side; otherwise scalar (one-to-one).
-        const annIsCollection = /\b(list|List|set|Set)\b/.test(annotation);
-        const uselistFalse = /\buselist\s*=\s*False\b/.test(args);
-        const uselistTrue = /\buselist\s*=\s*True\b/.test(args);
-        let cardinality: EntityRelation["cardinality"];
-        if (uselistFalse) cardinality = "one-to-one";
-        else if (annIsCollection || uselistTrue) cardinality = "one-to-many";
-        else if (annotation) cardinality = "many-to-one";
-        // A classic relationship beside a foreign key to its target is the scalar, owning side.
-        else if (this.fkTargets(members).has(target)) cardinality = "many-to-one";
-        else cardinality = "one-to-many"; // SQLAlchemy default is a collection
-
-        // back_populates / backref name the inverse field; secondary is the
-        // join table (→ many-to-many).
-        const inverse = this.kwargString(args, "back_populates") ?? this.backrefName(args);
-        const secondary = this.kwargTarget(args, "secondary");
-        if (secondary) cardinality = "many-to-many";
-
-        relations.push(
-          this.relation(cls.name, field, target, cardinality, {
-            inverseField: inverse,
-            joinTable: secondary,
-            orm: "sqlalchemy",
-            // EXTRACTED when target came from an explicit arg; INFERRED when it
-            // was derived from the Mapped[...] annotation only.
-            confidence: this.firstTarget(args) ? "EXTRACTED" : "INFERRED",
-          }),
-        );
-        targets.add(target);
+        this.pushSqlAlchemyRelationship(cls, field, relM[1] ?? "", annotation, members, relations, targets);
         continue;
       }
 
@@ -450,6 +419,99 @@ export class PythonEntityExtractor extends EntityExtractor {
         if (type && this.isScalarType(type)) properties.push(this.column(field, type));
       }
     }
+
+    // `@declared_attr` / `@orm.declared_attr` methods whose body is a sole
+    // `return relationship(...)` — same relation as a field assignment. A
+    // declared_attr that returns a string, column_property, etc. is the decoy.
+    this.extractDeclaredAttrRelationships(cls, members, relations, targets);
+  }
+
+  /**
+   * `@declared_attr def league(cls): return relationship("League", …)` (and
+   * `orm.relationship` / `@orm.declared_attr` / `@declared_attr.cascading`).
+   * Logical lines split the decorator, `def` and `return` into separate
+   * members, so this walks them in order rather than matching field assigns.
+   */
+  private extractDeclaredAttrRelationships(
+    cls: ClassInfo,
+    members: string[],
+    relations: EntityRelation[],
+    targets: Set<string>,
+  ): void {
+    for (let i = 0; i < members.length; i++) {
+      const dec = members[i]!.trim();
+      // `@declared_attr`, `@orm.declared_attr`, `@declared_attr.cascading`,
+      // `@declared_attr(cascading=True)`.
+      if (!/^@(?:\w+\.)*declared_attr(?:\.\w+)?(?:\s*\([\s\S]*\))?\s*$/.test(dec)) continue;
+      const defLine = (members[i + 1] ?? "").trim();
+      const defM = defLine.match(/^def\s+([A-Za-z_]\w*)\s*\([^)]*\)\s*:\s*([\s\S]*)$/);
+      if (!defM) continue;
+      const field = defM[1]!;
+      let body = (defM[2] ?? "").trim();
+      let j = i + 2;
+      if (!body) {
+        const parts: string[] = [];
+        while (j < members.length) {
+          const next = members[j]!;
+          const t = next.trim();
+          // Next class member: decorator, another def, or a field assign / annotated attr.
+          if (/^@/.test(t) || /^def\s+/.test(t) || /^[A-Za-z_]\w*\s*(?::|=)/.test(t)) break;
+          parts.push(next);
+          j++;
+        }
+        body = parts.join("\n").trim();
+      }
+      const cleaned = body.replace(/\b(?:db|sa|sqlalchemy|orm|sqlmodel)\.(?=[A-Za-z_])/g, "");
+      const retM = cleaned.match(/^return\s+[Rr]elationship\s*\(([\s\S]*)\)\s*$/);
+      if (!retM) continue;
+      this.pushSqlAlchemyRelationship(cls, field, retM[1] ?? "", "", members, relations, targets);
+    }
+  }
+
+  /** Shared cardinality / inverse / secondary rules for a relationship(...) call. */
+  private pushSqlAlchemyRelationship(
+    cls: ClassInfo,
+    field: string,
+    args: string,
+    annotation: string,
+    members: string[],
+    relations: EntityRelation[],
+    targets: Set<string>,
+  ): void {
+    // Target: positional/`argument=` arg, else from the Mapped[...] / list[X] annotation.
+    const target = this.firstTarget(args) ?? this.coreType(annotation);
+    if (!target) return;
+
+    // Cardinality: a `Mapped[list[X]]`/`List[X]` annotation, or a `uselist`
+    // arg, indicates the collection side; otherwise scalar (one-to-one).
+    const annIsCollection = /\b(list|List|set|Set)\b/.test(annotation);
+    const uselistFalse = /\buselist\s*=\s*False\b/.test(args);
+    const uselistTrue = /\buselist\s*=\s*True\b/.test(args);
+    let cardinality: EntityRelation["cardinality"];
+    if (uselistFalse) cardinality = "one-to-one";
+    else if (annIsCollection || uselistTrue) cardinality = "one-to-many";
+    else if (annotation) cardinality = "many-to-one";
+    // A classic relationship beside a foreign key to its target is the scalar, owning side.
+    else if (this.fkTargets(members).has(target)) cardinality = "many-to-one";
+    else cardinality = "one-to-many"; // SQLAlchemy default is a collection
+
+    // back_populates / backref name the inverse field; secondary is the
+    // join table (→ many-to-many).
+    const inverse = this.kwargString(args, "back_populates") ?? this.backrefName(args);
+    const secondary = this.kwargTarget(args, "secondary");
+    if (secondary) cardinality = "many-to-many";
+
+    relations.push(
+      this.relation(cls.name, field, target, cardinality, {
+        inverseField: inverse,
+        joinTable: secondary,
+        orm: "sqlalchemy",
+        // EXTRACTED when target came from an explicit arg; INFERRED when it
+        // was derived from the Mapped[...] annotation only.
+        confidence: this.firstTarget(args) ? "EXTRACTED" : "INFERRED",
+      }),
+    );
+    targets.add(target);
   }
 
   // ─── Pony ORM ──────────────────────────────────────────────────────────────

@@ -25,6 +25,56 @@ async function analyze(src: string, rel = "app/models.py"): Promise<FileAnalysis
 
 const entities = (a: FileAnalysis) => a.classes.filter((c) => c.decorators?.includes("entity")).map((c) => c.name);
 
+describe("Python entities — SQLAlchemy @declared_attr → relationship", () => {
+  it("reads declared_attr methods that return relationship; non-relationship returns stay out", async () => {
+    const a = await analyze(`from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, declared_attr
+from sqlalchemy import orm
+
+class Base(DeclarativeBase):
+    pass
+
+class League(Base):
+    __tablename__ = "leagues"
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+class Club(Base):
+    __tablename__ = "clubs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column()
+
+    @declared_attr
+    def league(cls):
+        return relationship("League", back_populates="clubs")
+
+class Player(Base):
+    __tablename__ = "players"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    club_id: Mapped[int] = mapped_column()
+
+    @orm.declared_attr
+    def club(cls):
+        return orm.relationship("Club", back_populates="players")
+
+# Decoy: same decorator, return is not a relationship — must not become a relation.
+class Garage(Base):
+    __tablename__ = "garages"
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    @declared_attr
+    def league(cls):
+        return "not-a-relationship"
+`);
+    expect(entities(a).sort()).toEqual(["Club", "Garage", "League", "Player"]);
+    const rels = (a.entityRelations ?? []).map((r) => `${r.fromEntity}.${r.fromField} -> ${r.toEntity}`);
+    expect(rels).toEqual(expect.arrayContaining([
+      "Club.league -> League",
+      "Player.club -> Club",
+    ]));
+    expect(rels.some((r) => r.startsWith("Garage."))).toBe(false);
+    expect(rels.some((r) => r.includes(".return"))).toBe(false);
+  });
+});
+
 describe("Python entities — SQLModel Relationship (nested serializer-style)", () => {
   it("reads table=True Relationship fields as relations; nested schema fields stay out", async () => {
     const a = await analyze(`from typing import Optional
