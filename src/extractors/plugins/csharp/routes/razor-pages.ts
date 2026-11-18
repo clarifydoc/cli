@@ -2,6 +2,7 @@ import type { Node } from "web-tree-sitter";
 import type { FileAnalysis, RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";
 import { buildPath } from "./aspnet.js";
+import { filterMiddlewareCalls } from "./filter-middleware.js";
 
 /**
  * Razor Pages: `Pages/Club.cshtml` declares `@page "/clubs/{id:int}"` and its code-behind
@@ -19,12 +20,26 @@ export interface CsPageHandler {
   /** `OnPostSave` → `Save` (`?handler=Save`); null for the page's default handler. */
   named: string | null;
   line: number;
+  middlewareCalls?: string[];
 }
 export interface CsPageModelFact {
   handlers: CsPageHandler[];
+  /** Class-level `[ServiceFilter(typeof(X))]` — every page handler inherits it. */
+  middlewareCalls?: string[];
 }
 
 const HANDLER = /^On(Get|Post|Put|Patch|Delete|Head|Options)([A-Z]\w*?)?$/;
+
+function attributesOf(decl: Node): Node[] {
+  const out: Node[] = [];
+  for (const child of decl.children) {
+    if (child.type !== "attribute_list") continue;
+    for (const attr of child.children) {
+      if (attr.type === "attribute") out.push(attr);
+    }
+  }
+  return out;
+}
 
 export function extractPageModels(root: Node, facts: RouteFact[]): void {
   for (const cls of root.descendantsOfType("class_declaration")) {
@@ -32,15 +47,28 @@ export function extractPageModels(root: Node, facts: RouteFact[]): void {
     if (!base || !/^(?:[\w.]+\.)?PageModel$/.test(base.text.trim())) continue;
     const name = cls.childForFieldName("name")?.text;
     if (!name) continue;
+    const classMw = filterMiddlewareCalls(attributesOf(cls));
     const handlers: CsPageHandler[] = [];
-    for (const m of cls.childForFieldName("body")?.namedChildren ?? []) {
+    const body = cls.childForFieldName("body");
+    for (const m of body?.namedChildren ?? []) {
       if (m.type !== "method_declaration") continue;
       const method = m.childForFieldName("name")?.text ?? "";
       const h = HANDLER.exec(method.replace(/Async$/, ""));
       if (!h || !m.children.some((c) => c.type === "modifier" && c.text === "public")) continue;
-      handlers.push({ verb: h[1]!.toUpperCase(), method, named: h[2] ?? null, line: m.startPosition.row + 1 });
+      const ownMw = filterMiddlewareCalls(attributesOf(m));
+      handlers.push({
+        verb: h[1]!.toUpperCase(),
+        method,
+        named: h[2] ?? null,
+        line: m.startPosition.row + 1,
+        ...(ownMw.length > 0 ? { middlewareCalls: ownMw } : {}),
+      });
     }
-    if (handlers.length > 0) facts.push({ kind: CS_PAGE_MODEL, line: cls.startPosition.row + 1, owner: name, data: { handlers } satisfies CsPageModelFact });
+    if (handlers.length > 0) {
+      const data: CsPageModelFact = { handlers };
+      if (classMw.length > 0) data.middlewareCalls = classMw;
+      facts.push({ kind: CS_PAGE_MODEL, line: cls.startPosition.row + 1, owner: name, data });
+    }
   }
 }
 
@@ -70,7 +98,19 @@ export const razorPageRoutes: RouteResolver = {
           const key = `${h.verb} ${h.named ?? ""}`;
           if (seen.has(key)) continue;
           seen.add(key);
-          rows.push({ path: h.named === null ? path : `${path}?handler=${h.named}`, httpMethod: h.verb, kind: "api", handler: h.method, calls: [], middleware: [], line: h.line, ...(f.owner ? { owner: f.owner } : {}) });
+          const fact = f.data as CsPageModelFact;
+          const middlewareCalls = [...new Set([...(fact.middlewareCalls ?? []), ...(h.middlewareCalls ?? [])])];
+          rows.push({
+            path: h.named === null ? path : `${path}?handler=${h.named}`,
+            httpMethod: h.verb,
+            kind: "api",
+            handler: h.method,
+            calls: [],
+            middleware: [],
+            line: h.line,
+            ...(middlewareCalls.length > 0 ? { middlewareCalls } : {}),
+            ...(f.owner ? { owner: f.owner } : {}),
+          });
         }
       }
       if (rows.length > 0) a.routes = [...a.routes, ...rows];
