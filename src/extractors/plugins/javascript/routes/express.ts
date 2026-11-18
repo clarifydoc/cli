@@ -508,32 +508,59 @@ export function applyRouterLevelGuards(root: Node, routes: RouteInfo[], sourceTe
   const routerFilters: Array<{ receiver: string; line: number; text: string }> = [];
   /** The functions every `receiver.use(…)` names, guard or not: what they read at request time is each later route's. */
   const routerCalls: Array<{ receiver: string; line: number; names: string[] }> = [];
-  for (const stmt of root.namedChildren) {
-    const call = stmt.type === "expression_statement" ? stmt.namedChildren[0] : null;
-    if (!call || call.type !== "call_expression") continue;
+  /** Receivers this file registers routes on — an `app.use(router)` hands on a router, not middleware. */
+  const routeReceivers = new Set(
+    routes.map((r) => routeMeta.get(r)?.receiver).filter((r): r is string => !!r),
+  );
+  /** A router mounted with `.use(other.routes())` or `use(path, other)` inherits that parent's earlier `use` middleware. */
+  const routerParent = new Map<string, string>();
+  const mountArg = (arg: Node): boolean =>
+    routerOfMiddleware(arg) !== null || (arg.type === "identifier" && routeReceivers.has(arg.text.toLowerCase()));
+  const recordMountParent = (parentRecv: string, arg: Node): void => {
+    const id = routerOfMiddleware(arg);
+    if (id?.type === "identifier") routerParent.set(id.text.toLowerCase(), parentRecv);
+    else if (arg.type === "identifier" && routeReceivers.has(arg.text.toLowerCase())) routerParent.set(arg.text.toLowerCase(), parentRecv);
+  };
+  const visitRouterUse = (call: Node): void => {
     const fn = call.childForFieldName("function");
-    if (fn?.type !== "member_expression" || fn.childForFieldName("property")?.text !== "use") continue;
+    if (fn?.type !== "member_expression" || fn.childForFieldName("property")?.text !== "use") return;
     const receiver = receiverName(fn);
-    if (!receiver || NON_ROUTER_RECEIVERS.has(receiver)) continue;
+    if (!receiver || NON_ROUTER_RECEIVERS.has(receiver)) return;
     const args = call.childForFieldName("arguments")?.namedChildren ?? [];
-    if (args.length === 0 || args[0]!.type === "string" || args[0]!.type === "template_string") continue;
-    const middleware = args.flatMap(composedMiddleware);
+    if (args.length === 0) return;
+    const line = call.startPosition.row + 1;
+    const pathFirst = args[0]!.type === "string" || args[0]!.type === "template_string";
+    const middleware = (pathFirst ? args.slice(1) : args).flatMap(composedMiddleware).filter((n) => !mountArg(n));
+    for (const arg of pathFirst ? args.slice(1) : args) recordMountParent(receiver, arg);
     const used = middlewareCalleeNames(middleware);
-    if (used.length > 0) routerCalls.push({ receiver, line: call.startPosition.row + 1, names: used });
+    if (used.length > 0) routerCalls.push({ receiver, line, names: used });
     for (const arg of middleware) {
       const guard = guardFromMiddleware(arg);
-      if (guard) routerGuards.push({ receiver, line: call.startPosition.row + 1, guard });
-      else if (filterKind(collapse(arg.text))) routerFilters.push({ receiver, line: call.startPosition.row + 1, text: collapse(arg.text) });
+      if (guard) routerGuards.push({ receiver, line, guard });
+      else if (filterKind(collapse(arg.text))) routerFilters.push({ receiver, line, text: collapse(arg.text) });
     }
-  }
+  };
+  const walkRouterUses = (node: Node): void => {
+    if (node.type === "call_expression") visitRouterUse(node);
+    if (node.type === "binary_expression" && node.childForFieldName("operator")?.text === "&&") {
+      const right = node.childForFieldName("right");
+      if (right?.type === "call_expression") visitRouterUse(right);
+    }
+    for (const child of node.namedChildren) walkRouterUses(child);
+  };
+  walkRouterUses(root);
   if (sourceText === undefined || sourceText.includes("addHook")) collectFastifyHooks(root, routerGuards);
 
   for (const route of routes) {
     const meta = routeMeta.get(route);
     if (!meta) continue;
     routeMeta.delete(route);
+    const recvChain = new Set<string>();
+    if (meta.receiver) {
+      for (let r: string | undefined = meta.receiver; r; r = routerParent.get(r)) recvChain.add(r);
+    }
     const inherited = routerGuards
-      .filter((g) => g.receiver === meta.receiver && g.line < route.line && (!g.scope || (route.line >= g.scope.from && route.line <= g.scope.to)))
+      .filter((g) => recvChain.has(g.receiver) && g.line < route.line && (!g.scope || (route.line >= g.scope.from && route.line <= g.scope.to)))
       .map((g) => g.guard);
     // Middleware keeps source order (router-level first, then the route's own
     // arguments as written), so `applyRouteMeta` is used only for params; the
@@ -544,11 +571,11 @@ export function applyRouterLevelGuards(root: Node, routes: RouteInfo[], sourceTe
     if (inherited.length > 0) route.middleware = [...inherited.map((g) => g.text), ...route.middleware];
     const auth = buildAuth([...(meta.mountGuards ?? []), ...inherited], meta.guards);
     if (auth) route.auth = auth;
-    const inheritedFilters = routerFilters.filter((f) => f.receiver === meta.receiver && f.line < route.line).map((f) => f.text);
+    const inheritedFilters = routerFilters.filter((f) => recvChain.has(f.receiver) && f.line < route.line).map((f) => f.text);
     applyRouteMeta(route, { params: meta.params, inheritedFilters, filters: ownFilters });
     // Router-level middleware first (registration order), then the route's own: the functions the symbol linker resolves.
     if (!route.mount) {
-      const calls = [...new Set([...routerCalls.filter((c) => c.receiver === meta.receiver && c.line < route.line).flatMap((c) => c.names), ...(route.middlewareCalls ?? [])])];
+      const calls = [...new Set([...routerCalls.filter((c) => recvChain.has(c.receiver) && c.line < route.line).flatMap((c) => c.names), ...(route.middlewareCalls ?? [])])];
       if (calls.length > 0) route.middlewareCalls = calls;
     }
   }
@@ -581,7 +608,7 @@ function dropUnprovenConstantRoutes(routes: RouteInfo[], sourceText: string): vo
  * factory of `limit(10)` / `auth.session(db)` — the call the middleware is built by. Anything else (an inline function,
  * an object) names none; one no project function matches is simply never linked.
  */
-function middlewareCalleeNames(nodes: readonly Node[]): string[] {
+export function middlewareCalleeNames(nodes: readonly Node[]): string[] {
   const names: string[] = [];
   for (const n of nodes) {
     const target = n.type === "call_expression" ? n.childForFieldName("function") : n;
@@ -594,7 +621,7 @@ function middlewareCalleeNames(nodes: readonly Node[]): string[] {
  * What one `use(…)` argument stands for: koa-compose's `compose([authenticate, rateLimit])`
  * is its middleware, one by one; anything else is itself.
  */
-function composedMiddleware(arg: Node): Node[] {
+export function composedMiddleware(arg: Node): Node[] {
   if (arg.type !== "call_expression") return [arg];
   const callee = arg.childForFieldName("function")?.text ?? "";
   if (!/^(?:[\w$]+\.)?compose$/.test(callee)) return [arg];
