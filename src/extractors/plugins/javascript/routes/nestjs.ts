@@ -22,11 +22,14 @@ import { CONSTANT_REF } from "./path-helpers.js";
  * `@Version(...)` on either (the method's wins), and the parameter decorators
  * `@Body() / @Query() / @Param() / @Headers() / @UploadedFile() / @Req()`,
  * which are CHILDREN of the parameter node. App-wide guards are
- * `nest-global-guards` facts the project resolver puts on every Nest API route
- * of the same sub-project: `app.useGlobalGuards(…)` (NestFactory bootstrap only),
+ * `nest-global-guards` facts: `app.useGlobalGuards(…)` (NestFactory bootstrap),
  * or `{ provide: APP_GUARD, useClass|useExisting|useValue: … }` in a `@Module`
  * `providers` array — each names `inheritedMiddleware` at the registering file
  * so `Class.canActivate` resolves through that file's imports.
+ * `useGlobalInterceptors` and `{ provide: APP_INTERCEPTOR, useClass: X }` are a
+ * `nest-global-interceptors` fact whose middleware text and `Class.intercept`
+ * reach follow the same rules — only a class the sub-project declares gets an
+ * `intercept` call; framework types still appear in middleware text when named.
  */
 
 const HTTP_DECORATORS = new Set(["Get", "Post", "Put", "Patch", "Delete", "All", "Head", "Options"]);
@@ -511,10 +514,156 @@ export function collectNestAppGuards(root: Node, sourceText: string, facts: Rout
   walk(root);
 }
 
+/** `app.useGlobalInterceptors(new AuditInterceptor())` or `APP_INTERCEPTOR`. */
+export const NEST_GLOBAL_INTERCEPTORS = "nest-global-interceptors";
+export interface NestGlobalInterceptorsFact {
+  /** `useGlobalInterceptors(AuditInterceptor)` / `APP_INTERCEPTOR(AuditInterceptor)`. */
+  middleware: string[];
+  /** `AuditInterceptor.intercept` for each project interceptor class. */
+  calls: string[];
+}
+
+function isAppInterceptorToken(node: Node | null): boolean {
+  return node?.type === "identifier" && node.text === "APP_INTERCEPTOR";
+}
+
+/** `useClass: AuditInterceptor`, `useExisting: X`, or `useValue: new X()`. */
+function providerInterceptorClass(value: Node | null): string | null {
+  if (!value) return null;
+  if (value.type === "identifier" && /^[A-Z]/.test(value.text)) return value.text;
+  return globalGuardClass(value);
+}
+
 /**
- * Every API route of a sub-project that registered `useGlobalGuards` inherits
- * those guards: auth/middleware texts, and `inheritedMiddleware` naming the
- * bootstrap file so each `Class.canActivate` resolves through its imports
+ * `app.useGlobalInterceptors(…)` only when this file bootstraps a Nest app.
+ * Each argument that names a class becomes middleware text and a
+ * `Class.intercept` candidate.
+ */
+export function collectNestGlobalInterceptors(root: Node, sourceText: string, facts: RouteFact[]): void {
+  if (!/\buseGlobalInterceptors\b/.test(sourceText)) return;
+  if (!/\bNestFactory\b/.test(sourceText) && !/['"]@nestjs\/core['"]/.test(sourceText)) return;
+  const walk = (node: Node): void => {
+    if (node.type === "call_expression") {
+      const fn = node.childForFieldName("function");
+      if (fn?.type === "member_expression" && fn.childForFieldName("property")?.text === "useGlobalInterceptors") {
+        const middleware: string[] = [];
+        const calls: string[] = [];
+        for (const arg of callArgs(node)) {
+          const cls = globalGuardClass(arg);
+          if (!cls) continue;
+          middleware.push(`useGlobalInterceptors(${cls})`);
+          calls.push(`${cls}.intercept`);
+        }
+        if (middleware.length > 0) {
+          facts.push({
+            kind: NEST_GLOBAL_INTERCEPTORS,
+            line: node.startPosition.row + 1,
+            data: { middleware, calls } satisfies NestGlobalInterceptorsFact,
+          });
+        }
+      }
+    }
+    for (const child of node.namedChildren) walk(child);
+  };
+  walk(root);
+}
+
+/**
+ * `{ provide: APP_INTERCEPTOR, useClass: X }` in a `@Module({ providers: […] })`.
+ */
+export function collectNestAppInterceptors(root: Node, sourceText: string, facts: RouteFact[]): void {
+  if (!/\bAPP_INTERCEPTOR\b/.test(sourceText) || !/@Module\b/.test(sourceText)) return;
+  const walk = (node: Node): void => {
+    if (node.type === "decorator") {
+      const d = decoratorCall(node);
+      if (d?.name === "Module") {
+        const config = callArgs(d.call)[0];
+        if (config?.type === "object") {
+          const providers = objectField(config, "providers");
+          if (providers?.type === "array") {
+            for (const entry of providers.namedChildren) {
+              if (entry.type !== "object") continue;
+              if (!isAppInterceptorToken(objectField(entry, "provide"))) continue;
+              const cls =
+                providerInterceptorClass(objectField(entry, "useClass"))
+                ?? providerInterceptorClass(objectField(entry, "useExisting"))
+                ?? providerInterceptorClass(objectField(entry, "useValue"));
+              if (!cls) continue;
+              facts.push({
+                kind: NEST_GLOBAL_INTERCEPTORS,
+                line: entry.startPosition.row + 1,
+                data: {
+                  middleware: [`APP_INTERCEPTOR(${cls})`],
+                  calls: [`${cls}.intercept`],
+                } satisfies NestGlobalInterceptorsFact,
+              });
+            }
+          }
+        }
+      }
+    }
+    for (const child of node.namedChildren) walk(child);
+  };
+  walk(root);
+}
+
+function nestProjectClassNames(analyses: FileAnalysis[], projectId: string): Set<string> {
+  const names = new Set<string>();
+  for (const a of analyses) {
+    if ((a.projectId ?? "") !== projectId) continue;
+    for (const c of a.classes ?? []) names.add(c.name);
+  }
+  return names;
+}
+
+/**
+ * Every API route of a sub-project inheriting global interceptors gets their
+ * middleware text and, for classes the sub-project declares,
+ * `inheritedMiddleware` naming the declaring file so each `Class.intercept`
+ * resolves through its imports.
+ */
+export const nestGlobalInterceptors: RouteResolver = {
+  id: "nest-global-interceptors",
+  languages: ["typescript", "javascript"],
+  priority: 26,
+  resolve(analyses: FileAnalysis[], _ctx: ProjectContext): void {
+    const byProject = new Map<string, Array<{ file: string; fact: NestGlobalInterceptorsFact }>>();
+    for (const a of analyses) {
+      for (const f of a.routeFacts ?? []) {
+        if (f.kind !== NEST_GLOBAL_INTERCEPTORS) continue;
+        const key = a.projectId ?? "";
+        (byProject.get(key) ?? byProject.set(key, []).get(key)!).push({ file: a.filePath, fact: f.data as NestGlobalInterceptorsFact });
+      }
+    }
+    if (byProject.size === 0) return;
+    for (const a of analyses) {
+      const globals = byProject.get(a.projectId ?? "");
+      if (!globals?.length || !a.routes.some((r) => r.kind === "api" && !r.mount)) continue;
+      const projectClasses = nestProjectClassNames(analyses, a.projectId ?? "");
+      a.routes = a.routes.map((r) => {
+        if (r.kind !== "api" || r.mount) return r;
+        let route = r;
+        for (const g of globals) {
+          const texts = g.fact.middleware.filter((t) => !route.middleware.includes(t));
+          if (texts.length > 0) route = { ...route, middleware: [...texts, ...route.middleware] };
+          const calls = g.fact.calls.filter((c) => projectClasses.has(c.replace(/\.intercept$/, "")));
+          if (calls.length === 0) continue;
+          const entry = { file: g.file, calls };
+          const existing = route.inheritedMiddleware ?? [];
+          if (!existing.some((e) => e.file === entry.file && e.calls.join("\0") === entry.calls.join("\0"))) {
+            route = { ...route, inheritedMiddleware: [...existing, entry] };
+          }
+        }
+        return route;
+      });
+    }
+  },
+};
+
+/**
+ * Every API route of a sub-project that registered `useGlobalGuards` / `APP_GUARD`
+ * inherits those guards: auth/middleware texts, and `inheritedMiddleware` naming
+ * the registering file so each `Class.canActivate` resolves through its imports
  * (never a namesake class elsewhere). Nest's global guards run on the whole
  * app; files with no API routes (the bootstrap itself) are skipped.
  */

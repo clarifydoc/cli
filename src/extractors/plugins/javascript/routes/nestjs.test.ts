@@ -1,7 +1,15 @@
 import { describe, it, expect } from "vitest";
 import "../../../registry.js"; // side effect: registers tree-sitter grammars
 import { parseSource } from "../../../../parsers/parser-manager.js";
-import { collectNestAppGuards, collectNestGlobalGuards, extractNestjsRoutes, type NestGlobalGuardsFact } from "./nestjs.js";
+import {
+  collectNestAppGuards,
+  collectNestAppInterceptors,
+  collectNestGlobalGuards,
+  collectNestGlobalInterceptors,
+  extractNestjsRoutes,
+  type NestGlobalGuardsFact,
+  type NestGlobalInterceptorsFact,
+} from "./nestjs.js";
 import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 
 async function routesOf(src: string): Promise<RouteInfo[]> {
@@ -250,5 +258,71 @@ export class ApiModule {}
 export class AppModule {}
 `);
     expect(facts).toEqual([]);
+  });
+});
+
+describe("NestJS useGlobalInterceptors facts", () => {
+  async function factsOf(src: string): Promise<RouteFact[]> {
+    const tree = await parseSource(src, "typescript" as any, "main.ts");
+    const facts: RouteFact[] = [];
+    collectNestGlobalInterceptors(tree.rootNode, src, facts);
+    return facts;
+  }
+
+  it("records AuditInterceptor from NestFactory bootstrap, and ignores a namesake method", async () => {
+    const nest = await factsOf(`import { NestFactory } from "@nestjs/core";
+import { AuditInterceptor } from "./audit.interceptor";
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  app.useGlobalInterceptors(new AuditInterceptor());
+}
+`);
+    expect(nest).toHaveLength(1);
+    expect(nest[0]!.data as NestGlobalInterceptorsFact).toEqual({
+      middleware: ["useGlobalInterceptors(AuditInterceptor)"],
+      calls: ["AuditInterceptor.intercept"],
+    });
+
+    const decoy = await factsOf(`export class DecoyService {
+  useGlobalInterceptors() { return "no"; }
+}
+new DecoyService().useGlobalInterceptors();
+`);
+    expect(decoy).toEqual([]);
+  });
+
+  it("names framework interceptors in middleware text", async () => {
+    const facts = await factsOf(`import { NestFactory } from "@nestjs/core";
+import { ClassSerializerInterceptor } from "@nestjs/common";
+const app = await NestFactory.create(AppModule);
+app.useGlobalInterceptors(new ClassSerializerInterceptor(reflector));
+`);
+    expect((facts[0]!.data as NestGlobalInterceptorsFact).middleware).toEqual([
+      "useGlobalInterceptors(ClassSerializerInterceptor)",
+    ]);
+    expect((facts[0]!.data as NestGlobalInterceptorsFact).calls).toEqual(["ClassSerializerInterceptor.intercept"]);
+  });
+});
+
+describe("NestJS APP_INTERCEPTOR providers", () => {
+  async function factsOf(src: string): Promise<RouteFact[]> {
+    const tree = await parseSource(src, "typescript" as any, "app.module.ts");
+    const facts: RouteFact[] = [];
+    collectNestAppInterceptors(tree.rootNode, src, facts);
+    return facts;
+  }
+
+  it("records useClass registrations", async () => {
+    const facts = await factsOf(`import { Module } from "@nestjs/common";
+import { APP_INTERCEPTOR } from "@nestjs/core";
+import { AuditInterceptor } from "./audit.interceptor";
+
+@Module({
+  providers: [{ provide: APP_INTERCEPTOR, useClass: AuditInterceptor }],
+})
+export class AppModule {}
+`);
+    expect((facts[0]!.data as NestGlobalInterceptorsFact).middleware).toEqual(["APP_INTERCEPTOR(AuditInterceptor)"]);
+    expect((facts[0]!.data as NestGlobalInterceptorsFact).calls).toEqual(["AuditInterceptor.intercept"]);
   });
 });
