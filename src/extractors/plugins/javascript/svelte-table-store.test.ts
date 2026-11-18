@@ -9,12 +9,14 @@ import type { ProjectAnalysis } from "../../../types/analysis.js";
 /**
  * A Svelte component reads its TanStack table through the store's auto-subscription (`$table.nextPage()`): the call
  * runs the `onPaginationChange` the component wrote, and nothing else of the project that shares a name with it.
+ * A markup-only handler (`on:click={() => $table.previousPage()}`) is the same call.
  */
 const FILES: Record<string, string> = {
   "package.json": JSON.stringify({ name: "league-web", dependencies: { svelte: "^4.2.0", "@tanstack/svelte-table": "^8.20.0", axios: "^1.6.0" } }),
   "src/decoy.js": `import axios from 'axios';
 export function loadPage() { return axios.delete('/api/v2/decoy-load'); }
 export function nextPage() { return axios.delete('/api/v2/decoy-next'); }
+export function previousPage() { return axios.delete('/api/v2/decoy-prev'); }
 `,
   "src/Standings.svelte": `<script>
   import { createSvelteTable } from '@tanstack/svelte-table';
@@ -26,6 +28,16 @@ export function nextPage() { return axios.delete('/api/v2/decoy-next'); }
   function reload() { $standings.nextPage(); }
 </script>
 <button on:click={next}>next</button>
+`,
+  "src/Pager.svelte": `<script>
+  import { createSvelteTable } from '@tanstack/svelte-table';
+  import axios from 'axios';
+  export let rows = [];
+  function loadPage(update) { axios.get('/api/v2/pager-page'); }
+  const table = createSvelteTable({ data: rows, columns: [], onPaginationChange: loadPage });
+</script>
+<button on:click={() => $table.previousPage()}>prev</button>
+<button on:click={() => $standings.nextPage()}>decoy</button>
 `,
 };
 
@@ -49,8 +61,13 @@ describe("a Svelte table store's methods", () => {
     const reached = summary.symbolLinks.filter((l) => l.sourceFile === "src/Standings.svelte" && l.strategy === "dispatch:library-option").map((l) => `${l.sourceSymbol} -${l.callName}-> ${l.targetFile}:${l.targetSymbol}`);
     expect(reached).toEqual(["next -table.nextPage-> src/Standings.svelte:loadPage"]);
   });
+  it("runs a markup-only store method the same way", () => {
+    const reached = summary.symbolLinks.filter((l) => l.sourceFile === "src/Pager.svelte" && l.strategy === "dispatch:library-option").map((l) => `${l.sourceSymbol} -${l.callName}-> ${l.targetFile}:${l.targetSymbol}`);
+    expect(reached).toEqual(["<setup> -table.previousPage-> src/Pager.svelte:loadPage"]);
+  });
   it("links no store of another name, and nothing into the namesake decoy", () => {
     expect(summary.symbolLinks.filter((l) => l.sourceSymbol === "reload" && l.relation !== "reference")).toEqual([]);
+    expect(summary.symbolLinks.filter((l) => l.sourceFile === "src/Pager.svelte" && l.callName === "standings.nextPage")).toEqual([]);
     expect(summary.symbolLinks.filter((l) => l.targetFile === "src/decoy.js")).toEqual([]);
   });
 });
