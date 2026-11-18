@@ -1,12 +1,14 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { analyzeFile } from "../../../core/file-analyzer.js";
-import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
+import { analyze } from "../../../core/analyzer.js";
+import { loadReportSummary } from "../../../core/report-payload.js";
+import { mkdtemp, writeFile, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import type { FileAnalysis } from "../../../types/analysis.js";
+import type { FileAnalysis, ProjectAnalysis } from "../../../types/analysis.js";
 
 /** Through the real per-file pipeline (tree-sitter parse + every extractor). */
-async function analyze(src: string, rel = "src/app.zig"): Promise<FileAnalysis> {
+async function analyzeOne(src: string, rel = "src/app.zig"): Promise<FileAnalysis> {
   const root = await mkdtemp(join(tmpdir(), "zig-"));
   await mkdir(join(root, dirname(rel)), { recursive: true });
   await writeFile(join(root, rel), src);
@@ -22,9 +24,20 @@ async function analyze(src: string, rel = "src/app.zig"): Promise<FileAnalysis> 
   return result!.analysis;
 }
 
+/** Full project analysis so symbol links run (Bike decoy must not win). */
+async function scan(files: Record<string, string>): Promise<{ summary: ProjectAnalysis; done: () => Promise<void> }> {
+  const dir = await mkdtemp(join(tmpdir(), "cd-zig-struct-"));
+  for (const [rel, text] of Object.entries(files)) {
+    await mkdir(dirname(join(dir, "repo", rel)), { recursive: true });
+    await writeFile(join(dir, "repo", rel), text);
+  }
+  await analyze({ projectRoot: join(dir, "repo"), outputDir: join(dir, "out"), lsp: false, gitHistory: false });
+  return { summary: await loadReportSummary(join(dir, "out")), done: () => rm(dir, { recursive: true, force: true }) };
+}
+
 describe("Zig functions, types and imports", () => {
   it("reads functions, container types, methods and fields", async () => {
-    const a = await analyze([
+    const a = await analyzeOne([
       'const std = @import("std");',
       'const db = @import("db.zig");',
       'const Router = @import("router.zig").Router;',
@@ -50,6 +63,7 @@ describe("Zig functions, types and imports", () => {
       ["helper", false, "void", []],
       ["closes", false, null, ["std.testing.expect"]],
     ]);
+    expect(a.functions.find((f) => f.name === "main")!.localTypes).toEqual([{ name: "car", type: "Car" }]);
     expect(a.classes.map((c) => [c.name, c.kind ?? "class", c.properties.map((p) => `${p.name}:${p.type}`), c.methods.map((m) => m.name)])).toEqual([
       ["Car", "class", ["id:u64", "total:f64"], ["close"]],
       ["Line", "class", ["sku:[]const u8"], []],
@@ -64,15 +78,65 @@ describe("Zig functions, types and imports", () => {
   });
 
   it("reads a file that declares fields as a struct named after the file", async () => {
-    const a = await analyze(["id: u64,", "name: []const u8,", "pub fn init(id: u64) @This() {", "    return .{ .id = id, .name = \"\" };", "}"].join("\n"), "src/Driver.zig");
+    const a = await analyzeOne(["id: u64,", "name: []const u8,", "pub fn init(id: u64) @This() {", "    return .{ .id = id, .name = \"\" };", "}"].join("\n"), "src/Driver.zig");
     expect(a.functions).toEqual([]);
     expect(a.classes.map((c) => [c.name, c.properties.map((p) => p.name), c.methods.map((m) => m.name)])).toEqual([["Driver", ["id", "name"], ["init"]]]);
+  });
+
+  it("types a local from a struct literal, a typed annotation and a pointer literal", async () => {
+    const a = await analyzeOne([
+      "const Car = struct { id: u64 };",
+      "pub fn run() void {",
+      "    var c = Car{ .id = 1 };",
+      "    const p = &Car{ .id = 2 };",
+      "    var d: Car = .{ .id = 3 };",
+      "    var e: *Car = undefined;",
+      "    _ = c; _ = p; _ = d; _ = e;",
+      "}",
+    ].join("\n"));
+    expect(a.functions[0]!.localTypes).toEqual([
+      { name: "c", type: "Car" },
+      { name: "p", type: "Car" },
+      { name: "d", type: "Car" },
+      { name: "e", type: "Car" },
+    ]);
+  });
+});
+
+describe("Zig struct-literal locals link to the typed method", () => {
+  let summary: ProjectAnalysis;
+  let done: () => Promise<void>;
+  beforeAll(async () => {
+    ({ summary, done } = await scan({
+      "src/main.zig": [
+        "const Car = struct {",
+        "    id: u64,",
+        "    pub fn park(self: *Car) void { _ = self; }",
+        "};",
+        "const Bike = struct {",
+        "    id: u64,",
+        "    pub fn park(self: *Bike) void { _ = self; }",
+        "};",
+        "pub fn main() void {",
+        "    var c = Car{ .id = 1 };",
+        "    c.park();",
+        "}",
+      ].join("\n"),
+      "build.zig.zon": ".{ .name = .garage, .version = \"0.0.0\", .paths = .{ \"src\" } }",
+    }));
+  });
+  afterAll(async () => done());
+
+  it("links c.park to Car.park and not Bike.park", () => {
+    const parks = summary.symbolLinks.filter((l) => l.callName === "c.park" || l.targetSymbol.endsWith(".park"));
+    expect(parks.map((l) => `${l.targetSymbol}:${l.strategy}`)).toEqual(["Car.park:injection"]);
+    expect(summary.symbolLinks.some((l) => l.targetSymbol === "Bike.park")).toBe(false);
   });
 });
 
 describe("Zig routes and data access", () => {
   it("reads http.zig routes and groups, tokamak decl literals and zap endpoints", async () => {
-    const a = await analyze([
+    const a = await analyzeOne([
       "pub fn main() !void {",
       "    var router = try server.router(.{});",
       '    router.get("/api/cars/:id", getCar, .{});',
@@ -97,7 +161,7 @@ describe("Zig routes and data access", () => {
   });
 
   it("reads jetzig views by file path", async () => {
-    const a = await analyze([
+    const a = await analyzeOne([
       "pub fn index(request: *jetzig.Request) !jetzig.View { return request.render(.ok); }",
       "pub fn get(id: []const u8, request: *jetzig.Request) !jetzig.View { _ = id; return request.render(.ok); }",
       "pub fn post(request: *jetzig.Request) !jetzig.View { return request.render(.created); }",
@@ -108,7 +172,7 @@ describe("Zig routes and data access", () => {
   });
 
   it("reads SQL in strings and multiline strings, and std.http.Client calls", async () => {
-    const a = await analyze([
+    const a = await analyzeOne([
       "fn load(conn: *pg.Conn, client: *std.http.Client) !void {",
       "    _ = try conn.query(",
       "        \\\\SELECT id, total",
@@ -150,7 +214,7 @@ describe("Zig packages", () => {
 
 describe("Zig test blocks", () => {
   it("are test functions with their calls, a doctest named apart from the function it tests", async () => {
-    const a = await analyze([
+    const a = await analyzeOne([
       'const std = @import("std");',
       "fn rank(points: u32) u32 { return points; }",
       'test "ranks clubs" {',
@@ -167,7 +231,7 @@ describe("Zig test blocks", () => {
   });
 
   it("keeps a test named after its function apart from it, and a body-less doctest reaches the function", async () => {
-    const a = await analyze([
+    const a = await analyzeOne([
       "pub fn kick(n: u32) u32 { return n; }",
       "pub fn pass() void {}",
       'test "kick" {',

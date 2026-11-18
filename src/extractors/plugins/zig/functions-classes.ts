@@ -4,6 +4,8 @@ import type { FunctionInfo, ClassInfo, Language, PropertyInfo } from "../../func
 import { extractCalls } from "../../shared/call-graph.js";
 import { CONTAINER_TYPES, declValue, isPub } from "./syntax.js";
 
+type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
+
 /**
  * Zig functions and types. `pub fn f(x: T) !R { … }` at file level is a
  * function; a `const Order = struct { … };` (or `enum`/`union`/`opaque`) is a
@@ -11,6 +13,11 @@ import { CONTAINER_TYPES, declValue, isPub } from "./syntax.js";
  * included. A file is itself a struct: one that declares fields at the top
  * (`Order.zig` with `id: u64,`) is a type named after the file, and its
  * functions are its methods. `self` is the receiver, not a parameter.
+ *
+ * A local initialised by a struct literal (`var c = Car{ .id = 1 }`,
+ * `const c = &Car{ .id = 1 }`) or declared with a type (`var c: Car = .{…}`,
+ * `var c: *Car = undefined`) is typed in `FunctionInfo.localTypes`, so
+ * `c.park()` links to `Car.park` and not a namesake method on another type.
  */
 export class ZigExtractor extends FunctionClassExtractor {
   readonly languages: Language[] = ["zig"];
@@ -82,6 +89,8 @@ function fn(node: Node): FunctionInfo {
     .filter((p) => p.type === "parameter")
     .map((p) => ({ name: p.childForFieldName("name")?.text ?? "", type: p.childForFieldName("type")?.text ?? null, defaultValue: null }))
     .filter((p) => p.name && p.name !== "self" && p.name !== "_");
+  const body = node.childForFieldName("body");
+  const localTypes = extractLocalTypes(body);
   return {
     name: node.childForFieldName("name")?.text ?? "",
     params,
@@ -89,9 +98,10 @@ function fn(node: Node): FunctionInfo {
     isAsync: false,
     isExported: isPub(node),
     decorators: [],
-    calls: extractCalls(node.childForFieldName("body"), "zig"),
+    calls: extractCalls(body, "zig"),
     line: node.startPosition.row + 1,
     endLine: node.endPosition.row + 1,
+    ...(localTypes.length > 0 ? { localTypes } : {}),
   };
 }
 
@@ -103,11 +113,13 @@ function fn(node: Node): FunctionInfo {
 function testBlock(node: Node): FunctionInfo {
   const label = node.namedChildren.find((c) => c.type === "string" || c.type === "identifier");
   const title = label?.type === "string" ? label.text.slice(1, -1) : label ? `test ${label.text}` : `test at line ${node.startPosition.row + 1}`;
-  const calls = extractCalls(node.namedChildren.find((c) => c.type === "block") ?? null, "zig");
+  const body = node.namedChildren.find((c) => c.type === "block") ?? null;
+  const calls = extractCalls(body, "zig");
   // A doctest (`test rank { … }`) is the declaration's own test whatever its body calls: it reaches `rank`.
   if (label?.type === "identifier" && !calls.some((c) => c.name === label.text)) {
     calls.push({ name: label.text, kind: "internal", target: null, line: label.startPosition.row + 1, column: label.startPosition.column + 1 });
   }
+  const localTypes = extractLocalTypes(body);
   return {
     name: title,
     params: [],
@@ -119,5 +131,53 @@ function testBlock(node: Node): FunctionInfo {
     line: node.startPosition.row + 1,
     endLine: node.endPosition.row + 1,
     testCase: { title: label?.type === "string" ? title : label?.text ?? title, path: [], kind: "case" },
+    ...(localTypes.length > 0 ? { localTypes } : {}),
   };
+}
+
+/**
+ * Locals whose type the body states: a struct literal (`Car{ .id = 1 }`,
+ * `&Car{…}`) or a written type on the declaration (`var c: Car = …`).
+ * First sighting wins; `_` and lowercase / builtin names are skipped.
+ */
+function extractLocalTypes(body: Node | null): LocalType[] {
+  if (!body) return [];
+  const out: LocalType[] = [];
+  const seen = new Set<string>();
+  for (const decl of body.descendantsOfType("variable_declaration")) {
+    const name = decl.namedChildren.find((c) => c.type === "identifier")?.text;
+    if (!name || name === "_" || seen.has(name)) continue;
+    const type = localTypeOf(decl);
+    if (!type) continue;
+    seen.add(name);
+    out.push({ name, type });
+  }
+  return out;
+}
+
+/** The project type a `var`/`const` declaration states, or null when it does not. */
+function localTypeOf(decl: Node): string | null {
+  const annotated = typeNameOf(decl.childForFieldName("type"));
+  if (annotated) return annotated;
+  const value = declValue(decl);
+  if (!value) return null;
+  if (value.type === "struct_initializer") return typeNameOf(value.namedChildren.find((c) => c.type === "identifier"));
+  if (value.type === "unary_expression") {
+    const lit = value.namedChildren.find((c) => c.type === "struct_initializer");
+    return lit ? typeNameOf(lit.namedChildren.find((c) => c.type === "identifier")) : null;
+  }
+  return null;
+}
+
+/** A PascalCase type identifier (optionally behind `*` / `[]`), never a builtin. */
+function typeNameOf(node: Node | null | undefined): string | null {
+  if (!node) return null;
+  if (node.type === "identifier") {
+    const name = node.text;
+    return /^[A-Z]\w*$/.test(name) ? name : null;
+  }
+  if (node.type === "pointer_type" || node.type === "optional_type" || node.type === "array_type") {
+    return typeNameOf(node.namedChildren.find((c) => c.type === "identifier" || c.type === "pointer_type" || c.type === "optional_type"));
+  }
+  return null;
 }
