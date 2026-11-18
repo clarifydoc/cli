@@ -1,5 +1,7 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 import { attributeRepositoryAccesses, splitTypeArgs, type RepositoryAccessKnobs } from "../shared/repository-access.js";
+import { alembicSchemaOf } from "./alembic-schema.js";
+import { fkRelation, replaySchema } from "../shared/schema-replay.js";
 import type { ClassInfo, EntityRelation, FileAnalysis, FunctionInfo, Language, PropertyInfo } from "../../../types/analysis.js";
 
 /**
@@ -51,6 +53,7 @@ export class PythonEntityExtractor extends EntityExtractor {
     inheritDjangoModels(analyses);
     resolveDjangoRelatedManagers(analyses);
     resolveDjangoUserModel(analyses);
+    replayAlembicChains(analyses);
   }
 
   extract(ctx: EntityExtractContext): EntityExtractResult {
@@ -66,7 +69,12 @@ export class PythonEntityExtractor extends EntityExtractor {
     const nonOrmBases = this.collectNonOrmBases(ctx);
     // An Alembic revision (`revision = "…"` beside `down_revision = …`) declares copies of the models
     // as they were at that point, for its data migration: the models are the application's, not these.
-    if (/^revision\s*[:=]/m.test(ctx.sourceText) && /^down_revision\s*[:=]/m.test(ctx.sourceText)) return { entities, relations };
+    // Its `op.create_table(…, schema="x")` / `op.drop_table` rows still build the schema.
+    if (/^revision\s*[:=]/m.test(ctx.sourceText) && /^down_revision\s*[:=]/m.test(ctx.sourceText)) {
+      const { tables, ops } = alembicSchemaOf(ctx.sourceText);
+      const fks = ops.filter((o) => o.op === "add-foreign-key" && o.column && o.to).map((o) => fkRelation(o.table, o.column!, o.to!));
+      return { entities: tables, relations: fks, ...(ops.length ? { schemaOps: ops } : {}) };
+    }
 
     for (const cls of ctx.analysis.classes) {
       try {
@@ -838,14 +846,46 @@ const PY_REPOSITORY_KNOBS: RepositoryAccessKnobs = {
 /**
  * The table a model names: SQLAlchemy `__tablename__ = "…"`, Django's
  * `class Meta: db_table = "…"`, peewee `table_name`, tortoise `table`, Pony
- * `_table_`. The Meta forms only inside a nested `class Meta`.
+ * `_table_`. The Meta forms only inside a nested `class Meta`. A SQLAlchemy
+ * `__table_args__ = {"schema": "league"}` (or a trailing dict in a tuple)
+ * prefixes the name so it joins an Alembic `op.create_table(…, schema=…)`.
  */
 function pythonTableName(body: string): string | null {
   const direct = /^\s*(?:__tablename__|_table_)\s*(?::\s*\w+\s*)?=\s*["']([^"']+)["']/m.exec(body);
-  if (direct) return direct[1]!;
   const meta = /^([ \t]*)class[ \t]+Meta\b[^\n]*:[ \t]*\n((?:\1[ \t]+[^\n]*(?:\n|$))*)/m.exec(body);
   const inMeta = meta ? /^\s*(?:db_table|table_name|table)\s*=\s*["']([^"']+)["']/m.exec(meta[2]!) : null;
-  return inMeta?.[1] ?? null;
+  const table = direct?.[1] ?? inMeta?.[1] ?? null;
+  if (!table) return null;
+  const schema = tableArgsSchema(body);
+  return schema ? `${schema}.${table}` : table;
+}
+
+/** `__table_args__ = {"schema": "x"}` or `(__table_args__ = (…, {"schema": "x"}))`. */
+function tableArgsSchema(body: string): string | null {
+  const m = /__table_args__\s*=\s*(?:\([^;]*?\{\s*["']schema["']\s*:\s*["']([^"']+)["']|\{\s*["']schema["']\s*:\s*["']([^"']+)["'])/s.exec(body);
+  return m?.[1] ?? m?.[2] ?? null;
+}
+
+/**
+ * Replay Alembic version directories whose files carry `schemaOps`, in filename
+ * order (revision ids sort with the hex prefix Alembic writes). A lone
+ * revision with no chain neighbours still ends as the schema it states.
+ */
+function replayAlembicChains(analyses: FileAnalysis[]): void {
+  const byDir = new Map<string, FileAnalysis[]>();
+  for (const a of analyses) {
+    if (a.language !== "python" || !a.schemaOps?.length) continue;
+    const m = a.filePath.match(/^(.*(?:^|\/)(?:alembic\/)?versions\/)/i);
+    if (!m) {
+      replaySchema([a]);
+      continue;
+    }
+    (byDir.get(m[1]!) ?? byDir.set(m[1]!, []).get(m[1]!)!).push(a);
+  }
+  for (const chain of byDir.values()) {
+    chain.sort((x, y) => (x.filePath < y.filePath ? -1 : 1));
+    replaySchema(chain);
+  }
 }
 
 /**

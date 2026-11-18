@@ -24,7 +24,7 @@ const LANGUAGE_MARKERS: Partial<Record<Language, RegExp>> = {
   java: JAVA_MARKERS,
   kotlin: JAVA_MARKERS,
   python:
-    /\bmodels\.(?:Model|[A-Z]\w*Field|ForeignKey|OneToOneField|ManyToManyField)|__tablename__|\bmapped_column\b|\bMapped\s*\[|\brelationship\s*\(|\bColumn\s*\(|\bdb\.Entity\b|\bForeignKeyField\b|\bDeclarativeBase\b|\bDeferredForeignKey\b|\bfields\.(?:ForeignKeyField|OneToOneField|ManyToManyField)|\bPrimaryKey\s*\(|\bRequired\s*\(|\bDeclarative_base\b|\bdeclarative_base\b/,
+    /\bmodels\.(?:Model|[A-Z]\w*Field|ForeignKey|OneToOneField|ManyToManyField)|__tablename__|\bmapped_column\b|\bMapped\s*\[|\brelationship\s*\(|\bColumn\s*\(|\bdb\.Entity\b|\bForeignKeyField\b|\bDeclarativeBase\b|\bDeferredForeignKey\b|\bfields\.(?:ForeignKeyField|OneToOneField|ManyToManyField)|\bPrimaryKey\s*\(|\bRequired\s*\(|\bDeclarative_base\b|\bdeclarative_base\b|\bop\.create_table\b|\balembic\b/,
   csharp:
     /\bDbSet\s*<|\[\s*(?:Table|Column|Key|ForeignKey|Class)\b|\bmodelBuilder\b|\.HasOne\s*\(|\.HasMany\s*\(|\.WithMany\s*\(|\b(?:Create|Rename|Delete)\.Table/,
   go: /\bgorm\b|gorm:"|\bent\.Schema\b|\bRegisterModel\s*\(|orm:"/,

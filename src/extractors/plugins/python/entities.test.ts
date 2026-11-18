@@ -103,4 +103,76 @@ def upgrade():
 `, "league/alembic/versions/2023-10-04_dded3119c1fe_added_unique_constraints.py");
     expect(entities(a)).toEqual([]);
   });
+
+  it("reads op.create_table schema= as a schema-qualified table; bare and wrong-schema decoys stay apart", async () => {
+    const a = await analyze(`"""add clubs"""
+from alembic import op
+import sqlalchemy as sa
+
+revision = "a1b2c3d4e5f6"
+down_revision = None
+
+
+def upgrade() -> None:
+    op.create_table(
+        "clubs",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("name", sa.String(80), nullable=False),
+        schema="league",
+    )
+    op.create_table(
+        "clubs",
+        sa.Column("id", sa.Integer(), primary_key=True),
+    )
+    op.create_table(
+        "clubs",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        schema="cup",
+    )
+
+
+def downgrade() -> None:
+    op.drop_table("clubs", schema="league")
+    op.drop_table("clubs")
+    op.drop_table("clubs", schema="cup")
+`, "alembic/versions/a1b2c3d4e5f6_add_clubs.py");
+    expect(entities(a)).toEqual([]);
+    const tables = a.classes.filter((c) => c.decorators?.includes("table")).map((c) => c.name).sort();
+    expect(tables).toEqual(["clubs", "cup.clubs", "league.clubs"]);
+    // Downgrade's drop_table is ignored — it would wipe the same file's creates.
+    expect((a.schemaOps ?? []).map((o) => `${o.op} ${o.table}`).sort()).toEqual([
+      "create-table clubs",
+      "create-table cup.clubs",
+      "create-table league.clubs",
+    ]);
+    const league = a.classes.find((c) => c.name === "league.clubs")!;
+    expect(league.properties.map((p) => p.name)).toEqual(["id", "name"]);
+  });
+
+  it("prefixes a model's __tablename__ with __table_args__ schema so it joins the migration table", async () => {
+    const a = await analyze(`from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import String, Integer
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Club(Base):
+    __tablename__ = "clubs"
+    __table_args__ = {"schema": "league"}
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(80))
+
+
+class CupClub(Base):
+    __tablename__ = "clubs"
+    __table_args__ = {"schema": "cup"}
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+`);
+    const club = a.classes.find((c) => c.name === "Club")!;
+    const cup = a.classes.find((c) => c.name === "CupClub")!;
+    expect(club.tableName).toBe("league.clubs");
+    expect(cup.tableName).toBe("cup.clubs");
+  });
 });
