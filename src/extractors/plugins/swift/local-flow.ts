@@ -23,7 +23,7 @@ export function uniqueLocals(entries: NonNullable<FunctionInfo["localTypes"]>): 
   for (const e of entries) {
     const prev = byName.get(e.name);
     if (prev === undefined) byName.set(e.name, e);
-    else if (prev && (prev.type !== e.type || prev.qualifier !== e.qualifier || prev.from !== e.from || prev.element !== e.element)) byName.set(e.name, null);
+    else if (prev && (prev.type !== e.type || prev.qualifier !== e.qualifier || prev.from !== e.from || prev.aliasOf !== e.aliasOf || prev.element !== e.element)) byName.set(e.name, null);
   }
   return [...byName.values()].filter((e): e is Entry => e !== null);
 }

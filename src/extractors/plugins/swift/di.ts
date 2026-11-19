@@ -395,6 +395,16 @@ export function initializerQualifier(rhs: string): string | undefined {
   return lookupName(rhs);
 }
 
+/** Words that are values, not names a local could be an alias of. */
+const ALIAS_NOT_A_NAME = new Set(["self", "super", "nil", "true", "false"]);
+
+/** Whether a statement assigns the name again (`c = other`, `case .a: c = y`, `c += 1`), which makes it no stable alias. */
+function reassigned(bodyLines: string[], name: string): boolean {
+  const declaration = new RegExp(String.raw`\b(?:let|var)\s+${name}\b`);
+  const assignment = new RegExp(String.raw`(?<![\w$.])${name}\s*(?:\?\?|<<|>>|&&|\|\||[-+*/%&|^])?=(?!=)`);
+  return bodyLines.some((l) => assignment.test(blankStringLiterals(l).replace(/\/\/.*$/, "").replace(declaration, "")));
+}
+
 const LOCAL_RE = /^\s*(?:(?:if|guard|while)\s+)?(?:let|var)\s+([a-zA-Z_]\w*)\s*(?::\s*([^=]+?))?\s*(?:=\s*(.+?))?\s*(?:\belse\s*\{.*|\{\s*)?$/;
 
 /**
@@ -426,6 +436,11 @@ export function extractSwiftLocalTypes(
       // `let e = car.engine()`: typed through the method's declared return type.
       const call = callFrom(m[3]);
       if (call) out.push({ name, type: "", ...call });
+      else if (!/^\s*(?:if|guard|while)\b/.test(statement)) {
+        // `let c = club`, `var c = self.club!`: the name is another name (a pattern binding is typed by its narrowing).
+        const head = /^(?:self\s*\.\s*)?([a-z_]\w*)\s*[!?]?$/.exec(m[3].trim())?.[1];
+        if (head && head !== name && !ALIAS_NOT_A_NAME.has(head) && !reassigned(bodyLines, name)) out.push({ name, type: "", aliasOf: head });
+      }
     }
   }
   const code = bodyLines.map((l) => blankStringLiterals(l)).join("\n");

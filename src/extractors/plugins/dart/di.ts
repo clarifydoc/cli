@@ -468,13 +468,24 @@ const TYPED_LOCAL_RE = new RegExp(
 
 type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
 
+/** Lowercase words that are values, not names a local could be an alias of. */
+const ALIAS_NOT_A_NAME = new Set(["this", "super", "null", "true", "false", "void", "dynamic"]);
+
+/** Whether a statement assigns the name again (`c = other;`, `if (x) c = y;`, `c ??= x;`, `c += 1`), which makes it no stable alias. */
+function reassigned(bodyLines: string[], name: string): boolean {
+  const id = name.replace(/\$/g, "\\$");
+  const declaration = new RegExp(String.raw`\b(?:final|var|late|const)\s+${id}\b`);
+  const assignment = new RegExp(String.raw`(?<![\w$.])${id}\s*(?:\?\?|~/|<<|>>>?|[-+*/%&|^])?=(?!=)`);
+  return bodyLines.some((l) => assignment.test(codeOf(l).replace(declaration, "")));
+}
+
 /** One entry per name; a name declared again with a different type, key or initializer is dropped. */
 export function uniqueLocals(entries: NonNullable<FunctionInfo["localTypes"]>): NonNullable<FunctionInfo["localTypes"]> {
   const byName = new Map<string, LocalType | null>();
   for (const e of entries) {
     const prev = byName.get(e.name);
     if (prev === undefined) byName.set(e.name, e);
-    else if (prev && (prev.type !== e.type || prev.qualifier !== e.qualifier || prev.from !== e.from)) byName.set(e.name, null);
+    else if (prev && (prev.type !== e.type || prev.qualifier !== e.qualifier || prev.from !== e.from || prev.aliasOf !== e.aliasOf)) byName.set(e.name, null);
   }
   return [...byName.values()].filter((e): e is LocalType => e !== null);
 }
@@ -610,6 +621,12 @@ export function extractDartLocalTypes(bodyLines: string[], fn: { name: string; p
       else {
         const call = classLevelCall(untyped[2]!);
         if (call) out.push({ name: untyped[1]!, type: "", ...call });
+        else {
+          // `final c = club;`, `final c = maybeClub!;`: the name is another name (a null assertion reads as the name).
+          const head = /^([a-z_$][\w$]*)\s*!?$/.exec(untyped[2]!.trim())?.[1];
+          const name = untyped[1]!;
+          if (head && head !== name && !ALIAS_NOT_A_NAME.has(head) && !reassigned(bodyLines, name)) out.push({ name, type: "", aliasOf: head });
+        }
       }
       continue;
     }
