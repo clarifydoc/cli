@@ -173,6 +173,8 @@ interface ScriptCall {
   method: string;
   target: string;
   line: number;
+  /** 0-based column in the PHP source, only where it is the markup's too (no PHP tag earlier on the line). */
+  column?: number;
 }
 
 /** A script string as a route target: `{{php}}` and a `+`-appended tail are runtime segments. */
@@ -185,9 +187,21 @@ function scriptTarget(url: string, concatenated: boolean, pagePath?: string): st
 }
 
 /** The api-calls in the inline `<script>` blocks of `markup`, with each block's line span. */
-function scriptCalls(markup: string, pagePath?: string): Array<{ start: number; end: number; calls: ScriptCall[] }> {
+function scriptCalls(markup: string, pagePath?: string, source?: string): Array<{ start: number; end: number; calls: ScriptCall[] }> {
   const blocks: Array<{ start: number; end: number; calls: ScriptCall[] }> = [];
   const lineAt = (i: number): number => markup.slice(0, i).split("\n").length;
+  const columnOf = (i: number) => {
+    const c = columnAt(i);
+    return c === undefined ? {} : { column: c };
+  };
+  const sourceLines = source?.split("\n");
+  // A column is the markup's; it is the source's only while the line's text before it is untouched by a rewritten PHP tag.
+  const columnAt = (i: number): number | undefined => {
+    const lineStart = markup.lastIndexOf("\n", i - 1) + 1;
+    const col = i - lineStart;
+    const row = sourceLines?.[lineAt(i) - 1];
+    return row !== undefined && row.startsWith(markup.slice(lineStart, i)) ? col : undefined;
+  };
   for (const b of markup.matchAll(/<script\b(?![^>]*\bsrc\s*=)[^>]*>([\s\S]*?)<\/script>/gi)) {
     const bodyStart = b.index! + b[0].indexOf(">") + 1;
     const body = b[1]!;
@@ -197,7 +211,7 @@ function scriptCalls(markup: string, pagePath?: string): Array<{ start: number; 
       const target = m[3] !== undefined ? scriptTarget(m[3], !!m[4], pagePath) : scriptTarget(m[6]!, !!m[7], pagePath);
       if (!target) continue;
       const method = m[1] === "post" ? "POST" : "GET";
-      calls.push({ method, target, line: lineAt(bodyStart + m.index!) });
+      calls.push({ method, target, line: lineAt(bodyStart + m.index!), ...columnOf(bodyStart + m.index!) });
     }
     for (const m of body.matchAll(AJAX_RE)) {
       const opts = body.slice(m.index!, m.index! + 600);
@@ -205,7 +219,7 @@ function scriptCalls(markup: string, pagePath?: string): Array<{ start: number; 
       const target = url ? scriptTarget(url[2]!, !!url[3], pagePath) : null;
       if (!target) continue;
       const method = (/\b(?:type|method)\s*:\s*['"](\w+)['"]/.exec(opts)?.[1] ?? "GET").toUpperCase();
-      calls.push({ method, target, line: lineAt(bodyStart + m.index!) });
+      calls.push({ method, target, line: lineAt(bodyStart + m.index!), ...columnOf(bodyStart + m.index!) });
     }
     if (calls.length > 0) blocks.push({ start: lineAt(b.index!), end: lineAt(b.index! + b[0].length), calls });
   }
@@ -233,14 +247,14 @@ export function readPhpView(analysis: FileAnalysis, source: string): void {
 
   // Inline scripts: one pseudo-function per block holding its calls.
   const named = new Set(analysis.functions.map((f) => f.name));
-  for (const block of scriptCalls(markup, pagePath ?? undefined)) {
+  for (const block of scriptCalls(markup, pagePath ?? undefined, source)) {
     const name = `<script:${block.start}>`;
     if (!named.has(name)) {
       named.add(name);
       const fn: FunctionInfo = { name, params: [], returnType: null, isAsync: false, isExported: false, decorators: [], calls: [], line: block.start, endLine: block.end };
       analysis.functions.push(fn);
     }
-    for (const c of block.calls) analysis.dataSources.push({ kind: "api-call", name: `${c.method} ${c.target}`, target: c.target, calls: [], line: c.line });
+    for (const c of block.calls) analysis.dataSources.push({ kind: "api-call", name: `${c.method} ${c.target}`, target: c.target, calls: [], line: c.line, ...(c.column !== undefined ? { column: c.column } : {}) });
   }
 
   const subComponents: SubComponentInfo[] = [];

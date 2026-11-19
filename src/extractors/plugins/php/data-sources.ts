@@ -271,6 +271,7 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
           // curl requests with GET unless an option says otherwise.
           httpMethod: (handle ? this.curlMethods.get(handle) : undefined) ?? "GET",
           line,
+          column: node.startPosition.column,
         }));
         return;
       }
@@ -294,7 +295,7 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
       if (fnName === "file_get_contents") {
         const target = this.firstStringArg(node);
         if (target && /^https?:\/\//i.test(target)) {
-          sources.push(this.ds({ kind: "api-call", name: fnName, target, line }));
+          sources.push(this.ds({ kind: "api-call", name: fnName, target, line, column: node.startPosition.column }));
         }
         return;
       }
@@ -368,7 +369,7 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
 
       // Guzzle-style HTTP: $client->get/post/put/patch/delete/request
       if (/Http|Client|Guzzle/i.test(recvText) && /^(get|post|put|patch|delete|request|send)$/i.test(method)) {
-        sources.push(this.ds({ kind: "api-call", ...this.httpRequest(node, method, callText), line }));
+        sources.push(this.ds({ kind: "api-call", ...this.httpRequest(node, method, callText), line, column: node.startPosition.column }));
         return;
       }
 
@@ -424,7 +425,7 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
       const callText = `${scope}::${name}`;
 
       if (scope === "Http" && /^(get|post|put|patch|delete|head|options|send|request)$/i.test(name)) {
-        sources.push(this.ds({ kind: "api-call", ...this.httpRequest(node, name, callText), line }));
+        sources.push(this.ds({ kind: "api-call", ...this.httpRequest(node, name, callText), line, column: node.startPosition.column }));
         return;
       }
 
