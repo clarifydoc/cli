@@ -468,10 +468,14 @@ function elementOf(cell: ValueCell, key?: string): ValueCell {
 }
 
 /** The value-flow facts of one method (or top-level function), or undefined when it states none. */
-export function extractRubyValueFlow(code: readonly string[], fn: FunctionInfo, cls: ClassInfo | null): ValueFlowFact[] | undefined {
-  if (fn.endLine <= fn.line) return undefined;
+export function extractRubyValueFlow(code: readonly string[], fn: FunctionInfo, cls: ClassInfo | null, inlineBody?: string): ValueFlowFact[] | undefined {
+  // A method written on its `def` line (`def run(cb:) = cb.call`, `def run(cb); cb.call; end`) has the body the caller cut out.
+  const oneLine = fn.endLine <= fn.line;
+  if (oneLine && inlineBody === undefined) return undefined;
   const reader = new Reader(fn, cls, false);
-  const statements = statementsOf(code, fn.line, fn.endLine - 1);
+  const statements = oneLine
+    ? splitTop(inlineBody!, ";").map((text) => ({ text, line: fn.line, offsets: [0] }))
+    : statementsOf(code, fn.line, fn.endLine - 1);
   if (statements.length === 0) return undefined;
   for (const s of statements) reader.statement(s);
   const last = statements[statements.length - 1]!;

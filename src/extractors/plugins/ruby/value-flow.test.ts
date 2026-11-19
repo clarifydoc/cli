@@ -643,3 +643,28 @@ describe("Ruby value flow: a closure written as an argument", () => {
     expect(flow.map((l) => l.replace(/^Club\.schedule_(\w)@\d+ \S+ -> club\.rb::Club\./, "$1 "))).toEqual(["a on_full_time", "b on_kickoff", "c on_whistle", "d on_penalty", "e on_corner"]);
   });
 });
+
+describe("Ruby value flow: one-line and endless methods", () => {
+  it("`def run(callback: nil); callback.call; end` and `def run(callback:) = callback.call` run what is handed in", async () => {
+    const { flow } = await links({
+      "club.rb": rb(
+        "class Club",
+        "  def on_full_time; end",
+        "  def on_kickoff; end",
+        "  def on_whistle; end",
+        "  def decoy; end",
+        "  def plan",
+        "    run_a(callback: method(:on_full_time))",
+        "    run_b(callback: -> { on_kickoff })",
+        "    run_c(method(:on_whistle))",
+        "  end",
+        "  def run_a(callback: nil); callback.call; end",
+        "  def run_b(callback:) = callback.call",
+        "  def run_c(callback) callback.call end",
+        "  def keep(callback: nil); callback.decoy; end",
+        "end",
+      ),
+    });
+    expect(flow.map((l) => l.replace(/^Club\.run_(\w)@(\d+) \S+ -> club\.rb::Club\./, "$1@$2 "))).toEqual(["a@11 on_full_time", "b@12 on_kickoff", "c@13 on_whistle"]);
+  });
+});

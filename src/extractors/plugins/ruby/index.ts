@@ -276,6 +276,14 @@ function bodyLines(lines: readonly string[], fn: FunctionInfo): Array<[number, s
   return [[fn.line - 1, " ".repeat(col) + decl.slice(col)]];
 }
 
+/** The body of a method written on its `def` line (`def x; y; end`, `def x = y`), cut of its closing `end`; undefined for any other. */
+function inlineBodyOf(code: readonly string[], fn: FunctionInfo): string | undefined {
+  if (fn.endLine > fn.line || fn.testCase) return undefined;
+  const text = bodyLines(code, fn)[0]?.[1];
+  if (text === undefined) return undefined;
+  return text.replace(/\s*;?\s*\bend\s*$/, "").trim() || undefined;
+}
+
 /**
  * Where a one-line method's body starts on its `def` line: after an endless
  * method's `=` (`def range = window.current`), after the `;` that ends the
@@ -1540,7 +1548,7 @@ export const rubySpec: RegexLangSpec = {
         addSymbolListDispatchCalls(lines, code, cls, m);
         addBareStatementCalls(code, cls, m, bound);
         addSuperCalls(code, m);
-        const valueFlow = extractRubyValueFlow(code, m, cls);
+        const valueFlow = extractRubyValueFlow(code, m, cls, inlineBodyOf(code, m));
         if (valueFlow) m.valueFlow = valueFlow;
       }
       // A controller's filters, for the project pass that runs them before each action.
@@ -1630,7 +1638,7 @@ export const rubySpec: RegexLangSpec = {
     withRubyArgOrigins(lines, fns);
     const code = rubyCodeLinesOf(lines);
     for (const fn of fns) {
-      const valueFlow = extractRubyValueFlow(code, fn, null);
+      const valueFlow = extractRubyValueFlow(code, fn, null, inlineBodyOf(code, fn));
       if (valueFlow) fn.valueFlow = valueFlow;
     }
     return fns;
