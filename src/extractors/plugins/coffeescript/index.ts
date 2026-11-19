@@ -214,11 +214,11 @@ const BACKBONE = /^\s*(url|urlRoot)\s*:\s*['"]([^'"]+)['"]/;
 function coffeeDataSources(lines: string[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
   const consumed = new Set<number>();
-  const push = (method: string, raw: string, line: number) => {
+  const push = (method: string, raw: string, line: number, column: number) => {
     // `"/api/orders/#{@id}/close"` → `/api/orders/{id}/close`
     const target = raw.replace(/#\{\s*@?([\w.]+?)\s*\}/g, (_m, v: string) => `{${v.split(".").pop()}}`);
     if (!target.startsWith("/") && !/^https?:\/\//.test(target)) return;
-    out.push({ kind: "api-call", name: `${method} ${target}`, target, calls: [], line });
+    out.push({ kind: "api-call", name: `${method} ${target}`, target, calls: [], line, column });
   };
   const usesBackbone = lines.some((l) => /\bBackbone\./.test(l));
   lines.forEach((line, i) => {
@@ -236,12 +236,12 @@ function coffeeDataSources(lines: string[]): DataSourceInfo[] {
         url ??= /\burl\s*:\s*['"]([^'"]+)['"]/.exec(lines[j]!)?.[1];
       }
       const type = /\b(?:type|method)\s*:\s*['"](\w+)['"]/i.exec(options)?.[1];
-      if (url) push((type ?? (fn === "post" ? "POST" : "GET")).toUpperCase(), url, i + 1);
+      if (url) push((type ?? (fn === "post" ? "POST" : "GET")).toUpperCase(), url, i + 1, m.index);
       return;
     }
-    if ((m = CLIENT.exec(line))) { push(m[1]!.toUpperCase(), m[2]!, i + 1); return; }
-    if ((m = FETCH.exec(line))) { push((/method\s*:\s*['"](\w+)['"]/i.exec(m[2] ?? "")?.[1] ?? "GET").toUpperCase(), m[1]!, i + 1); return; }
-    if (usesBackbone && (m = BACKBONE.exec(line))) push("GET", m[2]!, i + 1);
+    if ((m = CLIENT.exec(line))) { push(m[1]!.toUpperCase(), m[2]!, i + 1, m.index); return; }
+    if ((m = FETCH.exec(line))) { push((/method\s*:\s*['"](\w+)['"]/i.exec(m[2] ?? "")?.[1] ?? "GET").toUpperCase(), m[1]!, i + 1, m.index); return; }
+    if (usesBackbone && (m = BACKBONE.exec(line))) push("GET", m[2]!, i + 1, m.index);
   });
   return out;
 }
