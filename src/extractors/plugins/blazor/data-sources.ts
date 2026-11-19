@@ -38,7 +38,7 @@ export function extractBlazorDataSources(lines: string[], _classes: ClassInfo[])
       if (!/^(?:https?:\/\/|\/?[\w{][\w{}\-./]*)(?:\?.*)?$/.test(target)) continue;
       target = target.replace(/\?.*$/, "");
       if (!/^https?:/.test(target) && !target.startsWith("/")) target = "/" + target;
-      out.push({ kind: "api-call", name: `${verb} ${target}`, target, calls: [], line: i + 1 });
+      out.push({ kind: "api-call", name: `${verb} ${target}`, target, calls: [], line: i + 1, column: m.index! });
     }
   }
   return out;
