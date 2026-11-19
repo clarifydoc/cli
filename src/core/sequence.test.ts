@@ -103,3 +103,24 @@ describe("routeAnchor with registrars", () => {
     expect(routeAnchor({ ...row, registrar: "registerCars" }, links)).toBeNull();
   });
 });
+
+describe("buildSequence and a shared component", () => {
+  const link = (sf: string, ss: string, tf: string, ts: string, extra: object = {}) =>
+    ({ sourceFile: sf, sourceSymbol: ss, sourceLine: 1, callName: ts, targetFile: tf, targetSymbol: ts, targetLine: 1, confidence: "EXTRACTED", ...extra });
+  const dialog = "src/ui/ConfirmDialog.tsx";
+  const summary = {
+    symbolLinks: [
+      link("src/pages/ClubPage.tsx", "ClubPage", dialog, "ConfirmDialog", { relation: "calls" }),
+      link("src/pages/ClubPage.tsx", "(reference)", dialog, "ConfirmDialog", { strategy: "dispatch:renders", relation: "reference" }),
+      link("src/pages/PlayerPage.tsx", "(reference)", dialog, "ConfirmDialog", { strategy: "dispatch:renders", relation: "reference" }),
+      link(dialog, "ConfirmDialog", "src/pages/ClubPage.tsx", "dropClub", { strategy: "dispatch:prop-callback", relation: "dispatch", viaUsage: [{ file: "src/pages/ClubPage.tsx", line: 4 }] }),
+      link(dialog, "ConfirmDialog", "src/pages/PlayerPage.tsx", "dropPlayer", { strategy: "dispatch:prop-callback", relation: "dispatch", viaUsage: [{ file: "src/pages/PlayerPage.tsx", line: 4 }] }),
+    ],
+  } as unknown as ProjectAnalysis;
+
+  it("leaves a shared child through the binding its entering page made, not another page's", () => {
+    const text = buildSequence(summary, { file: "src/pages/ClubPage.tsx", symbol: "ClubPage", title: "ClubPage" });
+    expect(text).toContain("dropClub()");
+    expect(text).not.toContain("dropPlayer()");
+  });
+});

@@ -1,3 +1,4 @@
+import { keyOf, usageGate } from "./symbol-graph.js";
 import { routeSymbolPath } from "./route-symbol.js";
 import type { ProjectAnalysis, SymbolLink } from "../types/analysis.js";
 import { idFactory, mermaidLabel } from "./mermaid-text.js";
@@ -154,7 +155,9 @@ export function buildSequence(summary: ProjectAnalysis, seed: { file: string; sy
   const start = lane(laneOf(seed.file, seed.symbol));
   say(client, start, title);
 
-  const walk = (file: string, symbol: string, level: number, path: Set<string>): void => {
+  // A walk that entered a shared component from one user leaves it through that user's bindings only (`usageGate`).
+  const gate = usageGate(summary.symbolLinks ?? []);
+  const walk = (file: string, symbol: string, level: number, path: Set<string>, state = ""): void => {
     const here = lane(laneOf(file, symbol));
     const key = `${file}::${symbol}`;
     for (const d of access.get(key) ?? []) {
@@ -162,7 +165,12 @@ export function buildSequence(summary: ProjectAnalysis, seed: { file: string; sy
       if (d.access === "queue-consume") say(target, here, `consume ${d.entity}`);
       else say(here, target, d.access === "queue-publish" ? `publish ${d.entity}` : `${d.sites[0]?.name ?? "query"}`);
     }
-    const out = calls.get(key) ?? [];
+    const next = new Map<SymbolLink, string>();
+    for (const l of calls.get(key) ?? []) {
+      const to = gate.active ? gate.forward(state, keyOf(l.sourceFile, l.sourceSymbol), keyOf(l.targetFile, l.targetSymbol)) : "";
+      if (to !== null) next.set(l, to);
+    }
+    const out = [...next.keys()];
     const shown = out.slice(0, fanOut);
     // The frames open around the calls drawn so far, outermost first.
     const frames = opts.frames?.get(file) ?? [];
@@ -199,7 +207,7 @@ export function buildSequence(summary: ProjectAnalysis, seed: { file: string; sy
       const text = l.relation === "http" ? `HTTP ${l.callName}` : short(l.targetSymbol);
       say(here, to, text + (l.confidence === "AMBIGUOUS" ? " ?" : ""), arrow);
       const before = body.length;
-      if (level < depth) walk(l.targetFile, l.targetSymbol, level + 1, new Set([...path, callee]));
+      if (level < depth) walk(l.targetFile, l.targetSymbol, level + 1, new Set([...path, callee]), next.get(l));
       else body.push(`  Note over ${to}: depth ${depth} reached`);
       // A call within the lane that led nowhere needs no return arrow to read.
       if (to !== here || body.length > before) say(to, here, "return", "-->>");

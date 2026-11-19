@@ -1,5 +1,6 @@
 import type { ProjectAnalysis, SymbolLink } from "../types/analysis.js";
 import { byOrdinal } from "./ordinal.js";
+import { keyOf, usageGate } from "./symbol-graph.js";
 
 /**
  * What a flow does, as a tree, and how two such trees differ — a route's
@@ -53,7 +54,9 @@ export function sequenceTree(summary: ProjectAnalysis, seed: { file: string; sym
     const k = `${d.file}::${d.symbol}`;
     (access.get(k) ?? access.set(k, []).get(k)!).push(d);
   }
-  const walk = (file: string, symbol: string, level: number, path: Set<string>): SequenceStep[] => {
+  // The same gate `buildSequence` walks with: a shared child's emits go back to the user that entered it.
+  const gate = usageGate(summary.symbolLinks ?? []);
+  const walk = (file: string, symbol: string, level: number, path: Set<string>, state = ""): SequenceStep[] => {
     const key = `${file}::${symbol}`;
     const steps: SequenceStep[] = [];
     for (const d of access.get(key) ?? []) {
@@ -61,12 +64,14 @@ export function sequenceTree(summary: ProjectAnalysis, seed: { file: string; sym
       if (!steps.some((s) => s.name === what)) steps.push({ name: what, children: [] });
     }
     for (const l of calls.get(key) ?? []) {
+      const next = gate.active ? gate.forward(state, keyOf(l.sourceFile, l.sourceSymbol), keyOf(l.targetFile, l.targetSymbol)) : "";
+      if (next === null) continue;
       const callee = `${l.targetFile}::${l.targetSymbol}`;
       if (path.has(callee)) {
         steps.push({ name: `${stepName(l)} ↻`, children: [] });
         continue;
       }
-      steps.push({ name: stepName(l), children: level < depth ? walk(l.targetFile, l.targetSymbol, level + 1, new Set([...path, callee])) : [] });
+      steps.push({ name: stepName(l), children: level < depth ? walk(l.targetFile, l.targetSymbol, level + 1, new Set([...path, callee]), next) : [] });
     }
     return steps;
   };

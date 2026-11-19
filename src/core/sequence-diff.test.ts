@@ -68,3 +68,24 @@ describe("flow locks", () => {
     ]);
   });
 });
+
+describe("sequenceTree and a shared component", () => {
+  const l = (sf: string, ss: string, tf: string, ts: string, extra: object = {}) =>
+    ({ sourceFile: sf, sourceSymbol: ss, sourceLine: 1, callName: ts, targetFile: tf, targetSymbol: ts, targetLine: 1, confidence: "EXTRACTED", relation: "calls", ...extra });
+  const dialog = "src/ui/ConfirmDialog.tsx";
+  const summary = {
+    symbolLinks: [
+      l("src/pages/ClubPage.tsx", "ClubPage", dialog, "ConfirmDialog"),
+      l("src/pages/PlayerPage.tsx", "(reference)", dialog, "ConfirmDialog", { strategy: "dispatch:renders", relation: "reference" }),
+      l("src/pages/ClubPage.tsx", "(reference)", dialog, "ConfirmDialog", { strategy: "dispatch:renders", relation: "reference" }),
+      l(dialog, "ConfirmDialog", "src/pages/ClubPage.tsx", "dropClub", { relation: "dispatch", strategy: "dispatch:prop-callback", viaUsage: [{ file: "src/pages/ClubPage.tsx", line: 4 }] }),
+      l(dialog, "ConfirmDialog", "src/pages/PlayerPage.tsx", "dropPlayer", { relation: "dispatch", strategy: "dispatch:prop-callback", viaUsage: [{ file: "src/pages/PlayerPage.tsx", line: 4 }] }),
+    ],
+  } as unknown as ProjectAnalysis;
+
+  it("follows a shared child's emit back to the entering user only", () => {
+    const tree = JSON.stringify(sequenceTree(summary, { file: "src/pages/ClubPage.tsx", symbol: "ClubPage" }));
+    expect(tree).toContain("dropClub()");
+    expect(tree).not.toContain("dropPlayer()");
+  });
+});
