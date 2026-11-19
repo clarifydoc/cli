@@ -30,6 +30,16 @@ const FILES: Record<string, string> = {
   "rust/b/src/lib.rs": "pub mod garage;\n",
   "rust/b/src/garage.rs": "pub struct Garage;\n\nimpl Garage {\n    pub fn park(&self) {}\n}\n",
   "rust/a/src/run.rs": "use crate::garage::Garage;\n\npub fn go(g: Garage) {\n    g.park();\n}\n",
+  // Rust: modules of the importing crate that re-export another crate's module and a glob of its types.
+  "rust-reexport/Cargo.toml": '[workspace]\nmembers = ["league-api", "league-fixtures"]\n',
+  "rust-reexport/league-api/Cargo.toml": '[package]\nname = "league-api"\nversion = "0.1.0"\n',
+  "rust-reexport/league-fixtures/Cargo.toml": '[package]\nname = "league-fixtures"\nversion = "0.1.0"\n',
+  "rust-reexport/league-api/src/lib.rs": "pub mod triggers;\npub mod args;\n",
+  "rust-reexport/league-api/src/triggers/mod.rs": "pub use league_fixtures::match_helpers;\npub use league_fixtures::types::*;\n",
+  "rust-reexport/league-fixtures/src/lib.rs": "pub mod match_helpers;\npub mod types;\n",
+  "rust-reexport/league-fixtures/src/match_helpers.rs": "pub struct FixtureId;\n",
+  "rust-reexport/league-fixtures/src/types.rs": "pub struct MatchdayArgs;\n\nimpl MatchdayArgs {\n    pub fn run(&self) {}\n}\n",
+  "rust-reexport/league-api/src/args.rs": "use crate::triggers::match_helpers::FixtureId;\nuse crate::triggers::MatchdayArgs;\n\npub fn go(a: FixtureId, b: MatchdayArgs) {\n    b.run();\n}\n",
   // C: an include written with a directory, and a header of the same name elsewhere.
   "c/league/club.h": "void club_join(void);\n",
   "c/league/club.c": '#include "club.h"\nvoid club_join(void) {}\n',
@@ -83,6 +93,13 @@ describe("an import binds only what its path names", () => {
   it("Rust: crate:: is the importing crate's own", () => {
     expect(links("rust/a/src/run.rs")).toEqual([]);
     expect(edges("rust/a/src/run.rs")).not.toContain("b/src/garage.rs");
+  });
+
+  it("Rust: a crate:: path through a module re-exporting another crate's module or glob follows it", () => {
+    expect(links("rust-reexport/league-api/src/args.rs")).toEqual([
+      "calls b.run -> league-fixtures/src/types.rs::MatchdayArgs.run",
+      "reference FixtureId -> league-fixtures/src/match_helpers.rs::FixtureId",
+    ]);
   });
 
   it("C: an include with a directory reaches only the bodies of that header", () => {

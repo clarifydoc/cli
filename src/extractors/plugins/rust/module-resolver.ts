@@ -95,7 +95,23 @@ function finishModulePath(dir: string, path: string[], specifier: string | undef
 
 /** The directory a `crate::`-rooted path stays in: the importing crate's own; null for any other path. */
 export function rustImportConfinement(importingFile: string, source: string, ctx: ImportResolveContext): string | null {
-  return source.startsWith("crate::") ? crateSrcOf(importingFile, ctx) : null;
+  if (!source.startsWith("crate::")) return null;
+  const src = crateSrcOf(importingFile, ctx);
+  if (src === null) return null;
+  // A module on the written path that re-exports another crate's item, module or glob (`pub use other::m;`,
+  // `pub use other::m as n;`, `pub use other::types::*;`) hands the path over: it is no longer confined.
+  const foreign = (from: string): boolean => workspaceCrate(from.split("::")[0]!, ctx) !== null;
+  const segs = source.split("::").slice(1).filter((x) => x && x !== "*");
+  let cur: string | null = moduleFile(src, [], ctx);
+  for (let i = 0; cur && i <= segs.length; i++) {
+    if (ctx.globImportsOf(cur).some((g) => foreign(g))) return null;
+    const seg = segs[i];
+    if (seg === undefined) break;
+    const named = ctx.namedImportOf?.(cur, seg);
+    if (named && foreign(named.source)) return null;
+    cur = exactModuleFile(src, segs.slice(0, i + 1), ctx);
+  }
+  return src;
 }
 
 /** The directory a path's first segment starts from; null when it names no project crate. */
