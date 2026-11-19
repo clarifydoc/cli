@@ -407,6 +407,8 @@ function localTypesFrom(found: Node[], scopeIds: ReadonlySet<number>, intoLambda
               // is declared to return; the linker reads that.
               const call = init ? initializerCall(init) : null;
               if (call) put(name, { name, type: "", ...call });
+              // `var api = x ? Clubs() : Players()`: each arm's call, marked as one choice.
+              else for (const arm of init ? conditionalArmCalls(init) ?? [] : []) put(name, { name, type: "", choice: decl.startIndex, ...arm });
             }
           } else if (stated && init && unwrapExpression(init).type === "object_creation_expression") {
             constructed.push({ name, declared: typeNode.text, built: stated.type });
@@ -449,6 +451,27 @@ function localTypesFrom(found: Node[], scopeIds: ReadonlySet<number>, intoLambda
   for (const entry of byName.values()) if (entry) out.push(entry);
   for (const [name, calls] of fromCalls) if (!byName.has(name)) out.push(...calls.values());
   return out.length > 0 ? out : undefined;
+}
+
+/**
+ * The calls a conditional initializer's arms make (`x ? Clubs() : Players()`, nested conditionals flattened), or null
+ * when the initializer is no conditional or any arm is no call: a call's type must come from every arm.
+ */
+function conditionalArmCalls(init: Node): Array<{ from: string; awaited?: true }> | null {
+  const node = unwrapExpression(init);
+  if (node.type !== "conditional_expression") return null;
+  const out: Array<{ from: string; awaited?: true }> = [];
+  for (const field of ["consequence", "alternative"]) {
+    const arm = node.childForFieldName(field);
+    if (!arm) return null;
+    const nested = conditionalArmCalls(arm);
+    const calls = nested ?? [initializerCall(arm)];
+    for (const c of calls) {
+      if (!c) return null;
+      out.push(c);
+    }
+  }
+  return out;
 }
 
 /**
