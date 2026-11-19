@@ -12,7 +12,7 @@
 
 import { readFile, stat } from "fs/promises";
 import { homedir } from "os";
-import { dirname, join, resolve } from "path";
+import { basename, dirname, join, resolve } from "path";
 import {
   AnalysisLockedError,
   currentLockHolder,
@@ -359,6 +359,32 @@ export class AnalysisStore {
     return join(this.options.analysisDir, "project-summary.json");
   }
 
+  /**
+   * The command that writes the analysis this server reads: `analyze` puts its output in
+   * `<-o>/<project name>`, so a custom directory of another shape is only named, not passed.
+   */
+  get analyzeCommand(): string {
+    const root = resolve(this.options.projectRoot);
+    const dir = resolve(this.options.analysisDir);
+    const arg = (p: string) => (/\s/.test(p) ? JSON.stringify(p) : p);
+    return basename(dir) === basename(root)
+      ? `clarifydoc analyze ${arg(root)} -o ${arg(dirname(dir))}`
+      : `clarifydoc analyze ${arg(root)}`;
+  }
+
+  /** What a tool says when the analysis is on disk but cannot be read: where, why, and the command that rewrites it. */
+  unreadableMessage(reason: string): string {
+    return (
+      `The analysis at ${this.summaryPath} cannot be read (${reason}). ` +
+      `Fix the file or its permissions, or write it again with \`${this.analyzeCommand}\`.`
+    );
+  }
+
+  /** Why the summary cannot be statted when it exists but is refused (permissions, …); undefined when absent or readable. */
+  async summaryBlocked(): Promise<string | undefined> {
+    return unreadableReason(this.summaryPath);
+  }
+
   /** True when an analysis exists on disk. */
   async exists(): Promise<boolean> {
     return (await statOrNull(this.summaryPath)) !== null;
@@ -370,7 +396,11 @@ export class AnalysisStore {
    */
   async load(): Promise<LoadedAnalysis> {
     let info = await statOrNull(this.summaryPath);
-    if (!info) info = await this.coldStart();
+    if (!info) {
+      const blocked = await unreadableReason(this.summaryPath);
+      if (blocked) throw new MissingAnalysisError(this.unreadableMessage(blocked));
+      info = await this.coldStart();
+    }
 
     const key = `${info.mtimeMs}:${info.size}`;
     if (this.cached && this.cacheKey === key) return this.cached;
@@ -379,7 +409,14 @@ export class AnalysisStore {
     if (this.loading?.key === key) return this.loading.promise;
 
     const promise = (async () => {
-      const summary = await loadReportSummary(this.options.analysisDir);
+      const summary = await loadReportSummary(this.options.analysisDir).catch((err: unknown) => {
+        // A file that is refused or is not JSON is the reader's to be told about; any other failure keeps its type.
+        const code = (err as NodeJS.ErrnoException).code;
+        if (err instanceof SyntaxError || code === "EACCES" || code === "EPERM" || code === "EISDIR") {
+          throw new MissingAnalysisError(this.unreadableMessage((err as Error).message ?? String(err)));
+        }
+        throw err;
+      });
       const loaded: LoadedAnalysis = {
         summary,
         index: buildIndex(summary),
@@ -410,7 +447,7 @@ export class AnalysisStore {
         `No analysis found at ${this.summaryPath}. This server is read-only ` +
           `(--no-auto-analyze --no-cold-start). Analyze from VS Code ` +
           `(ClarifyDoc: Analyze Workspace) or run ` +
-          `\`clarifydoc analyze ${this.options.projectRoot}\`.`,
+          `\`${this.analyzeCommand}\`.`,
       );
     }
 
@@ -795,6 +832,17 @@ export function buildIndex(summary: ProjectAnalysis): AnalysisIndex {
 
 export function symbolKey(file: string, symbol: string): string {
   return `${file.toLowerCase()}::${symbol.toLowerCase()}`;
+}
+
+/** Why a path cannot be read when it is refused (permissions); undefined when it is absent or readable. */
+async function unreadableReason(path: string): Promise<string | undefined> {
+  try {
+    await stat(path);
+    return undefined;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === "EACCES" || code === "EPERM" ? code : undefined;
+  }
 }
 
 async function statOrNull(path: string) {

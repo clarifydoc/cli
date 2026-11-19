@@ -1,7 +1,7 @@
 import { readFile } from "fs/promises";
 import { join } from "path";
 import type { McpTool } from "../protocol.js";
-import type { FileAnalysis, SymbolLink } from "../../types/analysis.js";
+import type { ClassInfo, FileAnalysis, FunctionInfo, PropertyInfo, SymbolLink } from "../../types/analysis.js";
 import { symbolKey } from "../store.js";
 import { confidenceNote, fenced, joinLines, loc, numberArg, plural, requiredStringArg, stringArg } from "../format.js";
 import { isTestPath, mustResolveFile, nearSymbols, requireAnalysis, stalenessHint, type ToolContext } from "./context.js";
@@ -31,6 +31,8 @@ interface Span {
   via?: SymbolLink;
   /** What the definition's head above `line` holds: its decorators and the first words of its doc comment. */
   head?: Head;
+  /** The class this span is, when it is one: what a body over the budget is replaced by the members of. */
+  cls?: ClassInfo;
 }
 
 /** The definition's own decorators and doc, which say how far above `line` its head starts. */
@@ -46,7 +48,13 @@ interface Definition {
   line: number;
   endLine: number;
   head: Head;
+  cls?: ClassInfo;
 }
+
+/** Member signatures listed for one class that does not fit; the rest is counted. */
+const MAX_SIGNATURES = 120;
+/** One signature's length, in characters. */
+const MAX_SIGNATURE_CHARS = 200;
 
 /**
  * `clarifydoc_extract`: a function's source and the source of what it calls,
@@ -218,7 +226,7 @@ export function extractTool(ctx: ToolContext): McpTool {
           const again = (await currentDefinitions(span.file)).filter((d) => d.symbol === span.symbol);
           const nearest = again.sort((a, b) => Math.abs(a.line - span.line) - Math.abs(b.line - span.line))[0];
           if (nearest) {
-            span = { ...span, line: nearest.line, endLine: nearest.endLine, head: nearest.head };
+            span = { ...span, line: nearest.line, endLine: nearest.endLine, head: nearest.head, ...(nearest.cls ? { cls: nearest.cls } : {}) };
             refound.add(span.file);
           } else unverified = true;
         }
@@ -233,6 +241,19 @@ export function extractTool(ctx: ToolContext): McpTool {
         const tokens = Math.ceil(body.length / CHARS_PER_TOKEN);
         if (span.depth > 0 && used + tokens > maxTokens) {
           withheld.push({ span, tokens });
+          continue;
+        }
+        if (span.depth === 0 && span.cls && tokens > maxTokens) {
+          // A class whose body does not fit: its API, not its first screenful.
+          const { lines: sigs, tokens: sigTokens } = memberSignatures(span.cls, lines, span.line, Math.max(200, maxTokens - used));
+          used += sigTokens;
+          blocks.push(
+            `## ${span.symbol} (class) — ${span.file}:${from}-${span.endLine} — body ≈${tokens} tokens, over the ${maxTokens}-token budget: member signatures`,
+            ...(unverified ? ["⚠ Lines unverified: the file changed since the analysis and no definition of this name is in it now."] : []),
+            fenced(sigs.join("\n")),
+            `Extract one member by name: clarifydoc_extract symbol="${span.symbol}.<member>" file="${span.file}", or raise \`maxTokens\` for the whole body.`,
+            "",
+          );
           continue;
         }
         used += tokens;
@@ -275,7 +296,7 @@ function headOf(a: FileAnalysis, item: { decorators?: readonly string[]; doc?: s
 /** Every class a file defines, by name — a definition a name can mean, though never a callee's span. */
 function classDefinitions(a: FileAnalysis | null): Definition[] {
   if (!a) return [];
-  return (a.classes ?? []).filter((c) => c.line > 0 && c.endLine >= c.line).map((c) => ({ symbol: c.name, line: c.line, endLine: c.endLine, head: headOf(a, c) }));
+  return (a.classes ?? []).filter((c) => c.line > 0 && c.endLine >= c.line).map((c) => ({ symbol: c.name, line: c.line, endLine: c.endLine, head: headOf(a, c), cls: c }));
 }
 
 /** Every function and method a file defines, keyed the way symbol links name them (`Class.method`). */
@@ -287,4 +308,72 @@ function definitions(a: FileAnalysis | null): Definition[] {
     for (const m of cls.methods ?? []) out.push({ symbol: `${cls.name}.${m.name}`, line: m.line, endLine: m.endLine, head: headOf(a, m) });
   }
   return out;
+}
+
+/**
+ * A class's members as signatures: fields and properties from the facts (name, type, modifiers), methods as
+ * the source writes their declaration at the member's own line — whatever the language, up to the end of the
+ * parameter list and before any body — or, where the file has moved on, from the facts. Capped at the budget.
+ */
+function memberSignatures(cls: ClassInfo, lines: string[], classLine: number, maxTokens: number): { lines: string[]; tokens: number } {
+  const out: string[] = [declarationText(lines, classLine) ?? cls.name];
+  const fields = (cls.properties ?? []).map(propertySignature);
+  const methods = (cls.methods ?? []).map((m) => `${functionSignature(m, lines)}  [line ${m.line}]`);
+  const all = [...fields, ...methods];
+  let chars = out[0]!.length;
+  let listed = 0;
+  for (const sig of all) {
+    if (listed >= MAX_SIGNATURES || (chars + sig.length) / CHARS_PER_TOKEN > maxTokens) break;
+    out.push(`  ${sig}`);
+    chars += sig.length + 3;
+    listed++;
+  }
+  if (listed < all.length) out.push(`  … ${all.length - listed} more member${all.length - listed === 1 ? "" : "s"}`);
+  return { lines: out, tokens: Math.ceil(chars / CHARS_PER_TOKEN) };
+}
+
+function propertySignature(p: PropertyInfo): string {
+  const mods = [p.visibility, p.isStatic ? "static" : "", p.isReadonly ? "readonly" : ""].filter(Boolean).join(" ");
+  return `${mods ? `${mods} ` : ""}${p.name}${p.type ? `: ${p.type}` : ""}`;
+}
+
+/** The method's declaration as the source spells it, else `name(params): return` from the facts. */
+function functionSignature(m: FunctionInfo, lines: string[]): string {
+  const written = m.line > 0 ? declarationText(lines, m.line) : null;
+  if (written && written.includes(m.name)) return written;
+  const params = (m.params ?? []).map((q) => `${q.name}${q.type ? `: ${q.type}` : ""}`).join(", ");
+  return `${m.name}(${params})${m.returnType ? `: ${m.returnType}` : ""}`;
+}
+
+/**
+ * The declaration that starts at a 1-based line: its first line, continued while parentheses are open (up to
+ * six lines), cut before a body opened with `{`, whitespace collapsed, capped.
+ */
+function declarationText(lines: string[], line: number): string | null {
+  const first = lines[line - 1];
+  if (first === undefined) return null;
+  let text = first;
+  let depth = 0;
+  for (let i = line; ; i++) {
+    for (const ch of lines[i - 1] ?? "") {
+      if (ch === "(") depth++;
+      else if (ch === ")") depth--;
+    }
+    if (depth <= 0 || i - line >= 5 || i >= lines.length) break;
+    text += ` ${lines[i]}`;
+  }
+  let cut = -1;
+  depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    else if (ch === "{" && depth <= 0) {
+      cut = i;
+      break;
+    }
+  }
+  if (cut >= 0) text = text.slice(0, cut);
+  text = text.replace(/\s+/g, " ").trim();
+  return text.length > MAX_SIGNATURE_CHARS ? `${text.slice(0, MAX_SIGNATURE_CHARS)}…` : text;
 }

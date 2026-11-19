@@ -45,11 +45,15 @@ export function statusTool(ctx: ToolContext): McpTool {
     description: "Use first: what is mapped (frameworks, sub-projects, counts of routes, screens, links, traces, entities, findings) and how fresh it is. `lint`: rows that contradict each other.",
     inputSchema: { type: "object", properties: { lint: { type: "boolean" } }, additionalProperties: false },
     handler: async (args) => {
+      if (!(await ctx.store.exists())) {
+        const blocked = await ctx.store.summaryBlocked();
+        if (blocked) return { text: ctx.store.unreadableMessage(blocked), isError: true };
+      }
       if (!(await ctx.store.exists()) && !ctx.store.allowColdStart) {
         return {
           text:
             `No ClarifyDoc analysis exists for ${ctx.store.projectRoot} (expected ${ctx.store.summaryPath}).\n` +
-            `This server cannot run one itself. Analyze from VS Code (ClarifyDoc: Analyze Workspace) or the CLI.`,
+            `This server cannot run one itself. Analyze from VS Code (ClarifyDoc: Analyze Workspace) or run \`${ctx.store.analyzeCommand}\`.`,
           isError: true,
         };
       }
