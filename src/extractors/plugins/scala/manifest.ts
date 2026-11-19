@@ -1,6 +1,8 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { sbtPackageManager } from "./package-manifests.js";
 import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
+import { scalaTestCommand } from "./test-command.js";
+import { scalaProjectCommands } from "./project-commands.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -11,6 +13,8 @@ import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 export const scalaManifest: LanguagePluginManifest = {
   docComments: C_STYLE_DOCS,
   language: "scala",
+  testCommand: scalaTestCommand,
+  projectCommands: scalaProjectCommands,
   callPathsFromHead: true,
   family: "jvm",
   packageManagers: [sbtPackageManager],
