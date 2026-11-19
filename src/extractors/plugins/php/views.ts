@@ -1,7 +1,7 @@
 import type { FileAnalysis, FunctionInfo, ScreenComponentInfo, ScreenInfo, SubComponentInfo } from "../../../types/analysis.js";
 import { extractHtmlInteractiveElements } from "../html/index.js";
 import { materializeElementRequests } from "../shared/element-requests.js";
-import { SELF_ADDRESS, bindPageScreen, hasPageMarkup, resolveMarkupTargets, servedScriptPath, resolvePageTarget } from "./plain-pages.js";
+import { SELF_ADDRESS, bindPageScreen, declareSelfPostHandler, hasPageMarkup, resolveMarkupTargets, servedScriptPath, resolvePageTarget } from "./plain-pages.js";
 
 /**
  * Plain-PHP view templates — CodeIgniter's `application/views/**.php` (CI4
@@ -285,5 +285,8 @@ export function readPhpView(analysis: FileAnalysis, source: string): void {
     navigatesTo: [...navigatesTo],
   };
   analysis.screens = [screen];
-  if (pagePath !== null) bindPageScreen(analysis, pagePath);
+  if (pagePath !== null) {
+    bindPageScreen(analysis, pagePath);
+    declareSelfPostHandler(analysis, pagePath);
+  }
 }

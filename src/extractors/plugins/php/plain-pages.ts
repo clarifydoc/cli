@@ -1,5 +1,6 @@
 import type { Node } from "web-tree-sitter";
 import type { FileAnalysis, RouteInfo } from "../../../types/analysis.js";
+import { handlerOf } from "../shared/element-requests.js";
 import { extractCalls } from "../../shared/call-graph.js";
 
 /**
@@ -157,4 +158,17 @@ export function bindPageScreen(analysis: FileAnalysis, path: string): void {
     screen.routePath = path;
     screen.renderedBy = [{ filePath: analysis.filePath, method: "GET", path, line: 1 }];
   }
+}
+
+/**
+ * A self-posting form's request is built by core once the page's route is known, under the handler
+ * name `handlerOf("POST", path)`; the symbol link it yields starts at that function, so the page
+ * declares it (a one-line pseudo-function at the first such control) like a form with an action does.
+ */
+export function declareSelfPostHandler(analysis: FileAnalysis, path: string): void {
+  const own = analysis.interactiveElements.find((e) => e.ownViewPost && !e.request);
+  if (!own) return;
+  const name = handlerOf("POST", path);
+  if (analysis.functions.some((f) => f.name === name)) return;
+  analysis.functions.push({ name, params: [], returnType: null, isAsync: false, isExported: false, decorators: [], calls: [], line: own.line, endLine: own.line });
 }

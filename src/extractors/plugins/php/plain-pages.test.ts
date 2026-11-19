@@ -67,6 +67,8 @@ describe("plain PHP pages", () => {
     expect(a.interactiveElements.filter((e) => e.ownViewPost).length).toBeGreaterThanOrEqual(2);
     expect(a.screens[0]!.renderedBy).toEqual([expect.objectContaining({ path: "/edit_player.php" })]);
     expect(routes.map((r) => r.httpMethod).sort()).toEqual(["GET", "POST"]);
+    // The symbol link core builds from the self-post starts at a function the page declares.
+    expect(a.functions.filter((f) => f.name === "post_edit_player_php")).toHaveLength(1);
   });
 
   it("routes a script by the input it reads, with no page around it", async () => {
