@@ -313,3 +313,69 @@ describe("django-allauth views the project does not write", () => {
     ]);
   });
 });
+
+const ALLAUTH_INCLUDE_FILES: Record<string, string> = {
+  "requirements.txt": "django==5.0\ndjango-allauth==65.0\n",
+  "config/settings.py": `ROOT_URLCONF = "config.urls"\nINSTALLED_APPS = ["league", "allauth", "allauth.account"]\n`,
+  "config/urls.py": `from django.urls import include, path
+
+from league import views as league_views
+
+urlpatterns = [
+    path("accounts/", include("allauth.urls")),
+    path("club-accounts/", include("allauth.account.urls")),
+    path("clubs/login/", league_views.login),
+    path("garage/", include("league.urls")),
+]
+`,
+  "league/urls.py": `from django.urls import path
+
+from . import views
+
+urlpatterns = [
+    path("login/", views.login),
+]
+`,
+  "league/views.py": `def login(request):
+    return None
+`,
+};
+
+describe("django-allauth include(\"allauth.urls\")", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "cd-allauth-include-"));
+    for (const [rel, text] of Object.entries(ALLAUTH_INCLUDE_FILES)) {
+      await mkdir(dirname(join(dir, "app", rel)), { recursive: true });
+      await writeFile(join(dir, "app", rel), text);
+    }
+    await analyze({ projectRoot: join(dir, "app"), outputDir: join(dir, "out"), lsp: false, gitHistory: false });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 180_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("mounts the account routes that act on the user model, and a project view of the same name does not", () => {
+    const flows = (summary.dataFlows ?? []).filter((f) => f.entryKind === "route").map((f) => `${f.entryLabel} ${f.effect} ${f.resource}`).sort();
+    expect(flows).toEqual([
+      "/accounts/login/ db-read User",
+      "/accounts/password/change/ db-write User",
+      "/accounts/password/reset/ db-read User",
+      "/accounts/password/reset/key/{uidb36}-{key}/ db-write User",
+      "/accounts/password/set/ db-write User",
+      "/accounts/signup/ db-write User",
+      "/club-accounts/login/ db-read User",
+      "/club-accounts/password/change/ db-write User",
+      "/club-accounts/password/reset/ db-read User",
+      "/club-accounts/password/reset/key/{uidb36}-{key}/ db-write User",
+      "/club-accounts/password/set/ db-write User",
+      "/club-accounts/signup/ db-write User",
+    ]);
+    const routes = (summary.routeMap ?? []).map((r) => r.path);
+    expect(routes).toContain("/clubs/login/");
+    expect(routes).toContain("/garage/login/");
+    expect(flows.some((f) => f.startsWith("/clubs/login/") || f.startsWith("/garage/login/"))).toBe(false);
+  });
+});

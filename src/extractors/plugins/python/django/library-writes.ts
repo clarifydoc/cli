@@ -2,6 +2,7 @@ import type { DataSourceInfo, FileAnalysis } from "../../../../types/analysis.js
 import type { ProjectContext } from "../../../../types/project.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";
 import { type ClassAt, declaredAlong, DRF_GENERIC_VIEW, PythonClassIndex } from "./drf.js";
+import type { UrlEntry } from "./facts.js";
 import { serializerSites } from "./serializer-dispatch.js";
 import { routeSymbolName } from "../../../../core/route-symbol.js";
 
@@ -25,11 +26,12 @@ import { routeSymbolName } from "../../../../core/route-symbol.js";
 
 /**
  * django-allauth's own views, which a urlconf routes to by name (`path("accounts/signup/", SignupView.as_view())`,
- * `allauth_account_views.login`): the project writes none of their code, and they act on the user model — signing
- * up creates the user, a password change / set / reset saves it, a login and a reset request look it up. A table of
- * what the library is known to do per view; a view it does not list (`logout`, the e-mail and social views) adds
- * nothing. The module must be allauth's own: a project module of another name, or a project class named
- * `SignupView`, is never one of these.
+ * `allauth_account_views.login`, or `include("allauth.urls")` / `include("allauth.account.urls")`): the project
+ * writes none of their code, and they act on the user model — signing up creates the user, a password change /
+ * set / reset saves it, a login and a reset request look it up. A table of what the library is known to do per
+ * view; a view it does not list (`logout`, the e-mail and social views) adds nothing. The module must be
+ * allauth's own: a project module of another name, a project class named `SignupView`, or a project that vendors
+ * `allauth/account/views.py`, is never one of these.
  */
 const ALLAUTH_ACCOUNT_VIEWS: Record<string, { name: string; access: "read" | "write" }> = {
   login: { name: "login", access: "read" },
@@ -46,9 +48,48 @@ const ALLAUTH_ACCOUNT_VIEWS: Record<string, { name: string; access: "read" | "wr
   PasswordResetFromKeyView: { name: "password reset", access: "write" },
 };
 const ALLAUTH_USER_MODEL = "User";
+const ALLAUTH_VIEWS_MODULE = "allauth.account.views";
+/** `include("allauth.urls")` mounts account urls at ""; `include("allauth.account.urls")` is the same table. */
+const ALLAUTH_URLCONF_SPECS = new Set(["allauth.urls", "allauth.account.urls"]);
 
-/** The allauth account view a route's handler names through the file's own imports, else null. */
+/**
+ * The account routes under a library allauth urlconf that act on the user model (not logout / e-mail / social).
+ * Handlers are fully-qualified so `allauthLibraryAccess` recognises them without an import in the urlconf.
+ */
+const ALLAUTH_ACCOUNT_URLS: Array<{ route: string; view: string; name: string }> = [
+  { route: "login/", view: "login", name: "account_login" },
+  { route: "signup/", view: "signup", name: "account_signup" },
+  { route: "password/change/", view: "password_change", name: "account_change_password" },
+  { route: "password/set/", view: "password_set", name: "account_set_password" },
+  { route: "password/reset/", view: "password_reset", name: "account_reset_password" },
+  { route: "password/reset/key/<uidb36>-<key>/", view: "password_reset_from_key", name: "account_reset_password_from_key" },
+];
+
+/**
+ * Urlconf entries for a known library module the project does not ship. The urlconf walker calls this when
+ * `include("allauth.urls")` (or `allauth.account.urls`) resolves to no project file — a project that vendors
+ * allauth is walked as its own urlconf instead. `line` is the include's.
+ */
+export function libraryUrlconfEntries(spec: string, line: number): UrlEntry[] | null {
+  if (!ALLAUTH_URLCONF_SPECS.has(spec)) return null;
+  return ALLAUTH_ACCOUNT_URLS.map(({ route, view, name }) => ({
+    t: "view",
+    route,
+    regex: false,
+    line,
+    view: { kind: "func", name: `${ALLAUTH_VIEWS_MODULE}.${view}` },
+    name,
+  }));
+}
+
+/** The allauth account view a route's handler names through an import or a library include expansion, else null. */
 function allauthAccountView(a: FileAnalysis, handler: string, projectFiles: ReadonlySet<string>): { name: string; access: "read" | "write" } | null {
+  if (projectFiles.has("allauth/account/views.py")) return null;
+  // `include("allauth.urls")` expansion: handler is `allauth.account.views.login`.
+  if (handler.startsWith(`${ALLAUTH_VIEWS_MODULE}.`)) {
+    const view = handler.slice(ALLAUTH_VIEWS_MODULE.length + 1);
+    return view.includes(".") ? null : (ALLAUTH_ACCOUNT_VIEWS[view] ?? null);
+  }
   const [head, ...rest] = handler.split(".");
   if (!head || rest.length > 1) return null;
   const imp = a.imports.find((i) => !i.isType && (i.specifiers.includes(head) || i.aliases?.[head] !== undefined));
@@ -57,7 +98,7 @@ function allauthAccountView(a: FileAnalysis, handler: string, projectFiles: Read
   // `from allauth.account import views as v` + `v.login`, or `from allauth.account.views import SignupView` + `SignupView`.
   const module = rest.length === 1 ? `${imp.source}.${exported}` : imp.source;
   const view = rest.length === 1 ? rest[0]! : exported;
-  if (module !== "allauth.account.views" || projectFiles.has("allauth/account/views.py")) return null;
+  if (module !== ALLAUTH_VIEWS_MODULE) return null;
   return ALLAUTH_ACCOUNT_VIEWS[view] ?? null;
 }
 
@@ -66,7 +107,10 @@ export const allauthLibraryAccess: RouteResolver = {
   languages: ["python"],
   priority: 32,
   resolve(analyses: FileAnalysis[], _ctx: ProjectContext): void {
-    if (!analyses.some((a) => a.imports.some((i) => i.source === "allauth.account" || i.source === "allauth.account.views"))) return;
+    const mentionsAllauth = analyses.some((a) =>
+      a.imports.some((i) => i.source === "allauth.account" || i.source === "allauth.account.views")
+      || a.routes.some((r) => r.handler?.startsWith(`${ALLAUTH_VIEWS_MODULE}.`)));
+    if (!mentionsAllauth) return;
     const projectFiles = new Set(analyses.map((a) => a.filePath));
     for (const a of analyses) {
       for (const r of a.routes) {

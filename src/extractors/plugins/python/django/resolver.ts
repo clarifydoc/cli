@@ -20,6 +20,7 @@ import {
   type UrlEntry,
   type ViewRef,
 } from "./facts.js";
+import { libraryUrlconfEntries } from "./library-writes.js";
 import { djangoRoute, joinDjango } from "./paths.js";
 
 const VERBS = ["get", "post", "put", "patch", "delete", "head", "options"] as const;
@@ -83,7 +84,11 @@ interface Where {
  * (`path(settings.BASE_PATH, …)`) contributes nothing to the path and marks
  * what is below it. Handlers are `DefiningClass.method` where the project
  * declares the method, so params and symbol links bind; a framework-provided
- * action (`TagViewSet.list`) is anchored on the ViewSet's class line.
+ * action (`TagViewSet.list`) is anchored on the ViewSet's class line. An
+ * `include("allauth.urls")` (or `allauth.account.urls`) that resolves to no
+ * project file expands through `libraryUrlconfEntries` into the account routes
+ * that act on the user model; a project that vendors that module is walked as
+ * its own urlconf instead.
  */
 /** The verbs a function view's decorators restrict it to: `@api_view(["GET", "POST"])`, `@require_http_methods(["GET"])`, `@require_POST`, `@require_safe`. */
 export function viewVerbs(decorators: readonly string[]): string[] {
@@ -462,6 +467,10 @@ export const djangoUrlconfResolver: RouteResolver = {
           if (target && conf) {
             visited.add(target);
             walk(target, conf, path, nextMarker, depth + 1, under(target));
+          } else if (!target) {
+            // A known library urlconf the project does not ship (`include("allauth.urls")`).
+            const library = libraryUrlconfEntries(t.spec, e.line);
+            if (library) walk(file, library, path, nextMarker, depth + 1, under(null));
           }
         } else if (t.kind === "var") {
           const local = urlconfs.get(file)?.get(t.name);
