@@ -1,5 +1,6 @@
 import type { ParamInfo, PropertyInfo, RouteInfo, RouteParamBinding } from "../../../types/analysis.js";
 import type { RequestSchemaHooks, TypeShape } from "../../../types/language-plugin.js";
+import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 /**
  * How Python type annotations and Pydantic fields look on the wire — what the
@@ -47,27 +48,7 @@ export function splitGeneric(type: string): { name: string; args: string[] } {
 
 /** Split on commas (or `|` when `sep` says so) that are outside brackets/parens/braces/quotes. */
 export function splitTopLevel(text: string, sep: "," | "|" = ","): string[] {
-  const parts: string[] = [];
-  let depth = 0;
-  let quote: string | null = null;
-  let start = 0;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (quote) {
-      if (ch === "\\") i++;
-      else if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === "'" || ch === '"') quote = ch;
-    else if (ch === "[" || ch === "(" || ch === "{") depth++;
-    else if (ch === "]" || ch === ")" || ch === "}") depth--;
-    else if (ch === sep && depth === 0) {
-      parts.push(text.slice(start, i).trim());
-      start = i + 1;
-    }
-  }
-  parts.push(text.slice(start).trim());
-  return parts.filter((p) => p.length > 0);
+  return splitTopLevelWith(text, { sep, quotes: "'\"", escapes: "'\"", trim: true, dropBlank: true });
 }
 
 /** Drop module qualification (`typing.Optional` → `Optional`, `datetime.datetime` → `datetime`). */
