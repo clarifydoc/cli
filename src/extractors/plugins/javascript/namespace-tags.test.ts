@@ -20,7 +20,7 @@ const FILES: Record<string, string> = {
   return <button onClick={() => onConfirm()}>OK</button>;
 }
 `,
-  "src/ui/index.ts": `export { ConfirmDialog } from "./ConfirmDialog";\n`,
+  "src/ui/index.ts": `export { ConfirmDialog } from "./ConfirmDialog";\nexport * from "./Whistle";\n`,
   "src/ui/Dialogs.tsx": `export function Confirm({ onConfirm }: { onConfirm: () => void }) {
   return <button onClick={() => onConfirm()}>Sure</button>;
 }
@@ -30,6 +30,12 @@ export function Other() { return <i />; }
   "src/pages/ClubPage.tsx": page("ClubPage", "dropClub", "<UI.ConfirmDialog onConfirm={DROP} />", `import * as UI from "../ui";`),
   "src/pages/MatchPage.tsx": page("MatchPage", "dropMatch", "<Dialogs.Confirm onConfirm={DROP} />", `import * as Dialogs from "../ui/Dialogs";`),
   "src/pages/PlayerPage.tsx": page("PlayerPage", "dropPlayer", "<ConfirmDialog onConfirm={DROP} />", `import { ConfirmDialog } from "../ui/ConfirmDialog";`),
+  // A member in a directory's index file, behind the barrel.
+  "src/ui/Whistle/index.tsx": `export function Whistle({ onBlow }: { onBlow: () => void }) {
+  return <button onClick={() => onBlow()}>Blow</button>;
+}
+`,
+  "src/pages/RefereePage.tsx": page("RefereePage", "blowWhistle", "<UI.Whistle onBlow={DROP} />", `import * as UI from "../ui";`),
   // The namespace has no such member: a leaf-name guess would find the shared dialog.
   "src/pages/GaragePage.tsx": page("GaragePage", "dropGarage", "<UI.Missing onConfirm={DROP} />", `import * as UI from "../ui";`),
 };
@@ -59,6 +65,7 @@ describe("a namespaced or member JSX tag", () => {
   it("binds the child's callback to the parent that wrote the tag, through a barrel or the file itself", () => {
     expect(emitsInto("src/ui/ConfirmDialog.tsx")).toEqual(["ClubPage.tsx:dropClub", "PlayerPage.tsx:dropPlayer"]);
     expect(emitsInto("src/ui/Dialogs.tsx")).toEqual(["MatchPage.tsx:dropMatch"]);
+    expect(emitsInto("src/ui/Whistle/index.tsx")).toEqual(["RefereePage.tsx:blowWhistle"]);
   });
 
   it("states that the namespaced parent renders the child, so the gate tells it from the others", () => {
@@ -66,7 +73,7 @@ describe("a namespaced or member JSX tag", () => {
       .filter((l) => l.strategy === "dispatch:renders")
       .map((l) => `${l.sourceFile.replace("src/pages/", "")}>${l.targetFile.replace("src/ui/", "")}`)
       .sort();
-    expect(renders).toEqual(["ClubPage.tsx>ConfirmDialog.tsx", "MatchPage.tsx>Dialogs.tsx", "PlayerPage.tsx>ConfirmDialog.tsx"]);
+    expect(renders).toEqual(["ClubPage.tsx>ConfirmDialog.tsx", "MatchPage.tsx>Dialogs.tsx", "PlayerPage.tsx>ConfirmDialog.tsx", "RefereePage.tsx>Whistle/index.tsx"]);
   });
 
   it("leaves a member the namespace does not export unresolved", () => {

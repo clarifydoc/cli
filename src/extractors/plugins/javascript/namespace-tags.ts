@@ -44,6 +44,17 @@ function specifierFor(from: string, file: string): string {
  * it as an ordinary import. A copy: the input is never changed, and the same array comes back when no file has such a tag.
  */
 export function withNamespaceTags(analyses: FileAnalysis[]): FileAnalysis[] {
+  const hit = VIEWS.get(analyses);
+  if (hit) return hit;
+  const view = resolveViews(analyses);
+  VIEWS.set(analyses, view);
+  return view;
+}
+
+/** One view per analyses array: every resolver of a run asks. */
+const VIEWS = new WeakMap<FileAnalysis[], FileAnalysis[]>();
+
+function resolveViews(analyses: FileAnalysis[]): FileAnalysis[] {
   if (!analyses.some((a) => a.subComponents?.some((s) => s.namespaceMember && !s.importSource))) return analyses;
   const map = buildFilePathMap(analyses);
   const byPath = new Map(analyses.map((a) => [a.filePath, a]));
