@@ -3,6 +3,7 @@ import type { FunctionInfo, ClassInfo, CallInfo, RouteFact, ImportInfo, ExportIn
 import { holdNoiseCall } from "../../shared/call-graph.js";
 import { escapeRegex } from "./path-utils.js";
 import type { ParsedFunctionSpan } from "../../../types/language-plugin.js";
+import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 /**
  * Shared regex-based extraction framework for languages without tree-sitter support.
@@ -1060,28 +1061,7 @@ function ungroupParams(piece: string): string[] {
 
 /** Split on commas outside `()`, `[]`, `<>`, `{}` and quotes. */
 export function splitTopLevel(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let cur = "";
-  let quote: string | null = null;
-  for (const ch of text) {
-    if (quote) {
-      cur += ch;
-      if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === '"' || ch === "'") quote = ch;
-    else if ("([<{".includes(ch)) depth++;
-    else if (")]>}".includes(ch)) depth = Math.max(0, depth - 1);
-    if (ch === "," && depth === 0) {
-      out.push(cur);
-      cur = "";
-      continue;
-    }
-    cur += ch;
-  }
-  if (cur.trim()) out.push(cur);
-  return out;
+  return splitTopLevelWith(text, { brackets: "()[]<>{}", quotes: "\"'", clamp: true });
 }
 
 /** Extract properties from class body lines using language-specific detectors. */
