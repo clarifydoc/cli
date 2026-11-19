@@ -3,6 +3,7 @@ import type { GuardAttr } from "../../shared/route-metadata.js";
 import { applyRouteMeta, boundParam, inferredParam, pathParamNames } from "../../shared/route-metadata.js";
 import type { Form, SeqForm, StringForm, SymbolForm } from "./forms.js";
 import { isKeyword, isSymbol, mapGet, printForm, tryReadFirst, tryReadForms, walk } from "./forms.js";
+import { joinRootedPath } from "../../shared/route-paths.js";
 
 /**
  * Clojure web routes with their attribute layer, read from the form tree:
@@ -258,10 +259,7 @@ function fileGuards(forms: Form[]): FileGuard[] {
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
 
-function joinPath(prefixes: string[], path: string): string {
-  const parts = [...prefixes, path].join("/").split("/").filter(Boolean);
-  return "/" + parts.join("/");
-}
+const joinPath = (prefixes: string[], path: string): string => joinRootedPath([...prefixes, path]);
 
 interface Ctx {
   prefixes: string[];
