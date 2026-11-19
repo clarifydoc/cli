@@ -310,14 +310,16 @@ describe("PHP value flow: closures held in a value", () => {
         "        schedule(unknown: $this->onWhistle(...));",
         "        later(callback: $this->onWhistle(...));",
         "    }",
+        "    public function arm($when = null, callable $callback = null) { $callback(); }",
+        "    public function plan2() { $this->arm(callback: $this->onWhistle(...)); }",
         "}",
         "function schedule($when = null, callable $callback = null) {", "    $callback();", "}",
         "function scheduleBy($when = null, callable $callback = null) {", "    $callback();", "}",
         "function later($callback = null) {", "    $callback();", "}", "",
       ].join("\n"),
     });
-    expect(links).toContain("schedule@14 callback -> src/Club.php::Club.onFullTime");
-    expect(links).toContain("scheduleBy@17 callback -> src/Club.php::Club.onKickoff");
-    expect(links.filter((l) => l.includes("::Club.onWhistle"))).toEqual(["later@20 callback -> src/Club.php::Club.onWhistle"]);
+    expect(links).toContain("schedule@16 callback -> src/Club.php::Club.onFullTime");
+    expect(links).toContain("scheduleBy@19 callback -> src/Club.php::Club.onKickoff");
+    expect(links.filter((l) => l.includes("::Club.onWhistle"))).toEqual(["Club.arm@12 callback -> src/Club.php::Club.onWhistle", "later@22 callback -> src/Club.php::Club.onWhistle"]);
   });
 });

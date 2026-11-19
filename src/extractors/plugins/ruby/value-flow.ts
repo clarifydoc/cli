@@ -345,7 +345,7 @@ class Reader {
     splitTopLevel(argsText).forEach((raw, index) => {
       const text = raw.trim();
       // A block argument (`&m`) binds the callee's `&blk` formal, which a written index cannot name: not stated.
-      if (text === "" || text.startsWith("*") || text.startsWith("&") || /=>/.test(text)) return;
+      if (text === "" || text.startsWith("*") || text.startsWith("&") || /=>/.test(text) || /^["'][^"']*["']:\s/.test(text)) return;
       // `schedule(callback: method(:on_full_time))`: the value binds the keyword formal of that name (a positional
       // formal of the same name is not one, `ParamInfo.argumentLabel`), never one by position.
       const kw = /^([a-z_]\w*):\s+([\s\S]+)$/.exec(text);
