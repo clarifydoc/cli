@@ -128,7 +128,7 @@ export function extractLispDataSources(forms: readonly Form[]): DataSourceInfo[]
       else if (leaf === "http-request") { url = text(s.items[1]); method = text(plist(s.items, "method"))?.toUpperCase() ?? "GET"; }
       else if (/^http-(get|post|put|delete)$/.test(h)) { method = h.slice(5).toUpperCase(); url = text(s.items[1]); }
       else if (/^(?:get|post|put|delete)-pure-port$/.test(h) && head(s.items[1]) === "string->url") { method = h.split("-")[0]!.toUpperCase(); url = text(seq(s.items[1])!.items[1]); }
-      if (method && url && /^(?:https?:\/\/|\/)/.test(url)) out.push({ kind: "api-call", name: `${method} ${url}`, target: url, calls: [], line: s.line });
+      if (method && url && /^(?:https?:\/\/|\/)/.test(url)) out.push({ kind: "api-call", name: `${method} ${url}`, target: url, calls: [], line: s.line, ...(s.column !== undefined ? { column: s.column } : {}) });
     });
   }
   return out.sort((a, b) => a.line - b.line);

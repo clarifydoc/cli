@@ -17,8 +17,8 @@
 export type Dialect = "clojure" | "lisp";
 
 export type Form =
-  | { kind: "list" | "vector" | "set"; items: Form[]; line: number; endLine?: number }
-  | { kind: "map"; entries: Array<[Form, Form]>; line: number; endLine?: number }
+  | { kind: "list" | "vector" | "set"; items: Form[]; line: number; column?: number; endLine?: number }
+  | { kind: "map"; entries: Array<[Form, Form]>; line: number; column?: number; endLine?: number }
   | { kind: "string"; value: string; line: number }
   | { kind: "keyword"; name: string; line: number }
   | { kind: "symbol"; name: string; line: number }
@@ -34,6 +34,8 @@ const CLOSERS: Record<string, string> = { "(": ")", "[": "]", "{": "}" };
 class Reader {
   private pos = 0;
   private line = 1;
+  /** Index of the current line's first character, so a form's column is its offset from it. */
+  private lineStart = 0;
 
   constructor(private readonly src: string, private readonly dialect: Dialect = "clojure") {}
 
@@ -63,7 +65,7 @@ class Reader {
 
   private advance(): string {
     const ch = this.src[this.pos++] ?? "";
-    if (ch === "\n") this.line++;
+    if (ch === "\n") { this.line++; this.lineStart = this.pos; }
     return ch;
   }
 
@@ -115,6 +117,7 @@ class Reader {
     this.skipWs();
     const ch = this.peek();
     const line = this.line;
+    const column = this.pos - this.lineStart;
     if (ch === "") return null;
     if (this.dialect === "lisp") {
       const atom = this.readLispSpecial(ch, line);
@@ -123,13 +126,13 @@ class Reader {
     if (ch === "(" || ch === "[") {
       this.advance();
       const items = this.readSeq(CLOSERS[ch]!);
-      return { kind: ch === "(" || this.dialect === "lisp" ? "list" : "vector", items, line, endLine: this.line };
+      return { kind: ch === "(" || this.dialect === "lisp" ? "list" : "vector", items, line, column, endLine: this.line };
     }
     if (ch === "{") {
       this.advance();
-      if (this.dialect === "lisp") return { kind: "list", items: this.readSeq("}"), line, endLine: this.line };
+      if (this.dialect === "lisp") return { kind: "list", items: this.readSeq("}"), line, column, endLine: this.line };
       const items = this.readSeq("}");
-      return { ...this.toMap(items, line), endLine: this.line } as Form;
+      return { ...this.toMap(items, line), column, endLine: this.line } as Form;
     }
     if (ch === "#") {
       const next = this.src[this.pos + 1] ?? "";
