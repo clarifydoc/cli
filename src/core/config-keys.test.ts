@@ -146,7 +146,7 @@ describe("Spring configuration keys", () => {
     expect(row("app/src/main/resources/application.yml", "league.token")!.consumers).toEqual(expect.arrayContaining([
       expect.objectContaining({ file: "app/src/main/java/com/example/league/Scoreboard.java", line: 10, via: "value" }),
     ]));
-    expect(row("app/src/main/resources/application.yml", "league.season-length")!.consumers).toHaveLength(1);
+    expect(row("app/src/main/resources/application.yml", "league.season-length")!.consumers).toHaveLength(2);
   });
 
   it("reads a Kotlin @Value with an escaped dollar", () => {
