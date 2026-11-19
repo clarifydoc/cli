@@ -27,7 +27,7 @@ export function extractPowerShellDataSources(lines: string[]): DataSourceInfo[] 
     const target = urlTarget(uri);
     if (!target) continue;
     const method = (/-Method\s+["']?(\w+)/i.exec(call)?.[1] ?? "GET").toUpperCase();
-    const source: DataSourceInfo = { kind: "api-call", name: `${method} ${target}`, target, calls: [], line: i + 1 };
+    const source: DataSourceInfo = { kind: "api-call", name: `${method} ${target}`, target, calls: [], line: i + 1, column: lines[i]!.search(/\b(?:Invoke-RestMethod|Invoke-WebRequest|irm|iwr)\b/i) };
     const env = /^\$env:(\w+)\//i.exec(uri)?.[1];
     if (env) source.baseEnv = env;
     const variable = /^\$(?:\{(?:script:|global:)?(\w+)\}|(?:script:|global:)?(\w+))(?=\/)/i.exec(uri);
