@@ -2,6 +2,7 @@ import { extractUIKitNavigation } from "./uikit-navigation.js";
 import { extractSwiftUINavigation } from "./swiftui-navigation.js";
 import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
+import { swiftTestTargets } from "./test-targets.js";
 import { extractClassesWithSpec } from "../shared/regex-base.js";
 import { extractVaporRoutes } from "./routes.js";
 import { addMemberFlowLocals, parseSwiftReturnType } from "./local-flow.js";
@@ -160,8 +161,6 @@ function oneLineProperties(line: string): PropertyInfo[] {
   }
   return out;
 }
-
-import { swiftTestTargets } from "./test-targets.js";
 
 export const swiftSpec: RegexLangSpec = {
   language: "swift",

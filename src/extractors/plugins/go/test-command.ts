@@ -48,7 +48,7 @@ export function goTestCommand(tests: readonly TestTarget[]): string | null {
   for (const [dir, pkg] of [...byDir].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))) {
     if (pkg.whole) { add("", dir); continue; }
     if (pkg.functions.size) add(` -run '^(${[...pkg.functions].sort().join("|")})$'`, dir);
-    for (const [runner, methods] of [...pkg.runnerMethods].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    for (const [runner, methods] of [...pkg.runnerMethods].filter(([r]) => !pkg.functions.has(r)).sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
       add(` -run '^${runner}$' -testify.m '^(${[...methods].sort().join("|")})$'`, dir);
     }
     if (pkg.suiteMethods.size) add(` -run '/^(${[...pkg.suiteMethods].sort().join("|")})$'`, dir);

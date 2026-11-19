@@ -6,7 +6,7 @@
  */
 export function swiftTestTargets(lines: string[], filePath: string): Array<{ name: string; dir: string }> {
   if (!/(?:^|\/)Package\.swift$/.test(filePath)) return [];
-  const text = lines.map((l) => l.replace(/\/\/.*$/, "")).join("\n");
+  const text = lines.map((l) => l.replace(/(^|\s)\/\/.*$/, "$1")).join("\n");
   const base = filePath.includes("/") ? filePath.slice(0, filePath.lastIndexOf("/")) : "";
   const out: Array<{ name: string; dir: string }> = [];
   const open = /\.testTarget\s*\(/g;
@@ -20,6 +20,7 @@ export function swiftTestTargets(lines: string[], filePath: string): Array<{ nam
       else if (c === "(") depth++;
       else if (c === ")") depth--;
     }
+    if (depth > 0) continue;
     const args = text.slice(open.lastIndex, i - 1);
     const name = /(?:^|[\s,(])name\s*:\s*"([^"\\]+)"/.exec(args)?.[1];
     // `path:` as this call's own argument, not one of a nested `.process(…)` resource rule (those say `.copy("x")`).

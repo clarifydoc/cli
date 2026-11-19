@@ -2,7 +2,7 @@ import type { TestTarget } from "../../../types/language-plugin.js";
 
 /** The umbrella app a test file belongs to: `apps/club` for `apps/club/test/club_test.exs` (`""` for any other file). */
 function umbrellaApp(file: string): string {
-  return /^((?:.*\/)?apps\/[^/]+)\/test\//.exec(file)?.[1] ?? "";
+  return /^((?:.*?\/)?apps\/[^/]+)\/test\//.exec(file)?.[1] ?? "";
 }
 
 /**
