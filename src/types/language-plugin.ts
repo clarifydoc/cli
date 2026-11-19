@@ -1803,6 +1803,12 @@ export interface LanguagePluginManifest {
    */
   moduleLocalsInScope?: boolean;
   /**
+   * A parameter or local declared as a union or an intersection of classes (`Club | Player`, `Club & Named`) may
+   * be any of them: the linker links the call to each candidate that declares the member (AMBIGUOUS when several
+   * do), and to none when a candidate names no project class. Set only where the type system states such types.
+   */
+  candidateTypeUnions?: boolean;
+  /**
    * A file's exported module-level bindings (`FileAnalysis.moduleBindings`) are seen by the files that import it,
    * and by those it imports in turn (Ruby: a `require`d file's top-level constants are global once loaded). The
    * linker follows imports a few files deep; the files named must agree on the binding's type.

@@ -26,7 +26,7 @@ import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scori
 import { isExternalImportSource, importResolveContext as buildImportResolveContext } from "./import-index.js";
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
 import { commonPrefixLength, extensionFamily, escapeRegex } from "../extractors/plugins/shared/path-utils.js";
-import { receiverTypeName } from "../extractors/shared/type-parser.js";
+import { receiverTypeCandidates, receiverTypeName } from "../extractors/shared/type-parser.js";
 import { ELEMENT_HOP } from "../extractors/shared/collection-element.js";
 import { isTestFile } from "./test-file-detector.js";
 import { callSiteKey, hasValueFlowFacts, solveValueFlow, valueFlowInvokeSites } from "./value-flow.js";
@@ -7138,17 +7138,21 @@ function resolveThroughDeclaredType(
   if (point) return linkThroughPoint(ctx, analysis, sourceFile, point, leafName, mkLink);
   if (branches.length === 0) return collectionExtensionLink(ctx, analysis, sourceFile, sourceSymbol, consumer, receiver, leafName, mkLink);
   if (branches.length < 2) return null;
-  // A local typed differently per branch (`const api = slug ? guestApi(slug).clubs : playerApi().clubs`)
-  // whose every branch reaches ONE method — a base both classes inherit it from: that body runs
-  // whichever the branch gave, on that branch's class, so the call links once per class. Branches
-  // reaching different methods leave the local untyped: neither class is the local's.
+  // A local typed differently per branch (`const api = slug ? guestApi(slug).clubs : playerApi().clubs`), or a
+  // parameter declared `Club | Player` / `Club & Named`: each candidate class that declares the member is linked.
+  // Candidates reaching ONE method — a base all of them inherit it from — link once per class (that body runs
+  // whichever the branch gave, on that branch's class). Candidates reaching different methods each link, AMBIGUOUS:
+  // a run-time choice picks one and nothing says which. A candidate declaring no such member is skipped; when only
+  // one declares it, that link stays INFERRED (the member names its class).
   const out: SymbolLink[] = [];
   for (const b of branches) {
     const p = walkChain(ctx, b, receiver.slice(1), false);
     const link = p ? linkThroughPoint(ctx, analysis, sourceFile, p, leafName, mkLink) : null;
-    if (!link || (out[0] && (out[0].targetFile !== link.targetFile || out[0].targetSymbol !== link.targetSymbol))) return null;
-    if (!out.some((o) => o.viaType === link.viaType && o.viaTypeFile === link.viaTypeFile)) out.push(link);
+    if (!link) continue;
+    if (!out.some((o) => o.targetFile === link.targetFile && o.targetSymbol === link.targetSymbol && o.viaType === link.viaType && o.viaTypeFile === link.viaTypeFile)) out.push(link);
   }
+  if (out.length === 0) return null;
+  if (new Set(out.map((o) => `${o.targetFile}|${o.targetSymbol}`)).size > 1) for (const o of out) o.confidence = "AMBIGUOUS";
   ctx.extraLinks.push(...out.slice(1));
   return out[0]!;
 }
@@ -8208,7 +8212,22 @@ function scopedName(
   const declared = local ?? param;
   if (declared) {
     const typeName = receiverTypeName(declared.type, analysis.language);
-    if (!typeName && !declared.qualifier) return null;
+    if (!typeName && !declared.qualifier) {
+      // `x: Club | Player`, `x: Club & Named`: each candidate class, for a caller that follows the chain on each.
+      if (branches && pluginFor(analysis.language)?.candidateTypeUnions) {
+        const candidates = receiverTypeCandidates(declared.type, analysis.language);
+        const points: InjectionPoint[] = [];
+        for (const name of candidates?.names ?? []) {
+          const ref = nestedTypeRef(ctx, consumer, name, sourceFile) ?? typeRefFor(ctx, name, sourceFile, analysis.projectId, () => namespaceScope(ctx, analysis, sourceSymbol), name);
+          // A candidate that is no project class (a library's `Response`, a primitive) may be what the value is
+          // and may declare the member: no candidate decides then, and no namesake of it is guessed.
+          if (!ref?.typeFile || !ctx.classAt.has(memberKey(ref.typeFile, declaredTypeName(ctx, ref.typeFile, ref.typeName)))) { points.length = 0; break; }
+          points.push({ typeName: ref.typeName, typeFile: ref.typeFile, member: name, consumer, ...(param && !param.injected ? { container: false } : {}) });
+        }
+        branches.push(...points);
+      }
+      return null;
+    }
     // A class the caller's own body declares is the type its name states there, before an import or a namesake.
     const ownClass = typeName && callable && pluginFor(analysis.language)?.lexicalCallScope
       ? analysis.classes.find((c) => c.name === typeName && callable.line < c.line && c.endLine <= callable.endLine)

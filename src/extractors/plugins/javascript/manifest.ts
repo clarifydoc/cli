@@ -166,6 +166,7 @@ export const typescriptManifest: LanguagePluginManifest = {
   // `function run(save) { save() }` calls the parameter, never the module's `save`; a class declared in a function is its own.
   lexicalCallScope: true,
   moduleLocalsInScope: true,
+  candidateTypeUnions: true,
   // `new Map()` in a module is the global unless `Map` is imported; Nuxt and unplugin-auto-import make exports global.
   importsBindNames: JS_IMPORTS_BIND_NAMES,
   platformSuffixes: JS_PLATFORM_SUFFIXES,
@@ -219,6 +220,7 @@ export const javascriptManifest: LanguagePluginManifest = {
   // `function run(save) { save() }` calls the parameter, never the module's `save`; a class declared in a function is its own.
   lexicalCallScope: true,
   moduleLocalsInScope: true,
+  candidateTypeUnions: true,
   // `new Map()` in a module is the global unless `Map` is imported; Nuxt and unplugin-auto-import make exports global.
   importsBindNames: JS_IMPORTS_BIND_NAMES,
   platformSuffixes: JS_PLATFORM_SUFFIXES,

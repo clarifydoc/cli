@@ -10,7 +10,7 @@ import { loadReportSummary } from "./report-payload.js";
  * (`return new ClubApi()`), another factory's result (`return useClubApi()`), or an object literal whose member
  * holds one (`return { clubs: useClubApi() }`). The call lands on that class's method — never on the factory,
  * never on a namesake class — and through it on the route. A library's object (`return useI18n()`) types
- * nothing, and a local whose arms build two classes stays untyped.
+ * nothing, and a local whose arms build two classes links each arm, AMBIGUOUS.
  */
 describe("typing what a factory returns", () => {
   let dir: string;
@@ -117,10 +117,11 @@ describe("typing what a factory returns", () => {
     expect(targetOf(links, "again.getAll")).toEqual(["ClubApi.ts::ClubApi.getAll"]);
   });
 
-  it("leaves a library's object off every namesake, and a local built as two classes untyped", async () => {
+  it("leaves a library's object off every namesake, and links a local built as two classes once per arm, AMBIGUOUS", async () => {
     const links = await viewLinks();
     expect(targetOf(links, "labels.t").some((t) => t.startsWith("strings.ts"))).toBe(false);
-    expect(targetOf(links, "mixed.getAll")).toEqual([]);
+    expect(targetOf(links, "mixed.getAll").sort()).toEqual(["ClubApi.ts::ClubApi.getAll", "PlayerApi.ts::PlayerApi.getAll"]);
+    expect(links.filter((l) => l.callName === "mixed.getAll").every((l) => l.confidence === "AMBIGUOUS")).toBe(true);
   });
 
   it("reaches the route each class calls, never the namesake's", async () => {

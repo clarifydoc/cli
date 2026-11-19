@@ -328,6 +328,33 @@ export function receiverTypeName(raw: string | null | undefined, language: Langu
   return simple;
 }
 
+/**
+ * The named types a value of declared type `raw` may be when the type text states SEVERAL: a union
+ * (`Club | Player`, absent members such as `null` left out) or an intersection (`Club & Named`, inline object
+ * types left out). Each member goes through {@link receiverTypeName}; a member that names no class (a collection,
+ * a builtin, a function type) makes the whole list null, since the value may then be that and no candidate decides.
+ * Null for text stating one type (that is `receiverTypeName`'s) or more than `max` candidates.
+ */
+export function receiverTypeCandidates(raw: string | null | undefined, language: Language, max = 8): { names: string[]; kind: "union" | "intersection" } | null {
+  if (!raw) return null;
+  let s = raw.trim();
+  // One enclosing pair of parentheses around the whole text.
+  while (s.startsWith("(") && s.endsWith(")") && matchClose(s, 0, "(", ")") === s.length - 1) s = s.slice(1, -1).trim();
+  const union = splitTopLevel(s, ["|"]);
+  const intersection = union.length > 1 ? [] : splitTopLevel(s, ["&"]);
+  const kind = union.length > 1 ? "union" : intersection.length > 1 ? "intersection" : null;
+  if (!kind) return null;
+  const members = (kind === "union" ? union.filter((m) => !ABSENT_TYPES.has(m.trim())) : intersection.filter((m) => !m.trim().startsWith("{"))).map((m) => m.trim());
+  if (members.length < 2 || members.length > max) return null;
+  const names: string[] = [];
+  for (const m of members) {
+    const name = receiverTypeName(m, language);
+    if (!name) return null;
+    if (!names.includes(name)) names.push(name);
+  }
+  return names.length >= 2 ? { names, kind } : null;
+}
+
 function stripDecoration(input: string, _language: Language): string {
   let s = input.trim();
   if (!s) return "";
