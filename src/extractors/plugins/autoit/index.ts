@@ -36,13 +36,13 @@ function au3DataSources(lines: string[]): DataSourceInfo[] {
     if (m) http.add(m[1]!.toLowerCase());
   }
   for (let i = 0; i < lines.length; i++) {
-    const push = (method: string, url: string) => {
-      if (/^(?:https?:\/\/|\/)/.test(url)) out.push({ kind: "api-call", name: `${method} ${url}`, target: url, calls: [], line: i + 1 });
+    const push = (method: string, url: string, column: number) => {
+      if (/^(?:https?:\/\/|\/)/.test(url)) out.push({ kind: "api-call", name: `${method} ${url}`, target: url, calls: [], line: i + 1, column });
     };
     const line = lines[i]!;
-    for (const m of line.matchAll(/\$(\w+)\.Open\(\s*["'](\w+)["']\s*,\s*["']([^"']+)["']/gi)) if (http.has(m[1]!.toLowerCase())) push(m[2]!.toUpperCase(), m[3]!);
-    for (const m of line.matchAll(/\b(?:InetGet|InetRead|_INetGetSource|_HTTP_Get)\(\s*["']([^"']+)["']/gi)) push("GET", m[1]!);
-    for (const m of line.matchAll(/\b_HTTP_Post\(\s*["']([^"']+)["']/gi)) push("POST", m[1]!);
+    for (const m of line.matchAll(/\$(\w+)\.Open\(\s*["'](\w+)["']\s*,\s*["']([^"']+)["']/gi)) if (http.has(m[1]!.toLowerCase())) push(m[2]!.toUpperCase(), m[3]!, m.index!);
+    for (const m of line.matchAll(/\b(?:InetGet|InetRead|_INetGetSource|_HTTP_Get)\(\s*["']([^"']+)["']/gi)) push("GET", m[1]!, m.index!);
+    for (const m of line.matchAll(/\b_HTTP_Post\(\s*["']([^"']+)["']/gi)) push("POST", m[1]!, m.index!);
   }
   return out.sort((a, b) => a.line - b.line);
 }
