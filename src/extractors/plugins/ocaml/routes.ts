@@ -3,6 +3,7 @@ import type { RouteInfo } from "../../../types/analysis.js";
 import type { RouteExtractor } from "../../routes/base.js";
 import { extractCalls } from "../../shared/call-graph.js";
 import { positionalArgs, stringValue, valuePath } from "./syntax.js";
+import { joinTrimmedPath } from "../../shared/route-paths.js";
 
 /** A path held in a module constant (`Paths.clubs`) — the project pass fills `${…}` from `moduleValues`. */
 function pathRef(node: Node | null | undefined): string | null {
@@ -17,11 +18,7 @@ function ocamlPath(path: string): string {
   return path.replace(/:(\w+)/g, "{$1}");
 }
 
-function joinPath(prefix: string, path: string): string {
-  if (!prefix) return path;
-  const joined = `${prefix.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
-  return joined.length > 1 ? joined.replace(/\/+$/, "") : "/";
-}
+const joinPath = (prefix: string, path: string): string => joinTrimmedPath(prefix, path, { prefixOptional: true });
 
 /** The router a call belongs to: `Dream.get` / `get` (under `open Dream`), Opium's `App.get`. */
 function routeVerb(fn: string | null): { verb: string | null; scope: boolean } | null {
