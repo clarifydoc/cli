@@ -4,6 +4,7 @@ import type { FunctionInfo, ClassInfo, ParamInfo, Language } from "../../functio
 import type { CallInfo, PropertyInfo } from "../../../types/analysis.js";
 import { extractCalls } from "../../shared/call-graph.js";
 import { scanRequestAccess } from "./request-access.js";
+import { importedModuleLocals, returnedModule } from "./returned-modules.js";
 import { pyStringValue } from "./data-sources.js";
 import {
   annotatedAliases,
@@ -323,6 +324,19 @@ export class PythonExtractor extends FunctionClassExtractor {
     if (body && (LOCAL_TYPE_GATE.test(bodyText) || (params.some((p) => p.type) && ALIAS_GATE.test(bodyText)) || WALRUS_GATE.test(bodyText) || ((collections = collectionParams(params)), LOOP_GATE.test(bodyText)))) {
       const locals = collectLocalTypes(body, params, typeComments, collections);
       if (locals.length > 0) fn.localTypes = locals;
+    }
+    // A function handing back a module it imported, and locals bound to `importlib.import_module("x")`: the module
+    // a call on them reaches (core types the local as that module, never a namesake elsewhere).
+    if (body && /\breturn\b/.test(bodyText)) {
+      const module = returnedModule(body);
+      if (module) fn.returnsModule = module;
+    }
+    if (body && fn.localTypes && bodyText.includes("import_module")) {
+      const modules = importedModuleLocals(body, new Set(params.map((p) => p.name)));
+      for (const local of fn.localTypes) {
+        const module = modules.get(local.name);
+        if (module && !local.type) local.module = module;
+      }
     }
     return { fn, node, assignsSelf: SELF_ASSIGN_GATE.test(bodyText), typeComments };
   }

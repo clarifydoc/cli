@@ -53,6 +53,8 @@ interface SymbolDef {
   returnType?: string | null;
   /** `FunctionInfo.declaredReturnType`: the return type as written where `returnType` keeps less of it. */
   declaredReturn?: string;
+  /** `FunctionInfo.returnsModule`: the module (as its import states it) every return of the function hands back. */
+  returnsModule?: string;
   /** Only a re-export names it here (`from .impl import Service` in `__init__`): the definition is elsewhere. */
   reexport?: boolean;
   /** A method of the class object (`FunctionInfo.classLevel`), every definition of the name being one. */
@@ -978,6 +980,7 @@ function buildSymbolIndex(
         endLine: fn.endLine,
         returnType: overloadReturn(prev, fn.returnType),
         ...(fn.declaredReturnType && !prev ? { declaredReturn: fn.declaredReturnType } : {}),
+        ...(fn.returnsModule && !prev ? { returnsModule: fn.returnsModule } : {}),
         ...(passThroughIndex(fn) >= 0 && !prev ? { passesThrough: passThroughIndex(fn) } : {}),
         ...(!prev && passThroughIndex(fn) < 0 && passElementIndex(fn, pluginFor(analysis.language)?.collectionElementOf) >= 0
           ? { passesElement: passElementIndex(fn, pluginFor(analysis.language)?.collectionElementOf) } : {}),
@@ -5203,6 +5206,10 @@ function resolveCallToDefinitionBody(
     // A name a route refers to (a class-based view) is the class, not a construction.
     return reference ? link : constructionLink(link, call, ctx);
   };
+  // A local bound to a module (`mod = load_backend()` where that function returns an imported module,
+  // `m = importlib.import_module("other")`): the call is that module's own top-level function.
+  const viaModuleLocal = parts.length === 2 && !reference ? moduleLocalCall(ctx, analysis, sourceFile, sourceSymbol, parts[0]!, leafName, mkLink) : null;
+  if (viaModuleLocal) return viaModuleLocal;
   const throughDeclaredType = (): SymbolLink | null =>
     isQualified ? resolveThroughDeclaredType(sourceFile, sourceSymbol, call, analysis, ctx, parts, leafName, mkLink) : null;
 
@@ -7762,6 +7769,47 @@ function chainDeclaredType(
   }
   if (!owner?.typeFile) return null;
   return last.call ? methodDeclaredReturn(ctx, owner, last.name) : fieldDeclaredType(ctx, owner, last.name);
+}
+
+/**
+ * A call `local.name()` on a local every binding of which is a module: `localTypes[].module` (a literal
+ * `importlib.import_module("x")`), or a call of a function declaring `returnsModule`. The module's file is found
+ * the way an import of it would be, from the file that states it; the link is its own top-level function, never a
+ * method or a namesake of another module. Any other binding of the name, or two modules, decides nothing.
+ */
+function moduleLocalCall(ctx: LinkContext, analysis: FileAnalysis, sourceFile: string, sourceSymbol: string, head: string, leaf: string, mkLink: MkLink): SymbolLink | null {
+  const callable = findEnclosingCallable(analysis, sourceSymbol);
+  if (!callable || sourceSymbol === "<setup>") return null;
+  const key = nameKey(analysis.language, head);
+  const locals = callable.localTypes?.filter((l) => nameKey(analysis.language, l.name) === key) ?? [];
+  if (locals.length === 0 || callable.params.some((p) => nameKey(analysis.language, p.name) === key)) return null;
+  const resolveImport = pluginFor(analysis.language)?.resolveImport;
+  if (!resolveImport) return null;
+  let target: string | null = null;
+  for (const l of locals) {
+    let from: { file: string; module: string } | null = null;
+    if (l.module && !l.type) from = { file: sourceFile, module: l.module };
+    else if (!l.module && !l.type && l.from && !l.awaited && !l.element && l.fromIndex === undefined && !l.destructured && !l.member) {
+      const callee = /^([A-Za-z_]\w*)\(\)$/.exec(l.from)?.[1];
+      if (!callee) return null;
+      let file = sourceFile;
+      let def = symbolIn(ctx, sourceFile, callee);
+      if (def?.name !== callee) {
+        const link = importedFunctionLink(ctx, analysis, sourceFile, sourceSymbol, callee);
+        file = link?.targetFile ?? "";
+        def = link ? symbolIn(ctx, link.targetFile, link.targetSymbol) : undefined;
+      }
+      if (def?.name !== callee || !def.returnsModule) return null;
+      from = { file, module: def.returnsModule };
+    }
+    if (!from) return null;
+    const module = resolveImport(from.file, from.module, leaf, importResolveContext(ctx));
+    if (!module) return null;
+    if (target !== null && target !== module) return null;
+    target = module;
+  }
+  const def = target ? ctx.symbolIndex.get(target)?.get(leaf) : undefined;
+  return target && def && def.name === leaf ? mkLink(target, def.name, def.line, "INFERRED", "import-file") : null;
 }
 
 /**

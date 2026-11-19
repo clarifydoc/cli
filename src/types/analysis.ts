@@ -1659,7 +1659,7 @@ export interface FunctionInfo {
    * `soft`: the type comes from a parameter list of a function nested in this one (Go function literal): it types
    * the calls on the name, but where a chain off it cannot be followed it does not rule out a unique-name match.
    */
-  localTypes?: Array<{ name: string; type: string; qualifier?: string; from?: string; awaited?: boolean; fromIndex?: number; element?: true; iterator?: "iterated" | "dereferenced"; destructured?: true; member?: true; field?: true; soft?: true; aliasOf?: string; key?: string; indexOrigin?: CallArgOrigin["origin"] }>;
+  localTypes?: Array<{ name: string; type: string; qualifier?: string; from?: string; awaited?: boolean; fromIndex?: number; element?: true; iterator?: "iterated" | "dereferenced"; destructured?: true; member?: true; field?: true; soft?: true; aliasOf?: string; key?: string; indexOrigin?: CallArgOrigin["origin"]; module?: string }>;
   /**
    * Locals the plugin saw bound to a value whose type the source never states (a Ruby block parameter,
    * `clubs.each { |club| … }`). A call on one is on an unknown type: the linker's last-resort
@@ -1731,6 +1731,12 @@ export interface FunctionInfo {
    * concrete URL that joins to the backend route. Optional; JS/TS, Python and Rust set it.
    */
   urlTemplate?: string;
+  /**
+   * The module every `return` of the function hands back, as the import states it (`def load(): import backend; return backend`
+   * → `backend`). A local bound to a call of this function (`localTypes[].from`) is that module: a call on it reaches the
+   * module's own top-level function. `localTypes[].module` is the same for a local bound to `importlib.import_module("x")`.
+   */
+  returnsModule?: string;
   /**
    * The expression `urlTemplate` started with before the extractor dropped it
    * as a runtime base (`this.baseUrl()` in `` `${this.baseUrl()}/${this.resource}` ``).
