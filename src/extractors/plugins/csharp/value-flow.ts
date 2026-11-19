@@ -2,6 +2,7 @@ import type { Node } from "web-tree-sitter";
 import type { ParamInfo, ValueCell, ValueFlowFact } from "../../../types/analysis.js";
 import { csharpCallHooks } from "./call-hooks.js";
 import { argumentsOf, unwrapExpression } from "./local-types.js";
+import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 /**
  * Value-flow facts of a C# member (`FunctionInfo.valueFlow`): how a function value — a method group, a delegate
@@ -51,16 +52,7 @@ const ELEMENT_VIEWS: ReadonlySet<string> = new Set(["Values", "Keys"]);
 type Shape = "delegate" | "collection" | "unknown" | null;
 
 function splitTop(text: string): string[] {
-  const parts: string[] = [];
-  let depth = 0;
-  let cur = "";
-  for (const ch of text) {
-    if (ch === "<" || ch === "(" || ch === "[") depth++;
-    else if (ch === ">" || ch === ")" || ch === "]") depth--;
-    if (ch === "," && depth === 0) { parts.push(cur); cur = ""; } else cur += ch;
-  }
-  if (cur) parts.push(cur);
-  return parts;
+  return splitTopLevelWith(text, { brackets: "<>()[]", quotes: "", tail: "empty" });
 }
 
 function shapeOfType(type: string | null | undefined, delegates: ReadonlySet<string>): Shape {
