@@ -17,18 +17,18 @@ import { dSqlLines } from "./source.js";
  */
 export function extractDDataSources(lines: string[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
-  const push = (method: string, target: string, line: number) => {
+  const push = (method: string, target: string, line: number, column: number) => {
     if (!target.startsWith("/") && !/^https?:\/\//i.test(target)) return;
-    out.push({ kind: "api-call", name: `${method} ${target}`, target, calls: [], line });
+    out.push({ kind: "api-call", name: `${method} ${target}`, target, calls: [], line, column });
   };
   lines.forEach((line, i) => {
     if (/^\s*\/\//.test(line)) return;
     for (const m of line.matchAll(/\brequestHTTP\s*\(\s*"([^"]+)"/g)) {
       const callback = lines.slice(i, i + 8).join("\n");
-      push(/\.method\s*=\s*HTTPMethod\.(\w+)/.exec(callback)?.[1]?.toUpperCase() ?? "GET", m[1]!, i + 1);
+      push(/\.method\s*=\s*HTTPMethod\.(\w+)/.exec(callback)?.[1]?.toUpperCase() ?? "GET", m[1]!, i + 1, m.index!);
     }
     for (const m of line.matchAll(/(?<![\w.])(get|post|put|patch|del|getContent|postContent)\s*(?:!\s*\w+\s*)?\(\s*"(https?:\/\/[^"]+)"/g)) {
-      push(CURL_VERB[m[1]!]!, m[2]!, i + 1);
+      push(CURL_VERB[m[1]!]!, m[2]!, i + 1, m.index!);
     }
   });
   return [...out, ...extractDMongoSources(lines)].sort((a, b) => a.line - b.line);
