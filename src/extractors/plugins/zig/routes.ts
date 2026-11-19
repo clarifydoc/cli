@@ -4,6 +4,7 @@ import type { RouteExtractor } from "../../routes/base.js";
 import { extractCalls } from "../../shared/call-graph.js";
 import { callArgs, calleeName, declValue, isPub, memberName, stringValue } from "./syntax.js";
 import { initFields } from "./syntax.js";
+import { joinTrimmedPath } from "../../shared/route-paths.js";
 
 const VERBS: Record<string, string> = { get: "GET", post: "POST", put: "PUT", patch: "PATCH", delete: "DELETE", head: "HEAD", options: "OPTIONS" };
 
@@ -18,11 +19,7 @@ function zigPath(path: string): string {
   return path.replace(/:(\w+)/g, "{$1}");
 }
 
-function joinPath(prefix: string, path: string): string {
-  if (!prefix) return path;
-  const joined = `${prefix.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
-  return joined.length > 1 ? joined.replace(/\/+$/, "") : "/";
-}
+const joinPath = (prefix: string, path: string): string => joinTrimmedPath(prefix, path, { prefixOptional: true });
 
 /** Inside a `test "…" { … }` block: a fixture, not the app's routing. */
 function inTest(node: Node): boolean {
