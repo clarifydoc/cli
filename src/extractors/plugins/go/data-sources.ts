@@ -189,6 +189,8 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
     return name && baseClients.has(name) ? { client: name } : {};
   };
 
+  // Where a Resty verb call starts on its line: the last `Verb` at or before the end of the match without its URL literal.
+  const verbColumn = (text: string, m: RegExpMatchArray): number => text.lastIndexOf(m[1]!, m.index! + m[0].replace(/\s*(?:["'`][^"'`]+["'`])?$/, "").length);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     if (/^\s*\/\//.test(line)) continue;
@@ -231,7 +233,8 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
       const rest = restyText.slice(resty.index! + resty[0].length);
       const urlArg = resty[2] ? undefined : /^\s*([A-Za-z_]\w*)\s*[,)]/.exec(rest)?.[1];
       const target = resty[2] ?? (urlArg ? localUrl(lines, verbIdx, urlArg) ?? (constants ??= stringConstants(lines)).get(urlArg) ?? null : concatUrl(rest));
-      sources.push({ kind: "api-call", name: resty[1]!.toUpperCase(), target, calls: [], line: verbIdx + 1, ...restyClient(restyText) });
+      const col = new RegExp(String.raw`\b${resty[1]}\s*\(`).exec(lines[verbIdx]!)?.index;
+      sources.push({ kind: "api-call", name: resty[1]!.toUpperCase(), target, calls: [], line: verbIdx + 1, ...(col !== undefined ? { column: col } : {}), ...restyClient(restyText) });
       i = restyEnd;
       continue;
     }
@@ -239,7 +242,7 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
       const rest = line.slice(resty.index! + resty[0].length);
       const urlArg = resty[2] ? undefined : /^\s*([A-Za-z_]\w*)\s*[,)]/.exec(rest)?.[1];
       const target = resty[2] ?? (urlArg ? localUrl(lines, i, urlArg) ?? (constants ??= stringConstants(lines)).get(urlArg) ?? null : concatUrl(rest));
-      sources.push({ kind: "api-call", name: resty[1]!.toUpperCase(), target, calls: [], line: lineNo, ...restyClient(line) });
+      sources.push({ kind: "api-call", name: resty[1]!.toUpperCase(), target, calls: [], line: lineNo, column: verbColumn(line, resty), ...restyClient(line) });
       continue;
     }
 
@@ -258,7 +261,7 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
       const rest = line.slice(helper.index! + helper[0].length);
       // `http.Post(base+"/v1/clubs", …)`: the URL built where it is passed.
       const target = helper[2] ?? (urlArg ? localUrl(lines, i, urlArg) : concatUrl(rest));
-      sources.push({ kind: "api-call", name: helper[1]!.toUpperCase().replace("POSTFORM", "POST"), target, calls: [], line: lineNo });
+      sources.push({ kind: "api-call", name: helper[1]!.toUpperCase().replace("POSTFORM", "POST"), target, calls: [], line: lineNo, column: helper.index! });
       continue;
     }
     if (newReq) {
@@ -274,11 +277,11 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
       if (target === null && urlArg && inProcess) target = (constants ??= stringConstants(lines)).get(urlArg) ?? null;
       // An in-process request runs a route only when handed to the router; `"/"` names no route.
       if (inProcess && (target === null || target === "/" || !servedInProcess(lines, i, (functions ??= goFunctions(lines))))) continue;
-      sources.push({ kind: "api-call", name: (newReq[2] ?? newReq[3]!).toUpperCase(), target, calls: [], line: lineNo });
+      sources.push({ kind: "api-call", name: (newReq[2] ?? newReq[3]!).toUpperCase(), target, calls: [], line: lineNo, column: newReq.index! });
       continue;
     }
     if (clientVerb) {
-      sources.push({ kind: "api-call", name: clientVerb[2]!.toUpperCase(), target: clientVerb[3] ?? null, calls: [], line: lineNo });
+      sources.push({ kind: "api-call", name: clientVerb[2]!.toUpperCase(), target: clientVerb[3] ?? null, calls: [], line: lineNo, column: clientVerb.index! });
       continue;
     }
 

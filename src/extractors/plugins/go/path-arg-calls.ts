@@ -298,13 +298,13 @@ export function goRequestFactoryRows(lines: string[]): DataSourceInfo[] {
         if ((fn.testHelper || req[1] === "httptest") && !servedInProcess(lines, i, fns)) continue;
         const args = callArgs(lines, i, req.index + req[0].length - 1);
         const [m, u] = /WithContext/.test(req[0]) ? args.slice(1) : args;
-        if (m && u && params.has(u) && !VERB_LITERAL.test(m)) out.push({ kind: "api-call", name: `${req[1]}.NewRequest`, target: `\${${u}}`, calls: [], line: i + 1 });
+        if (m && u && params.has(u) && !VERB_LITERAL.test(m)) out.push({ kind: "api-call", name: `${req[1]}.NewRequest`, target: `\${${u}}`, calls: [], line: i + 1, column: req.index });
         continue;
       }
       if (fn.testHelper) continue;
       const built = /http\.Request\s*\{[^}]*\bMethod\s*:\s*([A-Za-z_]\w*)/.exec(line);
       const url = fn.params.find((p) => URL_PARAM.test(p));
-      if (built && params.has(built[1]!) && url) out.push({ kind: "api-call", name: "http.Request", target: `\${${url}}`, calls: [], line: i + 1 });
+      if (built && params.has(built[1]!) && url) out.push({ kind: "api-call", name: "http.Request", target: `\${${url}}`, calls: [], line: i + 1, column: built.index });
     }
   }
   return out;
