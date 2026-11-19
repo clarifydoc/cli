@@ -5,6 +5,7 @@ import { objcSpec } from "./index.js";
 import { objcPackages } from "./packages.js";
 import { objcManifest } from "./manifest.js";
 import { cFamilyReachability } from "../shared/c-family-reachability.js";
+import { firstBranchView } from "../shared/preprocessor-branches.js";
 
 const OBJC_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -22,7 +23,7 @@ export const objcMeta: LanguagePluginMeta = {
   // Objective-C: `@try`/`@catch`/`@finally` carry a leading `@`.
   regexControlFlow: extendRegexControlFlow([
     { match: /^@try\b/, type: "try_statement" },
-  ], { catch: /^\}?\s*@?catch\b/, finally: /^\}?\s*@?finally\b/ }),
+  ], { catch: /^\}?\s*@?catch\b/, finally: /^\}?\s*@?finally\b/, sourceView: (text) => firstBranchView(text, false) }),
   ...objcManifest,
   regexSpec: objcSpec,
   // Functions and calls read by tree-sitter-objc while the `tree-sitter:objc` feature is on (tree-sitter.ts).

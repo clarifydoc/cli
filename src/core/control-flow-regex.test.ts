@@ -274,7 +274,7 @@ int f(long x) {
   if (x) { return 1; }
   return 0;
 }`)).toMatchObject({ decisions: 1, returns: 2 });
-      // Arms that pair up on their own stay drawn together.
+      // Arms that pair up on their own are alternatives of one build: only the first is drawn.
       expect(draw(language, `int f(int x) {
 #ifdef FAST
   if (x) { return 1; }
@@ -282,8 +282,22 @@ int f(long x) {
   if (x > 1) { return 2; }
 #endif
   return 0;
-}`)).toMatchObject({ decisions: 2, returns: 3 });
+}`)).toMatchObject({ decisions: 1, returns: 2 });
+      // The same function without the conditional draws as before.
+      expect(draw(language, `int f(int x) {
+  if (x) { return 1; }
+  return 0;
+}`)).toMatchObject({ decisions: 1, returns: 2 });
     }
+    // Objective-C reads the first arm the same way.
+    expect(draw("objc", `int f(int x) {
+#ifdef FAST
+  if (x) { return 1; }
+#else
+  if (x > 1) { return 2; }
+#endif
+  return 0;
+}`)).toMatchObject({ decisions: 1, returns: 2 });
   });
 
   it("Ruby: modifiers, case arms with string labels, def-level rescue, closures skipped", () => {

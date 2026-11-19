@@ -285,6 +285,16 @@ export function compilerView(text: string, cplusplus: boolean): string {
 }
 
 /**
+ * One function's text with only the first live branch of every conditional kept (the first a compiler does not rule
+ * out, after dead blocks such as `#if 0` are blanked — the one the ANTLR readers fall back to), for a reader that draws the function: both arms of an
+ * `#if`/`#else` are alternatives of one build, never two statements run in a row. Lines are kept; a text with no
+ * `#` is returned as is.
+ */
+export function firstBranchView(text: string, cplusplus: boolean): string {
+  return firstBranches(withoutDeadCode(text, cplusplus), cplusplus);
+}
+
+/**
  * A backslash-newline outside a directive, a string, a character and a `//` comment (`extern int yylex \`, a macro
  * call's arguments split with `\`, a `||\` condition) is whitespace to the C preprocessor but a lexer error to the
  * grammars, and so is a form feed between tokens. Both are blanked to a space, so lines and columns stay. A directive
