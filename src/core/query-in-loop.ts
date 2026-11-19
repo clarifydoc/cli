@@ -209,18 +209,19 @@ function relationsOf(graph: Pick<EntityGraph, "nodes" | "edges"> | undefined): (
 export function findBlockingInAsync(analyses: readonly FileAnalysis[], skip: (file: string) => boolean): PatternInfo[] {
   const out: PatternInfo[] = [];
   let classes: Map<string, ClassInfo[]> | undefined;
-  const classesNamed = (name: string): ClassInfo[] => {
+  const classesIn = (language: string, name: string): ClassInfo[] => {
     if (!classes) {
       classes = new Map();
-      for (const a of analyses) for (const c of a.classes) (classes.get(c.name) ?? classes.set(c.name, []).get(c.name)!).push(c);
+      for (const a of analyses) for (const c of a.classes) (classes.get(`${a.language}\0${c.name}`) ?? classes.set(`${a.language}\0${c.name}`, []).get(`${a.language}\0${c.name}`)!).push(c);
     }
-    return classes.get(name) ?? [];
+    return classes.get(`${language}\0${name}`) ?? [];
   };
   for (const a of analyses) {
     const manifest = manifestFor(a.language as Language);
     const blocking = manifest?.blockingCalls;
     const typed = manifest?.blockingOnReceiver;
     if ((!blocking && !typed) || skip(a.filePath)) continue;
+    const classesNamed = (name: string): ClassInfo[] => classesIn(a.language, name);
     const typedApplies = typed ? !typed.types.some((t) => classesNamed(t).length > 0) : false;
     const fns: Array<{ fn: FunctionInfo; name: string; owner?: ClassInfo }> = [
       ...a.functions.map((fn) => ({ fn, name: fn.name })),
@@ -257,9 +258,14 @@ function blocksOnReceiver(
   owner: ClassInfo | undefined,
   classesNamed: (name: string) => ClassInfo[],
 ): boolean {
-  const m = /^(?:this\.)?([A-Za-z_]\w*)\.(\w+)$/.exec(call);
-  if (!m || !spec.members.test(m[2]!)) return false;
-  const head = m[1]!;
+  const m = /^(this\.)?([A-Za-z_]\w*)\.(\w+)$/.exec(call);
+  if (!m || !spec.members.test(m[3]!)) return false;
+  const head = m[2]!;
+  // `this.task` is the caller's field, never a local of that name.
+  if (m[1]) {
+    const field = owner?.properties?.find((p) => p.name === head)?.type;
+    return !!field && spec.receiverTypes.test(field.trim());
+  }
   const types = new Set<string>();
   let unknown = false;
   const entries = (fn.localTypes ?? []).filter((l) => l.name === head);
