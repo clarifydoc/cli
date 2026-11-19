@@ -3,6 +3,7 @@ import { applyRouteMeta, inferredParam, pathParamNames, type GuardAttr } from ".
 import { splitTopLevel } from "../shared/regex-base.js";
 import { extractSwiftRequestAccess } from "./request-schema.js";
 import { balancedArgs } from "../shared/text-scan.js";
+import { joinRootedPath } from "../../shared/route-paths.js";
 
 /**
  * Vapor (Swift server) routes — Swift produced zero routes before:
@@ -60,10 +61,7 @@ function segmentsOf(argText: string): string[] {
   return [...argText.matchAll(SEGMENT_RE)].map((m) => m[1]!).filter((s) => s.length > 0);
 }
 
-function joinPath(prefix: string, segments: string[]): string {
-  const parts = [prefix, ...segments].join("/").split("/").filter(Boolean);
-  return "/" + parts.join("/");
-}
+const joinPath = (prefix: string, segments: string[]): string => joinRootedPath([prefix, ...segments]);
 
 /** One middleware expression → what it contributes to the route. */
 export function middlewareGuard(expr: string): GuardAttr | null {
