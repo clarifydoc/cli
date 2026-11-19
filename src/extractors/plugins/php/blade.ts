@@ -89,6 +89,8 @@ export function extractBladeInteractiveElements(sourceText: string): Interactive
   // resolver maps to the route's controller action; literal paths are left to that resolver too.
   const elements = extractHtmlInteractiveElements(lines, { requests: true });
   if (sourceText.includes("wire:model")) bindWireModels(lines, elements);
+  // Echo bodies were cut from the lines the reader saw: a column would not be the source's.
+  for (const el of elements) delete el.column;
   return elements.map((el) => {
     if (!el.request) return el;
     if (!el.request.target.startsWith(ROUTE_MARK)) return { ...el, handler: el.handler ?? handlerOf(el.request.method, el.request.target) };

@@ -115,7 +115,7 @@ describe("HTML interactive-element extraction", () => {
 
   it("names a link to an app route after its GET, base-path template dropped", () => {
     const out = els(`<a class="cymbal-button-primary" href="{{ $.baseUrl }}/" role="button">Continue</a>\n<a href="{{ $.baseUrl }}/part/{{.Item.Id}}">\n  <img src="{{.Item.Picture}}">\n</a>\n<a href="/logo.png">x</a>\n<a data-href="/x" href="https://example.com/docs">ext</a>`);
-    expect(out).toEqual([
+    expect(out.map(({ column: _c, ...e }) => e)).toEqual([
       { element: "link", event: "click", handler: "root", line: 1, caption: "Continue", request: { method: "GET", target: "/" } },
       // an image, no text: no caption
       { element: "link", event: "click", handler: "part_x", line: 2, request: { method: "GET", target: "/part/:param" } },
@@ -137,7 +137,7 @@ describe("HTML interactive-element extraction", () => {
   <button class="cymbal-button-primary" type="submit">Buy Car</button>
 </form>
 <button type="button" id="toggle">x</button>`);
-    expect(out).toEqual([
+    expect(out.map(({ column: _c, ...e }) => e)).toEqual([
       { element: "form", event: "submit", handler: "post_garage_empty", line: 1, request: { method: "POST", target: "/garage/empty" } },
       { element: "button", event: "click", handler: "post_garage_empty", line: 2, caption: "Empty Garage", request: { method: "POST", target: "/garage/empty" } },
       { element: "link", event: "click", handler: "root", line: 5, caption: "Continue", request: { method: "GET", target: "/" } },
@@ -168,7 +168,7 @@ describe("HTML interactive-element extraction", () => {
   <button type="submit" onclick="check()">Check</button>
 </form>
 <form method="post"><button>Save</button></form>`);
-    expect(out).toEqual([
+    expect(out.map(({ column: _c, ...e }) => e)).toEqual([
       { element: "form", event: "submit", handler: "search", line: 1, request: { method: "GET", target: "/search" } },
       { element: "button", event: "click", handler: "search", line: 2, caption: "Go", request: { method: "GET", target: "/search" } },
       { element: "button", event: "click", handler: "post_cars_delete", line: 3, caption: "Delete", request: { method: "POST", target: "/cars/delete" } },

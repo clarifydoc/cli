@@ -3793,6 +3793,12 @@ export interface InteractiveElementInfo {
    */
   request?: { method: string; target: string; attribute?: string };
   /**
+   * 0-based column (UTF-16 code units from the line's start) of the tag, stated only on an element that carries a
+   * `request` or posts to its own view — the api-call row built from it takes it. Absent where the text before the
+   * tag is not the source's own (a comment or a PHP tag rewritten earlier on the line).
+   */
+  column?: number;
+  /**
    * A server-rendered `<form method="post">` with no `action` (or `action=""`), or a submit control in one:
    * the browser posts to the URL the page was served from. `request` stays empty until core, which knows
    * the route that renders this page (`ScreenInfo.renderedBy`), sets it to a POST at that route's path.

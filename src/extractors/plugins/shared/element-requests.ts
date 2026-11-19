@@ -33,6 +33,7 @@ export function materializeElementRequests(analysis: FileAnalysis, only?: Readon
       ...(el.request.attribute ? { urlAttribute: el.request.attribute } : {}),
       calls: [],
       line: el.line,
+      ...(el.column !== undefined ? { column: el.column } : {}),
     };
     analysis.dataSources.push(row);
     added.push(row);
@@ -80,3 +81,15 @@ export function handlerOf(method: string, target: string): string {
   return method === "GET" ? base : `${method.toLowerCase()}_${base}`;
 }
 
+
+/**
+ * Drops the `column` of every element whose line, as the reader saw it (`markupLines`), does not start with the
+ * same text in `sourceLines`: a column is the source's only where the text before the tag is unchanged.
+ */
+export function keepSourceColumns(elements: Array<{ line: number; column?: number }>, markupLines: string[], sourceLines: string[]): void {
+  for (const el of elements) {
+    if (el.column === undefined) continue;
+    const seen = markupLines[el.line - 1]?.slice(0, el.column);
+    if (seen === undefined || !sourceLines[el.line - 1]?.startsWith(seen)) delete el.column;
+  }
+}

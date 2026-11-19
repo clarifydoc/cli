@@ -2,7 +2,7 @@ import type { PreprocessOutcome } from "../../../types/language-plugin.js";
 import { astroAssetRefs, blankExceptAstroCode, parseAstro } from "../../../parsers/astro-sfc.js";
 import { extractHtmlInteractiveElements } from "../html/index.js";
 import { withMarkupExpressions } from "./markup-expressions.js";
-import { materializeElementRequests } from "../shared/element-requests.js";
+import { keepSourceColumns, materializeElementRequests } from "../shared/element-requests.js";
 
 /**
  * Astro component preprocessing: the frontmatter and the `<script>` blocks are the file's source (the rest
@@ -33,7 +33,10 @@ export function astroPreprocess(rawSource: string, relativePath: string): Prepro
           analysis.imports.push({ source: ref.source, specifiers: [], isDefault: false, isNamespace: false, isType: false, line: ref.line });
       }
       analysis.templateTree = parsed.templateTree;
-      analysis.interactiveElements.push(...extractHtmlInteractiveElements(parsed.markup.split("\n"), { requests: true }));
+      const markupLines = parsed.markup.split("\n");
+      const found = extractHtmlInteractiveElements(markupLines, { requests: true });
+      keepSourceColumns(found, markupLines, rawSource.split("\n"));
+      analysis.interactiveElements.push(...found);
       materializeElementRequests(analysis);
       for (const comp of parsed.templateComponents) {
         const importSource = analysis.imports.find((imp) => imp.specifiers.includes(comp.name))?.source ?? null;

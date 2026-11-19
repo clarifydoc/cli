@@ -1,6 +1,6 @@
 import type { FileAnalysis, FunctionInfo, ScreenComponentInfo, ScreenInfo, SubComponentInfo } from "../../../types/analysis.js";
 import { extractHtmlInteractiveElements } from "../html/index.js";
-import { materializeElementRequests } from "../shared/element-requests.js";
+import { keepSourceColumns, materializeElementRequests } from "../shared/element-requests.js";
 import { SELF_ADDRESS, bindPageScreen, declareSelfPostHandler, hasPageMarkup, resolveMarkupTargets, servedScriptPath, resolvePageTarget } from "./plain-pages.js";
 
 /**
@@ -242,6 +242,7 @@ export function readPhpView(analysis: FileAnalysis, source: string): void {
   const lines = markup.split("\n");
 
   const elements = extractHtmlInteractiveElements(lines, { requests: true });
+  keepSourceColumns(elements, lines, source.split(/\r?\n/));
   analysis.interactiveElements = elements;
   materializeElementRequests(analysis);
 

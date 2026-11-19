@@ -391,7 +391,10 @@ export function extractHtmlInteractiveElements(lines: string[], opts: { requests
       const caption = text ? { caption: text } : {};
       // What a page script can find a handler-less element by.
       const selector = inline ? undefined : selectorOf(tag, attrs);
+      // The tag's column, only while the masked line still reads as the given one up to it (a removed comment shifts it).
+      const column = lines[i]!.startsWith(markup[i]!.slice(0, m.index!)) ? m.index! : undefined;
       const add = (el: InteractiveElementInfo): void => {
+        if (column !== undefined && (el.request || el.ownViewPost)) el = { ...el, column };
         out.push(selector && !el.request && (el.handler === null || el.handler === id) ? { ...el, selector } : el);
       };
 
