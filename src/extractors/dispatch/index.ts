@@ -36,7 +36,8 @@ export function resolveProjectDispatch(analyses: FileAnalysis[]): SymbolLink[] {
     const strategy = `dispatch:${r.id}` as const;
     const relation = relationForStrategy(strategy);
     for (const link of r.resolve(subset)) {
-      out.push({ ...link, strategy, relation });
+      // A link may state its own relation (a `(reference)` edge a resolver draws is no call).
+      out.push({ ...link, strategy, relation: link.relation ?? relation });
     }
   }
   return dropProductionToTestLinks(out, analyses);

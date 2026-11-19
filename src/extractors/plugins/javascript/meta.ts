@@ -78,7 +78,7 @@ import { JavaScriptDataSourceExtractor } from "./data-sources.js";
 import { JavaScriptMutationExtractor } from "./data-mutations.js";
 import { JavaScriptEntityExtractor } from "./entities.js";
 import { javascriptRouteExtractor } from "./routes/index.js";
-import { JsComponentEmitResolver, JsPropCallbackResolver, JsProvideInjectResolver, JsSlotScopeResolver, JsLoopItemCallbackResolver, angularSelectorsOf } from "./dispatch.js";
+import { JsComponentEmitResolver, JsComponentRenderResolver, JsPropCallbackResolver, JsProvideInjectResolver, JsSlotScopeResolver, JsLoopItemCallbackResolver, angularSelectorsOf } from "./dispatch.js";
 import { JsTemplateRefResolver } from "./template-refs.js";
 import { javascriptRequestSchema } from "./request-schema.js";
 import { javascriptReachability } from "./reachability.js";
@@ -317,7 +317,7 @@ const importsExports = new JavaScriptImportExportExtractor();
 const dataSources = new JavaScriptDataSourceExtractor();
 const dataMutations = new JavaScriptMutationExtractor();
 const entities = new JavaScriptEntityExtractor();
-const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new VuexStateWatchResolver(), new JsPropCallbackResolver(), new JsProvideInjectResolver(), new JsPropFlowResolver(), new JsStoreWatchResolver(), new JsContextTypeResolver(), new JsParamTypeResolver(), new JsSlotScopeResolver(), new JsLoopItemCallbackResolver(), new JsEventBusResolver(), new JsSubjectResolver(), new JsTemplateRefResolver(), new DomBindingResolver(), new JobEventResolver()];
+const dispatchResolvers = [new JsComponentEmitResolver(), new VuexDispatchResolver(), new VuexStateWatchResolver(), new JsPropCallbackResolver(), new JsComponentRenderResolver(), new JsComponentRenderResolver(true), new JsProvideInjectResolver(), new JsPropFlowResolver(), new JsStoreWatchResolver(), new JsContextTypeResolver(), new JsParamTypeResolver(), new JsSlotScopeResolver(), new JsLoopItemCallbackResolver(), new JsEventBusResolver(), new JsSubjectResolver(), new JsTemplateRefResolver(), new DomBindingResolver(), new JobEventResolver()];
 const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, convexBuilderResolver, cdkRouteResolver, nestInheritedGuards, nestGlobalGuards, nestGlobalInterceptors, koaAppMiddleware, nextMiddlewareGuards, astroMiddlewareGuards, screenTableResolver, pathHelperResolver];
 
 export const typescriptMeta: LanguagePluginMeta = {

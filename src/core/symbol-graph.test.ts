@@ -94,6 +94,36 @@ describe("usageGate and a child's users", () => {
   });
 });
 
+describe("usageGate and a page rendering the child", () => {
+  const BASE: SymbolLink[] = [
+    link("Dialog.vue", "close", "LoanDialog.vue", "resetForm", [{ file: "LoanDialog.vue", line: 9 }]),
+  ];
+  const renders = (file: string, strategy: "dispatch:renders" | "dispatch:renders-open"): SymbolLink => ({
+    ...link(file, "(reference)", "Dialog.vue", "<setup>"), strategy, relation: "reference",
+  });
+  const leave = (links: SymbolLink[], from: string, caller: string) => {
+    const gate = usageGate(links);
+    const inClose = gate.forward("", k(from, caller), k("Dialog.vue", "close"))!;
+    return gate.forward(inClose, k("Dialog.vue", "close"), k("LoanDialog.vue", "resetForm"));
+  };
+
+  it("leaves through no binding for a page that renders the child and binds nothing, whatever else it does", () => {
+    expect(leave([...BASE, renders("MatchPage.vue", "dispatch:renders")], "MatchPage.vue", "kickOff")).toBeNull();
+  });
+
+  it("keeps every binding for a page spreading props or listeners into the child", () => {
+    expect(leave([...BASE, renders("SpreadPage.vue", "dispatch:renders-open")], "SpreadPage.vue", "kickOff")).not.toBeNull();
+    const gate = usageGate([...BASE, renders("SpreadPage.vue", "dispatch:renders-open")]);
+    const atClose = gate.reverse("", k("LoanDialog.vue", "resetForm"), k("Dialog.vue", "close"))!;
+    expect(gate.reverse(atClose, k("Dialog.vue", "close"), k("SpreadPage.vue", "kickOff"))).toBe("");
+  });
+
+  it("keeps a page spreading into the child open even though it also imports it", () => {
+    const both = [...BASE, { ...link("SpreadPage.vue", "(reference)", "Dialog.vue", "default"), strategy: "reference" as const, relation: "reference" as const }, renders("SpreadPage.vue", "dispatch:renders-open")];
+    expect(leave(both, "SpreadPage.vue", "kickOff")).not.toBeNull();
+  });
+});
+
 describe("dedupSymbolLinks and binding sites", () => {
   it("keeps the binding sites of both duplicates, and none when one states none", () => {
     const a = link("ConfirmDialog.tsx", "handleOk", "ClubPage.tsx", "saveClub", [{ file: "ClubPage.tsx", line: 7 }]);

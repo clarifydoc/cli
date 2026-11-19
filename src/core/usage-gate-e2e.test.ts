@@ -350,3 +350,71 @@ describe("an emit returns to the usage it came in by (a dialog twelve pages bind
     expect(summary.healthScore?.penalties?.some((p) => /circular/.test(p.reason)) ?? false).toBe(false);
   });
 });
+
+describe("a page rendering the child without binding, or spreading into it", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    ({ dir, summary } = await project({
+      "web/package.json": JSON.stringify({ name: "league-web", dependencies: { react: "18.2.0", vue: "3.4.0", axios: "1.6.0" } }),
+      "web/src/components/ConfirmDialog.tsx": [
+        "interface ConfirmDialogProps {",
+        "  message: string;",
+        "  onConfirm?: () => void;",
+        "}",
+        "export function ConfirmDialog({ message, onConfirm }: ConfirmDialogProps) {",
+        "  return <button onClick={() => onConfirm?.()}>{message}</button>;",
+        "}",
+      ].join("\n"),
+      "web/src/pages/ClubPage.tsx": [
+        'import axios from "axios";',
+        'import { ConfirmDialog } from "../components/ConfirmDialog";',
+        "export function ClubPage() {",
+        '  async function saveClub() { await axios.post("/api/clubs", { name: "Rovers" }); }',
+        '  return <ConfirmDialog message="Save club?" onConfirm={saveClub} />;',
+        "}",
+      ].join("\n"),
+      "web/src/pages/PlayerPage.tsx": [
+        'import axios from "axios";',
+        'import { ConfirmDialog } from "../components/ConfirmDialog";',
+        "export function PlayerPage() {",
+        "  async function deletePlayer() { await axios.delete(`/api/players/7`); }",
+        '  return <ConfirmDialog message="Release player?" onConfirm={deletePlayer} />;',
+        "}",
+      ].join("\n"),
+      "web/src/pages/MatchPage.tsx": [
+        'import { ConfirmDialog } from "../components/ConfirmDialog";',
+        "export function MatchPage() {",
+        '  return <ConfirmDialog message="Kick off?" />;',
+        "}",
+      ].join("\n"),
+      "web/src/pages/SpreadPage.tsx": [
+        'import { ConfirmDialog } from "../components/ConfirmDialog";',
+        "export function SpreadPage(props: { message: string }) {",
+        "  return <ConfirmDialog {...props} />;",
+        "}",
+      ].join("\n"),
+    }));
+  });
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("states each render as a user of the child, a spread one as open", () => {
+    const strategies = summary.symbolLinks.filter((l) => l.strategy?.startsWith("dispatch:renders")).map((l) => [l.sourceFile.split("/").pop(), l.strategy]).sort();
+    expect(strategies).toEqual([
+      ["ClubPage.tsx", "dispatch:renders"],
+      ["MatchPage.tsx", "dispatch:renders"],
+      ["PlayerPage.tsx", "dispatch:renders"],
+      ["SpreadPage.tsx", "dispatch:renders-open"],
+    ]);
+    expect(summary.symbolLinks.filter((l) => l.strategy?.startsWith("dispatch:renders")).every((l) => l.relation === "reference")).toBe(true);
+  });
+
+  it("gives the page binding nothing no handler, and the page spreading every one", () => {
+    expect(tablesOf(summary, "web/src/pages/ClubPage.tsx")).toEqual(["clubs"]);
+    expect(tablesOf(summary, "web/src/pages/PlayerPage.tsx")).toEqual(["players"]);
+    expect(tablesOf(summary, "web/src/pages/MatchPage.tsx")).toEqual([]);
+    expect(tablesOf(summary, "web/src/pages/SpreadPage.tsx")).toEqual(["clubs", "players"]);
+  });
+});

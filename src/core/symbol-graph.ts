@@ -225,10 +225,13 @@ function buildUsageGate(symbolLinks: readonly GateLink[]): UsageGate {
   for (const l of symbolLinks) if (l.strategy === "inheritance" && l.sourceFile !== l.targetFile) extending.add(`${l.targetFile}\u0000${l.sourceFile}`);
   for (const l of symbolLinks) {
     if (l.sourceFile === l.targetFile || !users.has(l.targetFile) || extending.has(`${l.targetFile}\u0000${l.sourceFile}`)) continue;
-    if (l.relation === "reference" || l.strategy === "reference" || l.strategy === "dispatch:template-ref") use(l.targetFile, l.sourceFile);
+    if (l.relation === "reference" || l.strategy === "reference" || l.strategy === "dispatch:template-ref" || l.strategy === "dispatch:renders" || l.strategy === "dispatch:renders-open") use(l.targetFile, l.sourceFile);
   }
   // The file a walk entered a child from leads out through a binding when it binds the child there, or uses it nowhere.
-  const admits = (child: string, entry: string, files: ReadonlySet<string>): boolean => files.has(entry) || !users.get(child)?.has(entry);
+  // A user spreading props or listeners into the child states no binding to be held to: it keeps taking every one.
+  const open = new Set<string>();
+  for (const l of symbolLinks) if (l.strategy === "dispatch:renders-open" && users.has(l.targetFile)) open.add(`${l.targetFile}\u0000${l.sourceFile}`);
+  const admits = (child: string, entry: string, files: ReadonlySet<string>): boolean => files.has(entry) || !users.get(child)?.has(entry) || open.has(`${child}\u0000${entry}`);
   // Forward state: `<child file>\u0002<file it was entered from>`.
   // Reverse state: `<child file>\u0002<binding files, \u0003-joined>` — the bindings the walk left the child by.
   const split = (state: string): [string, string] => {

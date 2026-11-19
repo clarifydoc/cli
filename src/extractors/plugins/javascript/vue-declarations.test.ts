@@ -57,3 +57,13 @@ describe("a parent's listeners are not props", () => {
     expect(card.listeners).toEqual(["save", "cancel", "update:modelValue"]);
   });
 });
+
+describe("a tag spreading an object into a child", () => {
+  const props = (tag: string) => parseVueSfc(`<template>\n  ${tag}\n</template>`).templateComponents[0]!.props;
+  it("states a spread for a bare v-bind and v-on, and for no named binding", () => {
+    expect(props('<ClubDialog v-bind="$attrs" v-on="$listeners" />')).toContain("...spread");
+    expect(props('<ClubDialog v-bind="attrs" />')).toContain("...spread");
+    expect(props('<ClubDialog v-on="$listeners" message="x" />')).toEqual(["message", "...spread"]);
+    expect(props('<ClubDialog :message="text" v-bind:count="n" @confirm="save" />')).toEqual(["message", "count"]);
+  });
+});

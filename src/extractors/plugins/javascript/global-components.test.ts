@@ -249,3 +249,12 @@ describe("Vue components registered by an install loop", () => {
     expect(linksInto("src/pages/TrophyPage.vue")).toEqual([]);
   });
 });
+
+describe("a JSX tag spreading props into a child", () => {
+  it("states the spread on the component even when it comes on a later tag", async () => {
+    const src = `import { ClubDialog } from "./ClubDialog";
+export const Page = (props) => (<div><ClubDialog message="a" /><ClubDialog {...props} /></div>);`;
+    const subs = extractSubComponents(await parseSource(src, "typescript" as never, "Page.tsx"), src, "typescript" as never, []);
+    expect(subs.map((s) => [s.name, s.props])).toEqual([["ClubDialog", ["message", "...spread"]]]);
+  });
+});

@@ -193,6 +193,11 @@ function walkForJsx(
     if (nameNode) {
       const name = nameNode.text;
       // Components start with uppercase (not HTML elements)
+      // A later tag of a component the file already renders: only a spread it states is new (an open binding).
+      if (name && seen.has(name) && /^[A-Z]/.test(name) && extractJsxProps(node).includes("...spread")) {
+        const first = components.find((c) => c.name === name && !c.global);
+        if (first && !first.props.includes("...spread")) first.props.push("...spread");
+      }
       if (name && /^[A-Z]/.test(name) && !seen.has(name)) {
         seen.add(name);
         const props = extractJsxProps(node);

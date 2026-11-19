@@ -435,6 +435,75 @@ function angularSelectors(analyses: FileAnalysis[]): Map<string, string> {
 }
 
 /**
+ * A file rendering a child that dispatches back (`<ClubDialog />`, `<club-dialog>`) is a USER of it, whatever its import
+ * looks like: core's usage gate (`SymbolLink.viaUsage`) lets a user lead out of the child only through the bindings that
+ * user states, so a page rendering the dialog without binding its callback reaches no other page's handler. One
+ * `(reference)` link per rendered child, `dispatch:renders`; a tag spreading props or listeners into the child
+ * (`{...props}`, `v-bind="$attrs"`, `v-on="$listeners"`) states no binding it can be held to and is
+ * `dispatch:renders-open`, which keeps taking every binding. Only children that can dispatch back are stated.
+ */
+export class JsComponentRenderResolver implements DispatchResolver {
+  readonly languages: Language[] = ["typescript", "javascript"];
+  readonly priority = 31;
+  /** `renders` for the tags binding nothing, `renders-open` for the ones spreading (the runner stamps `dispatch:<id>`). */
+  readonly id: string;
+  constructor(private readonly open = false) {
+    this.id = open ? "renders-open" : "renders";
+  }
+
+  resolve(analyses: FileAnalysis[]): SymbolLink[] {
+    const filePathMap = buildFilePathMap(analyses);
+    const byPath = new Map(analyses.map((a) => [a.filePath, a]));
+    const globals = globalComponentFiles(analyses, filePathMap);
+    const autoImported = autoImportedComponents(analyses);
+    // The children some tag binds an event or callback on: the only ones whose users the gate tells apart.
+    const bound = new Set<string>();
+    for (const parent of analyses) {
+      const byTag = new Map<string, string>([...(autoImported.get(parent.projectId ?? "") ?? []), ...globals]);
+      for (const sub of parent.subComponents ?? []) if (sub.importSource && !sub.global) byTag.set(tagKey(sub.name), sub.importSource);
+      const tags = [
+        ...(parent.interactiveElements ?? []).filter((el) => el.element === "custom" && el.component && el.handler && (PROP_CALLBACK.test(el.event) || VUE_PROP.test(el.event) || VUE_LISTENER.test(el.event) || el.event.startsWith("@"))).map((el) => el.componentCandidates ?? [el.component!]).flat(),
+        ...(parent.functionProps ?? []).map((fp) => fp.component),
+      ];
+      for (const tag of tags) {
+        const src = byTag.get(tagKey(tag));
+        const file = src ? resolveTarget(src, parent.filePath, filePathMap) : null;
+        if (file) bound.add(file.split("\u0000")[0]!);
+      }
+    }
+    const dispatches = (c: FileAnalysis) => bound.has(c.filePath);
+    const links: SymbolLink[] = [];
+    for (const parent of analyses) {
+      if (!parent.subComponents?.length) continue;
+      const auto = autoImported.get(parent.projectId ?? "");
+      for (const sub of parent.subComponents) {
+        if (sub.global) continue;
+        const key = tagKey(sub.name);
+        const file = sub.importSource ? resolveTarget(sub.importSource, parent.filePath, filePathMap) : globals.get(key) ?? auto?.get(key) ?? null;
+        const child = file ? byPath.get(file.split("\u0000")[0]!) : undefined;
+        if (!child || child.filePath === parent.filePath || !dispatches(child)) continue;
+        const stem = child.filePath.replace(/^.*\//, "").replace(/\.[^.]+$/, "");
+        const span = spansOf(child).find((sp) => tagKey(sp.symbol) === tagKey(stem)) ?? spansOf(child)[0];
+        if (!span) continue;
+        if (sub.props.includes("...spread") !== this.open) continue;
+        links.push({
+          sourceFile: parent.filePath,
+          sourceSymbol: "(reference)",
+          sourceLine: sub.line,
+          callName: `render:${sub.name}`,
+          targetFile: child.filePath,
+          targetSymbol: span.symbol,
+          targetLine: span.line,
+          confidence: "EXTRACTED",
+          relation: "reference",
+        });
+      }
+    }
+    return links;
+  }
+}
+
+/**
  * React's emit: a callback handed down as a prop. `<AddNewTrophy
  * onTrophyLookupChange={this.onTrophyLookupChange} />` in the parent, and
  * `this.props.onTrophyLookupChange(value)` (or a destructured `onTrophyLookupChange()`,

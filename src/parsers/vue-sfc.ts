@@ -136,5 +136,7 @@ function extractVueProps(attrs: string): string[] {
   }
   // v-model
   if (attrs.includes("v-model")) props.push("v-model");
+  // `v-bind="$attrs"` / `v-on="$listeners"`: an object of props or listeners, which no name states.
+  if (/(?<![\w:.-])v-(?:bind|on)\s*=/.test(attrs)) props.push("...spread");
   return props;
 }
