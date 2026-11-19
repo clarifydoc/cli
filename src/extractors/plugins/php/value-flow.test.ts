@@ -350,6 +350,6 @@ describe("PHP value flow: a closure written as an argument", () => {
         "}", "",
       ].join("\n"),
     });
-    expect(links.filter((l) => !l.includes("::Club.onPenalty")).map((l) => l.replace(/^Club\.run(\w)@\d+ \S+ -> src\/Club\.php::Club\./, "$1 "))).toEqual(["A onFullTime", "B onKickoff", "C onWhistle"]);
+    expect(links.map((l) => l.replace(/^Club\.run(\w)@\d+ \S+ -> src\/Club\.php::Club\./, "$1 "))).toEqual(["A onFullTime", "B onKickoff", "C onWhistle"]);
   });
 });
