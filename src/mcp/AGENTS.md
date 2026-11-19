@@ -147,6 +147,9 @@ write. That is what lets an external agent be configured as nothing but a comman
   lock held waits for the other run's summary instead of starting a competing scan; the lock heartbeats, so a long
   analysis is never stolen, and a crashed one is.
 
+- **No analysis behind the server.** When the output directory is missing, unreadable (`EACCES`/`EPERM`/`EISDIR`) or holds a summary that is not valid JSON, every tool answers — never throws past the protocol layer — with the path and the command that writes the analysis this server reads (`AnalysisStore.analyzeCommand`: `clarifydoc analyze <root> -o <dir>`, quoted when a path has spaces; `unreadableMessage` for a summary that cannot be read).
+- **A class over the extract budget.** `clarifydoc_extract` on a class whose body exceeds `maxTokens` returns its member signatures — fields from the facts, each method from its declaration at its start line, cut before the body, with `[line N]` — up to the budget or 120 members and a count of the rest, plus the call that extracts one member; a class that fits is printed whole, as before.
+
 ## Adding a tool
 
 1. Write it in the matching `tools/*.ts` as a `McpTool` factory taking `ToolContext`.
