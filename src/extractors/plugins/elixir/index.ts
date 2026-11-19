@@ -5,6 +5,7 @@ import { heexSigils, readHeex } from "./heex.js";
 import { attachEctoSchema, attachPatternKeys, extractEctoRelations, extractElixirRequestAccess, extractPhoenixRoutes } from "./phoenix.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { isChannelModule, phoenixChannelBindings, phoenixChannelEvents } from "./channels.js";
+import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 /** Last dotted segment of an Elixir module alias (`MyApp.Accounts.User` → `User`). */
 function lastSeg(mod: string): string {
@@ -420,27 +421,7 @@ function moduleAt(lines: string[], i: number): string | null {
 
 /** Top-level comma-separated arguments up to the call's closing paren. */
 function splitTopLevel(args: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let cur = "";
-  let quote = false;
-  for (const ch of args) {
-    if (ch === '"') quote = !quote;
-    if (!quote) {
-      if (ch === "(" || ch === "{" || ch === "[") depth++;
-      else if (ch === ")" || ch === "}" || ch === "]") {
-        if (depth === 0) break;
-        depth--;
-      } else if (ch === "," && depth === 0) {
-        out.push(cur);
-        cur = "";
-        continue;
-      }
-    }
-    cur += ch;
-  }
-  if (cur.trim()) out.push(cur);
-  return out;
+  return splitTopLevelWith(args, { quotes: "\"", stopAtCloser: true });
 }
 
 /**
