@@ -453,6 +453,9 @@ export function extractPascalDataSources(rawLines: string[]): DataSourceInfo[] {
   // dataset per routine says the routine reads it; a row per field (1,100 on
   // one settings unit) only inflates the count.
   let fieldReads = new Set<string>();
+  // The comment stripper drops text, so an index into `line` is the source's column only when nothing before it was cut.
+  const columnOf = (i: number, index: number): { column?: number } =>
+    rawLines[i]!.startsWith(lines[i]!.slice(0, index)) ? { column: index } : {};
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
@@ -506,6 +509,7 @@ export function extractPascalDataSources(rawLines: string[]): DataSourceInfo[] {
         target,
         calls: [],
         line: lineNo,
+        ...columnOf(i, http.index!),
       });
       continue;
     }
@@ -520,14 +524,16 @@ export function extractPascalDataSources(rawLines: string[]): DataSourceInfo[] {
             : null),
         calls: [],
         line: lineNo,
+        ...columnOf(i, wininet.index!),
       });
       continue;
     }
-    if (SHELL_EXECUTE_RE.test(line)) {
+    const shell = SHELL_EXECUTE_RE.exec(line);
+    if (shell) {
       const url = line.match(URL_LITERAL_RE)?.[1];
       // Only a literal web URL is an outbound edge; opening files/apps is not.
       if (url) {
-        sources.push({ kind: "api-call", name: "ShellExecute", target: url, calls: [], line: lineNo });
+        sources.push({ kind: "api-call", name: "ShellExecute", target: url, calls: [], line: lineNo, ...columnOf(i, shell.index) });
       }
       continue;
     }
