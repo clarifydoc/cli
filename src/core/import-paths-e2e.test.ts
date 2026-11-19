@@ -34,11 +34,13 @@ const FILES: Record<string, string> = {
   "rust-reexport/Cargo.toml": '[workspace]\nmembers = ["league-api", "league-fixtures"]\n',
   "rust-reexport/league-api/Cargo.toml": '[package]\nname = "league-api"\nversion = "0.1.0"\n',
   "rust-reexport/league-fixtures/Cargo.toml": '[package]\nname = "league-fixtures"\nversion = "0.1.0"\n',
-  "rust-reexport/league-api/src/lib.rs": "pub mod triggers;\npub mod args;\n",
+  "rust-reexport/league-api/src/lib.rs": "pub mod triggers;\npub mod args;\npub mod auth;\npub mod session;\n",
   "rust-reexport/league-api/src/triggers/mod.rs": "pub use league_fixtures::match_helpers;\npub use league_fixtures::types::*;\n",
   "rust-reexport/league-fixtures/src/lib.rs": "pub mod match_helpers;\npub mod types;\n",
   "rust-reexport/league-fixtures/src/match_helpers.rs": "pub struct FixtureId;\n",
-  "rust-reexport/league-fixtures/src/types.rs": "pub struct MatchdayArgs;\n\nimpl MatchdayArgs {\n    pub fn run(&self) {}\n}\n",
+  "rust-reexport/league-fixtures/src/types.rs": "pub struct MatchdayArgs;\n\nimpl MatchdayArgs {\n    pub fn run(&self) {}\n}\n\npub struct Whistle;\n\nimpl Whistle {\n    pub fn blow(&self) {}\n}\n",
+  "rust-reexport/league-api/src/auth.rs": "pub use league_fixtures::types::{\n    MatchdayArgs, Kickoff,\n    Whistle,\n};\n",
+  "rust-reexport/league-api/src/session.rs": "use std::sync::Arc;\nuse crate::auth::Whistle;\n\npub struct Ref {\n    pub whistle: Arc<Whistle>,\n}\n\nimpl Ref {\n    pub fn start(&self) {\n        self.whistle.blow();\n    }\n}\n",
   "rust-reexport/league-api/src/args.rs": "use crate::triggers::match_helpers::FixtureId;\nuse crate::triggers::MatchdayArgs;\n\npub fn go(a: FixtureId, b: MatchdayArgs) {\n    b.run();\n}\n",
   // C: an include written with a directory, and a header of the same name elsewhere.
   "c/league/club.h": "void club_join(void);\n",
@@ -93,6 +95,10 @@ describe("an import binds only what its path names", () => {
   it("Rust: crate:: is the importing crate's own", () => {
     expect(links("rust/a/src/run.rs")).toEqual([]);
     expect(edges("rust/a/src/run.rs")).not.toContain("b/src/garage.rs");
+  });
+
+  it("Rust: a crate:: item a module re-exports from another crate in a grouped, multi-line use follows it", () => {
+    expect(links("rust-reexport/league-api/src/session.rs")).toContain("calls whistle.blow -> league-fixtures/src/types.rs::Whistle.blow");
   });
 
   it("Rust: a crate:: path through a module re-exporting another crate's module or glob follows it", () => {

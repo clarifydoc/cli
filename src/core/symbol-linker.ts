@@ -3763,17 +3763,19 @@ function buildMemberTypes(
   };
   // Where an import's path is confined to the importer's own unit (`importConfinement`), a declaration outside it is no answer.
   let resolveCtx: ImportResolveContext | undefined;
-  const inConfinement = (source: string, consumerFile: string, file: string): boolean => {
-    const hook = pluginFor(languageOfFile.get(consumerFile) as Language)?.importConfinement;
-    if (!hook) return true;
+  const inConfinement = (source: string, consumerFile: string, file: string, name: string): boolean => {
+    const plugin = pluginFor(languageOfFile.get(consumerFile) as Language);
+    if (!plugin?.importConfinement) return true;
     resolveCtx ??= buildImportResolveContext(analyses, new Set(languageOfFile.keys()));
-    const dir = hook(consumerFile, source, resolveCtx);
-    return dir === null || dir === "" || file.startsWith(`${dir}/`);
+    const dir = plugin.importConfinement(consumerFile, source, resolveCtx);
+    if (dir === null || dir === "" || file.startsWith(`${dir}/`)) return true;
+    // A module of the unit that re-exports the name from elsewhere (`pub use other::{Garage, …};`) is the language's own answer.
+    return plugin.resolveImport?.(consumerFile, source, name, resolveCtx) === file;
   };
   // A type the consumer's own import names through a confined path lives inside it, never in a namesake outside.
   const confinedAway = (typeName: string, consumerFile: string, file: string): boolean =>
     !!pluginFor(languageOfFile.get(consumerFile) as Language)?.importConfinement && (analysisOf.get(consumerFile)?.imports ?? []).some((imp) =>
-      (imp.specifiers.includes(typeName) || Object.values(imp.aliases ?? {}).includes(typeName)) && !inConfinement(imp.source, consumerFile, file));
+      (imp.specifiers.includes(typeName) || Object.values(imp.aliases ?? {}).includes(typeName)) && !inConfinement(imp.source, consumerFile, file, typeName));
   const importedDecl = (typeName: string, consumerFile: string): string | null => {
     if ((classToFiles.get(typeName)?.length ?? 0) < 2) return null;
     // An import renaming the type (`import { Engine as Motor }`, `import Lathe from`) names its module too.
@@ -3782,7 +3784,7 @@ function buildMemberTypes(
     for (const imp of imps) {
       pathMap ??= buildFilePathMap(analyses);
       const f = resolveTarget(imp.source, consumerFile, pathMap);
-      if (f && declAt.has(memberKey(f, typeName)) && inConfinement(imp.source, consumerFile, f)) return f;
+      if (f && declAt.has(memberKey(f, typeName)) && inConfinement(imp.source, consumerFile, f, typeName)) return f;
     }
     // Where an import puts a whole unit in scope without naming what it uses (`uses Garage`), the one
     // imported file declaring the type is the one meant — as `typeFileFor` reads a parameter's type.
