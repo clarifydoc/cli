@@ -310,7 +310,7 @@ function restClassOf(lines: string[], at: number): string | null {
   return null;
 }
 
-function extractDartDataSources(lines: string[]): DataSourceInfo[] {
+export function extractDartDataSources(lines: string[]): DataSourceInfo[] {
   const restApi = lines.some((l) => /^\s*@RestApi\b/.test(l));
   const out: DataSourceInfo[] = [];
   const seen = new Set<string>();
@@ -342,7 +342,7 @@ function extractDartDataSources(lines: string[]): DataSourceInfo[] {
       while (sig < lines.length && /^\s*(?:@|$|\/\/)/.test(lines[sig]!)) sig++;
       if (cls && sig < lines.length) {
         const path = verb[2] ?? verb[3] ?? "";
-        push({ kind: "api-call", name: verb[1]!, target: path.startsWith("/") || /^https?:/.test(path) ? path : `/${path}`, calls: [], line: sig + 1, baseRef: { kind: "client", key: cls } });
+        push({ kind: "api-call", name: verb[1]!, target: path.startsWith("/") || /^https?:/.test(path) ? path : `/${path}`, calls: [], line: sig + 1, column: lines[sig]!.search(/\S/), baseRef: { kind: "client", key: cls } });
       }
       continue;
     }
@@ -369,6 +369,7 @@ function extractDartDataSources(lines: string[]): DataSourceInfo[] {
         target: dartUrlArg(lines, i, m.index + m.text.length),
         calls: [],
         line: ln,
+        column: m.index,
         ...(body ? { requestBody: body } : {}),
       });
     }
