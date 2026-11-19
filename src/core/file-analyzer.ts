@@ -43,6 +43,7 @@ import {
   inferTrpcEndpointFacts,
 } from "../extractors/plugins/javascript/routes/file-routes.js";
 import { inferNextMiddlewareFacts } from "../extractors/plugins/javascript/routes/next-middleware.js";
+import { inferAstroMiddlewareFacts } from "../extractors/plugins/javascript/routes/astro-middleware.js";
 import { restoreTypedReceiverCalls } from "./typed-receivers.js";
 import {
   createEmptyAnalysis,
@@ -875,7 +876,11 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
           flatRoutes: routeFrameworks.includes("react-router-framework") && /^(?:app|src)\/routes\//.test(routePath.replace(/\\/g, "/")) && usesFlatRoutes(file.absolutePath, routePath),
         }),
       );
-      const endpoints = [...inferTrpcEndpointFacts(routePath, sourceText, routeFrameworks), ...inferNextMiddlewareFacts(routePath, sourceText, routeFrameworks)];
+      const endpoints = [
+        ...inferTrpcEndpointFacts(routePath, sourceText, routeFrameworks),
+        ...inferNextMiddlewareFacts(routePath, sourceText, routeFrameworks),
+        ...inferAstroMiddlewareFacts(routePath, sourceText, routeFrameworks),
+      ];
       if (endpoints.length > 0) analysis.routeFacts = [...(analysis.routeFacts ?? []), ...endpoints];
     }
 
