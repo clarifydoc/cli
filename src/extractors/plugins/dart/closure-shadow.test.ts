@@ -19,6 +19,19 @@ void shadowedBlock(Club p) {
   });
 }
 void outside(Club p) { [1].forEach((x) { x.toString(); }); p.save(); }
+class Cache {
+  final int id;
+  final Roster _roster;
+  Cache({
+    required this.id,
+    required Roster roster,
+  })  : _roster = roster {
+    roster.onChanged((infos) {
+      for (final info in infos) { info.toString(); }
+    });
+  }
+}
+class Roster { void onChanged(Function cb) {} }
 void unrelated(Club p) { [1].forEach((_) { p.save(); }); }
 void after(Club p) { [1].forEach((p) => p.toString()); p.save(); }
 `,
@@ -52,6 +65,11 @@ describe.each([["tree-sitter", undefined], ["regex", "no-tree-sitter:dart"]])("D
     expect(target("shadowed")).toEqual([]);
     expect(target("shadowedDynamic")).toEqual([]);
     expect(target("shadowedBlock")).toEqual([]);
+  });
+
+  it("keeps a constructor formal used in the body after an initializer list", () => {
+    const rows = summary.symbolLinks.filter((l) => l.callName === "roster.onChanged").map((l) => l.targetSymbol);
+    expect(rows).toContain("Roster.onChanged");
   });
 
   it("keeps the formal's type outside the closure and under a closure that names another parameter", () => {
