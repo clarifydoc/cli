@@ -1,6 +1,7 @@
 import type { ClassInfo, DataSourceInfo, EntityRelation, FileAnalysis, FunctionInfo, PropertyInfo } from "../../../types/analysis.js";
 import { EntityExtractor, SYNTHETIC_ENTITY, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 import { companionStem } from "./companion.js";
+import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 /**
  * Data-model extraction for Delphi forms and data modules.
@@ -162,20 +163,7 @@ function bareColumn(raw: string): string | null {
 
 /** Split a comma-separated SQL list, ignoring commas nested in parentheses. */
 function splitTopLevel(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (ch === "(") depth++;
-    else if (ch === ")") depth--;
-    else if (ch === "," && depth === 0) {
-      out.push(text.slice(start, i));
-      start = i + 1;
-    }
-  }
-  out.push(text.slice(start));
-  return out;
+  return splitTopLevelWith(text, { brackets: "()", quotes: "", tail: "keep" });
 }
 
 /** `UPDATE <table> SET a = :a, b = :b [WHERE …]` → the table and its SET columns. */
