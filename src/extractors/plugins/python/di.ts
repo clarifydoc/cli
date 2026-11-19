@@ -1034,7 +1034,25 @@ function loopSource(right: Node | null): { from: string; pair: boolean } | null 
  * bodies are their own scopes and are left out.
  */
 export function pythonTopLevelLocalTypes(root: Node, sourceText: string): LocalType[] {
-  return collectLocalTypes(root, [], /#\s*type:/.test(sourceText));
+  const types = collectLocalTypes(root, [], /#\s*type:/.test(sourceText));
+  if (!sourceText.includes("global")) return types;
+  // A function that declares the name `global` and assigns it is a second initializer: what the module's own
+  // statement constructs is one of several. An annotation (`ticket: Ticket = …`) states the name's type outright.
+  const rebound = new Set<string>();
+  for (const g of root.descendantsOfType("global_statement")) {
+    let scope: Node | null = g.parent;
+    while (scope && scope.type !== "function_definition") scope = scope.parent;
+    const writes = new Set<string>();
+    for (const a of scope?.descendantsOfType(["assignment", "augmented_assignment"]) ?? []) writes.add(a.childForFieldName("left")?.text ?? "");
+    for (const id of g.namedChildren) if (id.type === "identifier" && writes.has(id.text)) rebound.add(id.text);
+  }
+  if (rebound.size === 0) return types;
+  const annotated = new Set<string>();
+  for (const stmt of root.namedChildren) {
+    const a = stmt.type === "expression_statement" ? stmt.namedChild(0) : null;
+    if (a?.type === "assignment" && a.childForFieldName("type")) annotated.add(a.childForFieldName("left")?.text ?? "");
+  }
+  return types.filter((l) => annotated.has(l.name) || !rebound.has(l.name));
 }
 
 /** Builtins whose result the project never declares — no point carrying them as initializers. */

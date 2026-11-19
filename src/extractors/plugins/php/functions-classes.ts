@@ -153,7 +153,7 @@ export class PhpExtractor extends FunctionClassExtractor {
   private parseFunction(node: Node): FunctionInfo {
     const name = node.childForFieldName("name")?.text ?? "anonymous";
     const doc = docTypesAbove(node);
-    const params = this.parseParams(node.childForFieldName("parameters"), doc);
+    const params = this.parseParams(node.childForFieldName("parameters"), doc, node.childForFieldName("body"));
     // A native return type wins; a docblock `@return T` types an untyped one.
     const returnType = this.parseReturnType(node) ?? doc?.returnType ?? null;
     const body = node.childForFieldName("body");
@@ -286,7 +286,7 @@ export class PhpExtractor extends FunctionClassExtractor {
   private parseMethod(node: Node): FunctionInfo {
     const name = node.childForFieldName("name")?.text ?? "anonymous";
     const doc = docTypesAbove(node);
-    const params = this.parseParams(node.childForFieldName("parameters"), doc);
+    const params = this.parseParams(node.childForFieldName("parameters"), doc, node.childForFieldName("body"));
     // A native return type wins; a docblock `@return T` types an untyped one.
     const returnType = this.parseReturnType(node) ?? doc?.returnType ?? null;
     const body = node.childForFieldName("body");
@@ -335,7 +335,7 @@ export class PhpExtractor extends FunctionClassExtractor {
    *   - `property_promotion_parameter` — `private Type $name` (PHP 8)
    *   - `variadic_parameter` — `...$args`
    */
-  private parseParams(paramsNode: Node | null, doc?: DocTypes): ParamInfo[] {
+  private parseParams(paramsNode: Node | null, doc?: DocTypes, body?: Node | null): ParamInfo[] {
     const params: ParamInfo[] = [];
     if (!paramsNode) return params;
 
@@ -348,8 +348,9 @@ export class PhpExtractor extends FunctionClassExtractor {
         const varNode = this.findChildByType(p, "variable_name");
         const nameNode = varNode ? this.findChildByType(varNode, "name") : null;
         const pName = nameNode?.text ?? varNode?.text.replace(/^\$/, "") ?? "_";
-        // A native type wins; a docblock `@param T $name` types an untyped one.
-        const typeText = this.parseParamType(p) ?? doc?.named.get(pName) ?? null;
+        // A native type wins; a docblock `@param T $name` types an untyped one, while the body leaves it bound.
+        const documented = doc?.named.get(pName);
+        const typeText = this.parseParamType(p) ?? (documented && !(body && rebindsName(body.text, pName)) ? documented : null);
         const defaultNode = p.childForFieldName("default_value");
         const param: ParamInfo = {
           name: pName,
@@ -753,6 +754,11 @@ const PHP_BLOCKS: ReadonlySet<string> = new Set([
 const PHP_SCALAR_TYPES: ReadonlySet<string> = new Set(["int", "float", "string", "bool", "array", "iterable", "callable", "object", "mixed", "null", "void", "self", "static", "parent", "false", "true", "never"]);
 
 const PHP_LOOPS: ReadonlySet<string> = new Set(["for_statement", "foreach_statement", "while_statement", "do_statement"]);
+
+/** Whether the text assigns `$name` again (plain, compound or `??=`) or binds it another way: the formal's documented type no longer describes it. */
+function rebindsName(text: string, name: string): boolean {
+  return new RegExp(`\\$${name}\\s*(?:\\*\\*|\\?\\?|[-+*/.%|&^])?=(?![=>])`).test(text) || rebinds(text, name);
+}
 
 /** Whether the text binds `$name` other than by a plain assignment: a `foreach` target, a `catch` variable, `global`/`static`, a `list()`/`[...]` target, a reference. */
 function rebinds(text: string, name: string): boolean {

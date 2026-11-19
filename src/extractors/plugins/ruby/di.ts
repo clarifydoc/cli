@@ -173,9 +173,27 @@ export function applyDeclaredParamTypes(lines: readonly string[], fn: FunctionIn
   if (fn.params.length === 0) return;
   const declared = declaredParamTypes(lines, fn.line - 1);
   if (declared.size === 0) return;
+  const bodyLines = lines.slice(fn.line, Math.max(fn.line, fn.endLine - 1));
+  // `club = club.reload` / `.dup` hands the same kind of object back: it is no new binding.
+  const assigned = new Set(
+    bodyLines
+      .map((l) => LOCAL_ASSIGN_RE.exec(codeOf(l)))
+      .filter((m): m is RegExpExecArray => !!m && !new RegExp(`^${m[1]}\\.(?:reload|dup|clone|itself|freeze)\\b`).test(m[2]!))
+      .map((m) => m[1]!),
+  );
   for (const p of fn.params) {
-    const t = declared.get(p.name.replace(/^\*+|^&/, ""));
-    if (t) p.type = t;
+    const name = p.name.replace(/^\*+|^&/, "");
+    const t = declared.get(name);
+    if (!t) continue;
+    if (!assigned.has(name)) {
+      p.type = t;
+      continue;
+    }
+    // A declaration describes the formal as it comes in: once the body assigns the name again, the local's own type
+    // holds (what the body states, read as for any local), not the declared one.
+    if (fn.localTypes?.some((l) => l.name === name && !l.field)) continue;
+    const own = extractRubyLocalTypes(bodyLines, { params: fn.params.filter((q) => q !== p) }).find((l) => l.name === name);
+    if (own) (fn.localTypes ??= []).push(own);
   }
 }
 
