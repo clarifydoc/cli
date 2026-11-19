@@ -83,3 +83,19 @@ describe("Perl parents", () => {
     expect(extend("package A;\nuse parent -norequire, qw(League::Club);").extends).toBe("League::Club");
   });
 });
+
+describe("Perl call reading", () => {
+  const callsOf = (src: string) => {
+    const lines = src.split("\n");
+    return perlSpec.extractLocalTypes!(lines, { name: "f", params: [] });
+  };
+  it("types a local only by a plain constructor, and not when two packages are assigned", () => {
+    expect(callsOf("my $a = League::Club->new(x => 1);")).toEqual([{ name: "a", type: "League::Club" }]);
+    expect(callsOf("my $a = League::Club->new->with_defaults;")).toEqual([]);
+    expect(callsOf("my $a = League::Club->new(x => 1)->init;")).toEqual([]);
+    expect(callsOf("my $a = League::Club->new;\n$a = 1;\nmy $b = 2;")).toHaveLength(1);
+  });
+  it("ignores a comment's extends", () => {
+    expect(perlSpec.extractClasses!("package A;\n# extends 'Legacy::Base'".split("\n"), [])[0]!.extends).toBeNull();
+  });
+});

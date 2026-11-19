@@ -54,8 +54,16 @@ function perlLocalTypes(bodyLines: string[]): NonNullable<FunctionInfo["localTyp
   const out: NonNullable<FunctionInfo["localTypes"]> = [];
   const seen = new Set<string>();
   for (const line of bodyLines) {
-    const m = line.match(/\b(?:my|our|local)\s+\$(\w+)\s*=\s*([A-Za-z_]\w*(?:::\w+)*)\s*->\s*new\b(?![\w:])/);
-    if (!m || m[2] === "__PACKAGE__" || seen.has(m[1]!)) continue;
+    const m = line.match(/\b(?:my|our|local)\s+\$(\w+)\s*=\s*([A-Za-z_]\w*(?:::\w+)*)\s*->\s*new\b(?![\w:])(.*)/);
+    if (!m || m[2] === "__PACKAGE__") continue;
+    // `Pkg->new(...)->init` is whatever `init` returns, not a `Pkg`.
+    if (/^\s*(?:\([^;]*\))?\s*->/.test(m[3]!)) continue;
+    if (seen.has(m[1]!)) {
+      // A variable assigned two different packages has no one type.
+      const at = out.findIndex((l) => l.name === m[1]);
+      if (at >= 0 && out[at]!.type !== m[2]) out.splice(at, 1);
+      continue;
+    }
     seen.add(m[1]!);
     out.push({ name: m[1]!, type: m[2]! });
   }
@@ -117,7 +125,7 @@ export const perlSpec: RegexLangSpec = {
     },
     {
       // League::Club::release(...) — a qualified sub.
-      pattern: new RegExp(`${NOT_AFTER}((?:[A-Za-z_]\\w*::)+[A-Za-z_]\\w*)\\s*\\(`),
+      pattern: new RegExp(`(?<!\\bsub\\s+)${NOT_AFTER}((?:[A-Za-z_]\\w*::)+[A-Za-z_]\\w*)\\s*\\(`),
       buildName: (m) => {
         const at = m[1]!.lastIndexOf("::");
         return { name: `${m[1]!.slice(0, at)}.${m[1]!.slice(at + 2)}`, leafName: m[1]!.slice(at + 2), receiverType: m[1]!.slice(0, at) };
@@ -125,7 +133,7 @@ export const perlSpec: RegexLangSpec = {
     },
     {
       // release(...), &release(...) — a sub of this package.
-      pattern: /(?<![\w$@%.>:])(?<!\bsub\s+)&?([A-Za-z_]\w*)\s*\(/,
+      pattern: /(?<![\w$@%.>:])(?<!\bsub\s+)&?(?!(?:my|our|local|state|sub|qw|q|qq|qr|m|s|tr|y|return|bless|shift|pop|keys|values|each|defined|scalar|ref|exists|delete|die|warn|print|printf|push|unshift|splice|join|map|grep|sort|reverse|wantarray|length|substr|index|sprintf|lc|uc|open|close|chomp|exit|undef)\b)([A-Za-z_]\w*)\s*\(/,
       buildName: (m) => ({ name: m[1]!, leafName: m[1]! }),
       replacesBaseline: true,
     },
@@ -154,7 +162,7 @@ export const perlSpec: RegexLangSpec = {
     for (const pkg of pkgs) {
       for (let i = pkg.line; i < pkg.endLine && i < lines.length; i++) {
         const line = lines[i];
-        const parents = parentPackages(line);
+        const parents = /^\s*#/.test(line) ? [] : parentPackages(line);
         for (const parent of parents) {
           if (!pkg.extends) pkg.extends = parent;
           else if (parent !== pkg.extends && !pkg.implements.includes(parent)) pkg.implements.push(parent);
