@@ -19,7 +19,7 @@ if (!process.execArgv.includes("--experimental-transform-types")) {
 }
 
 const src = (p) => import(pathToFileURL(join(SCRIPTS, "..", "src", p)).href);
-const [{ BaseErrorListener, BailErrorStrategy }, { parseWithAntlr, normalizeSource }, { readWithBranches }, { CLexer }, { CParser }, { CPP14Lexer }, { CPP14Parser }, { readC }, { readCpp }] = await Promise.all([
+const [{ BaseErrorListener, BailErrorStrategy }, { parseWithAntlr, normalizeSource }, { readWithBranches }, { CLexer }, { CParser }, { CPP14Lexer }, { CPP14Parser }, { readC }, { readCpp, blankRawStrings }] = await Promise.all([
   import("antlr4ng"),
   src("parsers/antlr/run.ts"),
   src("extractors/plugins/shared/preprocessor-branches.ts"),
@@ -95,25 +95,6 @@ function reader(Lexer, Parser, entry, attempts) {
     attempts.push({ errors, tree: tree !== null, rec });
     return { functions: [], topLevelCalls: [], syntaxErrors: errors };
   };
-}
-
-// Mirrors plugins/cpp/antlr.ts: a header with no C++ in it is read again as C.
-const CPP_ONLY = /::|\btemplate\s*<|\bnamespace\s+\w*\s*\{|\bclass\s+\w+\s*[:{]/;
-const codeOnly = (t) => t.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g, " ");
-const RAW_STRING = /(?<![\w\\"'])(?:u8|u|U|L)?R"([^ ()\\\t\v\f\n"]{0,16})\(/g;
-function blankRawStrings(text) {
-  if (!text.includes('R"')) return text;
-  let out = "";
-  let at = 0;
-  for (const m of text.matchAll(RAW_STRING)) {
-    if (m.index < at) continue;
-    const close = text.indexOf(`)${m[1]}"`, m.index + m[0].length);
-    if (close < 0) continue;
-    const end = close + m[1].length + 2;
-    out += text.slice(at, m.index) + '""' + text.slice(m.index + 2, end).replace(/[^\n]/g, " ");
-    at = end;
-  }
-  return out + text.slice(at);
 }
 
 /** Where the attempt failed: `{ kind, line, column, token }`. */

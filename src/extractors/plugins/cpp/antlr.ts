@@ -107,7 +107,7 @@ function codeOnly(text: string): string {
 }
 
 /** What only C++ writes: a scope, a template, a namespace or a class with a base or body. */
-const CPP_ONLY = /::|\btemplate\s*<|\bnamespace\s+\w*\s*\{|\bclass\s+\w+\s*[:{]/;
+export const CPP_ONLY = /::|\btemplate\s*<|\bnamespace\s+\w*\s*\{|\bclass\s+\w+\s*[:{]/;
 
 /** A raw string's start: an optional encoding prefix, `R"`, a delimiter of up to 16 characters, `(`. */
 const RAW_STRING = /(?<![\w\\"'])(?:u8|u|U|L)?R"([^ ()\\\t\v\f\n"]{0,16})\(/g;
@@ -116,7 +116,7 @@ const RAW_STRING = /(?<![\w\\"'])(?:u8|u|U|L)?R"([^ ()\\\t\v\f\n"]{0,16})\(/g;
  * Raw strings as `""` and spaces, newlines kept so lines and columns stay the file's: their text holds anything,
  * `)"`, `#if` lines and all, which only its closing delimiter ends — what the lexer cannot match without a predicate.
  */
-function blankRawStrings(text: string): string {
+export function blankRawStrings(text: string): string {
   if (!text.includes('R"')) return text;
   let out = "";
   let at = 0;
