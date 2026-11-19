@@ -1,5 +1,6 @@
 import type { ParamInfo, PropertyInfo, RouteParamInfo } from "../../../types/analysis.js";
 import type { RequestSchemaHooks, TypeShape } from "../../../types/language-plugin.js";
+import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 /**
  * How Swift types and properties look on the wire under `Codable` (Vapor's
@@ -35,20 +36,7 @@ function splitGeneric(type: string): { name: string; args: string[] } {
 
 /** Split on `sep` outside `<>`/`[]`/`()`. */
 function splitTop(text: string, sep: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (ch === "<" || ch === "[" || ch === "(") depth++;
-    else if (ch === ">" || ch === "]" || ch === ")") depth--;
-    else if (ch === sep && depth === 0) {
-      out.push(text.slice(start, i).trim());
-      start = i + 1;
-    }
-  }
-  out.push(text.slice(start).trim());
-  return out;
+  return splitTopLevelWith(text, { sep, brackets: "<>[]()", quotes: "", trim: true, tail: "keep" });
 }
 
 /** First string argument of a decorator whose name matches: `Field(key: "x")` → `x`. */
