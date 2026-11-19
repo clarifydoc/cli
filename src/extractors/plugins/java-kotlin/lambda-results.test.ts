@@ -53,6 +53,7 @@ public interface ClubRepo { Mono<Club> findById(long id); Flux<Club> findAll(); 
 `,
       [`${PKG}/PlayerRepo.java`]: "package com.example.league;\nimport reactor.core.publisher.Flux;\npublic interface PlayerRepo { Flux<Player> findAll(); }\n",
       [`${PKG}/Season.java`]: `package com.example.league;
+import reactor.core.publisher.Mono;
 public class Season {
   public void flatThenMap(ClubRepo repo, long id) { repo.findById(id).flatMap(club -> club.promote()).map(c -> c.rename()); }
   public void mapThenFlat(ClubRepo repo) { repo.findAll().map(c -> c.league()).doOnNext(l -> l.relegate()); }
@@ -60,6 +61,9 @@ public class Season {
   public void flatAsync(ClubRepo repo) { repo.findAll().flatMap(c -> c.leagueAsync()).subscribe(l -> l.relegate()); }
   // A reference to another class's static method is no member of the element.
   public void staticRef(ClubRepo repo) { repo.findAll().map(Player::league).subscribe(l -> l.relegate()); }
+  // One name bound by two lambdas of a chain, the second after a step that is no call on its parameter: the second keeps the method-wide typing.
+  public void again() { draft(null).map(club -> club.promote()).flatMap(w -> draft(w)).flatMap(club -> { club.rename(); return draft(club); }); }
+  Mono<Club> draft(Object o) { return null; }
   // The body is not a call on the parameter: the result is unknown.
   public void opaque(ClubRepo repo) { repo.findAll().map(c -> helper(c)).subscribe(l -> l.relegate()); }
 }
@@ -76,6 +80,10 @@ public class Season {
   it("types the parameter after map by the type its body declares, also through a method reference", () => {
     expect(targets(summary, "Season.mapThenFlat", "l.relegate")).toEqual(["League.relegate"]);
     expect(targets(summary, "Season.ref", "l.relegate")).toEqual(["League.relegate"]);
+  });
+
+  it("keeps the typing a lambda parameter had when its own source cannot be read", () => {
+    expect(targets(summary, "Season.again", "club.rename")).toEqual(["Club.rename"]);
   });
 
   it("never reaches the namesake and stops where the types do not say", () => {

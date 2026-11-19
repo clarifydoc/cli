@@ -1282,8 +1282,7 @@ export interface CallInfo {
    * lambda is handed: `from` is spelled as `FunctionInfo.localTypes[].from` is (a segment `@element()` stands for the
    * element of the declared type before it), `element` says the name is the element of what `from` declares. Scoped to
    * this call, so two lambdas of one method binding one name from different sources type each. The linker types the
-   * receiver by declared types only; when it cannot, the call links nowhere through the receiver (the lambda's name
-   * hides every other binding of it).
+   * receiver by declared types only; when it cannot, the call is resolved as if the fact were absent (the method-wide `localTypes`).
    */
   receiverFrom?: { from: string; element?: true };
   /** The DI token/key that lookup named, when it named one (`container.get(TYPES.Mailer)`). */

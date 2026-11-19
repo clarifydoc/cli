@@ -357,6 +357,7 @@ export function jvmElementFacts(
       if (!n.type && callee && i === 0 && (openHere || scoped)) {
         source = openHere ? elementSourceOf(callee.node) : valueSourceOf(callee.node);
         if (source) bindSource(n.name, source);
+        else if (openHere) bindFrom(n.name, keptSource(callee.node), null);
         else bind(n.name, null);
       } else if (openHere) bindFrom(n.name, keptSource(callee!.node), null);
       else bind(n.name, type);
@@ -674,7 +675,7 @@ export function jvmElementFacts(
   // each lambda's own scope still types its calls.
   const seenFrom = new Set<string>();
   const fromOnly = fromElements.filter((f) => {
-    const key = `${f.name}\0${f.from}`;
+    const key = `${f.name}\0${f.from}\0${f.element ? 1 : 0}`;
     if (binders.has(f.name) || seenFrom.has(key)) return false;
     seenFrom.add(key);
     return true;

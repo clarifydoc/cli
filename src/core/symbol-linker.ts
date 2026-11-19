@@ -7108,8 +7108,8 @@ function resolveThroughDeclaredType(
   if (call.receiverFrom && !receiver[0]!.call && !receiver[0]!.ctor) {
     const bound = initializerPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, { from: call.receiverFrom.from, ...(call.receiverFrom.element ? { element: true as const } : {}) }, 0);
     const p = bound ? walkChain(ctx, bound, receiver.slice(1), false) : null;
-    // The lambda binds the name here: a parameter, field or method-wide local of that name is another binding.
-    return p ? linkThroughPoint(ctx, analysis, sourceFile, p, leafName, mkLink) : null;
+    const link = p ? linkThroughPoint(ctx, analysis, sourceFile, p, leafName, mkLink) : null;
+    if (link) return link;
   }
   // A parameter a nested block's own untyped declaration hides at this site (`CallInfo.boundLocally` on a dotted
   // call): its declared type is not the receiver's. A typed block element (`localTypes` with type/from) still is.
