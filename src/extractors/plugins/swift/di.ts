@@ -414,7 +414,7 @@ const TUPLE_LOCAL_RE = /^\s*(?:let|var)\s*\(([^()]*)\)\s*(?::\s*([^=]+?))?\s*=\s
 /**
  * The locals a tuple pattern binds: each plain name at its position is typed by the annotation's element, else a
  * local of the initializer call's result at that index (`fromIndex`), which the linker types through the tuple the
- * function declares. A wildcard or a nested pattern only takes up a position.
+ * function declares. A wildcard only takes up a position; a nested pattern is not read at all. A name assigned again is dropped.
  */
 function tupleLocals(names: string, annotation: string | undefined, init: string): NonNullable<FunctionInfo["localTypes"]> {
   const out: NonNullable<FunctionInfo["localTypes"]> = [];
@@ -446,7 +446,7 @@ export function extractSwiftLocalTypes(
   for (const [i, statement, last] of statementsWithLine(bodyLines, ["let", "var"])) {
     const tuple = TUPLE_LOCAL_RE.exec(statement);
     if (tuple) {
-      out.push(...tupleLocals(tuple[1]!, tuple[2]?.trim(), tuple[3]!));
+      out.push(...tupleLocals(tuple[1]!, tuple[2]?.trim(), tuple[3]!).filter((l) => !reassigned(bodyLines, l.name)));
       continue;
     }
     const m = statement.match(LOCAL_RE);
