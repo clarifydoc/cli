@@ -23,3 +23,21 @@ describe("element requests carry a column", () => {
     expect(a.dataSources.filter((d) => d.kind === "api-call").map((d) => [d.line, d.column])).toEqual([[2, 2], [3, undefined]]);
   });
 });
+
+describe("Astro and Blade element columns", () => {
+  it("keeps an Astro form's column after a frontmatter block", async () => {
+    const { astroPreprocess } = await import("../javascript/astro-hooks.js");
+    const src = `---\nconst club = "é🚗";\n---\n<div>\n  <form method="post" action="/clubs"></form>\n</div>\n`;
+    const out = astroPreprocess(src, "pages/clubs.astro") as unknown as { postExtract: (a: FileAnalysis) => void };
+    const a = blank("pages/clubs.astro");
+    a.exports = [{ name: "default", kind: "default", line: 1 }] as FileAnalysis["exports"];
+    out.postExtract(a);
+    expect(a.dataSources.filter((d) => d.kind === "api-call").map((d) => [d.name, d.line, d.column])).toEqual([["POST /clubs", 5, 2]]);
+  });
+
+  it("drops a Blade column where an echo was cut earlier on the line", async () => {
+    const { extractBladeInteractiveElements } = await import("../php/blade.js");
+    const els = extractBladeInteractiveElements(`@csrf\n  <form method="post" action="/clubs"></form>\n{{ $x }} <form method="post" action="/players"></form>`);
+    expect(els.map((e) => [e.line, e.column])).toEqual([[2, 2], [3, undefined]]);
+  });
+});
