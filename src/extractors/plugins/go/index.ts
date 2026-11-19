@@ -15,7 +15,7 @@ import { extractHumaRoutes } from "./huma.js";
 import { extractGoDataSources } from "./data-sources.js";
 import { extractGoHttpClientRegistrations } from "./http-clients.js";
 import { extractGoRequestAccess } from "./request-access.js";
-import { extractGoClasses } from "./classes.js";
+import { extractGoClasses, hideShadowedTypes } from "./classes.js";
 import { goAddressedTypes } from "./addressed-types.js";
 import { extractGoDiBindings } from "./di-bindings.js";
 import { extractGoTypeAliases } from "./type-aliases.js";
@@ -186,11 +186,17 @@ export const goSpec: RegexLangSpec = {
   extractClasses: (lines, fns) => extractGoClasses(lines, fns, parseGoParam),
   // A composite literal handed to a call names the type the callee receives (`DoReadAll(ctx, &models.Club{}, a)`).
   // Where each call's arguments come from (a parameter, a request read), for `paramColumns`.
-  postProcessFunctions: (lines, fns) => withGoArgOrigins(lines, withCompositeArgs(lines, withGoDeclaredReturns(lines, withStructLiteralCalls(lines, fns, GO_LITERALS, "//")))),
+  postProcessFunctions: (lines, fns) => {
+    const out = withGoArgOrigins(lines, withCompositeArgs(lines, withGoDeclaredReturns(lines, withStructLiteralCalls(lines, fns, GO_LITERALS, "//"))));
+    for (const fn of out) hideShadowedTypes(lines, fn);
+    return out;
+  },
   postProcessClasses: (lines, classes) => {
     for (const cls of classes) withStructLiteralCalls(lines, cls.methods, GO_LITERALS, "//");
     for (const cls of classes) withGoDeclaredReturns(lines, cls.methods);
-    return withGoArgOriginsInClasses(lines, withCompositeArgsInClasses(lines, classes));
+    const out = withGoArgOriginsInClasses(lines, withCompositeArgsInClasses(lines, classes));
+    for (const cls of out) for (const fn of cls.methods) hideShadowedTypes(lines, fn);
+    return out;
   },
 
   // wire / fx / dig interface bindings (see di-bindings.ts).

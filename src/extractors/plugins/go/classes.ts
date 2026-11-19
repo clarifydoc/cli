@@ -111,6 +111,37 @@ function statedDeclarationType(code: string, name: string, constructors?: GoCons
   return names.length === 1 ? initializerType(rhs, 0, 1, constructors) : null;
 }
 
+/** `type Match struct{…}` / `type Match interface{…}` / `type Match int` / `type Match = X` declared inside a function body. */
+const BLOCK_TYPE_DECL_RE = /(?:^|[;{])\s*type\s+([A-Za-z_]\w*)(?:\[[^\]]*\])?\s+(?:=\s*)?[\w*\[\]]/;
+
+/**
+ * A type the body declares itself (`func Shadow() { type Match struct{ n int }; m := Match{}; m.Play() }`) hides the
+ * package type of that name: the locals it types and the constructions of it are of the block's own type, which no
+ * project class stands for. They are dropped, and the locals listed as untyped so no namesake is guessed for their calls.
+ */
+export function hideShadowedTypes(lines: readonly string[], fn: FunctionInfo): void {
+  const hidden = new Set<string>();
+  for (let ln = fn.line; ln <= fn.endLine; ln++) {
+    const code = stripGoComment(lines[ln - 1] ?? "");
+    const m = BLOCK_TYPE_DECL_RE.exec(ln === fn.line ? code.slice(code.indexOf("{") + 1 || code.length) : code);
+    if (m) hidden.add(m[1]!);
+  }
+  if (hidden.size === 0) return;
+  const bare = (t: string): string => t.replace(/^[*&\[\]]+/, "").replace(/\[.*$/, "");
+  const untyped = new Set(fn.untypedLocals);
+  const kept = (fn.localTypes ?? []).filter((l) => {
+    if (!hidden.has(bare(l.type))) return true;
+    untyped.add(l.name);
+    return false;
+  });
+  if (kept.length !== (fn.localTypes ?? []).length) {
+    if (kept.length > 0) fn.localTypes = kept;
+    else delete fn.localTypes;
+    fn.untypedLocals = [...untyped];
+  }
+  fn.calls = fn.calls.filter((c) => !hidden.has(c.name) && !hidden.has(bare(c.receiverType ?? "")));
+}
+
 /**
  * A name the body declares in several blocks with different stated types (`s := NewClub()` in one `if`, `s :=
  * NewPlayer()` in the next): Go scopes each to its block, and the function-wide reading leaves the name untyped

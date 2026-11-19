@@ -99,7 +99,7 @@ function headBinds(p: Node, name: string): boolean {
 }
 
 /** The names a function's parameter list binds. */
-function paramNames(fn: Node): Set<string> {
+export function parameterNames(fn: Node): Set<string> {
   const out = new Set<string>();
   const list = fn.childForFieldName("parameters") ?? fn.childForFieldName("parameter");
   if (!list) return out;
@@ -138,7 +138,7 @@ export function parameterShadowedAt(site: Node, name: string): boolean {
     } else if (p.type === "for_statement" || p.type === "for_in_statement" || p.type === "catch_clause") {
       if (headBinds(p, name)) shadowed = true;
     } else if (FUNCTION_BOUNDARIES.has(p.type)) {
-      if (paramNames(p).has(name)) return shadowed;
+      if (parameterNames(p).has(name)) return shadowed;
       if (SYMBOL_BOUNDARIES.has(p.type) || p.parent?.type === "variable_declarator") return false;
     }
   }
@@ -166,7 +166,7 @@ function bindingScopeAt(site: Node, name: string, stop?: Node): "inner" | "modul
     } else if (p.type === "for_statement" || p.type === "for_in_statement" || p.type === "catch_clause") {
       if (headBinds(p, name)) return "inner";
     } else if (FUNCTION_BOUNDARIES.has(p.type)) {
-      if (varsOf(p).has(name) || paramNames(p).has(name)) return "inner";
+      if (varsOf(p).has(name) || parameterNames(p).has(name)) return "inner";
     }
   }
   return "none";
@@ -220,7 +220,7 @@ export function ownMemberObjectAt(site: Node, head: string, key: string): boolea
     } else if (p.type === "for_statement" || p.type === "for_in_statement" || p.type === "catch_clause") {
       if (headBinds(p, head)) return false;
     } else if (FUNCTION_BOUNDARIES.has(p.type)) {
-      if (varsOf(p).has(head) || paramNames(p).has(head)) return false;
+      if (varsOf(p).has(head) || parameterNames(p).has(head)) return false;
     }
   }
   return false;
@@ -243,7 +243,7 @@ function topLevelNames(program: Node): Set<string> {
 
 /** True where a parameter of a function enclosing `site` binds `name`: a value handed in. */
 export function boundByParameterAt(site: Node, name: string): boolean {
-  for (let p = site.parent; p && p.type !== "program"; p = p.parent) if (FUNCTION_BOUNDARIES.has(p.type) && paramNames(p).has(name)) return true;
+  for (let p = site.parent; p && p.type !== "program"; p = p.parent) if (FUNCTION_BOUNDARIES.has(p.type) && parameterNames(p).has(name)) return true;
   return false;
 }
 

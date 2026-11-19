@@ -2,7 +2,7 @@ import type { Node, Tree } from "web-tree-sitter";
 import type { CallInfo, ParamInfo, ValueCell, ValueFlowFact } from "../../../types/analysis.js";
 import { javascriptCallHooks } from "./call-hooks.js";
 import { dispatchMapCallee, dispatchMapMember } from "./dispatch-maps.js";
-import { boundAtSite, reboundBefore } from "./block-scope.js";
+import { boundAtSite, parameterNames as boundParameterNames, reboundBefore } from "./block-scope.js";
 import { heldFunction } from "./held-functions.js";
 
 /**
@@ -434,6 +434,15 @@ class Flow {
     return this.names.has(name) || (this.moduleView?.names.has(name) ?? false);
   }
 
+  /** Whether a function nested inside the walked tree (not the walked function itself) takes `n`'s name as a parameter. */
+  private boundBelowRoot(n: Node): boolean {
+    for (let p: Node | null = n.parent; p && p.id !== this.root.id; p = p.parent) {
+      if (p.type === "program") return false;
+      if (FUNCTION_VALUES.has(p.type) && boundParameterNames(p).has(n.text)) return true;
+    }
+    return false;
+  }
+
   /** The functions and cells an expression stands for. */
   refsOf(node: Node | null, depth = 0): Ref[] {
     const n = unwrap(node);
@@ -443,6 +452,8 @@ class Flow {
       case "identifier": {
         if (NOT_VALUES.has(n.text)) return [];
         if (this.names.has(n.text)) return [{ cell: { name: n.text } }];
+        // A parameter of a function expression nested in the walked scope (`this.run = function (score) {…}`) is a value handed in, never the module function of that name.
+        if (this.known.has(n.text) && this.root && this.boundBelowRoot(n)) return [];
         return this.known.has(n.text) ? [{ cell: { name: n.text }, fn: n.text }] : [];
       }
       case "member_expression": {

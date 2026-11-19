@@ -40,6 +40,7 @@ export function addDartElementTypes(fn: FunctionInfo, lines: readonly string[], 
   if (fn.endLine < fn.line) return;
   const code = lines.slice(fn.line - 1, fn.endLine).map(codeOf);
   const body = code.join("\n");
+  markShadowedClosureParams(fn, code);
   const hasIs = /\bis\b/.test(body);
   const mayCollect = fields !== null || /<|\[|\bMap\b|\bList\b|\bfor\b/.test(body);
   if (!hasIs && !mayCollect) return;
@@ -212,4 +213,58 @@ function enclosingEnd(code: readonly string[], k: number): number {
     }
   }
   return code.length - 1;
+}
+
+const CLOSURE_HEAD = /(?<![\w$.])(?:\(\s*((?:(?:dynamic|var|final)\s+)?[a-z_$][\w$]*(?:\s*,\s*(?:(?:dynamic|var|final)\s+)?[a-z_$][\w$]*)*)\s*,?\s*\)|([a-z_$][\w$]*))\s*(?:async\s*)?(=>|\{)/g;
+
+/**
+ * An untyped closure parameter named like a typed formal of the function (`void a(Club p) { xs.forEach((p) { p.save(); }); }`)
+ * is a new binding: a call on it inside the closure is on an unknown type, never on the formal's. Those calls are marked
+ * `boundLocally`, which the linker reads as "the name is bound below the formal".
+ */
+function markShadowedClosureParams(fn: FunctionInfo, code: readonly string[]): void {
+  const typed = new Set(fn.params.filter((p) => p.type).map((p) => p.name.replace(/^this\./, "")));
+  if (typed.size === 0 || !fn.calls.some((c) => c.name.includes("."))) return;
+  const body = code.join("\n");
+  const lineStart: number[] = [];
+  let at = 0;
+  for (const l of code) { lineStart.push(at); at += l.length + 1; }
+  const spans: Array<{ name: string; from: number; to: number }> = [];
+  for (const m of body.matchAll(CLOSURE_HEAD)) {
+    const names = (m[1] ?? m[2]!).split(",").map((n) => n.trim().replace(/^(?:dynamic|var|final)\s+/, "")).filter((n) => typed.has(n));
+    if (names.length === 0) continue;
+    // A closure follows an opening bracket, a comma, `=`, `:` or `return`; `if (x) {`, `void f(x) {` and `f(x) =>` do not.
+    const before = body.slice(0, m.index!).trimEnd();
+    if (before !== "" && !/[(,=:\[{;?&|>]$/.test(before) && !/\breturn$/.test(before)) continue;
+    const start = m.index! + m[0].length - (m[3] === "{" ? 1 : 0);
+    let to: number;
+    if (m[3] === "{") {
+      let depth = 0;
+      to = body.length;
+      for (let i = start; i < body.length; i++) {
+        if (body[i] === "{") depth++;
+        else if (body[i] === "}" && --depth === 0) { to = i; break; }
+      }
+    } else {
+      // An expression body ends at the `,` or `)` / `;` that leaves the bracket the closure sits in.
+      let depth = 0;
+      to = body.length;
+      for (let i = start; i < body.length; i++) {
+        const c = body[i]!;
+        if ("([{".includes(c)) depth++;
+        else if (")]}".includes(c)) { if (--depth < 0) { to = i; break; } }
+        else if ((c === "," || c === ";") && depth === 0) { to = i; break; }
+      }
+    }
+    for (const name of names) spans.push({ name, from: start, to });
+  }
+  if (spans.length === 0) return;
+  for (const call of fn.calls as CallInfo[]) {
+    const head = call.name.split(".")[0]!;
+    if (!call.name.includes(".") || call.receiverType || call.line < fn.line) continue;
+    const base = lineStart[call.line - fn.line];
+    if (base === undefined) continue;
+    const pos = base + (call.column ?? 0);
+    if (spans.some((s) => s.name === head && pos >= s.from && pos <= s.to)) call.boundLocally = true;
+  }
 }

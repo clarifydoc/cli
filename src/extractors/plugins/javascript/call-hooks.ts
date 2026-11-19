@@ -293,10 +293,13 @@ function handedArgs(node: Node): string[] | null {
   if (fn?.type !== "identifier") return null;
   let params: Set<string> | null = null;
   const param = (name: string) => (params ??= enclosingParams(node)).has(name);
+  // The parameter of a member's own function (`this.run = function (score) {…}`) is no parameter of the symbol the call
+  // belongs to, so its name cannot be read there: the argument states nothing.
+  const memberParam = (a: Node) => a.type === "identifier" && ownedByMemberFunction(node, a.text);
   // A chain the function holds itself (`api.clubs` off a local): one rooted in
   // its own parameter (`req.params.id`) is its caller's to say.
   const chain = (a: Node) => a.type === "member_expression" && /^[\w$]+(?:\.[\w$]+)+$/.test(a.text) && !a.text.startsWith("this.") && !param(a.text.slice(0, a.text.indexOf(".")));
-  const isParam = (a: Node) => a.type === "identifier" && param(a.text);
+  const isParam = (a: Node) => a.type === "identifier" && param(a.text) && !memberParam(a);
   // A hook / composable (`useTableSort(sortBy, resetPage)`): what it is handed is what its body calls by the
   // parameter's name — a function or object named by an identifier, or a callback arrow that only calls one.
   if (HOOK_NAME.test(fn.text)) {
@@ -321,6 +324,14 @@ function callbackTarget(arg: Node): string {
   if (body?.type === "await_expression") body = body.namedChild(0);
   const callee = body?.type === "call_expression" ? body.childForFieldName("function") : null;
   return callee && /^[\w$]+(?:\.[\w$]+)*$/.test(callee.text) ? `=>${callee.text}` : "";
+}
+
+/** Whether the innermost enclosing function is a function expression assigned to a member (`this.run = function (score) {…}`) taking `name` as a parameter. */
+function ownedByMemberFunction(node: Node, name: string): boolean {
+  const fn = enclosingFunctionNode(node);
+  if (!fn || (fn.type !== "function_expression" && fn.type !== "arrow_function")) return false;
+  const parent = fn.parent;
+  return parent?.type === "assignment_expression" && parent.childForFieldName("left")?.type === "member_expression" && paramNames(fn).includes(name);
 }
 
 /** Names the innermost enclosing function binds as parameters (`(key, api, { page })`). */

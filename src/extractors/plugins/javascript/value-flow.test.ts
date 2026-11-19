@@ -240,3 +240,21 @@ describe("value-flow (js): nothing held", () => {
     expect(flow(links)).toEqual([]);
   });
 });
+
+describe("value-flow (js): a member function's own parameter shadows a module function", () => {
+  const base = [
+    "function score(x) { return x; }",
+    "function apply(f, v) { return f(v); }",
+  ];
+  const reached = async (rest: string[]) => {
+    const links = buildSymbolLinks(await analyzeAll({ "src/shadow.js": [...base, ...rest, ""].join("\n") }, "javascript"));
+    return links.filter((l) => l.callName === "f" && l.targetSymbol === "score").map((l) => l.strategy);
+  };
+  it("hands the parameter on nowhere", async () => {
+    expect(await reached(["function Squad() { this.run = function (score) { return apply(score, 1); }; }"])).toEqual([]);
+  });
+  it("still hands the module function on where the name is not the parameter", async () => {
+    expect(await reached(["function handed() { return apply(score, 1); }"])).toHaveLength(1);
+    expect(await reached(["function Club() { this.run = function (other) { return apply(score, other); }; }"])).toHaveLength(1);
+  });
+});
