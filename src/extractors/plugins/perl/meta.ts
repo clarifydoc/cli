@@ -36,5 +36,7 @@ export const perlMeta: LanguagePluginMeta = {
   regexSpec: perlSpec,
   knownPackages: cpanPackages,
   builtinTypes: new Set(COMMON_PRIMITIVES),
+  // A package written `League::Club` is that class, never the `Club` of another namespace.
+  nestedTypePaths: true,
   requestSchema: perlRequestSchema,
 };

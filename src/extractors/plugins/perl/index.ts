@@ -1,4 +1,4 @@
-import type { PropertyInfo } from "../../../types/analysis.js";
+import type { FunctionInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractCatalystRoutes, extractMojoDancerRoutes, isDancerFile, isMojoliciousFile, perlRequestAccess } from "./web.js";
 
@@ -33,6 +33,39 @@ function parseMooseHas(lines: string[], i: number): PropertyInfo | null {
   return prop;
 }
 
+/**
+ * The packages a line makes parents: `use parent 'A';`, `use parent -norequire, 'A', 'B';`, `use base qw(A B);`
+ * and Moose's `extends 'A'`. The options (`-norequire`) name no package.
+ */
+function parentPackages(line: string): string[] {
+  const use = line.match(/\buse\s+(?:parent|base)\s+([^;]*)/);
+  const list = use?.[1] ?? line.match(/\bextends\s+([^;]*)/)?.[1];
+  if (list === undefined) return [];
+  const out: string[] = [];
+  for (const m of list.matchAll(/qw\s*[([{/]([^)\]}/]*)|['"]([A-Za-z_][\w:]*)['"]/g)) {
+    if (m[2]) out.push(m[2]);
+    else for (const w of m[1]!.trim().split(/\s+/)) if (/^[A-Za-z_][\w:]*$/.test(w)) out.push(w);
+  }
+  return out;
+}
+
+/** `my $club = League::Club->new(...)`: the local is a `League::Club`. */
+function perlLocalTypes(bodyLines: string[]): NonNullable<FunctionInfo["localTypes"]> {
+  const out: NonNullable<FunctionInfo["localTypes"]> = [];
+  const seen = new Set<string>();
+  for (const line of bodyLines) {
+    const m = line.match(/\b(?:my|our|local)\s+\$(\w+)\s*=\s*([A-Za-z_]\w*(?:::\w+)*)\s*->\s*new\b(?![\w:])/);
+    if (!m || m[2] === "__PACKAGE__" || seen.has(m[1]!)) continue;
+    seen.add(m[1]!);
+    out.push({ name: m[1]!, type: m[2]! });
+  }
+  return out;
+}
+
+/** A method name after `->`, not `SUPER::m` or a fully qualified `Other::m`. */
+const METHOD = String.raw`([A-Za-z_]\w*)(?![\w:])`;
+const NOT_AFTER = String.raw`(?<![\w$@%&.>:])`;
+
 export const perlSpec: RegexLangSpec = {
   language: "perl",
   extensions: [".pl", ".pm", ".t", ".psgi", ".cgi"],
@@ -62,6 +95,42 @@ export const perlSpec: RegexLangSpec = {
   /** What a Catalyst action reads from `$c->request` — see `web.ts`. */
   extractRequestAccess: perlRequestAccess,
 
+  // A script's own statements run when it is loaded.
+  topLevelCallsInTypelessFiles: true,
+  typelessSetupExcluded: /\.t$/,
+
+  extractLocalTypes: (bodyLines) => perlLocalTypes(bodyLines),
+
+  // Every call form is stated here: `Pkg->m`, `$obj->m`, `Pkg::f(`, `f(`. The baseline `name(` matcher would read
+  // `$club->sign()` as a receiver-less `sign` and bind it to the caller's own package.
+  callPatterns: [
+    {
+      // League::Club->new(...) — a call on the package; `__PACKAGE__->m` is the enclosing package's.
+      pattern: new RegExp(`${NOT_AFTER}([A-Za-z_]\\w*(?:::\\w+)*)\\s*->\\s*${METHOD}`),
+      buildName: (m) =>
+        m[1] === "__PACKAGE__" ? { name: `self.${m[2]}`, leafName: m[2]! } : { name: `${m[1]}.${m[2]}`, leafName: m[2]!, receiverType: m[1]! },
+    },
+    {
+      // $club->sign(...), $self->sign(...) — a call on a variable (without parentheses it is as likely an accessor); the linker types it from its `my $x = Pkg->new`.
+      pattern: new RegExp(`(?<![\\w$@%&])\\$(\\w+)\\s*->\\s*${METHOD}\\s*\\(`),
+      buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2]! }),
+    },
+    {
+      // League::Club::release(...) — a qualified sub.
+      pattern: new RegExp(`${NOT_AFTER}((?:[A-Za-z_]\\w*::)+[A-Za-z_]\\w*)\\s*\\(`),
+      buildName: (m) => {
+        const at = m[1]!.lastIndexOf("::");
+        return { name: `${m[1]!.slice(0, at)}.${m[1]!.slice(at + 2)}`, leafName: m[1]!.slice(at + 2), receiverType: m[1]!.slice(0, at) };
+      },
+    },
+    {
+      // release(...), &release(...) — a sub of this package.
+      pattern: /(?<![\w$@%.>:])(?<!\bsub\s+)&?([A-Za-z_]\w*)\s*\(/,
+      buildName: (m) => ({ name: m[1]!, leafName: m[1]! }),
+      replacesBaseline: true,
+    },
+  ],
+
   // Perl packages are file-scoped, not block-scoped — see `extractClasses` below.
   classPatterns: [],
 
@@ -85,11 +154,10 @@ export const perlSpec: RegexLangSpec = {
     for (const pkg of pkgs) {
       for (let i = pkg.line; i < pkg.endLine && i < lines.length; i++) {
         const line = lines[i];
-        const parentMatch = line.match(/\buse\s+(?:parent|base)\s+['"]([A-Za-z_][\w:]*)['"]/)
-          ?? line.match(/\buse\s+(?:parent|base)\s+qw\s*[([]\s*([A-Za-z_][\w:]*)/)
-          ?? line.match(/\bextends\s+['"]([A-Za-z_][\w:]*)['"]/);
-        if (parentMatch && !pkg.extends) {
-          pkg.extends = parentMatch[1];
+        const parents = parentPackages(line);
+        for (const parent of parents) {
+          if (!pkg.extends) pkg.extends = parent;
+          else if (parent !== pkg.extends && !pkg.implements.includes(parent)) pkg.implements.push(parent);
         }
         const roleMatch = line.match(/^\s*with\s+['"]([A-Za-z_][\w:]*)['"]/);
         if (roleMatch) pkg.implements.push(roleMatch[1]);
