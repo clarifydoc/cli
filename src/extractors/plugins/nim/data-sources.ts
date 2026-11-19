@@ -18,24 +18,24 @@ import { nimSqlLines } from "./source.js";
  */
 export function extractNimDataSources(lines: string[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
-  const push = (method: string, target: string | null, line: number) => {
+  const push = (method: string, target: string | null, line: number, column: number) => {
     if (!target || (!target.startsWith("/") && !/^https?:\/\//i.test(target))) return;
-    out.push({ kind: "api-call", name: `${method} ${target}`, target, calls: [], line });
+    out.push({ kind: "api-call", name: `${method} ${target}`, target, calls: [], line, column });
   };
   lines.forEach((line, i) => {
     if (/^\s*#/.test(line)) return;
     for (const m of line.matchAll(/\.(getContent|postContent|putContent|patchContent|deleteContent|downloadFile)\s*\(\s*("[^"]*"(?:\s*&\s*[^,)]+)*)/g)) {
-      push(CONTENT_VERB[m[1]!]!, urlOf(m[2]!), i + 1);
+      push(CONTENT_VERB[m[1]!]!, urlOf(m[2]!), i + 1, m.index!);
     }
     for (const m of line.matchAll(/\.request\s*\(\s*(?:url\s*=\s*)?("[^"]*"(?:\s*&\s*[^,)]+)*)([^)]*)/g)) {
-      push(/\bHttp(Get|Post|Put|Patch|Delete|Head|Options)\b/.exec(m[2]!)?.[1]?.toUpperCase() ?? "GET", urlOf(m[1]!), i + 1);
+      push(/\bHttp(Get|Post|Put|Patch|Delete|Head|Options)\b/.exec(m[2]!)?.[1]?.toUpperCase() ?? "GET", urlOf(m[1]!), i + 1, m.index!);
     }
     for (const m of line.matchAll(/\b([A-Za-z_]\w*)\.(get|post|put|patch|delete|head)\s*\(\s*("[^"]*")/g)) {
       const url = urlOf(m[3]!);
-      if (/client|http/i.test(m[1]!) || /^https?:\/\//i.test(url ?? "")) push(m[2]!.toUpperCase(), url, i + 1);
+      if (/client|http/i.test(m[1]!) || /^https?:\/\//i.test(url ?? "")) push(m[2]!.toUpperCase(), url, i + 1, m.index!);
     }
     for (const m of line.matchAll(/\bajax(Get|Post|Put|Delete|Patch)\s*\(\s*([^,)]+(?:\([^)]*\))?)/g)) {
-      push(m[1]!.toUpperCase(), karaxUri(m[2]!.trim(), lines, i), i + 1);
+      push(m[1]!.toUpperCase(), karaxUri(m[2]!.trim(), lines, i), i + 1, m.index!);
     }
   });
   return out;
