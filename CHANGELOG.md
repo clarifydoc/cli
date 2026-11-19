@@ -3,6 +3,69 @@
 User-facing changes to the `clarifydoc` CLI, its MCP server and its library exports. Earlier versions are
 recorded in the git history only.
 
+## 1.1.0 — 2026-11-19
+
+Extractor 1.674.0 → 1.708.0: every cached analysis is read again once.
+
+### Added
+
+- **`clarifydoc rules init`** drafts architecture `rules` from today's folder dependencies (each folder stays below
+  its dependents, each cycle group stays out of its cycle), shows the diff, and with `--write` merges them and writes
+  the baseline SARIF that `analyze --baseline` takes, so only new drift fails.
+- **`clarifydoc install --remove`** undoes every entry `install` wrote (MCP servers, hooks, skills, git hooks, the
+  guidance section, plugin files) in place, and refuses a damaged marker. `mcp --print-config --pin` prints an
+  `npx -y clarifydoc@<version>` entry pinned to this version.
+- **Dead code with a confidence.** Each unused export carries `confidence` and `reasons`; `analyze --min-confidence`
+  and `clarifydoc_health`'s `minConfidence` filter them. A Procfile process, a compose or Dockerfile command and a CI
+  or Makefile run line keep the files they start alive.
+- **MCP over HTTP:** `mcp --http` serves several local agents (sessions with expiry, an event stream for
+  `list_changed`, `--token-file`); stdio accepts Content-Length framing.
+- **New MCP answers:** `clarifydoc_rename_plan` (a read-only rename plan with exact spans that refuses on uncertain
+  links); `clarifydoc_data_model` lists tables and ORM entities first and an API contract's schemas as their own
+  group; every tool names the command that fixes a missing or unreadable analysis; `clarifydoc_extract` returns a
+  large class's member signatures instead of failing; `clarifydoc_impact` matches hunks on the old side and has
+  `--brief`; status shows how far the analysis is behind the commit.
+- **New facts in the output** (all optional fields): a config key and the code that reads it (`configKeys`: Spring
+  `@Value` / `@ConfigurationProperties` → `application*.yml`, a tfvars key → its `variable`, a `${ENV}` placeholder in
+  `envVars`); the column an API call filters on; `summary-head.json`, the headline view beside the summary; an
+  entity's `origin` when an API contract declares it; contract and internal flags on routes.
+- **Edges for what a framework registers by scanning:** MediatR, Mediator, MassTransit and NServiceBus handlers
+  from the call that scans their assembly, and Android activities, services, receivers and providers from
+  `AndroidManifest.xml`, so they no longer show "no callers".
+
+### Changed
+
+- **Many more calls link by type (extractor 1.675.0–1.708.0).** Receivers typed through aliases, loops,
+  narrowing, destructuring, chains, struct literals, enum bodies and `this`/`super`; Go package-level values,
+  function-literal parameters, promoted fields and embedded interfaces; Java/Kotlin/C# generic bounds
+  (`<T extends Car>`); Java/Kotlin operator lambdas over `Mono`, `Flux`, `CompletableFuture`, `Optional` and
+  `Stream` (and their results), `join`/`get`/`block`/`await`, Kotlin `let`/`also`; Dart locals from a bare call;
+  Python star-import chains and class attributes; Perl method and package-qualified calls; calls through a nested
+  type's owner path (`Right.Builder.build()`).
+- **A function value is followed to the call that runs it** (the value-flow solver, facts for twelve languages):
+  callbacks, handler maps, lambdas held in fields and lists, props handed down, and store actions.
+- **More of the screen → route → table chain:** Vue, Pinia, Vuex, Angular and React state and watchers across
+  components; Go, Express and Rails route guards and middleware; URL builders over module receivers; plain `.php`
+  pages; Node RPC handler objects (bound methods, type assertions, held objects); client bases and service config
+  for Python, Go, PHP and Ruby.
+- **Wrong links removed.** A rebound or shadowed name keeps no stale type; an import binds only what its path names
+  (PHP namespaces, Rust `crate::`, C includes with a directory, TS default exports); a C# explicit interface member
+  answers only an interface-typed call; a Go pointer-receiver method is no fan-out target for a type nobody
+  addresses; a contract schema never covers a table of the same name.
+- **Fewer false "unreachable file" findings** in JS/TS (computed imports, Vue `<script src>`, run lines,
+  `bin/`, migrations, code-generator outputs, workspace subpaths) and for serverless handlers.
+- Extension-less scripts are analyzed by their `#!` line. Non-ASCII SQL table names are read. LSIF positions are
+  converted to UTF-16 columns.
+
+### Fixed
+
+- Two ReDoS paths (glob extglobs, ERB option parsing) and the code-scanning alerts on regex escaping are closed.
+- The MCP session cap evicts a session with no open event stream first.
+
+### Dependencies
+
+- commander 15.1, web-tree-sitter 0.27.2, tsdown 0.23.7, vitest 5.1.
+
 ## 0.13.0 — 2026-11-11
 
 Extractor 1.623.0 → 1.674.0: every cached analysis is read again once.
