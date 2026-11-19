@@ -167,10 +167,10 @@ function extractJspInteractiveElements(lines: string[]): InteractiveElementInfo[
  * an api-call row at the element's line inside a one-line pseudo-function
  * named after the request (`post_account_save_do`).
  */
-function jspRequests(lines: string[]): Array<{ line: number; method: string; target: string; handler: string; form: boolean }> {
+function jspRequests(lines: string[]): Array<{ line: number; column: number; method: string; target: string; handler: string; form: boolean }> {
   const text = lines.join("\n");
   if (!/<(?:\w+:)?form\b|<a\b/i.test(text)) return [];
-  const out: Array<{ line: number; method: string; target: string; handler: string; form: boolean }> = [];
+  const out: Array<{ line: number; column: number; method: string; target: string; handler: string; form: boolean }> = [];
   const lineAt = (i: number) => text.slice(0, i).split("\n").length;
   for (const t of text.matchAll(/<((?:html|form|s|sf):form|form|a)\b((?:[^>"']|"[^"]*"|'[^']*')*)>/gi)) {
     const tag = t[1]!.toLowerCase();
@@ -187,7 +187,7 @@ function jspRequests(lines: string[]): Array<{ line: number; method: string; tar
     // A link is a request to the app only when it names an action, not a page or an asset.
     if (!form && !/\.(?:do|action|htm)$/.test(target)) continue;
     const method = (attr(attrs, "method") ?? (form ? "post" : "get")).toUpperCase();
-    out.push({ line: lineAt(t.index!), method, target, handler: handlerOf(method, target), form });
+    out.push({ line: lineAt(t.index!), column: t.index! - (text.lastIndexOf("\n", t.index! - 1) + 1), method, target, handler: handlerOf(method, target), form });
   }
   return out;
 }
@@ -285,7 +285,7 @@ export const jspSpec: RegexLangSpec = {
   extractInteractiveElements: extractJspInteractiveElements,
   // Markup requests as calls the route linker joins (see `jspRequests`).
   extractDataSources: (lines) =>
-    jspRequests(lines).map((r) => ({ kind: "api-call" as const, name: `${r.method} ${r.target}`, target: r.target, calls: [], line: r.line })),
+    jspRequests(lines).map((r) => ({ kind: "api-call" as const, name: `${r.method} ${r.target}`, target: r.target, calls: [], line: r.line, column: r.column })),
   postProcessFunctions: (lines, fns) => {
     const named = new Set(fns.map((f) => f.name));
     const extra = jspRequests(lines).filter((r) => !named.has(r.handler) && named.add(r.handler));
