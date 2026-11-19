@@ -54,21 +54,21 @@ function shellText(line: string): string | null {
 }
 
 /** curl in a `do shell script "…"` string → method + URL. */
-function shellHttp(line: string): { method: string; url: string } | null {
+function shellHttp(line: string): { method: string; url: string; column: number } | null {
   const shell = shellText(line);
   if (!shell || !/\bcurl\b/.test(shell)) return null;
   const url = /(https?:\/\/[^\s"'\\]+)/.exec(shell)?.[1];
   if (!url) return null;
   const explicit = /(?:-X|--request)\s+(\w+)/.exec(shell)?.[1];
   const method = explicit ?? (/(?:^|\s)(?:-d|--data(?:-raw|-binary)?|-F|--form)\b/.test(shell) ? "POST" : "GET");
-  return { method: method.toUpperCase(), url };
+  return { method: method.toUpperCase(), url, column: line.search(/\bdo shell script\b/i) };
 }
 
 function asDataSources(lines: string[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
   for (let i = 0; i < lines.length; i++) {
     const http = shellHttp(lines[i]!);
-    if (http) out.push({ kind: "api-call", name: `${http.method} ${http.url}`, target: http.url, calls: [], line: i + 1 });
+    if (http) out.push({ kind: "api-call", name: `${http.method} ${http.url}`, target: http.url, calls: [], line: i + 1, ...(http.column >= 0 ? { column: http.column } : {}) });
   }
   return out;
 }
