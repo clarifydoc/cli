@@ -7,6 +7,7 @@ import { ormMappingFunctions } from "./orm-mappings.js";
 import { liquibaseClasses, liquibaseImports } from "./liquibase.js";
 import { localName } from "../shared/xml-scan.js";
 import { androidNavGraphFacts } from "../shared/android-nav-graph.js";
+import { ANDROID_MANIFEST_FUNCTION, androidManifestFacts, isAndroidManifest } from "../shared/android-manifest.js";
 import { CXF_SERVER_ADDRESS_FACT, CXF_SERVICE_BEANS_FACT, cxfAddressPath, type ServerAddressFact } from "../shared/cxf-service-beans.js";
 
 /**
@@ -266,6 +267,11 @@ function fn(name: string, line: number, endLine: number, calls: CallInfo[], kind
   };
 }
 
+/** An Android manifest's one function, the source of its component edges. */
+function manifestFunctions(lines: string[]): FunctionInfo[] {
+  return isAndroidManifest(lines.join("\n")) ? [fn(ANDROID_MANIFEST_FUNCTION, 1, lines.length, [], "android-manifest")] : [];
+}
+
 /** States → functions, so flow steps join the symbol/trace graph. */
 function extractFlowFunctions(lines: string[]): FunctionInfo[] {
   const { flow } = parsedOf(lines);
@@ -484,12 +490,14 @@ export const springxmlSpec: RegexLangSpec = {
   classPatterns: [],
   importPatterns: [],
 
-  postProcessFunctions: (lines) => [...extractFlowFunctions(lines), ...mapperFunctions(lines), ...ormMappingFunctions(lines)],
+  postProcessFunctions: (lines) => [...extractFlowFunctions(lines), ...mapperFunctions(lines), ...ormMappingFunctions(lines), ...manifestFunctions(lines)],
   // MyBatis mapper statements: the table each one reads or writes (mybatis.ts).
   extractDataSources: (lines) => mapperDataSources(lines),
   extractRoutes: (lines, _classes, filePath, _functions, facts) => {
     // An Android navigation graph states its destinations and actions as a fact the Java/Kotlin resolver joins.
     if (facts) androidNavGraphFacts(lines, facts);
+    // …and a manifest the components the platform starts by name.
+    if (facts) androidManifestFacts(lines, facts);
     // CXF servers: the classes they serve become contract rows in the Java/Kotlin resolver.
     if (facts) cxfServerBeans(lines, facts);
     // …and the address each endpoint publishes them at.

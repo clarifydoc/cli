@@ -1,7 +1,11 @@
 import { extractJvmScheduledJobs } from "./scheduled-jobs.js";
 import { extractRetrofitClients } from "./retrofit.js";
 import { screenClassResolver } from "../shared/screen-classes.js";
+import { AndroidManifestComponentsResolver } from "./android-manifest-components.js";
 import { androidNavGraphResolver } from "./routes/android-nav-graph.js";
+
+/** One instance for the Java and Kotlin metas: the registry runs a shared resolver once. */
+const androidManifestComponents = new AndroidManifestComponentsResolver();
 
 /** Android's screen classes: an Activity or a Fragment, by the platform classes a project's own derive from. */
 const androidScreenClasses = screenClassResolver("android-screen-classes", ["java", "kotlin"], new Set([
@@ -107,6 +111,8 @@ function jvmMeta(language: Language, opts: {
     routes: javaKotlinRouteExtractor,
     // Spring Security's authorizeHttpRequests rules, on the routes they match.
     routeResolvers: [springInheritedGuards, jaxrsSubResourceResolver, springSecurityResolver, cxfServiceBeanResolver, cxfAddressResolver, ktorRouteFnResolver, androidScreenClasses, androidNavGraphResolver, haloGvkResolver],
+    // Components an AndroidManifest.xml starts by name.
+    dispatchResolvers: [androidManifestComponents],
     functionsClasses: jvmFunctionsClasses,
     requestSchema: jvmRequestSchema,
     grpcStubService: firstStub(jvmGrpcStub, jvmThriftStub),

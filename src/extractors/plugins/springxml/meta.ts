@@ -7,6 +7,7 @@ import { isMapperXml } from "./mybatis.js";
 import { isOrmMappingXml } from "./orm-mappings.js";
 import { isLiquibaseChangelog, LiquibaseChangelogEntities } from "./liquibase.js";
 import { isAndroidNavGraph } from "../shared/android-nav-graph.js";
+import { isAndroidManifest } from "../shared/android-manifest.js";
 
 /**
  * Spring XML (Web Flow definitions + bean definitions), MyBatis mapper XML and Android navigation graphs. Claims the whole
@@ -29,7 +30,7 @@ export const springxmlMeta: LanguagePluginMeta = {
     // Spring `<beans>` or an OSGi Blueprint `<blueprint>` container: bean classes, REST clients, CXF endpoints.
     const isBeans = /<(?:[\w-]+:)?(?:beans|blueprint)[\s>]/.test(rawSource)
       && (/<(?:[\w-]+:)?bean\b[^>]*\bclass\s*=/.test(rawSource) || /<(?:jaxrs:client|jaxrs:server|jaxws:endpoint|jaxws:server)\b/.test(rawSource));
-    if (!isFlow && !isBeans && !isMapperXml(rawSource) && !isAndroidNavGraph(rawSource) && !isOrmMappingXml(rawSource) && !isLiquibaseChangelog(rawSource)) {
+    if (!isFlow && !isBeans && !isMapperXml(rawSource) && !isAndroidNavGraph(rawSource) && !isAndroidManifest(rawSource) && !isOrmMappingXml(rawSource) && !isLiquibaseChangelog(rawSource)) {
       return { skip: "not a Spring flow/bean definition, MyBatis mapper, JPA mapping file, Liquibase changelog or Android navigation graph" };
     }
     return null;

@@ -1,3 +1,4 @@
+import { collectAssemblyScans } from "../assembly-scan.js";
 import { constantString } from "../constant-expr.js";
 import type { Node } from "web-tree-sitter";
 import type { RouteFact, RouteInfo, RouteParamBinding, RouteParamInfo, RouteResponseInfo } from "../../../../types/analysis.js";
@@ -948,6 +949,8 @@ export const csharpRouteExtractor: RouteExtractor = {
     const shell = sourceText.includes("RegisterRoute(") ? registeredShellRoutes(sourceText) : [];
     // HotChocolate root-type registrations (`AddQueryType<Query>()`), for hotChocolateResolver.
     collectHotChocolateFacts(sourceText, facts);
+    // Handlers a registration finds by scanning an assembly (`AddMediatR`, `AddConsumers`, NServiceBus endpoints).
+    if (facts) collectAssemblyScans(sourceText, facts);
     // `app.MapClubsApi().RequireAuthorization()`: a guard on the group a project method returns.
     if (facts && GROUP_CALL_GATE.test(sourceText)) collectGroupCalls(tree.rootNode, facts);
     // Cheap gate: skip the full-tree walk for files with no route attributes.

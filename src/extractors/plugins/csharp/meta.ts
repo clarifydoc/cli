@@ -26,6 +26,7 @@ import { minimalApiGroupGuards } from "./routes/minimal-api-resolver.js";
 import { fastEndpointPrefixes } from "./routes/fast-endpoint-prefixes.js";
 import { CSharpMediatrResolver } from "./dispatch.js";
 import { CSharpHangfireTriggerResolver } from "./hangfire-triggers.js";
+import { CSharpAssemblyScanResolver } from "./assembly-scan.js";
 import { CsharpUiBridgeResolver } from "./ui-bridge.js";
 import { csharpRequestSchema } from "./request-schema.js";
 import { csharpReachability } from "./reachability.js";
@@ -51,7 +52,7 @@ export const csharpMeta: LanguagePluginMeta = {
   importsExports: new CSharpImportExportExtractor(),
   dataSources: new CSharpDataSourceExtractor(),
   entities: new CSharpEntityExtractor(),
-  dispatchResolvers: [new CSharpMediatrResolver(), new CSharpHangfireTriggerResolver(), new CsharpUiBridgeResolver()],
+  dispatchResolvers: [new CSharpMediatrResolver(), new CSharpAssemblyScanResolver(), new CSharpHangfireTriggerResolver(), new CsharpUiBridgeResolver()],
   routeResolvers: [aspnetControllerInheritance, razorPageRoutes, minimalApiGroupGuards, fastEndpointPrefixes, hotChocolateResolver],
   requestSchema: csharpRequestSchema,
   grpcStubService: firstStub(csharpGrpcStub, csharpThriftStub),
