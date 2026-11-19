@@ -4,6 +4,7 @@ import { extractCalls } from "../../../shared/call-graph.js";
 import { findChildByType } from "../../../shared/node-helpers.js";
 import { applyRouteMeta, boundParam, inferredParam, pathParamNames, type GuardAttr } from "../../../shared/route-metadata.js";
 import { extractPhpRequestAccess, isServiceType, requestReceivers } from "../request-access.js";
+import { joinRootedPath } from "../../../shared/route-paths.js";
 
 /**
  * Symfony PHP-8 attribute routing:
@@ -242,10 +243,7 @@ function routeParams(method: Node, path: string, body: Node | null): RouteParamI
   return out;
 }
 
-function joinPath(prefix: string, path: string): string {
-  const parts = (prefix + "/" + path).split("/").filter(Boolean);
-  return "/" + parts.join("/");
-}
+const joinPath = (prefix: string, path: string): string => joinRootedPath([prefix, path]);
 
 export function extractSymfonyAttributeRoutes(root: Node, routes: RouteInfo[]): void {
   const visit = (node: Node): void => {
