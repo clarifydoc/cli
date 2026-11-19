@@ -10,6 +10,7 @@ import { contextIndex } from "./decisions.js";
 import type { ToolCallRecord } from "../usage.js";
 import { commitRelation, describeCommitRelation } from "../../core/source-revision.js";
 import { isTestFile } from "../../core/test-file-detector.js";
+import { ignoreSuggestionLines, ignoreSuggestions } from "../../core/ignore-suggestions.js";
 
 export interface ToolContext {
   store: AnalysisStore;
@@ -301,6 +302,8 @@ export async function statusReport(loaded: LoadedAnalysis, store: AnalysisStore)
         : `lsp: ${summary.lspStats.serversUsed.join(", ") || "none"} (${summary.lspStats.lspResolvedCount} extra links)`,
     );
   }
+  const toIgnore = ignoreSuggestionLines(ignoreSuggestions(summary.files ?? [], summary.generatedRoots), 3);
+  if (toIgnore.length) lines.push("", ...toIgnore);
   lines.push("", `analysis dir: ${store.analysisDir}`);
   // A project with no frameworks or sub-projects would otherwise leave a gap.
   return lines.filter((line, i) => line !== "" || lines[i - 1] !== "").join("\n");

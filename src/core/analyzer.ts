@@ -1797,6 +1797,11 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
     [...new Set(reachabilityModels.values())].flatMap((m) => m.manifestEntries.map((e) => e.file)),
   );
   const { generatedRoots, unusedFiles } = analyzeUnusedCode(allAnalyses, componentGraph, publicEntries);
+  {
+    // Generated and vendored folders that still hold analyzed files: entries `.clarifydocignore` could take.
+    const suggested = ignoreSuggestionLines(ignoreSuggestions(allAnalyses.map((a) => a.filePath), generatedRoots));
+    for (const line of suggested) progress.detail(`  ${line}`);
+  }
   if (unusedFiles.length > 0) {
     progress.detail(`  Unused (generated): ${unusedFiles.length} file(s) under ${generatedRoots.join(", ")}`);
   }
@@ -2413,13 +2418,13 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Who pays for each performance pattern: the routes and commands that reach it.
   const perfWithEntries = attachPatternEntries(patterns, allAnalyses, symbolLinks, allEntryPoints);
   if (perfWithEntries > 0) progress.detail(`  Performance patterns reached from an entry point: ${perfWithEntries}`);
+  // Widest reach first: what more routes and screens run is fixed before what few do (blast radius's trace impact is attached above).
+  rankPerformanceByReach(patterns, blastRadius);
   // Routes that waive authentication and write stored data.
   const anonymousWrites = anonymousWriteFindings(allRoutes, dataFlows).filter((i) => !isUnauthored(i.filePath));
   if (anonymousWrites.length > 0) {
     allSecurityIssues.push(...anonymousWrites);
     progress.detail(`  Anonymous routes that write data: ${anonymousWrites.length}`);
-  // Widest reach first: what more routes and screens run is fixed before what few do (blast radius's trace impact is attached above).
-  rankPerformanceByReach(patterns, blastRadius);
   }
   // Webhook receivers that never check the sender's signature.
   const unverifiedWebhooks = webhookRoutes.findings.filter((i) => !isUnauthored(i.filePath));
@@ -4296,6 +4301,7 @@ export function enrichLinkGraphFromComponentGraph(
 }
 
 import type { FunctionInfo, ImportInfo, RouteInfo, SubProject } from "../types/analysis.js";
+import { ignoreSuggestionLines, ignoreSuggestions } from "./ignore-suggestions.js";
 import { anonymousWriteFindings, attachFindingEntries, attachPatternEntries, filterGapFindings, rankPerformanceByReach, safeMethodWriteFindings } from "./finding-entries.js";
 import { attachOsvAdvisories } from "./osv.js";
 import { readSourceRevision } from "./source-revision.js";
