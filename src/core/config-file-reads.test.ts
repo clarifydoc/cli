@@ -18,6 +18,8 @@ const FILES: Record<string, string> = {
 `,
   "app/config/cup.yml": `rounds: 6
 `,
+  "app/static/logo.png": `x
+`,
   "app/config/unread.json": `{ "x": 1 }
 `,
   "billing/config/league.json": `{ "fee": 3 }
@@ -62,10 +64,13 @@ import os
 from pathlib import Path
 
 
+STATIC = Path("config/unread.json")
+
+
 def seed(path, club):
     a = open("config/league.json")
-    b = Path("config", "cup.yml")
-    c = os.path.join("config", "league.json")
+    b = Path("config", "cup.yml").read_text()
+    c = open(os.path.join("config", "league.json"))
     d = open(path)
     e = open(f"config/{club}")
     f = club.open("config/unread.json")
@@ -81,6 +86,8 @@ const c = fs.readFileSync(path.join(__dirname, "config", "league.json"));
 const d = cache.readFile("config/unread.json");
 const e = fs.readFileSync(\`config/\${name}\`);
 const f = fs.readFileSync(process.env.LEAGUE_FILE);
+const logo = path.join(__dirname, "..", "static", "logo.png");
+res.sendFile(logo);
 `,
 };
 
@@ -111,8 +118,8 @@ describe("config file reads", () => {
 
   it("joins a Python open and Path built from literals", () => {
     const consumers = (file: string) => row(file)?.consumers.map((c) => [c.file.split("/").pop(), c.line]) ?? [];
-    expect(consumers("app/config/league.json")).toEqual(expect.arrayContaining([["seed.py", 7], ["seed.py", 9]]));
-    expect(consumers("app/config/cup.yml")).toContainEqual(["seed.py", 8]);
+    expect(consumers("app/config/league.json")).toEqual(expect.arrayContaining([["seed.py", 10], ["seed.py", 12]]));
+    expect(consumers("app/config/cup.yml")).toContainEqual(["seed.py", 11]);
   });
 
   it("joins a JS fs read and a path.join from __dirname, and nothing for another receiver", () => {
