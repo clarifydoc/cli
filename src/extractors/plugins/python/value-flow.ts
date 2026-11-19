@@ -590,7 +590,13 @@ export function pythonValueFlow(body: Node, scope: FlowScope): Fact[] {
     for (const a of args.namedChildren) {
       if (a.type === "comment") continue;
       if (a.type === "list_splat" || a.type === "dictionary_splat") break;
-      if (a.type === "keyword_argument") continue;
+      if (a.type === "keyword_argument") {
+        // `schedule(callback=on_full_time)`: the value binds the formal of that name, never one by position.
+        const label = a.childForFieldName("name")?.text;
+        const kwFrom = label ? sourceCell(a.childForFieldName("value"), "arg", line) : null;
+        if (label && kwFrom) facts.push({ kind: "arg", call: name, line, index: -1, name: label, from: kwFrom });
+        continue;
+      }
       const from = sourceCell(a, "arg", line);
       if (from) facts.push({ kind: "arg", call: name, line, index, from });
       index++;

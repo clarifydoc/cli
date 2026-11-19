@@ -660,3 +660,33 @@ describe("Python value flow: a factory returns its own nested function (real-rep
     expect(fire.map((l) => `${l.callName} -> ${l.targetSymbol}:${l.targetLine}`)).toEqual(["handler -> _handler:10"]);
   });
 });
+
+describe("Python value flow: keyword arguments", () => {
+  const files = {
+    "league.py": [
+      "def on_full_time():",
+      "    return 1",
+      "",
+      "def on_kick_off():",
+      "    return 2",
+      "",
+      "def schedule(when=None, callback=None, **extra):",
+      "    callback()",
+      "",
+      "def by_keyword():",
+      "    schedule(callback=on_full_time)",
+      "",
+      "def reordered():",
+      "    schedule(callback=on_full_time, when=on_kick_off)",
+      "",
+      "def unknown_name():",
+      "    schedule(missing=on_kick_off)",
+      "",
+    ].join("\n"),
+  };
+  it("binds a keyword argument to the formal of that name, never by position", async () => {
+    const links = flowLinks(await analyzeAll(files));
+    expect(links).toContain("league.py::schedule@8 callback -> league.py::on_full_time");
+    expect(links.filter((l) => l.includes("on_kick_off"))).toEqual([]);
+  });
+});
