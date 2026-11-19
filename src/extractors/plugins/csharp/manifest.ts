@@ -1,4 +1,5 @@
 import { collectionElementText } from "../../shared/collection-element.js";
+import { csharpTupleElements } from "./tuple-elements.js";
 import { csharpMigrationFiles } from "./migration-files.js";
 import { dotnetProjectCommands } from "./project-commands.js";
 import { dotnetTestCommand } from "./test-command.js";
@@ -26,6 +27,8 @@ export const csharpManifest: LanguagePluginManifest = {
   language: "csharp",
   callPathsFromHead: true,
   collectionElementOf: collectionElementText,
+  // `var (club, player) = Load();` over a declared `(Club, Player)` / `(Club club, Player player)`.
+  tupleElementsOf: csharpTupleElements,
   // Blazor code-behind's `Nav.NavigateTo("orders")` and MAUI Shell's `GoToAsync("Basket")` name app-root routes.
   linksFromBase: true,
   family: "dotnet",

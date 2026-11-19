@@ -362,7 +362,7 @@ function localTypesFrom(found: Node[], scopeIds: ReadonlySet<number>, intoLambda
   const put = (name: string, entry: LocalType): void => {
     if (entry.from) {
       const calls = fromCalls.get(name) ?? new Map<string, LocalType>();
-      const key = `${entry.awaited ? "await " : ""}${entry.from}`;
+      const key = `${entry.awaited ? "await " : ""}${entry.fromIndex === undefined ? "" : `${entry.fromIndex}:`}${entry.from}`;
       // The same call under another initializer (or none) is no single choice.
       const held = calls.get(key);
       if (held && held.choice !== entry.choice) {
@@ -391,6 +391,18 @@ function localTypesFrom(found: Node[], scopeIds: ReadonlySet<number>, intoLambda
       // Any scope: a closure can reassign the local it captures.
       const left = node.childForFieldName("left");
       if (left?.type === "identifier") reassigned.add(left.text);
+      else if (left?.type === "tuple_expression" && inScope(node, scopeIds, intoLambdas)) {
+        // `(var club, var player) = Load();`: a fresh local per `var` position, typed by what the call returns.
+        const init = node.childForFieldName("right");
+        const call = init ? initializerCall(init) : null;
+        if (call) {
+          left.namedChildren.forEach((arg, index) => {
+            const decl = arg.type === "argument" ? arg.namedChild(0) : null;
+            const name = decl?.type === "declaration_expression" && decl.namedChild(0)?.type === "implicit_type" ? decl.childForFieldName("name")?.text : undefined;
+            if (name) put(name, { name, type: "", ...call, fromIndex: index });
+          });
+        }
+      }
       continue;
     }
     if (!inScope(node, scopeIds, intoLambdas)) continue;
@@ -402,6 +414,19 @@ function localTypesFrom(found: Node[], scopeIds: ReadonlySet<number>, intoLambda
         if (!implicit && !NAMED_TYPE_NODES.has(typeNode.type)) break;
         for (const decl of node.namedChildren) {
           if (decl.type !== "variable_declarator") continue;
+          const pattern = implicit ? decl.namedChildren.find((c) => c.type === "tuple_pattern") : undefined;
+          if (pattern) {
+            // `var (club, player) = Load();`: each name at its position is a local of the call's result at that
+            // index (`fromIndex`); a discard or a nested pattern only takes up a position.
+            const init = decl.namedChildren.find((c) => c.id !== pattern.id && c.type !== "bracketed_argument_list");
+            const call = init ? initializerCall(init) : null;
+            if (call) {
+              pattern.namedChildren.forEach((part, index) => {
+                if (part.type === "identifier") put(part.text, { name: part.text, type: "", ...call, fromIndex: index });
+              });
+            }
+            continue;
+          }
           const nameNode = decl.childForFieldName("name");
           const name = nameNode?.text;
           if (!name) continue;
