@@ -961,11 +961,15 @@ function extractLocalTypes(body: Node | null, language: JkLang): LocalType[] {
   // distinct call is kept (locals of one name in sibling blocks); the linker
   // types the local only when their return types agree.
   // The value is the `choice` the call is an arm of (a conditional initializer), undefined for a plain initializer.
-  const fromCalls = new Map<string, Map<string, number | undefined>>();
-  const noteFrom = (name: string, from: string, choice?: number): void => {
-    const calls = fromCalls.get(name) ?? new Map<string, number | undefined>();
+  // A destructuring position (`fromIndex`) is part of the key: `val (a, b) = load()` binds two names to two elements.
+  type FromCall = { from: string; index?: number; choice: number | undefined };
+  const fromCalls = new Map<string, Map<string, FromCall>>();
+  const noteFrom = (name: string, from: string, choice?: number, index?: number): void => {
+    const calls = fromCalls.get(name) ?? new Map<string, FromCall>();
     // The same call under another initializer (or none) is no single choice.
-    calls.set(from, calls.has(from) && calls.get(from) !== choice ? undefined : choice);
+    const key = index === undefined ? from : `${index}:${from}`;
+    const held = calls.get(key);
+    calls.set(key, { from, ...(index !== undefined ? { index } : {}), choice: held && held.choice !== choice ? undefined : choice });
     fromCalls.set(name, calls);
   };
   const push = (name: string | null | undefined, rawType: string | null | undefined, init?: Node | null) =>
@@ -1026,7 +1030,22 @@ function extractLocalTypes(body: Node | null, language: JkLang): LocalType[] {
       // never reach here — this walks a function body only).
       const { name, type } = kotlinNameAndType(n);
       const eq = n.children.findIndex((c) => c.type === "=");
-      if (eq >= 0) push(name, type, n.children[eq + 1]);
+      const pattern = n.children.find((c) => c.type === "multi_variable_declaration");
+      if (pattern && eq >= 0) {
+        // `val (club, player) = load()`: each name at its position is a local of the call's result at that index
+        // (`fromIndex`), typed by the linker through the declared `Pair`/`Triple` or the data class's properties.
+        const from = callChainText(n.children[eq + 1], language);
+        let index = -1;
+        for (const v of pattern.namedChildren) {
+          if (v.type !== "variable_declaration") continue;
+          index++;
+          const local = v.children.find((x) => x.type === "simple_identifier")?.text;
+          if (!local || local === "_") continue;
+          const written = v.children.find((x) => x.type === "user_type" || x.type === "nullable_type")?.text;
+          if (written) push(local, written);
+          else if (from) noteFrom(local, from, undefined, index);
+        }
+      } else if (eq >= 0) push(name, type, n.children[eq + 1]);
       else {
         // A local delegated property: `val repo by inject<Repo>()`, `by lazy { Repo() }`.
         const fact = n.children.some((c) => c.type === "property_delegate") ? kotlinPropertyFact(n, null) : null;
@@ -1036,7 +1055,7 @@ function extractLocalTypes(body: Node | null, language: JkLang): LocalType[] {
     for (const child of n.children) visit(child);
   };
   visit(body);
-  for (const [name, froms] of fromCalls) if (!seen.has(name)) for (const [from, choice] of froms) out.push({ name, type: "", from, ...(choice !== undefined ? { choice } : {}) });
+  for (const [name, froms] of fromCalls) if (!seen.has(name)) for (const { from, index, choice } of froms.values()) out.push({ name, type: "", from, ...(index !== undefined ? { fromIndex: index } : {}), ...(choice !== undefined ? { choice } : {}) });
   return out;
 }
 

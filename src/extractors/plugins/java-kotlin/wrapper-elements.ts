@@ -1,3 +1,4 @@
+import { genericParts } from "../shared/element-chain.js";
 import { collectionElementText } from "../../shared/collection-element.js";
 
 /**
@@ -19,4 +20,17 @@ export function jvmElementText(language: "java" | "kotlin"): (type: string | nul
     const arg = m[2]!.trim().replace(/^(?:\?\s*(?:extends|super)\s+|out\s+)/, "");
     return /^[A-Za-z_][\w.]*$/.test(arg) ? arg : null;
   };
+}
+
+/**
+ * The element types of a Kotlin `Pair<Club, Player>` / `Triple<A, B, C>` a function declares it returns, in order, for
+ * a destructuring declaration (`val (club, player) = load()`); null for any other type, a project class named
+ * `Pair` included only by its arity (two or three arguments, none a star projection).
+ */
+export function kotlinTupleElements(returnType: string): string[] | null {
+  const parts = genericParts(returnType);
+  if (!parts) return null;
+  if (parts.name === "Pair" && parts.args.length === 2) return parts.args;
+  if (parts.name === "Triple" && parts.args.length === 3) return parts.args;
+  return null;
 }

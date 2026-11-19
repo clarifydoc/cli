@@ -1,4 +1,4 @@
-import { jvmElementText } from "./wrapper-elements.js";
+import { jvmElementText, kotlinTupleElements } from "./wrapper-elements.js";
 import { jvmMigrationFiles } from "./migration-files.js";
 import { jvmProjectCommands } from "./project-commands.js";
 import { jvmTestCommand } from "./test-command.js";
@@ -139,6 +139,10 @@ export const kotlinManifest: LanguagePluginManifest = {
   callPathsFromHead: true,
   unwrapCalls: { ...JVM_UNWRAP_CALLS, await: ["Deferred"] },
   collectionElementOf: jvmElementText("kotlin"),
+  // `val (club, player) = load()` over a declared `Pair<Club, Player>` / `Triple`; over a data class, its constructor's
+  // properties in order (`componentN`).
+  tupleElementsOf: kotlinTupleElements,
+  bindsStructFields: true,
   family: "jvm",
   // A package's top-level functions need no import in its other files.
   directoryScope: true,
