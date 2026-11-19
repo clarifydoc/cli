@@ -25,6 +25,9 @@ describe("C# conditional initializer arms", () => {
         "    public string OneDeclares(bool x) { var api = x ? Clubs() : Players(); return api.Reset(); }",
         "    public string Unknown(bool x, Svc other) { var api = x ? Clubs() : other.Make(); return api.Load(); }",
         "    public string Built(bool x) { var api = x ? Clubs() : new Player(); return api.Load(); }",
+        "    public string Mixed(bool x) {",
+        "      if (x) { var api = Clubs(); return api.Load(); } else { var api = x ? Clubs() : Players(); return api.Load(); }",
+        "    }",
         "    public string Separate(bool x) {",
         "      if (x) { var w = Clubs(); return w.Load(); } else { var w = Players(); return w.Load(); }",
         "    }",
@@ -52,6 +55,9 @@ describe("C# conditional initializer arms", () => {
   });
   it("types an arm that constructs a class as that class", async () => {
     expect(await links("Svc.Built", "api.Load")).toEqual(["ClubApi.Load:AMBIGUOUS", "Player.Load:AMBIGUOUS"]);
+  });
+  it("never fans a call one declaration shares with another declaration of the name", async () => {
+    expect(await links("Svc.Mixed", "api.Load")).toEqual([]);
   });
   it("never fans separate declarations of one name", async () => {
     expect(await links("Svc.Separate", "w.Load")).toEqual([]);

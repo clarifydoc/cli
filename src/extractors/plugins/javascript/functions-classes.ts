@@ -1082,8 +1082,11 @@ function assignedArms(declarator: Node, children: readonly Node[], body: Node): 
       if (!cases.some((c) => c.type === "switch_default")) return null;
       const out: Node[][] = [];
       for (const c of cases) {
-        const own = c.namedChildren.filter((x, i) => x.type !== "comment" && !(c.type === "switch_case" && i === 0) && x.type !== "break_statement");
+        const all = c.namedChildren.filter((x, i) => x.type !== "comment" && !(c.type === "switch_case" && i === 0));
+        const own = all.filter((x) => x.type !== "break_statement");
         if (own.length === 0 && c.type === "switch_case") continue;
+        // A case that runs on into the next one is no arm of its own: its assignment is overwritten.
+        if (c.type === "switch_case" && !["break_statement", "return_statement", "throw_statement", "continue_statement"].includes(all[all.length - 1]!.type)) return null;
         out.push(own);
       }
       return out;

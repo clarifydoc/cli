@@ -1075,7 +1075,6 @@ export const PY_BUILTIN_CALLS: ReadonlySet<string> = new Set([
   "vars", "dir", "id", "hash", "format", "super", "print", "input", "object",
 ]);
 
-/** An initializer that is a call (optionally awaited), spelled for `localTypes[].from`. */
 /**
  * The calls the arms of a conditional expression make (`clubs() if x else players()`, nested ones flattened), or null
  * when the value is no conditional or an arm is no call that states no type of its own.
@@ -1099,6 +1098,7 @@ function conditionalCalls(right: Node): Array<{ from: string; awaited: boolean }
   return out;
 }
 
+/** An initializer that is a call (optionally awaited), spelled for `localTypes[].from`. */
 function initializerCall(right: Node): { from: string; awaited: boolean } | null {
   let node: Node | null = right;
   let awaited = false;

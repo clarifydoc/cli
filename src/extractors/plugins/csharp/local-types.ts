@@ -362,7 +362,14 @@ function localTypesFrom(found: Node[], scopeIds: ReadonlySet<number>, intoLambda
   const put = (name: string, entry: LocalType): void => {
     if (entry.from) {
       const calls = fromCalls.get(name) ?? new Map<string, LocalType>();
-      calls.set(`${entry.awaited ? "await " : ""}${entry.from}`, entry);
+      const key = `${entry.awaited ? "await " : ""}${entry.from}`;
+      // The same call under another initializer (or none) is no single choice.
+      const held = calls.get(key);
+      if (held && held.choice !== entry.choice) {
+        delete held.choice;
+        delete entry.choice;
+      }
+      calls.set(key, entry);
       fromCalls.set(name, calls);
       return;
     }

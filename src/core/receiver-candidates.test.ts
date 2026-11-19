@@ -81,6 +81,14 @@ describe("receivers with several candidate types", () => {
         "  }",
         "  api.getAll();",
         "}",
+        "export function fallsThrough(kind: number) {",
+        "  let api;",
+        "  switch (kind) {",
+        "    case 1: api = useClubApi();",
+        "    default: api = usePlayerApi();",
+        "  }",
+        "  api.getAll();",
+        "}",
         "export function twoIfs(a: boolean, b: boolean) {",
         "  let api;",
         "  if (a) { api = useClubApi(); }",
@@ -235,7 +243,7 @@ describe("receivers with several candidate types", () => {
     expect(shape(await linksOf("switched"), "api.getAll")).toEqual(want);
   });
   it("leaves a reassigned local untyped when its assignments are no single if/else, or it is read or written outside it", async () => {
-    for (const fn of ["twoIfs", "noElse", "readBefore", "reassignedAfter"]) {
+    for (const fn of ["fallsThrough", "twoIfs", "noElse", "readBefore", "reassignedAfter"]) {
       expect(shape(await linksOf(fn), "api.getAll")).toEqual([]);
       expect((await linksOf(fn)).some((l) => l.targetFile.includes("Garage"))).toBe(false);
     }
