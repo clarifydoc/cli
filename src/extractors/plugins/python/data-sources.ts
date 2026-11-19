@@ -710,55 +710,160 @@ function loopModels(name: string, at: Node): string[] | undefined {
     };
     scan(cur.childForFieldName("body")!);
     if (rebound) return undefined;
-    let items: Node[] = [];
     let pairs = false;
+    let names: Array<string | undefined> = [];
     if (right.type === "call") {
       const fn = right.childForFieldName("function");
       const leaf = fn?.childForFieldName("attribute")?.text;
       const obj = fn?.childForFieldName("object");
-      const literal = obj?.type === "identifier" ? moduleConstant(obj.text, cur) : obj;
-      if (fn?.type !== "attribute" || literal?.type !== "dictionary" || (leaf !== "items" && leaf !== "values")) return undefined;
-      pairs = leaf === "items";
-      right = literal;
+      if (fn?.type !== "attribute" || (leaf !== "items" && leaf !== "values")) return undefined;
+      if (obj?.type === "identifier") {
+        const held = moduleConstantClasses(obj.text, cur);
+        if (!held || held.kind !== "dictionary") return undefined;
+        pairs = leaf === "items";
+        if (targets.length !== (pairs ? 2 : 1)) return undefined;
+        if (pairs && at1 !== 1) return undefined;
+        names = held.classes;
+      } else if (obj?.type === "dictionary") {
+        pairs = leaf === "items";
+        if (targets.length !== (pairs ? 2 : 1)) return undefined;
+        if (pairs && at1 !== 1) return undefined;
+        names = obj.namedChildren.filter((c) => c.type === "pair").map((c) => classNameOf(c.childForFieldName("value")));
+      } else return undefined;
     } else if (right.type === "identifier") {
-      const literal = moduleConstant(right.text, cur);
+      const held = moduleConstantClasses(right.text, cur);
       // A bare dict walks its keys, never its classes.
-      if (!literal || literal.type === "dictionary") return undefined;
-      right = literal;
-    }
-    if (right.type === "dictionary") {
+      if (!held || held.kind === "dictionary") return undefined;
+      if (targets.length !== 1) return undefined;
+      names = held.classes;
+    } else if (right.type === "dictionary") {
       if (targets.length !== (pairs ? 2 : 1)) return undefined;
       if (pairs && at1 !== 1) return undefined;
-      items = right.namedChildren.filter((c) => c.type === "pair").map((c) => c.childForFieldName("value")!);
+      names = right.namedChildren.filter((c) => c.type === "pair").map((c) => classNameOf(c.childForFieldName("value")));
     } else if (right.type === "list" || right.type === "tuple" || right.type === "set") {
       if (targets.length !== 1) return undefined;
-      items = right.namedChildren;
+      names = right.namedChildren.map((i) => classNameOf(i));
     } else return undefined;
-    const names = items.map((i) => /^(?:[a-z_]\w*\.)*([A-Z]\w*)$/.exec(i?.text ?? "")?.[1]);
     return names.length > 0 && names.every((n): n is string => !!n) ? [...new Set(names)] : undefined;
   }
   return undefined;
 }
 
+/** `Club` / `models.Club` → the class leaf; anything else → undefined. */
+function classNameOf(node: Node | null | undefined): string | undefined {
+  return /^(?:[a-z_]\w*\.)*([A-Z]\w*)$/.exec(node?.text ?? "")?.[1];
+}
+
 /**
- * The dict, list, tuple or set a module-level `NAME = …` binds, when the module assigns the name exactly once at
- * its top level (no rebinding, no `global` write, no augmented assignment) — what a loop in any function reads.
+ * Classes a module-level `NAME = …` collection holds for a loop: the one top-level literal, plus classes a
+ * function writes into it — `global NAME; NAME = […]` / `NAME["k"] = X`, or in-place `NAME.append(X)` /
+ * `NAME.extend([…])` / `NAME.update({…})` / `NAME += […]` (the last needs `global`). A local rebind of
+ * the name without `global` is a decoy and contributes nothing. Two top-level assignments still refuse.
  */
-function moduleConstant(name: string, at: Node): Node | undefined {
+function moduleConstantClasses(name: string, at: Node): { kind: "dictionary" | "list" | "tuple" | "set"; classes: string[] } | undefined {
   let root: Node = at;
   while (root.parent) root = root.parent;
-  let found: Node | undefined;
+  let kind: "dictionary" | "list" | "tuple" | "set" | undefined;
+  const classes = new Set<string>();
   let count = 0;
+  const takeCollection = (right: Node | null | undefined, asDictValues: boolean): boolean => {
+    if (!right || (right.type !== "dictionary" && right.type !== "list" && right.type !== "tuple" && right.type !== "set")) return false;
+    kind = right.type;
+    for (const n of collectionClassNodes(right, asDictValues)) {
+      const c = classNameOf(n);
+      if (c) classes.add(c);
+    }
+    return true;
+  };
   for (const stmt of root.namedChildren) {
     const a = stmt.type === "expression_statement" ? stmt.namedChild(0) : null;
     if (a?.type !== "assignment" && a?.type !== "augmented_assignment") continue;
     if (a.childForFieldName("left")?.text !== name) continue;
     count++;
-    const right = a.type === "assignment" ? a.childForFieldName("right") : null;
-    if (right && (right.type === "dictionary" || right.type === "list" || right.type === "tuple" || right.type === "set")) found = right;
-    else found = undefined;
+    if (a.type === "assignment") {
+      if (!takeCollection(a.childForFieldName("right"), a.childForFieldName("right")?.type === "dictionary")) return undefined;
+    } else return undefined;
   }
-  return count === 1 ? found : undefined;
+  if (count !== 1 || !kind) return undefined;
+
+  const addMutations = (fn: Node): void => {
+    const body = fn.childForFieldName("body");
+    if (!body) return;
+    let hasGlobal = false;
+    const scanGlobal = (n: Node): void => {
+      if (n.type === "function_definition" || n.type === "class_definition") return;
+      if (n.type === "global_statement" && n.namedChildren.some((c) => c.type === "identifier" && c.text === name)) hasGlobal = true;
+      for (const c of n.namedChildren) scanGlobal(c);
+    };
+    scanGlobal(body);
+    // A local `NAME = …` without `global` makes every mutation in this function a decoy.
+    let localRebound = false;
+    const assignsLocal = (n: Node): boolean => {
+      if (n.type === "function_definition" || n.type === "class_definition") return false;
+      if ((n.type === "assignment" || n.type === "augmented_assignment") && n.childForFieldName("left")?.text === name && !hasGlobal) return true;
+      return n.namedChildren.some(assignsLocal);
+    };
+    if (assignsLocal(body)) return;
+
+    const walk = (n: Node): void => {
+      if (n.type === "function_definition" || n.type === "class_definition") return;
+      if (n.type === "assignment") {
+        const left = n.childForFieldName("left");
+        const right = n.childForFieldName("right");
+        if (left?.text === name && hasGlobal) {
+          takeCollection(right, right?.type === "dictionary");
+        } else if (left?.type === "subscript" && left.childForFieldName("value")?.text === name) {
+          const c = classNameOf(right);
+          if (c) classes.add(c);
+        }
+      } else if (n.type === "augmented_assignment" && n.childForFieldName("left")?.text === name && hasGlobal) {
+        const right = n.childForFieldName("right");
+        if (right && (right.type === "list" || right.type === "tuple" || right.type === "set")) {
+          for (const el of right.namedChildren) {
+            const c = classNameOf(el);
+            if (c) classes.add(c);
+          }
+        }
+      } else if (n.type === "call") {
+        const fnNode = n.childForFieldName("function");
+        if (fnNode?.type === "attribute" && fnNode.childForFieldName("object")?.text === name) {
+          const leaf = fnNode.childForFieldName("attribute")?.text;
+          const args = positional(n);
+          if (leaf === "append") {
+            const c = classNameOf(args[0]);
+            if (c) classes.add(c);
+          } else if (leaf === "extend" && args[0] && (args[0].type === "list" || args[0].type === "tuple" || args[0].type === "set")) {
+            for (const el of args[0].namedChildren) {
+              const c = classNameOf(el);
+              if (c) classes.add(c);
+            }
+          } else if (leaf === "update" && args[0]?.type === "dictionary") {
+            for (const el of collectionClassNodes(args[0], true)) {
+              const c = classNameOf(el);
+              if (c) classes.add(c);
+            }
+          }
+        }
+      }
+      for (const c of n.namedChildren) walk(c);
+    };
+    walk(body);
+  };
+
+  for (const stmt of root.namedChildren) {
+    const def = stmt.type === "decorated_definition" ? stmt.childForFieldName("definition") : stmt;
+    if (def?.type === "function_definition") addMutations(def);
+  }
+  return { kind, classes: [...classes] };
+}
+
+/** Value nodes of a dict (its pair values) or the elements of a list/tuple/set. */
+function collectionClassNodes(node: Node, asDictValues: boolean): Node[] {
+  if (asDictValues && node.type === "dictionary") {
+    return node.namedChildren.filter((c) => c.type === "pair").map((c) => c.childForFieldName("value")!).filter(Boolean);
+  }
+  if (node.type === "list" || node.type === "tuple" || node.type === "set") return [...node.namedChildren];
+  return [];
 }
 
 /** `name` is a parameter of the function enclosing `at`, which its body never assigns or loops over. */

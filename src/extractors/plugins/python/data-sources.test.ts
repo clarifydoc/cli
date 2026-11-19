@@ -822,4 +822,61 @@ describe("a loop over a module-level constant of classes", () => {
     const found = await rowsOf(src);
     expect(found.filter(([e]) => e === "Club" || e === "Car")).toEqual([]);
   });
+  it("reads classes a global write or append adds, never a local decoy", async () => {
+    const src = [...HEAD,
+      "LISTED = [Club]",
+      "FILLED = []",
+      "MAPPED = {}",
+      "",
+      "def register():",
+      "    global LISTED, FILLED, MAPPED",
+      "    LISTED = [Club, Player]",
+      "    FILLED.append(Club)",
+      "    FILLED.append(Player)",
+      '    MAPPED["clubs"] = Club',
+      '    MAPPED["players"] = Player',
+      "",
+      "def decoy():",
+      "    LISTED = [Car]",
+      "    FILLED = []",
+      "    FILLED.append(Car)",
+      "    MAPPED = {}",
+      '    MAPPED["cars"] = Car',
+      "    return LISTED, FILLED, MAPPED",
+      "",
+      "def listed(session):",
+      "    for model in LISTED:",
+      "        session.scalars(select(model))",
+      "",
+      "def filled(session):",
+      "    for model in FILLED:",
+      "        session.scalars(select(model))",
+      "",
+      "def mapped(session):",
+      "    for key, model in MAPPED.items():",
+      "        session.scalars(select(model))",
+    ].join("\n");
+    const found = await rowsOf(src);
+    const entities = found.filter(([e]) => e === "Club" || e === "Player" || e === "Car").map(([e]) => e).sort();
+    expect(entities).toEqual(["Club", "Club", "Club", "Player", "Player", "Player"]);
+  });
+  it("reads an in-place append with no global, never a same-named local append", async () => {
+    const src = [...HEAD,
+      "MODELS = [Club]",
+      "",
+      "def register():",
+      "    MODELS.append(Player)",
+      "",
+      "def decoy():",
+      "    MODELS = []",
+      "    MODELS.append(Car)",
+      "    return MODELS",
+      "",
+      "def counts(session):",
+      "    for model in MODELS:",
+      "        session.scalars(select(model))",
+    ].join("\n");
+    const found = await rowsOf(src);
+    expect(found.map(([e]) => e)).toEqual(["Club", "Player"]);
+  });
 });
