@@ -95,7 +95,7 @@ function batchDataSources(lines: string[]): DataSourceInfo[] {
         const target = (base ? url.slice(base[0].length) : url).replace(/%(\w+)%/g, "{$1}");
         const method = (/(?:-X|--request)\s+"?(\w+)/i.exec(http[1]!)?.[1] ?? (/\s(?:-d|--data\S*)\s/.test(http[1]!) ? "POST" : "GET")).toUpperCase();
         if (target.startsWith("/") || /^https?:\/\//.test(target)) {
-          const ds: DataSourceInfo = { kind: "api-call", name: `${method} ${target}`, target, calls: [], line: i + 1 };
+          const ds: DataSourceInfo = { kind: "api-call", name: `${method} ${target}`, target, calls: [], line: i + 1, column: http.index! };
           if (base) ds.baseEnv = base[1]!;
           out.push(ds);
         }
