@@ -31,7 +31,7 @@ export class OCamlDataSourceExtractor extends DataSourceExtractor {
     const url = uriOf(labeledArg(node, "url") ?? positionalArgs(node).find((a) => uriOf(a) !== null));
     if (url && (url.startsWith("/") || /^https?:\/\//.test(url))) {
       const method = m[1]!.toUpperCase();
-      sources.push(this.ds({ kind: "api-call", name: `${method} ${url}`, target: url, line: node.startPosition.row + 1 }));
+      sources.push(this.ds({ kind: "api-call", name: `${method} ${url}`, target: url, line: node.startPosition.row + 1, column: node.startPosition.column }));
     }
   }
 }
