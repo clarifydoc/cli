@@ -140,6 +140,7 @@ export function grpcClientCalls(analyses: readonly FileAnalysis[], routes: reado
           name: path ? `POST ${path}` : `${service}.${method}`,
           target: path,
           line: call.line,
+          ...(call.column !== undefined ? { column: call.column } : {}),
           calls: [],
           filePath: a.filePath,
           ...(path ? {} : { contract: { type, method } }),

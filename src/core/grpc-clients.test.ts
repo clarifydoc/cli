@@ -76,3 +76,12 @@ describe("gRPC client calls", () => {
     expect(calls.map((c) => [c.name, c.target, c.contract])).toEqual([["Greeter.SayHello", null, { type: "Greeter", method: "SayHello" }]]);
   });
 });
+
+describe("gRPC client calls column", () => {
+  it("carries the call's column when it has one", () => {
+    const c = (name: string, line: number, column?: number) => ({ name, kind: "internal", target: null, line, ...(column !== undefined ? { column } : {}) }) as unknown as CallInfo;
+    const go = { ...goFile, functions: [{ name: "main", params: [], localTypes: [{ name: "client", type: "", from: "pb.NewCarServiceClient()" }], calls: [c("pb.NewCarServiceClient", 2, 4), c("client.GetCar", 3, 9), c("client.GetCar", 4)], line: 1, endLine: 9, decorators: [], isExported: true, isAsync: false }] } as unknown as FileAnalysis;
+    const routes = [{ path: "/acme.CarService/GetCar", httpMethod: "POST", kind: "api", handler: "GetCar", contract: { type: "acme.CarService", method: "GetCar" }, calls: [], middleware: [], line: 1 }] as unknown as RouteInfo[];
+    expect(grpcClientCalls([go], routes).map((x) => [x.line, x.column])).toEqual([[3, 9], [4, undefined]]);
+  });
+});

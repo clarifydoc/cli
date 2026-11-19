@@ -150,3 +150,10 @@ describe("dropProxiedDatabaseRows — a gRPC stub call", () => {
     expect(a.dataSources.map((d) => d.name)).toEqual(["db.query"]);
   });
 });
+
+describe("clientProxyCalls column", () => {
+  it("carries the source call's column, and none when the call has none", () => {
+    const withCol = { ...caller, classes: [{ ...(caller as any).classes[0], methods: [{ name: "find", params: [], calls: [{ ...call("playerApi.getPlayer", 10), column: 12 }, call("playerApi.createPlayer", 11)] }] }] } as unknown as FileAnalysis;
+    expect(clientProxyCalls([registry, withCol]).map((c) => [c.line, c.column])).toEqual([[10, 12], [11, undefined]]);
+  });
+});

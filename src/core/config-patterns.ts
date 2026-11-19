@@ -154,7 +154,9 @@ export async function applyExtractPatterns(analyses: FileAnalysis[], projectRoot
       for (let k = 0; k < i; k++) if (text.charCodeAt(k) === 10) n++;
       return n;
     };
-    const sites = (call: string) => [...text.matchAll(regexOf(call))].map((m) => ({ line: lineAt(m.index!), args: argsAt(text, m.index! + m[0].length - 1) ?? [] }));
+    // 0-based UTF-16 column: JS string indices already count code units.
+    const columnAt = (i: number) => i - (text.lastIndexOf("\n", i - 1) + 1);
+    const sites = (call: string) => [...text.matchAll(regexOf(call))].map((m) => ({ line: lineAt(m.index!), column: columnAt(m.index!), args: argsAt(text, m.index! + m[0].length - 1) ?? [] }));
     // An access a plugin already read is the same access: confirmed, not repeated.
     const has = (kind: string, line: number, target: string) => {
       const hit = a.dataSources.find((d) => d.kind === kind && d.line === line && d.target === target);
@@ -168,7 +170,7 @@ export async function applyExtractPatterns(analyses: FileAnalysis[], projectRoot
         if (!url) continue;
         const method = p.method ?? (p.methodArg !== undefined ? literal(s.args[p.methodArg])?.toUpperCase() : undefined);
         if (has("api-call", s.line, url)) continue;
-        a.dataSources.push({ kind: "api-call", name: method ? `${method} ${url}` : p.call, target: url, line: s.line, calls: [] });
+        a.dataSources.push({ kind: "api-call", name: method ? `${method} ${url}` : p.call, target: url, line: s.line, column: s.column, calls: [] });
         counts.httpCalls++;
       }
     }

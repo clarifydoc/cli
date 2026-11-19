@@ -117,14 +117,14 @@ export function clientProxyCalls(
         const helper = returns?.size ? helperCall(call.name) : null;
         const returned = helper ? returns!.get(helper.fn) : undefined;
         if (helper && returned) {
-          out.push(contractCall(returned, helper.method, call.line, a.filePath));
+          out.push(contractCall(returned, helper.method, call.line, a.filePath, call.column));
           continue;
         }
         // `Factory.fromClient(client, PlayerApi.class).getPlayer(id)`: the plugin states the receiver's type.
         const stated = call.receiverType ? proxyOf(call.receiverType) : null;
         const statedMethod = stated ? /\.([A-Za-z_$][\w$]*)$/.exec(call.name)?.[1] : undefined;
         if (stated && statedMethod) {
-          out.push(contractCall(stated, statedMethod, call.line, a.filePath));
+          out.push(contractCall(stated, statedMethod, call.line, a.filePath, call.column));
           continue;
         }
         const parts = call.name.split(".");
@@ -137,7 +137,7 @@ export function clientProxyCalls(
         if (!type) continue;
         const method = parts[parts.length - 1]!;
         if (!/^[A-Za-z_$][\w$]*$/.test(method)) continue;
-        out.push(contractCall(type, method, call.line, a.filePath));
+        out.push(contractCall(type, method, call.line, a.filePath, call.column));
       }
     };
     /**
@@ -210,12 +210,13 @@ export function clientProxyCalls(
   return out;
 }
 
-function contractCall(type: string, method: string, line: number, filePath: string): ApiCall {
+function contractCall(type: string, method: string, line: number, filePath: string, column?: number): ApiCall {
   return {
     kind: "api-call",
     name: `${type.split(".").pop()}.${method}`,
     target: null,
     line,
+    ...(column !== undefined ? { column } : {}),
     calls: [],
     filePath,
     contract: { type, method },
