@@ -1,3 +1,4 @@
+import { boundedType, typeParameterBounds } from "./type-bounds.js";
 import { constantString } from "./constant-expr.js";
 import { attachCommandHandlers } from "./command-handlers.js";
 import type { Node } from "web-tree-sitter";
@@ -340,6 +341,9 @@ export class CSharpExtractor extends FunctionClassExtractor {
     const name = compiledName ?? node.childForFieldName("name")?.text ?? "anonymous";
     const paramsNode = node.childForFieldName("parameters");
     const params = paramsNode ? this.parseCsharpParams(paramsNode) : [];
+    // A parameter written as a constrained type parameter (`M<U>(U u) where U : Boat`, class-level `where T : Car`) is its bound.
+    const typeBounds = typeParameterBounds(node);
+    if (typeBounds.size > 0) for (const p of params) if (p.type) p.type = boundedType(p.type, typeBounds) ?? p.type;
 
     // `returns` in the current grammar (`type` in older ones); a constructor has neither.
     const returnType = (node.childForFieldName("returns") ?? node.childForFieldName("type"))?.text ?? null;
@@ -368,6 +372,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
     }
     const localTypes = this.scope?.localTypesOf(body);
     if (localTypes) fn.localTypes = localTypes;
+    if (typeBounds.size > 0) for (const l of fn.localTypes ?? []) if (l.type) l.type = boundedType(l.type, typeBounds) ?? l.type;
     // What a loop, a LINQ callback, a `catch` or an element access states (see element-types.ts).
     const elements = body && this.scope ? csharpElementFacts(node, body, params, this.scope.ownNodes(body)) : null;
     if (elements) {

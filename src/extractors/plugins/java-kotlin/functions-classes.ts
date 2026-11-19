@@ -15,6 +15,7 @@ import { javalinSparkAccess } from "./routes/javalin-spark.js";
 import { expressionFact, koinQualifier, type ExprFact } from "./di-expressions.js";
 import { withCallNarrowing } from "./call-hooks.js";
 import { typeVariableArgs } from "./arg-kinds.js";
+import { boundedType, typeParameterBounds } from "./type-bounds.js";
 import { anonymousBaseOf, anonymousClassName, anonymousRefinesDeclared, isAnonymousClassCreation, mayHoldAnonymousClass } from "./java-anonymous.js";
 import { kotlinDelegationCall, kotlinSuperConstruction } from "./kotlin-delegation.js";
 import { jvmElementFacts, kotlinInvokeCalls, outerFieldLocals } from "./element-types.js";
@@ -562,12 +563,16 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       }
     }
 
+    // A parameter written as a bounded type parameter (`<U extends Boat>`, `class G<T : Car>`) is its bound.
+    const typeBounds = typeParameterBounds(node);
+    if (typeBounds.size > 0) for (const p of params) if (p.type) p.type = boundedType(p.type, typeBounds) ?? p.type;
+
     // Kotlin extension function (`fun Band.addRow()`): the receiver is the
     // method's implicit first parameter — it is called as `band.addRow()` on
     // that type although no class of it declares `addRow`.
     if (language === "kotlin" && node.type === "function_declaration") {
       const receiver = kotlinReceiverType(node);
-      if (receiver) params.unshift({ name: "this", type: receiver, defaultValue: null, isReceiver: true });
+      if (receiver) params.unshift({ name: "this", type: boundedType(receiver, typeBounds) ?? receiver, defaultValue: null, isReceiver: true });
     }
 
     // Java: the `type` field. Kotlin names no field: the return type is the
@@ -602,6 +607,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       : vis === "public" || (node.type === "constructor_declaration");
 
     const localTypes = extractLocalTypes(body, language);
+    if (typeBounds.size > 0) for (const l of localTypes) if (l.type) l.type = boundedType(l.type, typeBounds) ?? l.type;
     // What a loop, a callback, a narrowing, a `catch` or an element access states (see element-types.ts); a name the
     // body already typed some other way keeps that type.
     const elements = body ? jvmElementFacts(node, body, language, params) : null;
