@@ -1,6 +1,7 @@
 import type { ParamInfo, RouteResponseInfo } from "../../../types/analysis.js";
 import { statusCode } from "../shared/http-status.js";
 import { escapeRegex } from "../shared/path-utils.js";
+import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 /**
  * What a Go handler answers, read off its body:
@@ -47,26 +48,7 @@ function argText(text: string, open: number): string {
 
 /** Split a call's argument text at its top-level commas. */
 function splitArgs(args: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let cur = "";
-  for (let i = 0; i < args.length; i++) {
-    const ch = args[i]!;
-    if (ch === '"') {
-      const end = args.indexOf('"', i + 1);
-      cur += args.slice(i, end + 1);
-      i = end;
-      continue;
-    }
-    if (ch === "(" || ch === "{" || ch === "[") depth++;
-    if (ch === ")" || ch === "}" || ch === "]") depth--;
-    if (ch === "," && depth === 0) {
-      out.push(cur.trim());
-      cur = "";
-    } else cur += ch;
-  }
-  if (cur.trim()) out.push(cur.trim());
-  return out;
+  return splitTopLevelWith(args, { quotes: "\"", trim: true });
 }
 
 export function extractGoResponses(bodyLines: string[], fn: { name: string; params: ParamInfo[] }): RouteResponseInfo[] {
