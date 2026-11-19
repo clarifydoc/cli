@@ -12,4 +12,5 @@ export const goStructuralMatch: StructuralMatch = {
     return k === "" || /(^|[^\w])[A-Z]\d?(?!\w)/.test(k) ? null : k;
   },
   packagePrivate: (name) => /^[a-z_]/.test(name),
+  receiverKinds: true,
 };

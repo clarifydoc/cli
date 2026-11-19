@@ -15,6 +15,7 @@ import { extractHumaRoutes } from "./huma.js";
 import { extractGoDataSources } from "./data-sources.js";
 import { extractGoRequestAccess } from "./request-access.js";
 import { extractGoClasses } from "./classes.js";
+import { goAddressedTypes } from "./addressed-types.js";
 import { extractGoDiBindings } from "./di-bindings.js";
 import { extractGoTypeAliases } from "./type-aliases.js";
 import { thriftHandlerFacts } from "../shared/thrift-handlers.js";
@@ -194,6 +195,7 @@ export const goSpec: RegexLangSpec = {
   // wire / fx / dig interface bindings (see di-bindings.ts).
   extractDiBindings: (lines) => extractGoDiBindings(lines),
   extractTypeAliases: extractGoTypeAliases,
+  extractAddressedTypes: goAddressedTypes,
   // Scheduled jobs: entry points a clock runs.
   extractEntryPoints: (lines) => extractGoScheduledJobs(lines),
 

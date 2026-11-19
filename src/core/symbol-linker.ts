@@ -4239,7 +4239,15 @@ export function buildInterfaceImplMap(
       name: string; file: string; dir: string; methods: Map<string, { name: string; line: number }>; arity: Map<string, number>;
       sigs: Map<string, MethodSignature>;
     }>();
+    // Types some file uses by address: only they carry pointer-receiver methods (a language with receiver kinds).
+    const addressed = new Set<string>();
     for (const a of analyses) {
+      for (const t of a.addressedTypes ?? []) addressed.add(t);
+      // A type embedded in another passes its methods on, through the embedding's own receiver kind: keep them all.
+      for (const cls of a.classes) for (const e of cls.embeds ?? []) addressed.add(bareSupertypeName(e));
+    }
+    for (const a of analyses) {
+      const byKind = pluginFor(a.language as Language)?.structuralMatch?.receiverKinds === true;
       // A type's method set spans its directory only where types span files (Go).
       const scope = typesSpanFiles(a.language) ? a.filePath.slice(0, a.filePath.lastIndexOf("/") + 1) : a.filePath;
       for (const cls of a.classes) {
@@ -4249,6 +4257,7 @@ export function buildInterfaceImplMap(
         if (!set) methodSets.set(key, (set = { name: cls.name, file: a.filePath, dir: dirOf(a.filePath), methods: new Map(), arity: new Map(), sigs: new Map() }));
         for (const m of cls.methods) {
           if (set.methods.has(m.name)) continue;
+          if (byKind && m.pointerReceiver && !addressed.has(cls.name)) continue;
           set.methods.set(m.name, { name: m.name, line: m.line });
           set.arity.set(m.name, m.params.length);
           set.sigs.set(m.name, signatureOf(m));

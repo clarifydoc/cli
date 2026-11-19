@@ -674,6 +674,13 @@ export interface FileAnalysis {
    */
   diBindings?: DiBinding[];
   /**
+   * The types this file uses by address — `*Club` outside a method's receiver, `&Club{…}`, `new(Club)`, `&x` of a
+   * local declared as a `Club` — as bare names. In a language whose method sets depend on the receiver kind (Go) a
+   * type no file addresses is only ever used as a value, so a pointer-receiver method is not in its method set.
+   * Omitted where the file addresses none (or the language has no such rule).
+   */
+  addressedTypes?: string[];
+  /**
    * Type aliases the file declares (TypeScript `type Repo = ClubRepository`,
    * Go `type Repo = store.ClubRepo`, C# `using Repo = League.ClubRepository;`,
    * Rust `type Repo = Arc<dyn ClubStore>;`, Python `Repo = ClubRepository` /
@@ -1524,6 +1531,8 @@ export interface FunctionInfo {
   getter?: true;
   /** A `static` method of its class: `this` inside it is the class, not an instance. Set by the JS/TS plugin; omitted otherwise. */
   isStatic?: true;
+  /** Declared on a pointer receiver (Go `func (c *Club) Sign()`): only the pointer type's method set holds it. Omitted for a value receiver and for languages without the distinction. */
+  pointerReceiver?: true;
   /**
    * The template arguments an explicit specialization names (`template<> std::string convert<std::string>(…)` →
    * `["std::string"]`), as written: a call writing the same arguments (`CallInfo.templateArgs`) reaches it.

@@ -54,7 +54,8 @@ export function extractGoClasses(lines: string[], fns: FunctionInfo[], parsePara
     if (/^\s*func\b/.test(decl)) regroupParams(fn, lines, parseParam);
     else fn.params = groupedParams(goFuncVarParams(lines, fn.line - 1, fn.name, (t) => ({ name: t.trim(), type: null, defaultValue: null })).map((p) => p.name), parseParam);
     const recv = RECEIVER_RE.exec(decl);
-    const receiver = recv && recv[3] === fn.name ? { name: recv[1], type: recv[2]! } : null;
+    const receiver = recv && recv[4] === fn.name ? { name: recv[1], type: recv[3]! } : null;
+    if (receiver && recv![2]) fn.pointerReceiver = true;
 
     const inline = goInlineBodyColumn(decl, decl.indexOf(fn.name) + fn.name.length);
     const body = lines.slice(fn.line, fn.endLine);
@@ -209,7 +210,7 @@ function typeShadowedCalls(lines: readonly string[], fn: FunctionInfo, name: str
 }
 
 /** `func (s *Svc) Run(` / `func (Svc) Name(` / `func (s *Stack[T]) Push(` → receiver var, type, method. */
-const RECEIVER_RE = /^func\s*\(\s*(?:([A-Za-z_]\w*)\s+)?\*?\s*([A-Za-z_]\w*)(?:\s*\[[^\]]*\])?\s*\)\s*([A-Za-z_]\w*)/;
+const RECEIVER_RE = /^func\s*\(\s*(?:([A-Za-z_]\w*)\s+)?(\*?)\s*([A-Za-z_]\w*)(?:\s*\[[^\]]*\])?\s*\)\s*([A-Za-z_]\w*)/;
 
 function newStub(name: string, first: FunctionInfo, stubs: Map<string, ClassInfo>): ClassInfo {
   const stub: ClassInfo = {

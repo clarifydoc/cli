@@ -2504,4 +2504,10 @@ export interface StructuralMatch {
   typeKey(type: string | null, result: boolean): string | null;
   /** The method name is visible only inside its own package (Go: lowercase first letter). */
   packagePrivate(name: string): boolean;
+  /**
+   * Method sets depend on the receiver kind (Go): a method with `FunctionInfo.pointerReceiver` belongs to the type
+   * only where some file uses the type by address (`FileAnalysis.addressedTypes`); a type only ever used as a value
+   * has the value-receiver methods alone.
+   */
+  receiverKinds?: true;
 }

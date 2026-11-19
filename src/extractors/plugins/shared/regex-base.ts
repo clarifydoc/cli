@@ -307,6 +307,8 @@ export interface RegexLangSpec {
    * `FileAnalysis.diBindings`.
    */
   extractDiBindings?: (lines: string[], filePath: string) => DiBinding[];
+  /** Types the file uses by address (Go `&Club{}`, `*Club`, `new(Club)`) → `FileAnalysis.addressedTypes`. */
+  extractAddressedTypes?: (lines: string[]) => string[];
   /** Type aliases the file declares (Go `type A = B`, Rust `type A = B;`) → `FileAnalysis.typeAliases`. */
   extractTypeAliases?: (lines: string[]) => TypeAliasInfo[];
   /** Function-like macros the file defines outside function bodies (C family `#define`) → `FileAnalysis.macros`. */
