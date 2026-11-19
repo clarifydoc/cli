@@ -323,3 +323,33 @@ describe("PHP value flow: closures held in a value", () => {
     expect(links.filter((l) => l.includes("::Club.onWhistle"))).toEqual(["Club.arm@12 callback -> src/Club.php::Club.onWhistle", "later@22 callback -> src/Club.php::Club.onWhistle"]);
   });
 });
+
+describe("PHP value flow: a closure written as an argument", () => {
+  it("named and positional closures and arrow functions reach the callee's call; a call on the closure's parameter does not", async () => {
+    const links = await flow({
+      "src/Club.php": [
+        "<?php", "class Club {",
+        "    public function onFullTime() {}",
+        "    public function onKickoff() {}",
+        "    public function onWhistle() {}",
+        "    public function onPenalty() {}",
+        "    public function decoy() {}",
+        "    public function plan($player) {",
+        "        $this->runA(callback: fn() => $this->onFullTime());",
+        "        $this->runB(function () use ($player) {",
+        "            $player->promote();",
+        "            $this->onKickoff();",
+        "        });",
+        "        $this->runC(static fn() => self::onWhistle());",
+        "        $this->runD(callback: fn($p) => $p->decoy());",
+        "    }",
+        "    public function runA(callable $callback = null) {", "        $callback();", "    }",
+        "    public function runB(callable $callback) {", "        $callback();", "    }",
+        "    public function runC(callable $callback) {", "        call_user_func($callback);", "    }",
+        "    public function runD(callable $callback = null) {", "        $callback(1);", "    }",
+        "}", "",
+      ].join("\n"),
+    });
+    expect(links.filter((l) => !l.includes("::Club.onPenalty")).map((l) => l.replace(/^Club\.run(\w)@\d+ \S+ -> src\/Club\.php::Club\./, "$1 "))).toEqual(["A onFullTime", "B onKickoff", "C onWhistle"]);
+  });
+});

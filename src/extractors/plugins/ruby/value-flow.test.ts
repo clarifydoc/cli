@@ -597,3 +597,49 @@ describe("Ruby value flow: keyword arguments", () => {
     ]);
   });
 });
+
+describe("Ruby value flow: a closure written as an argument", () => {
+  it("keyword and positional lambdas, procs and do-closures reach the callee's call; a call on the closure's parameter does not", async () => {
+    const { flow } = await links({
+      "club.rb": rb(
+        "class Club",
+        "  def on_full_time; end",
+        "  def on_kickoff; end",
+        "  def on_whistle; end",
+        "  def on_penalty; end",
+        "  def on_corner; end",
+        "  def decoy; end",
+        "  def plan(player)",
+        "    schedule_a(callback: -> { on_full_time })",
+        "    schedule_b(-> { on_kickoff })",
+        "    schedule_c(callback: proc { on_whistle })",
+        "    schedule_d(callback: lambda do",
+        "      on_penalty",
+        "    end)",
+        "    schedule_e(Proc.new { on_corner })",
+        "    schedule_f(callback: ->(p) { p.decoy })",
+        "  end",
+        "  def schedule_a(callback: nil)",
+        "    callback.call",
+        "  end",
+        "  def schedule_b(callback)",
+        "    callback.call",
+        "  end",
+        "  def schedule_c(callback: nil)",
+        "    callback.call",
+        "  end",
+        "  def schedule_d(callback: nil)",
+        "    callback.call",
+        "  end",
+        "  def schedule_e(callback)",
+        "    callback.()",
+        "  end",
+        "  def schedule_f(callback: nil)",
+        "    callback.call(1)",
+        "  end",
+        "end",
+      ),
+    });
+    expect(flow.map((l) => l.replace(/^Club\.schedule_(\w)@\d+ \S+ -> club\.rb::Club\./, "$1 "))).toEqual(["a on_full_time", "b on_kickoff", "c on_whistle", "d on_penalty", "e on_corner"]);
+  });
+});
