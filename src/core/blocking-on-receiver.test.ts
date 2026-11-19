@@ -73,6 +73,7 @@ namespace League {
   public class ClubRepo {
     public Task<Club> FindAsync(int id) { return Task.FromResult(new Club()); }
     public Club Find(int id) { return new Club(); }
+    public Task Log(Task<Club> c) { return null; }
     public Report Summary() { return new Report(); }
   }
   public class Service {
@@ -95,6 +96,13 @@ namespace League {
       var x = one.Result;
       var y = two.ContinueWith(t => t.Result);
     }
+    public async Task Ordered(Task<Club> early, Task<Club> late, Task<Club> done) {
+      var a = early.Result;
+      await Log(early);
+      await Log(late.Result.Result);
+      await done;
+      var b = done.Result;
+    }
     public async Task Typed() { var z = Task.Run(() => _repo.FindAsync(4).Result); await z; }
     public int Sync(Task<Club> param) { return param.Result.Result; }
   }
@@ -109,7 +117,7 @@ describe("C# .Result on a Task inside an async method", () => {
   const reads = (): string[] =>
     (summary.patterns ?? []).filter((p) => p.kind === "blocking-in-async").map((p) => p.detail.split(" (a property read)")[0]!).sort();
   it("flags the reads whose receiver is a Task and nothing else", () => {
-    expect(reads()).toEqual(["_pending.Result", "_repo.FindAsync().Result", "param.Result", "t.Result", "this._pending.Result"]);
+    expect(reads()).toEqual(["_pending.Result", "_repo.FindAsync().Result", "early.Result", "late.Result", "param.Result", "t.Result", "this._pending.Result"]);
   });
 });
 
