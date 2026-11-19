@@ -486,7 +486,10 @@ class FactReader {
       if (arg.type !== "value_argument") continue;
       const value = namedChildren(arg).filter((c) => c.type !== "value_argument_label").at(-1);
       const cell = value ? this.cellOfValue(value) : null;
-      if (cell) this.facts.push({ kind: "arg", call: ref.name, line: ref.line, index, from: cell });
+      // `schedule(callback: f)`: the value binds the parameter whose argument label is that name (core reads
+      // `ParamInfo.argumentLabel`), never one by position; an unlabeled argument keeps its written index.
+      const label = namedChildren(arg).find((c) => c.type === "value_argument_label")?.text;
+      if (cell) this.facts.push(label ? { kind: "arg", call: ref.name, line: ref.line, index: -1, name: label, from: cell } : { kind: "arg", call: ref.name, line: ref.line, index, from: cell });
       index++;
     }
   }

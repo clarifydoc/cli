@@ -1089,6 +1089,11 @@ export interface ParamInfo {
   type: string | null;
   defaultValue: string | null;
   /**
+   * The name a call writes for this parameter when it is not `name` (Swift's external label: `callback handler: …`
+   * is passed as `callback:`; `_` for a parameter a call names not at all). Omitted when the call writes `name`.
+   */
+  argumentLabel?: string;
+  /**
    * What a dependency-injection container is asked for when it is not the
    * declared type alone: the token or key on the parameter
    * (`@Inject(USER_REPO)`, `@Qualifier("mailNotifier")`, `@Named("x")`,

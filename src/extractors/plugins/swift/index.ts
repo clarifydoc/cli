@@ -97,9 +97,11 @@ const PROTOCOL_ONLY_RE = /\b(?:struct|enum|protocol|extension)\b/;
 function parseSwiftParam(paramText: string): ParamInfo | null {
   const text = paramText.trim();
   if (!text) return null;
-  const m = text.match(/^(?:(?:[a-zA-Z_]\w*|_)\s+)?([a-zA-Z_]\w*)\s*:\s*(?:(?:inout|borrowing|consuming)\s+)?([^=]+?)\s*(?:=\s*(.+))?$/);
+  const m = text.match(/^(?:([a-zA-Z_]\w*)\s+)?([a-zA-Z_]\w*)\s*:\s*(?:(?:inout|borrowing|consuming)\s+)?([^=]+?)\s*(?:=\s*(.+))?$/);
   if (!m) return /^[a-zA-Z_]\w*$/.test(text) ? { name: text, type: null, defaultValue: null } : null;
-  return { name: m[1]!, type: m[2]!.trim(), defaultValue: m[3]?.trim() ?? null };
+  // `callback handler: …` is called as `callback:` and read as `handler`; `_ id` takes no label at all.
+  const label = m[1];
+  return { name: m[2]!, type: m[3]!.trim(), defaultValue: m[4]?.trim() ?? null, ...(label && label !== m[2] ? { argumentLabel: label } : {}) };
 }
 
 /**

@@ -146,4 +146,38 @@ func assemble() {
     expect(links.filter((l) => l.startsWith("Lookalike.fire:"))).toEqual([]);
     expect(links.filter((l) => l.startsWith("Printer.run:"))).toEqual([]);
   });
+
+  it("binds an argument label to the parameter that label names, never by position or by internal name", async () => {
+    const analyses = await analyzeAll({
+      "Sources/Hooks.swift": `func onFullTime() {}
+func onKickoff() {}
+func onSubstitution() {}
+func onWhistle() {}
+`,
+      "Sources/Schedule.swift": `func schedule(when: Int, callback handler: @escaping () -> Void, fallback: (() -> Void)? = nil) {
+    handler()
+    fallback?()
+}
+
+func scheduleTwo(_ first: @escaping () -> Void, callback: (() -> Void)? = nil) {
+    callback?()
+    first()
+}
+
+func plan() {
+    schedule(when: 1, callback: onFullTime, fallback: onKickoff)
+    scheduleTwo(onWhistle, callback: onSubstitution)
+    schedule(when: 2, handler: onWhistle)
+}
+`,
+    });
+    const found = flow(analyses);
+    expect(found).toContain("schedule: handler -> Sources/Hooks.swift::onFullTime");
+    expect(found).toContain("schedule: fallback -> Sources/Hooks.swift::onKickoff");
+    expect(found.filter((l) => l.startsWith("schedule: handler"))).toHaveLength(1);
+    expect(found).toContain("scheduleTwo: first -> Sources/Hooks.swift::onWhistle");
+    expect(found).toContain("scheduleTwo: callback -> Sources/Hooks.swift::onSubstitution");
+    // `handler:` is the internal name, not a label a caller may write: it binds nothing.
+    expect(found.some((l) => l.endsWith("::onWhistle") && l.startsWith("schedule:"))).toBe(false);
+  });
 });

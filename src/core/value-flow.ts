@@ -529,7 +529,7 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
     if (!target) return;
     const { scope, offset } = target;
     for (const a of args ?? []) {
-      const formal = a.name !== undefined ? scope.fn!.params.find((x) => x.name === a.name) : scope.fn!.params[a.index + offset];
+      const formal = a.name !== undefined ? scope.fn!.params.find((x) => (x.argumentLabel ?? x.name) === a.name) : scope.fn!.params[a.index + offset];
       if (!formal || formal.variadic) continue;
       addEdge(a.cell, cellOfKey(`L\0${scope.file}\0${scope.symbol}\0${formal.name}`));
       // An object handed to a formal declared as a class or interface: its members are the members of that type, for every reader of it.
