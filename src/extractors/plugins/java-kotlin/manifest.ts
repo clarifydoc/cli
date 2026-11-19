@@ -1,4 +1,4 @@
-import { collectionElementText } from "../../shared/collection-element.js";
+import { jvmElementText } from "./wrapper-elements.js";
 import { jvmMigrationFiles } from "./migration-files.js";
 import { jvmProjectCommands } from "./project-commands.js";
 import { jvmTestCommand } from "./test-command.js";
@@ -104,7 +104,7 @@ export const javaManifest: LanguagePluginManifest = {
   callPathsFromHead: true,
   // No `await`: the value comes out of a future, a `Mono` or an `Optional` through these calls.
   unwrapCalls: JVM_UNWRAP_CALLS,
-  collectionElementOf: collectionElementText,
+  collectionElementOf: jvmElementText("java"),
   family: "jvm",
   packageManagers: [mavenPackageManager, gradlePackageManager],
   packageEcosystems: ["maven"],
@@ -138,7 +138,7 @@ export const kotlinManifest: LanguagePluginManifest = {
   language: "kotlin",
   callPathsFromHead: true,
   unwrapCalls: { ...JVM_UNWRAP_CALLS, await: ["Deferred"] },
-  collectionElementOf: collectionElementText,
+  collectionElementOf: jvmElementText("kotlin"),
   family: "jvm",
   // A package's top-level functions need no import in its other files.
   directoryScope: true,

@@ -44,7 +44,8 @@ const KOTLIN_COLLECTIONS = set(
 const MAPS = set(
   "Map", "HashMap", "TreeMap", "LinkedHashMap", "SortedMap", "NavigableMap", "ConcurrentMap", "ConcurrentHashMap", "MutableMap",
 );
-const OPTIONALS = set("Optional", "Mono");
+const JAVA_OPTIONALS = set("Optional", "Mono", "CompletableFuture", "CompletionStage");
+const KOTLIN_OPTIONALS = set("Optional", "Mono", "Deferred");
 
 function parseType(language: JkLang): ChainRules["parseType"] {
   const collections = language === "java" ? JAVA_COLLECTIONS : KOTLIN_COLLECTIONS;
@@ -54,7 +55,7 @@ function parseType(language: JkLang): ChainRules["parseType"] {
     if (g.name === "[]") return { kind: "coll", elem: g.args[0]! };
     if (collections.has(g.name) && g.args.length === 1) return { kind: "coll", elem: g.args[0]! };
     if (MAPS.has(g.name) && g.args.length === 2) return { kind: "map", elem: g.args[1]!, key: g.args[0]! };
-    if (OPTIONALS.has(g.name) && g.args.length === 1) return { kind: "optional", elem: g.args[0]! };
+    if ((language === "java" ? JAVA_OPTIONALS : KOTLIN_OPTIONALS).has(g.name) && g.args.length === 1) return { kind: "optional", elem: g.args[0]! };
     return null;
   };
 }
@@ -64,7 +65,7 @@ const JAVA_RULES: ChainRules = {
   classOf,
   elementOf: set("get", "getFirst", "getLast", "removeFirst", "removeLast", "peek", "poll", "pop", "first", "last", "element", "next", "peekFirst", "peekLast", "pollFirst", "pollLast"),
   mapValueOf: set("get", "getOrDefault", "computeIfAbsent"),
-  keeps: set("stream", "parallelStream", "filter", "sorted", "distinct", "limit", "skip", "peek", "toList", "reversed", "subList", "takeWhile", "dropWhile", "iterator", "listIterator"),
+  keeps: set("stream", "parallelStream", "filter", "sorted", "distinct", "limit", "skip", "peek", "toList", "reversed", "subList", "takeWhile", "dropWhile", "iterator", "listIterator", "doOnNext", "doOnSuccess"),
   toOptional: set("findFirst", "findAny", "min", "max"),
   optionalValue: set("get", "orElseThrow", "orElse", "orElseGet", "block"),
   values: set("values"),
@@ -75,9 +76,14 @@ const JAVA_RULES: ChainRules = {
     ["forEach", [0]], ["filter", [0]], ["map", [0]], ["flatMap", [0]], ["anyMatch", [0]], ["allMatch", [0]], ["noneMatch", [0]],
     ["peek", [0]], ["removeIf", [0]], ["takeWhile", [0]], ["dropWhile", [0]], ["mapToInt", [0]], ["mapToLong", [0]],
     ["mapToDouble", [0]], ["forEachOrdered", [0]], ["sorted", [0, 1]], ["max", [0, 1]], ["min", [0, 1]], ["doOnNext", [0]],
+    ["flatMapMany", [0]], ["concatMap", [0]], ["doOnSuccess", [0]], ["subscribe", [0]], ["thenApply", [0]], ["thenAccept", [0]],
+    ["thenCompose", [0]], ["ifPresent", [0]], ["ifPresentOrElse", [0]],
   ]),
   mapCallbacks: new Map<string, readonly number[]>([["forEach", [1]], ["computeIfPresent", [1]], ["replaceAll", [1]]]),
-  optionalCallbacks: set("ifPresent", "ifPresentOrElse", "map", "filter", "flatMap"),
+  optionalCallbacks: set(
+    "ifPresent", "ifPresentOrElse", "map", "filter", "flatMap", "flatMapMany", "concatMap", "doOnNext", "doOnSuccess", "subscribe",
+    "thenApply", "thenAccept", "thenCompose",
+  ),
   valueCallbacks: set(),
 };
 
@@ -109,7 +115,7 @@ const KOTLIN_RULES: ChainRules = {
     ["maxByOrNull", [0]], ["minByOrNull", [0]], ["sortedBy", [0]], ["sortedByDescending", [0]], ["groupBy", [0]],
     ["associateBy", [0]], ["associate", [0]], ["flatMap", [0]], ["takeWhile", [0]], ["dropWhile", [0]], ["partition", [0]],
     ["onEach", [0]], ["distinctBy", [0]], ["removeIf", [0]], ["forEachIndexed", [1]], ["mapIndexed", [1]], ["filterIndexed", [1]],
-    ["onEachIndexed", [1]], ["sortedWith", [0, 1]],
+    ["onEachIndexed", [1]], ["sortedWith", [0, 1]], ["collect", [0]],
   ]),
   mapCallbacks: new Map<string, readonly number[]>([["forEach", [1]]]),
   optionalCallbacks: set("ifPresent", "map", "filter", "flatMap"),
@@ -331,12 +337,13 @@ export function jvmElementFacts(
     const names = lambdaNames(lambda);
     const callee = lambdaCallee(lambda);
     const found = callee ? callbackElement(callee.receiver, callee.method, rootState, rules) : null;
-    // A callback of a collection the body does not type: the elements of what its receiver reads.
+    // A callback of a collection the body does not type: the elements of what its receiver reads — past the steps
+    // that keep the element (`repo.findAll().filter(…).doOnNext(c -> …)` reads `repo.findAll()`).
     const open = !found && callee && (rules.callbacks.get(callee.method)?.length ?? 0) > 0 && !(rules.mapCallbacks.has(callee.method) && callee.method !== "forEach");
     names.forEach((n, i) => {
       const openHere = !n.type && !!open && !!callee && rules.callbacks.get(callee.method)!.includes(i);
       const type = n.type ?? (found && found.positions.includes(i) ? found.type : null);
-      if (openHere) bindFrom(n.name, callee!.node, null);
+      if (openHere) bindFrom(n.name, keptSource(callee!.node), null);
       else bind(n.name, type);
       if (n.name) {
         lambdaScopes.push({
@@ -359,6 +366,27 @@ export function jvmElementFacts(
       if (!best || (before(best.from, sc.from) && before(sc.to, best.to))) best = sc;
     }
     return best ? best.type : undefined;
+  };
+
+  /** The call a chain's element comes from: trailing element-keeping operators (`filter`, `stream`, `doOnNext`) peeled off. */
+  const keptSource = (node: Node): Node => {
+    let cur = node;
+    for (let guard = 0; guard < 16; guard++) {
+      let inner: Node | null = null;
+      let name: string | undefined;
+      if (language === "java" && cur.type === "method_invocation") {
+        inner = cur.childForFieldName("object");
+        name = cur.childForFieldName("name")?.text;
+      } else if (language === "kotlin" && cur.type === "call_expression") {
+        const callee = cur.child(0);
+        const last = callee?.type === "navigation_expression" ? callee.namedChildren[callee.namedChildCount - 1] : undefined;
+        name = last?.type === "navigation_suffix" ? last.namedChildren.find((c) => c.type === "simple_identifier")?.text : undefined;
+        inner = callee?.type === "navigation_expression" ? callee.child(0) : null;
+      }
+      if (!inner || !name || !rules.keeps.has(name)) return cur;
+      cur = inner;
+    }
+    return cur;
   };
 
   const regionOf = (check: Node): Node | null => {
@@ -549,7 +577,13 @@ export function jvmElementFacts(
 
   // A name one lambda types and another binds from a collection the body does not type gets no method-wide type:
   // each lambda's own scope still types its calls.
-  const fromOnly = fromElements.filter((f) => !binders.has(f.name));
+  const seenFrom = new Set<string>();
+  const fromOnly = fromElements.filter((f) => {
+    const key = `${f.name}\0${f.from}`;
+    if (binders.has(f.name) || seenFrom.has(key)) return false;
+    seenFrom.add(key);
+    return true;
+  });
   for (const f of fromElements) binders.get(f.name)?.add(null);
   const locals: LocalType[] = [];
   for (const [name, types] of binders) {
