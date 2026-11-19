@@ -33,6 +33,31 @@ describe("Spring XML client proxies", () => {
     ]);
   });
 
+  it("reads a prefixed bean of a prefixed root, and no other namespace's tag, nor a commented bean", () => {
+    expect(proxies(`<beans:beans xmlns="http://www.springframework.org/schema/mvc"
+    xmlns:beans="http://www.springframework.org/schema/beans" xmlns:util="http://www.springframework.org/schema/util">
+  <!--
+  <beans:bean id="old" class="com.acme.ClientFactory" factory-method="create">
+    <beans:constructor-arg type="java.lang.Class" value="com.acme.api.OldApi"/>
+    <beans:constructor-arg value="http://old:8080"/>
+  </beans:bean>
+  -->
+  <beans:bean id="playerApi" class="com.acme.LeagueRestClientFactory" factory-method="create">
+    <beans:constructor-arg><beans:value type="java.lang.Class">com.acme.api.PlayerApi</beans:value></beans:constructor-arg>
+    <beans:constructor-arg><beans:value type="java.lang.String">\${player.service.url}</beans:value></beans:constructor-arg>
+  </beans:bean>
+  <util:map id="decoy" class="com.acme.ClientFactory" factory-method="create">
+    <util:bean><util:constructor-arg type="java.lang.Class" value="com.acme.api.CarsApi"/></util:bean>
+  </util:map>
+  <util:bean id="decoy2" class="com.acme.ClientFactory" factory-method="create">
+    <util:constructor-arg type="java.lang.Class" value="com.acme.api.CarsApi"/>
+    <util:constructor-arg value="http://cars:8080"/>
+  </util:bean>
+</beans:beans>`)).toEqual([
+      { client: "com.acme.api.PlayerApi", scope: "project", proxyOf: "com.acme.api.PlayerApi", base: { kind: "config", key: "player.service.url" } },
+    ]);
+  });
+
   it("reads nothing into a factory with no address, or one handed two types", () => {
     expect(proxies(`<beans>
   <bean id="mapper" class="com.acme.MapperFactory" factory-method="create">
