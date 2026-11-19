@@ -72,6 +72,16 @@ def seed(path, club):
     g = open("config/missing.json", "r")
     return json.load(a), b, c, d, e, f, g
 `,
+  "app/web/server.js": `const fs = require("fs");
+const path = require("path");
+
+const a = JSON.parse(fs.readFileSync("./config/league.json", "utf8"));
+const b = fs.readFileSync(path.join(__dirname, "..", "config", "cup.yml"));
+const c = fs.readFileSync(path.join(__dirname, "config", "league.json"));
+const d = cache.readFile("config/unread.json");
+const e = fs.readFileSync(\`config/\${name}\`);
+const f = fs.readFileSync(process.env.LEAGUE_FILE);
+`,
 };
 
 async function scan(files: Record<string, string>): Promise<{ dir: string; summary: ProjectAnalysis }> {
@@ -103,6 +113,12 @@ describe("config file reads", () => {
     const consumers = (file: string) => row(file)?.consumers.map((c) => [c.file.split("/").pop(), c.line]) ?? [];
     expect(consumers("app/config/league.json")).toEqual(expect.arrayContaining([["seed.py", 7], ["seed.py", 9]]));
     expect(consumers("app/config/cup.yml")).toContainEqual(["seed.py", 8]);
+  });
+
+  it("joins a JS fs read and a path.join from __dirname, and nothing for another receiver", () => {
+    const consumers = (file: string) => row(file)?.consumers.filter((c) => c.file.endsWith("server.js")).map((c) => c.line);
+    expect(consumers("app/config/league.json")).toEqual([4]);
+    expect(consumers("app/config/cup.yml")).toEqual([5]);
   });
 
   it("joins nothing for a variable, a concatenation, an absolute path or a file the analysis lacks", () => {

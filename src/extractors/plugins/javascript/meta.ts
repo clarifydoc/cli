@@ -1,3 +1,4 @@
+import { extractJavaScriptFilePathReads } from "./file-path-reads.js";
 import { screenTableResolver } from "./routes/screen-tables.js";
 import { extractAttributeReads } from "./attribute-reads.js";
 import { extractBrowserNavigations } from "./browser-navigations.js";
@@ -251,6 +252,7 @@ const DB_CALL_ROOTS = [
 function astHooks(language: Language): AstExtractorHooks {
   return {
     taint: javascriptTaint,
+    filePathReads: extractJavaScriptFilePathReads,
     typeReferences: (tree, filePath) => extractTsTypeReferences(tree, language, filePath),
     interactiveElements: (tree, sourceText) => [
       ...extractInteractiveElements(tree, sourceText, language),
