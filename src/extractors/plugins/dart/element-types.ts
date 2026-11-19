@@ -101,6 +101,7 @@ export function addDartElementTypes(fn: FunctionInfo, lines: readonly string[], 
       }
     }
     addAccessCalls(fn, code, lists, maps);
+    addLoopBinderCalls(fn, code, lists);
   }
   if (hasIs) addNarrowedCalls(fn, code);
 
@@ -108,6 +109,66 @@ export function addDartElementTypes(fn: FunctionInfo, lines: readonly string[], 
     const typedNames = new Set(extra.map((e) => e.name));
     const keep = (fn.localTypes ?? []).filter((l) => l.type || !typedNames.has(l.name));
     fn.localTypes = uniqueLocals([...keep, ...extra]);
+  }
+}
+
+/**
+ * A loop variable that a later (or earlier) declaration of the same name in the function shares
+ * (`for (final c in players) { c.save(); } … final c = Boat(); c.save();`): each call on the name takes the type
+ * of the binding whose scope holds its line — the loop's element inside the loop, the declaration's construction
+ * after it. The call extractor keeps one call per name, so the others are added where the source has them. A name whose other bindings state no one type is left as it was.
+ */
+function addLoopBinderCalls(fn: FunctionInfo, code: readonly string[], lists: ReadonlyMap<string, string>): void {
+  const loops: Array<{ name: string; element: string; from: number; to: number }> = [];
+  for (let k = 0; k < code.length; k++) {
+    const head = /\bfor\s*\(\s*(?:final\s+|var\s+)?(?:[A-Z][\w<>?,. ]*?\s+)?([a-z_$]\w*)\s+in\s+(?:this\s*\.\s*)?([a-z_$]\w*)\s*\)/.exec(code[k]!);
+    if (!head) continue;
+    const element = lists.get(head[2]!);
+    if (!element) continue;
+    const rest = code[k]!.slice(head.index + head[0].length).trim();
+    const to = rest.startsWith("{") || rest === "" ? fn.line + blockEnd(code, rest === "" && !(code[k + 1] ?? "").trim().startsWith("{") ? k + 1 : k) : fn.line + k;
+    loops.push({ name: head[1]!, element, from: fn.line + k, to });
+  }
+  if (loops.length === 0) return;
+  const declared = new Map<string, Array<{ type: string; line: number }>>();
+  const declare = new RegExp(String.raw`^\s*(?:(?:final|late|const|var)\s+)*(?:(?:new\s+)?([A-Z]\w*)(?:<[^;=()]*>)?\??\s+)?([a-z_$]\w*)\s*=\s*(?:const\s+|new\s+)?([A-Z]\w*)\s*[(.]`);
+  code.forEach((line, k) => {
+    const m = declare.exec(line);
+    if (m && /^\s*(?:final|late|const|var|[A-Z])/.test(line)) {
+      const type = m[1] ?? m[3]!;
+      (declared.get(m[2]!) ?? declared.set(m[2]!, []).get(m[2]!)!).push({ type, line: fn.line + k });
+    }
+  });
+  const inLoop = (name: string, line: number) => loops.filter((l) => l.name === name && line >= l.from && line <= l.to);
+  const have = new Set(fn.calls.map((c) => `${c.line}:${c.name}`));
+  for (const name of new Set(loops.map((l) => l.name))) {
+    // One binding in scope outside the loops, stating one type; a parameter of that name is no declaration here.
+    const decls = declared.get(name) ?? [];
+    const types = new Set(decls.map((d) => d.type));
+    if (decls.length === 0 || types.size !== 1 || fn.params.some((p) => p.name.replace(/^this\./, "") === name)) continue;
+    const type = decls[0]!.type;
+    const first = Math.min(...decls.map((d) => d.line));
+    const scopeOf = (line: number): string | null => {
+      const loop = inLoop(name, line);
+      if (loop.length > 0) return loop[0]!.element;
+      return line > first ? type : null;
+    };
+    for (const call of fn.calls as CallInfo[]) {
+      if (call.receiverType || call.name.split(".").length !== 2 || call.name.split(".")[0] !== name) continue;
+      const t = scopeOf(call.line);
+      if (t) call.receiverType = t;
+    }
+    code.forEach((line, k) => {
+      const ln = fn.line + k;
+      const t = scopeOf(ln);
+      if (!t || ln === first) return;
+      for (const m of line.matchAll(new RegExp(String.raw`(?<![\w$.])${escapeRegex(name)}\s*[?!]?\.\s*([A-Za-z_$]\w*)\s*\(`, "g"))) {
+        const callName = `${name}.${m[1]}`;
+        if (have.has(`${ln}:${callName}`)) continue;
+        have.add(`${ln}:${callName}`);
+        fn.calls.push({ name: callName, kind: "internal", target: null, line: ln, column: m.index!, receiverType: t });
+      }
+    });
   }
 }
 
