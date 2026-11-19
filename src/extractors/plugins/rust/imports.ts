@@ -1,4 +1,5 @@
 import type { ImportInfo } from "../../../types/analysis.js";
+import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 /**
  * Rust `use` declarations, whole: a declaration may span lines and nest braces
@@ -89,17 +90,5 @@ function expand(body: string): string[] {
 }
 
 function splitTop(s: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < s.length; i++) {
-    if (s[i] === "{") depth++;
-    else if (s[i] === "}") depth--;
-    else if (s[i] === "," && depth === 0) {
-      out.push(s.slice(start, i));
-      start = i + 1;
-    }
-  }
-  out.push(s.slice(start));
-  return out;
+  return splitTopLevelWith(s, { brackets: "{}", quotes: "", tail: "keep" });
 }
