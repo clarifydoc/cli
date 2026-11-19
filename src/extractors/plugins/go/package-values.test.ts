@@ -82,6 +82,137 @@ func Clashing() {
 \tb(nil)
 }
 `,
+  // A promoted field through an embedded struct, a field typed through an aliased import, and a namesake `Stadium`
+  // whose methods fill many files of another directory.
+  "ratings/rating.go": `package ratings
+
+type Rating struct{}
+
+func (p *Rating) IsCaptain() bool { return true }
+`,
+  "zclub/context.go": `package zclub
+
+import ratings "example.com/league/ratings"
+
+type Base struct {
+	Venue *Stadium
+}
+
+type Matchday struct {
+	*Base
+}
+
+type Stadium struct {
+	Rating ratings.Rating
+	}
+
+type Squad interface {
+	Roster
+	Ping() error
+}
+
+type Roster interface {
+	Cap() int
+}
+
+func GetSquad() Squad { return nil }
+
+type Scout struct{}
+
+func (s *Scout) Hire() {}
+
+// Gear is declared in two other directories: the "Venue" field type is ambiguous, a chain off it cannot be followed.
+type Outside struct {
+	Venue *Gear
+}
+`,
+  "legacy/part0.go": `package legacy
+
+type Stadium struct{ Name string }
+
+func (r *Stadium) Part0() {}
+`,
+  "legacy/part1.go": `package legacy
+
+type Stadium struct{ Name string }
+
+func (r *Stadium) Part1() {}
+`,
+  "legacy/part2.go": `package legacy
+
+type Stadium struct{ Name string }
+
+func (r *Stadium) Part2() {}
+`,
+  "legacy/part3.go": `package legacy
+
+type Stadium struct{ Name string }
+
+func (r *Stadium) Part3() {}
+`,
+  "legacy/part4.go": `package legacy
+
+type Stadium struct{ Name string }
+
+func (r *Stadium) Part4() {}
+`,
+  "legacy/part5.go": `package legacy
+
+type Stadium struct{ Name string }
+
+func (r *Stadium) Part5() {}
+`,
+  "legacy/part6.go": `package legacy
+
+type Stadium struct{ Name string }
+
+func (r *Stadium) Part6() {}
+`,
+  "legacy/part7.go": `package legacy
+
+type Stadium struct{ Name string }
+
+func (r *Stadium) Part7() {}
+`,
+  "legacy/part8.go": `package legacy
+
+type Stadium struct{ Name string }
+
+func (r *Stadium) Part8() {}
+`,
+  "legacy/part9.go": `package legacy
+
+type Stadium struct{ Name string }
+
+func (r *Stadium) Part9() {}
+`,
+  "zclub/use.go": `package zclub
+
+func Owner() func(c *Matchday) {
+	return func(c *Matchday) {
+		c.Venue.Rating.IsCaptain()
+	}
+}
+
+func Plain(c *Matchday) { c.Venue.Rating.IsCaptain() }
+
+func Embedded() {
+	s := GetSquad()
+	s.Cap()
+}
+
+func Unknown() func(c *Outside) {
+	return func(c *Outside) { c.Venue.Rating.IsCaptain() }
+}
+`,
+  "feeds/gear.go": `package feeds
+
+type Gear struct{}
+`,
+  "wires/gear.go": `package wires
+
+type Gear struct{}
+`,
   "other/other.go": `package other
 
 type Boat struct{}
@@ -136,6 +267,9 @@ describe.each([["ANTLR", undefined], ["regex", "no-antlr"]])("Go package values 
       .map((l) => `${l.callName} -> ${l.targetSymbol}`)
       .sort();
 
+  // The two front ends name a deep call by different heads (`r.Source.Blow` / `Source.Blow`): only its target counts.
+  const onlyTarget = (row: string) => row.split(" -> ")[1]!;
+
   it("types a package value from a constructor or a written type, in its own file and its siblings", () => {
     expect(targets("SameFile")).toEqual(["store.Save -> Store.Save"]);
     expect(targets("Use")).toEqual(["cache.Save -> Cache.Save", "store.Save -> Store.Save"]);
@@ -151,6 +285,19 @@ describe.each([["ANTLR", undefined], ["regex", "no-antlr"]])("Go package values 
   it("leaves another package's call on a namesake name alone", () => {
     expect(targets("Use").length).toBe(2);
     expect(summary.symbolLinks!.filter((l) => l.sourceFile === "other/other.go" && l.callName === "store.Save")).toEqual([]);
+  });
+
+  it("follows a field promoted from an embedded struct and a type written through an import alias, in a literal and a declared function", () => {
+    expect(targets("Owner").map(onlyTarget)).toEqual(["Rating.IsCaptain"]);
+    expect(targets("Plain").map(onlyTarget)).toEqual(["Rating.IsCaptain"]);
+  });
+
+  it("finds a method an interface gets from an interface it embeds", () => {
+    expect(targets("Embedded")).toEqual(["s.Cap -> Roster.Cap"]);
+  });
+
+  it("keeps the unique-name match for a literal's parameter whose chain leaves the project", () => {
+    expect(targets("Unknown").map(onlyTarget)).toEqual(["Rating.IsCaptain"]);
   });
 
   it("types a function literal's parameters, never the namesake type's method", () => {

@@ -85,7 +85,7 @@ export function extractGoClasses(lines: string[], fns: FunctionInfo[], parsePara
     const literals = goLiteralParams(body);
     for (const { name, type } of literals.typed) {
       if (name === receiver?.name || declared.has(name) || locals.some((l) => l.name === name) || fn.params.some((p) => p.name === name)) continue;
-      locals.push({ name, type });
+      locals.push({ name, type, soft: true });
     }
     // Every name the body binds: a package variable of the same name is not what a call on it reads.
     const bound = new Set([...declared, ...literals.names]);

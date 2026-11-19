@@ -1656,8 +1656,10 @@ export interface FunctionInfo {
    * module-level name (`Kind.Club` of `[Kind.Club]: useClubStore()`). On a local read off such a record,
    * `indexOrigin`: where the key the read picks the entry by comes from (`stores[props.kind].actions` — a prop),
    * which a project pass may narrow to the entries the component's users bind (`LanguagePluginMeta.recordChoice`).
+   * `soft`: the type comes from a parameter list of a function nested in this one (Go function literal): it types
+   * the calls on the name, but where a chain off it cannot be followed it does not rule out a unique-name match.
    */
-  localTypes?: Array<{ name: string; type: string; qualifier?: string; from?: string; awaited?: boolean; fromIndex?: number; element?: true; iterator?: "iterated" | "dereferenced"; destructured?: true; member?: true; field?: true; aliasOf?: string; key?: string; indexOrigin?: CallArgOrigin["origin"] }>;
+  localTypes?: Array<{ name: string; type: string; qualifier?: string; from?: string; awaited?: boolean; fromIndex?: number; element?: true; iterator?: "iterated" | "dereferenced"; destructured?: true; member?: true; field?: true; soft?: true; aliasOf?: string; key?: string; indexOrigin?: CallArgOrigin["origin"] }>;
   /**
    * Locals the plugin saw bound to a value whose type the source never states (a Ruby block parameter,
    * `clubs.each { |club| … }`). A call on one is on an unknown type: the linker's last-resort

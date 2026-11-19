@@ -3727,10 +3727,21 @@ function buildMemberTypes(
   const classToFiles = new Map<string, string[]>();
   const declAt = new Map<string, FileAnalysis["classes"][number]>();
   const languageOfFile = new Map(analyses.map((a) => [a.filePath, a.language as string]));
+  // Where a type spans the files of a directory (Go: a stub per file holding methods), one directory is one
+  // definition: a name past the cap still keeps a candidate for each directory declaring it, so the consumer's own
+  // directory is never crowded out by a namesake whose methods fill many files.
+  const candidateDirs = new Map<string, Set<string>>();
   for (const a of analyses) {
+    const fileDir = a.filePath.slice(0, a.filePath.lastIndexOf("/") + 1);
     for (const cls of a.classes) {
       let arr = classToFiles.get(cls.name);
       if (!arr) classToFiles.set(cls.name, (arr = []));
+      if (arr.length < CLASS_CANDIDATE_CAP * 8 && typesSpanFiles(a.language)) {
+        let dirs = candidateDirs.get(cls.name);
+        if (!dirs) candidateDirs.set(cls.name, (dirs = new Set()));
+        if (!dirs.has(fileDir) && arr.length >= CLASS_CANDIDATE_CAP && !arr.includes(a.filePath)) arr.push(a.filePath);
+        dirs.add(fileDir);
+      }
       if (arr.length < CLASS_CANDIDATE_CAP && !arr.includes(a.filePath)) arr.push(a.filePath);
       declAt.set(memberKey(a.filePath, cls.name), cls);
     }
@@ -6043,7 +6054,7 @@ function resolveCallToDefinitionBody(
         // as a class of its own, may serve it. A chain the linker cannot type keeps the head's type as before.
         const chainType = parts.length > 2 && !call.receiverType ? chainReceiverType(ctx, analysis, sourceFile, sourceSymbol, call) : null;
         const declared = (call.receiverType ? receiverTypeName(call.receiverType, analysis.language) || call.receiverType : null)
-          ?? (chainType ? (chainType.project ? null : chainType.name) : receiverCutName(analysis, call) ? null : receiverDeclaredType(analysis, sourceSymbol, head.replace(/\?$/, "")));
+          ?? (chainType ? (chainType.project ? null : chainType.name) : receiverCutName(analysis, call) ? null : receiverDeclaredType(analysis, sourceSymbol, head.replace(/\?$/, ""), parts.length > 2));
         const tgtClass = entry.def.name.includes(".") ? entry.def.name.split(".")[0]! : null;
         const declEntry = declared ? classEntryFor(classCatalog.get(declared), sourceFile) : undefined;
         // An extension method is called on a type that does not declare it
@@ -6263,6 +6274,8 @@ function receiverDeclaredType(
   analysis: FileAnalysis,
   sourceSymbol: string,
   head: string,
+  /** The call goes through fields or calls off the head (`a.b.m()`), not straight to a method of it (`a.m()`). */
+  chained = false,
 ): string | null {
   const lang = analysis.language;
   /** Prefer a written namespace path (`lib::Twin`) over the bare leaf so unique-global cannot match a namesake. */
@@ -6275,7 +6288,8 @@ function receiverDeclaredType(
   const callable = findEnclosingCallable(analysis, sourceSymbol);
   if (callable) {
     const local = callable.localTypes?.find((l) => l.name === head);
-    if (local) return asDeclared(local.type);
+    // A soft local types the calls on it, but never vetoes the name guess a chain off it falls back to.
+    if (local) return local.soft && chained ? null : asDeclared(local.type);
     const param = callable.params?.find((p) => p.name === head);
     if (param?.type) return asDeclared(param.type);
   }
@@ -7353,7 +7367,8 @@ function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonl
     }
     point = seg.call
       ? methodResult(ctx, point, seg.name, awaited && i === rest.length - 1)
-      : ctx.memberTypes.get(memberKey(point.typeFile, point.typeName))?.get(nameKey(ctx.languageOf.get(point.typeFile), seg.name)) ?? readerResult(ctx, point, seg.name);
+      : ctx.memberTypes.get(memberKey(point.typeFile, point.typeName))?.get(nameKey(ctx.languageOf.get(point.typeFile), seg.name)) ??
+        promotedMemberPoint(ctx, point.typeName, point.typeFile, seg.name, new Set()) ?? readerResult(ctx, point, seg.name);
   }
   return point;
 }
@@ -7376,6 +7391,33 @@ function elementHop(ctx: LinkContext, before: InjectionPoint, previous: ChainSeg
   const named = hop.args?.trim();
   if (named && receiverTypeName(named, language) !== hopped.typeName) return null;
   return hopped;
+}
+
+/**
+ * The typed member a class gets from a struct it embeds (Go `type Context struct{ *Base }`, `c.Repo` is `Base.Repo`):
+ * one embedded path typing it, through embedded structs in turn; several that differ → null.
+ */
+function promotedMemberPoint(ctx: LinkContext, className: string, classFile: string, name: string, searching: Set<string>): InjectionPoint | null {
+  const mark = memberKey(classFile, className);
+  if (searching.has(mark)) return null;
+  const embedded = (ctx.classAt.get(mark)?.properties ?? []).filter((p) => p.decorators?.includes("embedded"));
+  if (embedded.length === 0) return null;
+  searching.add(mark);
+  try {
+    const language = (ctx.languageOf.get(classFile) ?? "go") as Language;
+    const key = nameKey(language, name);
+    const found: InjectionPoint[] = [];
+    for (const prop of embedded) {
+      const typeName = receiverTypeName(prop.type, language);
+      const typeFile = typeName ? typeFileFor(ctx, typeName, classFile, ctx.projectOf.get(classFile) ?? "root") : null;
+      if (!typeName || !typeFile) continue;
+      const hit = ctx.memberTypes.get(memberKey(typeFile, typeName))?.get(key) ?? promotedMemberPoint(ctx, typeName, typeFile, name, searching);
+      if (hit && !found.some((f) => f.typeName === hit.typeName && f.typeFile === hit.typeFile)) found.push(hit);
+    }
+    return found.length === 1 ? found[0]! : null;
+  } finally {
+    searching.delete(mark);
+  }
 }
 
 /** A paren-less member read that is no field: in a language where it may be a method call, what the method returns. */
@@ -7792,7 +7834,13 @@ function methodDeclaredReturn(ctx: LinkContext, point: Pick<InjectionPoint, "typ
  * The type a field of the point's class (or a base's, or a sibling part of a type split over a directory)
  * declares, as written. A name two parts of the class declare with different types decides nothing.
  */
-function fieldDeclaredType(ctx: LinkContext, point: Pick<InjectionPoint, "typeName" | "typeFile">, name: string): { type: string; file: string } | null {
+function fieldDeclaredType(
+  ctx: LinkContext,
+  point: Pick<InjectionPoint, "typeName" | "typeFile">,
+  name: string,
+  /** The types whose embedded fields are being searched, against embedding cycles. */
+  searching: Set<string> = new Set(),
+): { type: string; file: string } | null {
   let className = point.typeName;
   let file = point.typeFile;
   const key = nameKey(ctx.languageOf.get(point.typeFile ?? ""), name);
@@ -7813,6 +7861,9 @@ function fieldDeclaredType(ctx: LinkContext, point: Pick<InjectionPoint, "typeNa
     }
     if (found.size > 1) return null;
     if (found.size === 1) return [...found.values()][0]!;
+    // A field promoted from an embedded one (Go: `type Context struct{ *Base }` answers `c.Repo` with `Base.Repo`).
+    const promoted = promotedFieldType(ctx, className, file, name, searching);
+    if (promoted !== undefined) return promoted;
     const written = ctx.classAt.get(memberId)?.extends?.replace(/^::/, "");
     if (!written) return null;
     const base = bareClassName(written);
@@ -10059,6 +10110,8 @@ function methodAlongAncestors(
     if (outOfLine) return outOfLine;
     const promoted = promotedMethod(ctx, name, file, method, seen);
     if (promoted !== undefined) return promoted;
+    const embeddedHere = embeddedInterfaceMethod(ctx, name, file, method, seen);
+    if (embeddedHere !== undefined) return embeddedHere;
     const mixedIn = mixins ? viaMixins(side === "instance" ? "include" : "extend") : null;
     if (mixedIn) return mixedIn;
     // An included module may extend its includers with another (a Rails concern's `ClassMethods`):
@@ -10258,6 +10311,39 @@ function symbolIn(ctx: LinkContext, file: string, name: string): SymbolDef | und
 }
 
 /**
+ * The declared type of a field the class gets from a struct it embeds, one embedded path declaring it (several →
+ * null, as Go rejects the ambiguous selector; no embedded field or none declaring it → undefined).
+ */
+function promotedFieldType(
+  ctx: LinkContext,
+  className: string,
+  classFile: string,
+  name: string,
+  searching: Set<string>,
+): { type: string; file: string } | null | undefined {
+  const embedded = (ctx.classAt.get(memberKey(classFile, className))?.properties ?? []).filter((p) => p.decorators?.includes("embedded"));
+  if (embedded.length === 0) return undefined;
+  const mark = memberKey(classFile, className);
+  if (searching.has(mark)) return undefined;
+  searching.add(mark);
+  try {
+    const language = (ctx.languageOf.get(classFile) ?? "go") as Language;
+    const found = new Map<string, { type: string; file: string }>();
+    for (const prop of embedded) {
+      const typeName = receiverTypeName(prop.type, language);
+      const typeFile = typeName ? typeFileFor(ctx, typeName, classFile, ctx.projectOf.get(classFile) ?? "root") : null;
+      if (!typeName || !typeFile) continue;
+      const hit = fieldDeclaredType(ctx, { typeName, typeFile }, name, searching);
+      if (hit) found.set(`${hit.file}\0${hit.type}`, hit);
+    }
+    if (found.size === 0) return undefined;
+    return found.size === 1 ? [...found.values()][0]! : null;
+  } finally {
+    searching.delete(mark);
+  }
+}
+
+/**
  * A method promoted from an EMBEDDED field (Go: a struct embedding `UserRepo`
  * answers `s.Find()` with the embedded value's `Find`) — properties carrying
  * the `embedded` decorator. One embedded path defining it → that method;
@@ -10280,6 +10366,35 @@ function promotedMethod(
     const typeFile = typeFileFor(ctx, typeName, classFile, ctx.projectOf.get(classFile) ?? "root");
     if (!typeFile || seen.has(memberKey(typeFile, typeName))) continue;
     const hit = findMethodInClass(ctx, typeName, typeFile, method);
+    if (hit && !found.some((f) => f.file === hit.file && f.symbol === hit.symbol)) found.push(hit);
+  }
+  if (found.length === 0) return undefined;
+  return found.length === 1 ? found[0]! : null;
+}
+
+/**
+ * A method an interface gets from an interface it embeds (Go `type Engine interface { Session; Ping() error }` answers
+ * `e.SQL()` with `Session.SQL`). One embedded interface declaring it → that method; several different → null; none
+ * (or no embedding) → undefined.
+ */
+function embeddedInterfaceMethod(
+  ctx: LinkContext,
+  className: string,
+  classFile: string,
+  method: string,
+  seen: Set<string>,
+): { file: string; symbol: string; line: number } | null | undefined {
+  const cls = ctx.classAt.get(memberKey(classFile, className));
+  if (cls?.kind !== "interface" || !cls.embeds?.length) return undefined;
+  const found: Array<{ file: string; symbol: string; line: number }> = [];
+  for (const written of cls.embeds) {
+    const typeName = bareSupertypeName(written);
+    const typeFile = typeName ? typeFileFor(ctx, typeName, classFile, ctx.projectOf.get(classFile) ?? "root") : null;
+    if (!typeName || !typeFile || seen.has(memberKey(typeFile, typeName))) continue;
+    // Each embedded interface is walked once per lookup: two interfaces embedding each other end here.
+    const walked = new Set(seen);
+    walked.add(memberKey(classFile, className));
+    const hit = methodAlongAncestors(ctx, typeName, typeFile, method, undefined, walked);
     if (hit && !found.some((f) => f.file === hit.file && f.symbol === hit.symbol)) found.push(hit);
   }
   if (found.length === 0) return undefined;
