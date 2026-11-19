@@ -332,10 +332,70 @@ export const ACTIVATION_FILE_LANGUAGES: ReadonlyMap<string, readonly Language[]>
 export const NAMED_FILE_LANGUAGE: ReadonlyMap<string, Language> =
   claimTable(ALL_MANIFESTS, (m) => m.namedFiles ?? [], "Named file");
 
+/**
+ * Build the shebang-interpreter list, refusing a second claim on any name a
+ * manifest declares in `shebangInterpreterNames` (`claimTable` for interpreters).
+ */
+export function claimShebangInterpreters(
+  manifests: readonly LanguagePluginManifest[],
+): ReadonlyArray<{ language: Language; pattern: RegExp }> {
+  const withPattern = manifests.filter((m) => m.shebangInterpreter);
+  for (const m of withPattern) {
+    if (!m.shebangInterpreterNames?.length) throw new Error(`${m.language} declares shebangInterpreter without shebangInterpreterNames`);
+    // A declared name its own pattern does not match is a stale list.
+    for (const n of m.shebangInterpreterNames) {
+      if (!m.shebangInterpreter!.test(n)) throw new Error(`${m.language} shebangInterpreterNames "${n}" does not match its shebangInterpreter`);
+    }
+  }
+  claimTable(withPattern, (m) => m.shebangInterpreterNames ?? [], "Shebang interpreter");
+  return withPattern.map((m) => ({ language: m.language, pattern: m.shebangInterpreter! }));
+}
+
 /** The interpreters of extension-less scripts, by language (`shebangInterpreter`). */
-export const SHEBANG_INTERPRETERS: ReadonlyArray<{ language: Language; pattern: RegExp }> = ALL_MANIFESTS.flatMap((m) =>
-  m.shebangInterpreter ? [{ language: m.language, pattern: m.shebangInterpreter }] : [],
-);
+export const SHEBANG_INTERPRETERS: ReadonlyArray<{ language: Language; pattern: RegExp }> =
+  claimShebangInterpreters(ALL_MANIFESTS);
+
+/**
+ * Path-scoped extension claims (`pathScopedExtensions`): glob patterns for
+ * discovery and a matcher for `getLanguageForFile`. Keys are unique per
+ * extension + under-directory (two plugins may not both claim `.md` under
+ * `pages`).
+ */
+export const PATH_SCOPED_EXTENSIONS: ReadonlyArray<{
+  language: Language;
+  extension: string;
+  /** Path segment that must appear (`pages` → `(^|/)pages/`). */
+  under: string;
+  /** Discovery glob: every file of that extension below a `pages` directory. */
+  glob: string;
+}> = (() => {
+  const out: Array<{ language: Language; extension: string; under: string; glob: string }> = [];
+  const seen = new Map<string, Language>();
+  for (const manifest of ALL_MANIFESTS) {
+    for (const rule of manifest.pathScopedExtensions ?? []) {
+      for (const rawExt of rule.extensions) {
+        const extension = rawExt.toLowerCase();
+        for (const under of rule.under) {
+          const key = `${extension}\0${under.toLowerCase()}`;
+          const owner = seen.get(key);
+          if (owner) {
+            throw new Error(
+              `Path-scoped extension "${rawExt}" under "${under}" claimed by both ${owner} and ${manifest.language}`,
+            );
+          }
+          seen.set(key, manifest.language);
+          out.push({
+            language: manifest.language,
+            extension,
+            under,
+            glob: `**/${under}/**/*${extension}`,
+          });
+        }
+      }
+    }
+  }
+  return out;
+})();
 
 /** Language → the prefix its partials carry (`_` for Sass). See `LanguagePluginManifest.partialPrefix`. */
 export const PARTIAL_PREFIX_BY_LANGUAGE: ReadonlyMap<string, string> = new Map(

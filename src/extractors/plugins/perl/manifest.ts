@@ -12,6 +12,7 @@ export const perlManifest: LanguagePluginManifest = {
   docComments: PERL_DOCS,
   language: "perl",
   shebangInterpreter: /^perl\d*(?:\.\d+)*$/,
+  shebangInterpreterNames: ["perl"],
   family: "perl",
   packageManagers: [cpanPackageManager],
   packageEcosystems: ["cpan"],

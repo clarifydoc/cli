@@ -1925,6 +1925,15 @@ export interface LanguagePluginManifest {
    */
   namedFiles?: readonly string[];
   /**
+   * Extensions claimed only under matching path folders — not entered in
+   * `EXTENSION_TO_LANGUAGE`. Discovery globs every file of the extension below each
+   * `under` directory name (a path segment), and `getLanguageForFile` returns
+   * this language only when the project-relative path has that segment.
+   * TypeScript's Markdown pages: `{ extensions: [".md", ".mdx"], under: ["pages"] }`
+   * so `src/pages/club.md` is a page and a root `README.md` is not.
+   */
+  pathScopedExtensions?: ReadonlyArray<{ extensions: readonly string[]; under: readonly string[] }>;
+  /**
    * Directories discovery skips as build output that this ecosystem keeps
    * SOURCE in, and the marker that says so — `bin/` is .NET's build output
    * everywhere else: `{ dir: "bin", marker: "bin/dune" }` (dune keeps
@@ -1941,9 +1950,16 @@ export interface LanguagePluginManifest {
    * `#!/usr/bin/env ruby`, after `env` and its flags) of this language's
    * extension-less scripts: `/^ruby\d*$/`. Discovery then admits such a
    * script in a `bin/`, `script/` or `scripts/` directory (and the project
-   * root) as a file of this language. Two languages must not claim one name.
+   * root) as a file of this language. Two languages must not claim one name
+   * (`claimShebangInterpreters` refuses a second claim, as `claimTable` does
+   * for extensions and basenames).
    */
   shebangInterpreter?: RegExp;
+  /**
+   * The interpreter names `shebangInterpreter` claims, written out (`["bash", "sh", "dash"]`),
+   * each of which the pattern must match. The registry refuses a name two languages claim.
+   */
+  shebangInterpreterNames?: readonly string[];
   /**
    * Files a default ignore skips that are this ecosystem's SOURCE where a
    * marker says so: below each `marker` file whose text `markerIs` accepts,

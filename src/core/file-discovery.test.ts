@@ -158,6 +158,32 @@ describe("discoverFiles — secret-looking names and skipped source directories"
     expect(files).not.toContain("tooling/bin/Gen.rb");
   });
 
+  it("reads bin/ beside a Gemfile naming Sinatra or Rack with neither app/ nor lib/, not a tooling Gemfile", async () => {
+    write("web/Gemfile", "source 'https://rubygems.org'\ngem 'sinatra'\n");
+    write("web/bin/club.rb", "require 'sinatra'\nget('/clubs') { 'ok' }\n");
+    write("rackapp/Gemfile", "gem \"rack\", \"~> 3\"\n");
+    write("rackapp/bin/match.rb", "run Rack::Builder.new\n");
+    write("tooling/Gemfile", "gem 'rubocop'\n");
+    write("tooling/bin/lint.rb", "puts 1\n");
+    const files = (await discoverFiles(root)).files.map((f) => f.relativePath);
+    expect(files).toContain("web/bin/club.rb");
+    expect(files).toContain("rackapp/bin/match.rb");
+    expect(files).not.toContain("tooling/bin/lint.rb");
+  });
+
+  it("reads Markdown pages under pages/ only, never a README or docs file", async () => {
+    write("package.json", '{ "name": "club-site" }\n');
+    write("README.md", "# Club\n");
+    write("docs/guide.md", "# Guide\n");
+    write("src/pages/club.md", "# Club page\n");
+    write("src/pages/league.mdx", "# League page\n");
+    const files = (await discoverFiles(root)).files.map((f) => f.relativePath);
+    expect(files).toContain("src/pages/club.md");
+    expect(files).toContain("src/pages/league.mdx");
+    expect(files).not.toContain("README.md");
+    expect(files).not.toContain("docs/guide.md");
+  });
+
   it("admits an extension-less script whose #! line names a declared interpreter", async () => {
     write("Gemfile", "source 'https://rubygems.org'\n");
     write("lib/club.rb", "class Club; end\n");

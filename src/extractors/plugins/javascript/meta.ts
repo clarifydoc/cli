@@ -61,6 +61,7 @@ import { moduleValueFlowOf } from "./value-flow.js";
 import { vuePreprocess, withMixinScope } from "./vue-hooks.js";
 import { sveltePreprocess } from "./svelte-hooks.js";
 import { astroPreprocess } from "./astro-hooks.js";
+import { markdownPagesPreprocess } from "./markdown-pages.js";
 import { bundlePreprocess } from "./bundles.js";
 import { npmPackages } from "./packages.js";
 import { typescriptManifest, javascriptManifest } from "./manifest.js";
@@ -333,7 +334,7 @@ export const typescriptMeta: LanguagePluginMeta = {
   // <script> block (dispatched by extension).
   // A call's import-type argument the grammar misreads is rewritten over whichever text is parsed.
   preprocess: (raw, path) =>
-    withMixinScope(withSubjectTriggers(withImportTypeArgs(vuePreprocess(raw, path) ?? sveltePreprocess(raw, path) ?? astroPreprocess(raw, path) ?? templateEscapePreprocess(raw, "typescript"), raw, "typescript"), raw, "typescript"), raw, "typescript", path),
+    withMixinScope(withSubjectTriggers(withImportTypeArgs(markdownPagesPreprocess(raw, path) ?? vuePreprocess(raw, path) ?? sveltePreprocess(raw, path) ?? astroPreprocess(raw, path) ?? templateEscapePreprocess(raw, "typescript"), raw, "typescript"), raw, "typescript"), raw, "typescript", path),
   builtinTypes: TS_BUILTINS,
   complexity: COMPLEXITY,
   controlFlow: CONTROL_FLOW,

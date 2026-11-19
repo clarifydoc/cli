@@ -4,7 +4,7 @@ import { basename, dirname, relative, resolve, sep } from "path";
 import { glob, LinkedFiles } from "./glob.js";
 import type { Language } from "../types/analysis.js";
 import { EXTENSION_TO_LANGUAGE, getLanguageForFile, getLanguageForShebang } from "../parsers/language-map.js";
-import { CODE_LANGUAGES, NAMED_FILE_LANGUAGE, PACKAGE_ROOTS, READMIT_FILES, SHEBANG_INTERPRETERS, SOURCE_DIRS } from "../extractors/registry.js";
+import { CODE_LANGUAGES, NAMED_FILE_LANGUAGE, PACKAGE_ROOTS, PATH_SCOPED_EXTENSIONS, READMIT_FILES, SHEBANG_INTERPRETERS, SOURCE_DIRS } from "../extractors/registry.js";
 import { loadIgnorePatterns, isIgnored, ignoredDirectories } from "./clarifydoc-ignore.js";
 
 /**
@@ -220,6 +220,8 @@ export async function discoverFiles(
 
   const sourcePatterns = [
     ...Object.keys(EXTENSION_TO_LANGUAGE).map((ext) => `**/*${ext}`),
+    // Path-scoped extensions (Markdown under `pages/`): not every `*.md`.
+    ...PATH_SCOPED_EXTENSIONS.map((r) => r.glob),
     // Source files a plugin claims by basename (Play `conf/routes`, shell
     // `.bashrc`). A leading-dot name is path-scoped: the pattern is `**/.bashrc`,
     // which beats glob's default `dot: false`, without admitting every hidden file.

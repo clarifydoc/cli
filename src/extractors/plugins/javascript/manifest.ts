@@ -152,6 +152,8 @@ export const typescriptManifest: LanguagePluginManifest = {
   serviceConfig: jsServiceConfig,
   parsing: "tree-sitter",
   extensions: [".ts", ".tsx", ".mts", ".cts", ".vue", ".svelte", ".astro"],
+  // Markdown pages under a `pages/` folder (vite-plugin-pages): not every README.
+  pathScopedExtensions: [{ extensions: [".md", ".mdx"], under: ["pages"] }],
   // `*.d.ts` is skipped as compiler output, except in a hand-written types package.
   readmitFiles: [{ marker: "package.json", pattern: "**/*.d.ts", markerIs: isTypesOnlyPackage }],
   // A field is only reached through the instance (`this.x`); a bare name never is one.
@@ -186,6 +188,7 @@ export const javascriptManifest: LanguagePluginManifest = {
   language: "javascript",
   directoryIndexStems: ["index"],
   shebangInterpreter: /^(?:node(?:js)?|tsx|ts-node|bun|deno)$/,
+  shebangInterpreterNames: ["node", "nodejs", "tsx", "ts-node", "bun", "deno"],
   callPathsFromHead: true,
   collectionElementOf: collectionElementText,
   // `await repo.all()` holds the `Club[]` a declared `Promise<Club[]>` resolves to.

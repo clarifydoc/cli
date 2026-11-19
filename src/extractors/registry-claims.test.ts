@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { LanguagePluginManifest } from "../types/language-plugin.js";
-import { claimTable, EXTENSION_TO_LANGUAGE, PACKAGE_MANAGERS, packageEcosystemsFor, packageMatchingFor } from "./registry.js";
+import { claimShebangInterpreters, claimTable, EXTENSION_TO_LANGUAGE, PACKAGE_MANAGERS, packageEcosystemsFor, packageMatchingFor } from "./registry.js";
 import { extensionFamily } from "./plugins/shared/path-utils.js";
 
 const manifest = (language: string, extensions: string[]): LanguagePluginManifest =>
@@ -62,5 +62,24 @@ describe("extensionFamily", () => {
     expect(extensionFamily("schema.prisma")).toBeNull();
     expect(extensionFamily("README.md")).toBeNull();
     expect(extensionFamily("Makefile")).toBeNull();
+  });
+});
+
+describe("claimShebangInterpreters", () => {
+  const withShebang = (language: string, names: string[], pattern: RegExp) =>
+    ({ language, parsing: "regex", extensions: [], shebangInterpreter: pattern, shebangInterpreterNames: names }) as unknown as LanguagePluginManifest;
+
+  it("refuses two plugins claiming one interpreter", () => {
+    expect(() =>
+      claimShebangInterpreters([withShebang("ruby", ["ruby"], /^ruby$/), withShebang("racket", ["ruby"], /^ruby$/)]),
+    ).toThrow(/Shebang interpreter "ruby" claimed by both ruby and racket/);
+  });
+
+  it("refuses a name its own pattern does not match", () => {
+    expect(() => claimShebangInterpreters([withShebang("ruby", ["python"], /^ruby$/)])).toThrow(/does not match/);
+  });
+
+  it("accepts the registered manifests", () => {
+    expect(claimShebangInterpreters([withShebang("ruby", ["ruby"], /^ruby$/), withShebang("bash", ["bash", "sh"], /^(?:bash|sh)$/)])).toHaveLength(2);
   });
 });

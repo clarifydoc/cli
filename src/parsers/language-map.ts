@@ -1,5 +1,10 @@
 import type { Language } from "../types/analysis.js";
-import { EXTENSION_TO_LANGUAGE as REGISTRY_EXTENSION_TO_LANGUAGE, NAMED_FILE_LANGUAGE, SHEBANG_INTERPRETERS } from "../extractors/registry.js";
+import {
+  EXTENSION_TO_LANGUAGE as REGISTRY_EXTENSION_TO_LANGUAGE,
+  NAMED_FILE_LANGUAGE,
+  PATH_SCOPED_EXTENSIONS,
+  SHEBANG_INTERPRETERS,
+} from "../extractors/registry.js";
 
 /**
  * Map file extensions to Language — aggregated from every plugin's meta
@@ -10,16 +15,27 @@ export const EXTENSION_TO_LANGUAGE: Record<string, Language> = {
 };
 
 /** Get language for a file path based on its extension (case-insensitive:
- *  legacy Windows codebases ship `UNIT1.PAS` / `FORM1.DFM`). */
+ *  legacy Windows codebases ship `UNIT1.PAS` / `FORM1.DFM`). Path-scoped
+ *  claims (Markdown under `pages/`) win only when the path has that segment. */
 export function getLanguageForFile(filePath: string): Language | null {
-  const base = filePath.slice(Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\")) + 1).toLowerCase();
+  const posix = filePath.replace(/\\/g, "/");
+  const base = posix.slice(posix.lastIndexOf("/") + 1).toLowerCase();
   // Extension-less source files a plugin claims by name (Play `conf/routes`).
   const named = NAMED_FILE_LANGUAGE.get(base);
   if (named) return named;
-  const lastDot = filePath.lastIndexOf(".");
+  const lastDot = posix.lastIndexOf(".");
   if (lastDot < 0) return null;
-  const ext = filePath.slice(lastDot).toLowerCase();
-  return EXTENSION_TO_LANGUAGE[ext] ?? null;
+  const ext = posix.slice(lastDot).toLowerCase();
+  const global = EXTENSION_TO_LANGUAGE[ext];
+  if (global) return global;
+  // Path-scoped: `.md` under `pages/`, never a root README.
+  for (const rule of PATH_SCOPED_EXTENSIONS) {
+    if (ext !== rule.extension) continue;
+    if (new RegExp(`(?:^|/)${rule.under.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/`).test(posix)) {
+      return rule.language;
+    }
+  }
+  return null;
 }
 
 /**

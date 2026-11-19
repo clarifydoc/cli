@@ -27,6 +27,7 @@ export const pythonManifest: LanguagePluginManifest = {
   language: "python",
   directoryIndexStems: ["__init__"],
   shebangInterpreter: /^python\d*(?:\.\d+)*$/,
+  shebangInterpreterNames: ["python", "python3"],
   callPathsFromHead: true,
   // A function sees the module's typed names unless it rebinds them (`FunctionInfo.boundNames`).
   moduleLocalsInScope: true,

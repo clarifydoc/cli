@@ -11,6 +11,7 @@ export const bashManifest: LanguagePluginManifest = {
   docComments: HASH_DOCS,
   language: "bash",
   shebangInterpreter: /^(?:bash|sh|dash)$/,
+  shebangInterpreterNames: ["bash", "sh", "dash"],
   family: "shell",
   parsing: "tree-sitter",
   extensions: [".sh", ".bash"],

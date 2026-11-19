@@ -73,8 +73,8 @@ export async function detectFileBasedRoutes(
   return added;
 }
 
-/** What a routes folder may hold as a page: Vue SFCs, JSX/TSX pages, Markdown pages (vite-plugin-pages). */
-const PAGE_FILE_RE = /\.(?:vue|tsx|jsx|md)$/i;
+/** What a routes folder may hold as a page: Vue SFCs, JSX/TSX pages, Markdown/MDX pages (vite-plugin-pages). */
+const PAGE_FILE_RE = /\.(?:vue|tsx|jsx|mdx?)$/i;
 
 const VITE_CONFIG_NAMES = [
   "vite.config.ts", "vite.config.mts", "vite.config.cts",
