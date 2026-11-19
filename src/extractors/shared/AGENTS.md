@@ -75,3 +75,5 @@ Decorator extraction has per-language variants because grammars differ:
 - **Language-agnostic at the type level** — take `Language` as a parameter, dispatch internally
 - **Don't add language-specific logic here** if only one language needs it; that goes in `plugins/<lang>/` instead
 - **When adding a new language to `CALL_TYPES`**, also verify `NESTED_SCOPE_TYPES` covers its function/class/lambda nodes
+
+- [route-paths.ts](route-paths.ts) holds the route-path joins (`joinRoutePath`, `joinRootedPath` — always rooted, empty segments dropped, `collapse` for the doubled-slash spelling —, `joinTrimmedPath` — one `/` between, no trailing one, `prefixOptional`/`collapse`); [split-top-level.ts](split-top-level.ts) is the one top-level splitter (`brackets`, `quotes`, `escapes`, `trim`, `tail`, `dropBlank`, `clamp`, `stopAtCloser`). A plugin states the spelling it needs as options in a one-line wrapper; both have differential tests against the bodies they replaced — add the new spelling there before adding a variant to a plugin.
