@@ -7434,7 +7434,7 @@ function importedFunctionLink(
 ): SymbolLink | null {
   // A function an include or `require` puts in scope is called bare, as the file's own would be (`internal`):
   // it is imported when the file does not define it.
-  const shared = importsShareScope(analysis.language) && !analysis.functions.some((f) => f.name === name);
+  const shared = (importsShareScope(analysis.language) || !!pluginFor(analysis.language as Language)?.directoryNamesShared) && !analysis.functions.some((f) => f.name === name);
   const writes = (fn: FunctionInfo | null | undefined): CallInfo | undefined =>
     fn?.calls.find((c) => c.name === name && (c.kind === "cross-file" || (shared && c.kind === "internal")));
   const own = findEnclosingCallable(analysis, sourceSymbol);
@@ -7654,11 +7654,11 @@ function packageFunctionLink(ctx: LinkContext, analysis: FileAnalysis, sourceFil
 function moduleVariableType(ctx: LinkContext, analysis: FileAnalysis, name: string): { type: string; file: string } | null {
   const key = nameKey(analysis.language, name);
   const own = analysis.moduleBindings?.find((b) => nameKey(analysis.language, b.name) === key);
-  if (own) return { type: own.type, file: analysis.filePath };
+  if (own) return own.type ? { type: own.type, file: analysis.filePath } : null;
   const scoped = inScopeModuleBindings(ctx, analysis, name);
   if (scoped.length > 0) {
     const types = new Set(scoped.map((s) => s.binding.type));
-    return types.size === 1 ? { type: scoped[0]!.binding.type, file: scoped[0]!.holder.filePath } : null;
+    return types.size === 1 && scoped[0]!.binding.type ? { type: scoped[0]!.binding.type, file: scoped[0]!.holder.filePath } : null;
   }
   if (!typesSpanFiles(analysis.language as Language)) return null;
   const dir = analysis.filePath.slice(0, analysis.filePath.lastIndexOf("/") + 1);
@@ -7666,7 +7666,7 @@ function moduleVariableType(ctx: LinkContext, analysis: FileAnalysis, name: stri
   for (const a of bindingFilesIn(ctx, analysis.language, dir)) {
     if (a === analysis) continue;
     const b = a.moduleBindings?.find((x) => nameKey(a.language, x.name) === key);
-    if (b) found.set(b.type, { type: b.type, file: a.filePath });
+    if (b?.type) found.set(b.type, { type: b.type, file: a.filePath });
   }
   return found.size === 1 ? [...found.values()][0]! : null;
 }
@@ -8119,8 +8119,11 @@ function scopedName(
   // body did not type — never the field of the same name.
   if (pluginFor(analysis.language)?.explicitSelfMembers) return null;
   return receiverMember(ctx, analysis, sourceFile, callable, name) ?? ownMember(ctx, sourceFile, consumer, name)
-    ?? moduleBindingPoint(ctx, analysis, sourceFile, consumer, name, callable?.line);
+    ?? (pluginFor(analysis.language)?.directoryNamesShared && callable?.boundNames?.includes(name) ? null : moduleBindingPoint(ctx, analysis, sourceFile, consumer, name, callable?.line));
 }
+
+/** Module bindings being typed through their initializer call, to stop a cycle between them. */
+const resolvingBindings = new Set<string>();
 
 /**
  * A typed variable declared at module level (`FileAnalysis.moduleBindings`, `var dmLeague: TdmLeague;`, a Dart
@@ -8131,8 +8134,21 @@ function scopedName(
  */
 function moduleBindingPoint(ctx: LinkContext, analysis: FileAnalysis, sourceFile: string, consumer: string, name: string, at?: number): InjectionPoint | null {
   const key = nameKey(analysis.language, name);
-  const point = (holder: FileAnalysis, written: string): InjectionPoint | null => {
-    const typeName = receiverTypeName(written, holder.language);
+  const point = (holder: FileAnalysis, binding: Pick<ModuleBindingInfo, "type" | "from">): InjectionPoint | null => {
+    // A binding initialised by a call states no type: the callee's declared result, read from where it is declared.
+    if (!binding.type && binding.from) {
+      // `var a = b.New()` beside `var b = a.New()`: a binding whose initializer reads itself again types nothing.
+      const guard = `${holder.filePath}\0${binding.from}`;
+      if (resolvingBindings.has(guard)) return null;
+      resolvingBindings.add(guard);
+      try {
+        const typed = initializerPoint(ctx, holder, holder.filePath, "<setup>", "", { from: binding.from }, 0);
+        return typed ? { ...typed, member: name, consumer, container: false } : null;
+      } finally {
+        resolvingBindings.delete(guard);
+      }
+    }
+    const typeName = receiverTypeName(binding.type, holder.language);
     if (!typeName) return null;
     const ref = typeRefFor(ctx, typeName, holder.filePath, holder.projectId);
     return { typeName: ref?.typeName ?? typeName, typeFile: ref?.typeFile ?? null, member: name, consumer, container: false };
@@ -8140,8 +8156,19 @@ function moduleBindingPoint(ctx: LinkContext, analysis: FileAnalysis, sourceFile
   // A name inside the namespace body that declares it (Ruby `module League; SERVICE = …`) comes before a top-level namesake.
   let own = at === undefined ? undefined : innermostLexicalBinding(analysis, name, at);
   own ??= analysis.moduleBindings?.find((b) => nameKey(analysis.language, b.name) === key);
-  if (own) return point(analysis, own.type);
+  if (own) return point(analysis, own);
   const held: Array<{ holder: FileAnalysis; binding: ModuleBindingInfo }> = inScopeModuleBindings(ctx, analysis, name);
+  if (pluginFor(analysis.language)?.directoryNamesShared) {
+    // The binding another file of the directory declares (Go: one package). Two that disagree decide nothing, and a
+    // test file's is never read by code that is not a test.
+    const dir = analysis.filePath.slice(0, analysis.filePath.lastIndexOf("/") + 1);
+    const callerIsTest = isTestFile(analysis.filePath, analysis.language as Language);
+    for (const sibling of bindingFilesIn(ctx, analysis.language, dir)) {
+      if (sibling === analysis || (!callerIsTest && isTestFile(sibling.filePath, sibling.language as Language))) continue;
+      const binding = sibling.moduleBindings?.find((b) => nameKey(sibling.language, b.name) === key);
+      if (binding) held.push({ holder: sibling, binding });
+    }
+  }
   if (pluginFor(analysis.language)?.moduleBindingsFollowImports) {
     held.push(...requiredModuleBindings(ctx, analysis, name, key));
   } else if (pluginFor(analysis.language)?.importsShareScope) {
@@ -8155,7 +8182,7 @@ function moduleBindingPoint(ctx: LinkContext, analysis: FileAnalysis, sourceFile
   }
   let found: InjectionPoint | null = null;
   for (const { holder, binding } of held) {
-    const p = point(holder, binding.type);
+    const p = point(holder, binding);
     if (!p || (found && (found.typeName !== p.typeName || found.typeFile !== p.typeFile))) return null;
     found = p;
   }

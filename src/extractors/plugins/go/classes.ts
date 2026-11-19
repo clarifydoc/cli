@@ -4,6 +4,7 @@ import { goFuncVarParams, goInlineBodyColumn } from "./func-vars.js";
 import { extractGoLocalTypes, goPackageVars, initializerType, type GoBodyReading, type GoConstructors } from "./locals.js";
 import { addExpressionReceiverCalls, type GoTypeEnv } from "./element-types.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
+import { goLiteralParams } from "./literal-params.js";
 import { boundFromTags } from "./bound-tags.js";
 import { withHeadPathNames } from "./head-paths.js";
 import { bracketDelta, goContainerResult, goResultTextAt, goResultTypes, splitGoStatements, splitGoTopLevel, stripGoComment } from "./syntax.js";
@@ -44,7 +45,7 @@ export function extractGoClasses(lines: string[], fns: FunctionInfo[], parsePara
   // What this file states about fields, package variables and results, for the types a body does not declare.
   const env: GoTypeEnv = {
     fields: new Map(classes.flatMap((c) => c.properties.filter((p) => p.type).map((p) => [`${c.name}.${p.name}`, p.type!] as const))),
-    packageVars: new Map(goPackageVars(lines, constructors).map((v) => [v.name, v.type] as const)),
+    packageVars: new Map(goPackageVars(lines, constructors).filter((v) => v.type).map((v) => [v.name, v.type] as const)),
     results: constructors,
   };
 
@@ -79,6 +80,17 @@ export function extractGoClasses(lines: string[], fns: FunctionInfo[], parsePara
       if (param.isReceiver || !written || param.name === "_" || !declared.has(param.name) || goContainerResult(written)) continue;
       typeShadowedCalls(lines, fn, param.name, written, constructors);
     }
+    // The parameters of function literals in the body (`run := func(g *Garage) { g.Open() }`): typed like locals unless
+    // the function binds the name another way.
+    const literals = goLiteralParams(body);
+    for (const { name, type } of literals.typed) {
+      if (name === receiver?.name || declared.has(name) || locals.some((l) => l.name === name) || fn.params.some((p) => p.name === name)) continue;
+      locals.push({ name, type });
+    }
+    // Every name the body binds: a package variable of the same name is not what a call on it reads.
+    const bound = new Set([...declared, ...literals.names]);
+    if (bound.size > 0) fn.boundNames = [...bound];
+    else delete fn.boundNames;
     if (locals.length > 0) fn.localTypes = locals;
     else delete fn.localTypes;
     typeBlockLocalCalls(lines, fn, declared, locals, receiver?.name, constructors);

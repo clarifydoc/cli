@@ -1018,8 +1018,13 @@ export interface ExportInfo {
 /** A typed variable a module declares at its top level (`FileAnalysis.moduleBindings`). */
 export interface ModuleBindingInfo {
   name: string;
-  /** The declared type, as written. */
+  /** The declared type, as written. Empty when the type is only stated by `from`. */
   type: string;
+  /**
+   * The call the binding is initialised from when no type is written (`var store = NewStore()` → `NewStore()`, spelled as a
+   * call chain): the linker types the binding by that callee's declared result, as for a local's `from`.
+   */
+  from?: string;
   line: number;
   /** Visible to the files that import the module, not only to its own functions. */
   exported: boolean;

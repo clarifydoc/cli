@@ -1809,6 +1809,14 @@ export interface LanguagePluginManifest {
    */
   moduleBindingsFollowImports?: boolean;
   /**
+   * The files of a directory are one package whose top-level names are shared (Go): a module-level binding
+   * (`FileAnalysis.moduleBindings`) is seen by every other file of its directory, and so is a bare call's function
+   * that a sibling declares (followed for its declared result). A binding two files type differently decides
+   * nothing; a test file's is never seen by production code; a name a function binds itself
+   * (`FunctionInfo.boundNames`) is never read through it.
+   */
+  directoryNamesShared?: boolean;
+  /**
    * Language-specific filename/path patterns that mark a file as a test
    * (unit, integration, or e2e) — e.g. Go `_test.go`, JS `*_spec.js`/`*.cy.ts`,
    * Python `test_*.py`. Matched against the project-relative path (both `/` and

@@ -269,7 +269,7 @@ function fieldAlias(rhs: string): string | null {
 }
 
 /** `repo.Find(id)` / `store.NewRepo()` — the whole expression is ONE call: its chain as a call names it, `repo.Find()`. */
-function singleCall(rhs: string): string | null {
+export function singleCall(rhs: string): string | null {
   // A dereferenced receiver calls the same method: `(*c).Response()` → `c.Response()`.
   const text = rhs.trim().replace(/;\s*$/, "").replace(/^\(\s*\*\s*([A-Za-z_]\w*)\s*\)\./, "$1.");
   const m = /^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*\(/.exec(text);
@@ -350,18 +350,23 @@ export function initializerType(rhs: string, index: number, count: number, const
  * `var first = &Club{}`, `var registry = map[string]*Club{}`, `var home = NewClub()` (a same-file constructor), also
  * inside a `var ( … )` block. Name → type as written, with the line. A name declared twice is left out.
  */
-export function goPackageVars(lines: readonly string[], constructors?: GoConstructors): Array<{ name: string; type: string; line: number }> {
-  const out = new Map<string, { type: string; line: number } | null>();
-  const add = (name: string, type: string | null, line: number): void => {
+export function goPackageVars(lines: readonly string[], constructors?: GoConstructors): Array<{ name: string; type: string; line: number; from?: string }> {
+  const out = new Map<string, { type: string; line: number; from?: string } | null>();
+  const add = (name: string, type: string | null, line: number, from?: string): void => {
     if (name === "_") return;
-    if (out.has(name) || type === null) { out.set(name, null); return; }
-    out.set(name, { type: type.replace(/\s+/g, ""), line });
+    if (out.has(name) || (type === null && from === undefined)) { out.set(name, null); return; }
+    out.set(name, { type: (type ?? "").replace(/\s+/g, ""), line, ...(from !== undefined ? { from } : {}) });
   };
   const read = (names: string[], tail: string, line: number): void => {
     const t = tail.trim();
     if (t.startsWith("=")) {
       const rhs = t.slice(1);
-      names.forEach((n, i) => add(n, initializerType(rhs, i, names.length, constructors) ?? (names.length === 1 ? collectionBuilt(rhs) : null), line));
+      names.forEach((n, i) => {
+        const type = initializerType(rhs, i, names.length, constructors) ?? (names.length === 1 ? collectionBuilt(rhs) : null);
+        // `var store = NewStore()`: no type is written; the call that initialises it is, for the linker to type.
+        const from = type === null && i === 0 ? singleCall(rhs) : null;
+        add(n, type, line, from ?? undefined);
+      });
     } else {
       const type = t.split("=")[0]!.trim();
       for (const n of names) add(n, type && !type.startsWith("(") ? type : null, line);

@@ -237,7 +237,7 @@ export const goSpec: RegexLangSpec = {
   // A resty client or URL holder with a stated base: the origin of the requests made through it.
   extractHttpClientRegistrations: extractGoHttpClientRegistrations,
   // Typed package-level variables (`var first = &Club{}`) a bare name in the file's functions reaches.
-  extractModuleBindings: (lines) => goPackageVars(lines).map((v) => ({ name: v.name, type: v.type, line: v.line, exported: false })),
+  extractModuleBindings: (lines) => goPackageVars(lines).map((v) => ({ name: v.name, type: v.type, ...(v.from ? { from: v.from } : {}), line: v.line, exported: false })),
   // Calls naming the endpoint of a request factory (`NewInternalRequest(ctx, reqURL, "POST")`).
   extractPathArgCalls: extractGoPathArgCalls,
   extractRequestAccess: extractGoRequestAccess,

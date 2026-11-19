@@ -36,6 +36,8 @@ export const goManifest: LanguagePluginManifest = {
   extensions: [".go"],
   // One type spans files here: a type's methods sit in any file of its package directory.
   typesSpanFiles: true,
+  // A package variable is seen by every file of its directory.
+  directoryNamesShared: true,
   structuralMatch: goStructuralMatch,
   testFilePatterns: [/_test\.go$/],
   testSubjectAffixes: { suffixes: ["_test"] },
