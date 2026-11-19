@@ -10,9 +10,9 @@ import { asDoubleQuotedLiteral, extractSqlStringDataSources } from "../shared/sq
  */
 export function extractRakuDataSources(lines: string[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
-  const push = (method: string, url: string, line: number) => {
+  const push = (method: string, url: string, line: number, column: number) => {
     const target = url.replace(/\{\s*\$?([\w-]+)[^}]*\}|\$([\w-]+)/g, (_m, a: string, b: string) => `{${a ?? b}}`);
-    if (target.startsWith("/") || /^https?:\/\//.test(target)) out.push({ kind: "api-call", name: `${method} ${target}`, target, calls: [], line });
+    if (target.startsWith("/") || /^https?:\/\//.test(target)) out.push({ kind: "api-call", name: `${method} ${target}`, target, calls: [], line, column });
   };
   const bases = new Map<string, string>();
   for (const line of lines) {
@@ -21,10 +21,10 @@ export function extractRakuDataSources(lines: string[]): DataSourceInfo[] {
   }
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!.replace(/\s#.*$/, "");
-    for (const m of line.matchAll(/(?:Cro::HTTP::Client|HTTP::UserAgent(?:\.new)?|HTTP::Tiny(?:\.new)?)\.(get|post|put|patch|delete|head)\s*\(\s*(['"])(.*?)\2/g)) push(m[1]!.toUpperCase(), m[3]!, i + 1);
+    for (const m of line.matchAll(/(?:Cro::HTTP::Client|HTTP::UserAgent(?:\.new)?|HTTP::Tiny(?:\.new)?)\.(get|post|put|patch|delete|head)\s*\(\s*(['"])(.*?)\2/g)) push(m[1]!.toUpperCase(), m[3]!, i + 1, m.index!);
     for (const m of line.matchAll(/\$([\w-]+)\.(get|post|put|patch|delete|head)\s*\(\s*(['"])(\/.*?)\3/g)) {
       const base = bases.get(m[1]!);
-      if (base) push(m[2]!.toUpperCase(), base + m[4]!, i + 1);
+      if (base) push(m[2]!.toUpperCase(), base + m[4]!, i + 1, m.index!);
     }
   }
   return out;
