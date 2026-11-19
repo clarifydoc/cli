@@ -93,6 +93,11 @@ function finishModulePath(dir: string, path: string[], specifier: string | undef
   return module;
 }
 
+/** The directory a `crate::`-rooted path stays in: the importing crate's own; null for any other path. */
+export function rustImportConfinement(importingFile: string, source: string, ctx: ImportResolveContext): string | null {
+  return source.startsWith("crate::") ? crateSrcOf(importingFile, ctx) : null;
+}
+
 /** The directory a path's first segment starts from; null when it names no project crate. */
 function moduleDirOf(importingFile: string, head: string, ctx: ImportResolveContext): string | null {
   if (head === "crate") return crateSrcOf(importingFile, ctx);

@@ -1,7 +1,7 @@
 import { rustCollectionElement } from "./collection-element.js";
 import { rustMigrationFiles } from "./migration-files.js";
 import { rustProjectCommands } from "./project-commands.js";
-import { resolveRustImport } from "./module-resolver.js";
+import { resolveRustImport, rustImportConfinement } from "./module-resolver.js";
 import { rustTestCommand } from "./test-command.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { rustFrameworkRules } from "./frameworks.js";
@@ -19,6 +19,7 @@ export const rustManifest: LanguagePluginManifest = {
   docComments: C_STYLE_DOCS,
   migrationFiles: rustMigrationFiles,
   resolveImport: resolveRustImport,
+  importConfinement: rustImportConfinement,
   testCommand: rustTestCommand,
   // Spelled out as `std::fs::…` / `thread::sleep`: a bare `fs::read` may be tokio's, imported under that name.
   blockingCalls: /^(?:(?:std::)?thread::sleep|std::fs::[\w:]+)$/,

@@ -1313,6 +1313,13 @@ export interface LanguagePluginManifest {
    */
   resolveImport?(importingFile: string, source: string, specifier: string | undefined, ctx: ImportResolveContext): string | null;
   /**
+   * The directory an import's path is confined to, for a language whose path can start from the importer's own
+   * unit (`crate::garage::Garage` is the importing crate's, never another crate's): a class the import binds is
+   * declared at or below it, else the import names none and a namesake elsewhere is no answer. Null when the
+   * path is not so rooted. Leaf code: it reads only `ctx`.
+   */
+  importConfinement?(importingFile: string, source: string, ctx: ImportResolveContext): string | null;
+  /**
    * The directory a package import names, for a language whose import path is
    * the package's own name plus its directory (`importsNameDirectories` — a Go
    * import is the go.mod module path, then the directory under that module):

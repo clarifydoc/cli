@@ -23,7 +23,7 @@ import {
 import { reactiveTriggerLinks } from "./reactive-triggers.js";
 import type { ImportResolveContext, LanguagePluginManifest, PackageRoot, RecordChoice, StructuralMatch } from "../types/language-plugin.js";
 import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scoring.js";
-import { isExternalImportSource } from "./import-index.js";
+import { isExternalImportSource, importResolveContext as buildImportResolveContext } from "./import-index.js";
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
 import { commonPrefixLength, extensionFamily, escapeRegex } from "../extractors/plugins/shared/path-utils.js";
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
@@ -2254,8 +2254,13 @@ function definitionsBeside(
   const family = extensionFamily(header);
   const project = ctx.projectOf.get(header);
   const out: Array<{ file: string; def: SymbolDef }> = [];
-  for (const file of ctx.filesByStem.get(fileStem(header)) ?? []) {
+  const sameStem = ctx.filesByStem.get(fileStem(header)) ?? [];
+  const dirOf = (f: string): string => f.slice(0, f.lastIndexOf("/") + 1);
+  for (const file of sameStem) {
     if (file === header || declarations.some((ext) => file.endsWith(ext)) || extensionFamily(file) !== family) continue;
+    // A body with a declaration file of its own beside it (`other/club.c` and `other/club.h`) defines that one's
+    // names, not those of a header of the same name elsewhere.
+    if (dirOf(file) !== dirOf(header) && sameStem.some((d) => dirOf(d) === dirOf(file) && declarations.some((ext) => d.endsWith(ext)))) continue;
     if (ctx.projectOf.get(file) !== project || packageTest(ctx, file)) continue;
     const def = symbolIn(ctx, file, name);
     if (!def || def.name.includes(".")) continue;
@@ -2678,6 +2683,7 @@ function importPath(ctx: LinkContext, source: string, fromFile: string): string 
     if (file !== undefined) return ctx.filePathMap.get(file) === file ? file : null;
   }
   const target = resolveTarget(source, fromFile, ctx.filePathMap);
+  if (target && !withinImportConfinement(ctx, source, fromFile, target)) return null;
   // Where types live in nested namespaces (`nestedPackageLookup`), a file found by the name of its type is the
   // import's only when the namespace it declares is the one the source names: `using static Fx.Tools.Parts;`
   // never opens the `Parts` of another namespace.
@@ -3755,6 +3761,19 @@ function buildMemberTypes(
     closures.set(file, seen);
     return seen;
   };
+  // Where an import's path is confined to the importer's own unit (`importConfinement`), a declaration outside it is no answer.
+  let resolveCtx: ImportResolveContext | undefined;
+  const inConfinement = (source: string, consumerFile: string, file: string): boolean => {
+    const hook = pluginFor(languageOfFile.get(consumerFile) as Language)?.importConfinement;
+    if (!hook) return true;
+    resolveCtx ??= buildImportResolveContext(analyses, new Set(languageOfFile.keys()));
+    const dir = hook(consumerFile, source, resolveCtx);
+    return dir === null || dir === "" || file.startsWith(`${dir}/`);
+  };
+  // A type the consumer's own import names through a confined path lives inside it, never in a namesake outside.
+  const confinedAway = (typeName: string, consumerFile: string, file: string): boolean =>
+    !!pluginFor(languageOfFile.get(consumerFile) as Language)?.importConfinement && (analysisOf.get(consumerFile)?.imports ?? []).some((imp) =>
+      (imp.specifiers.includes(typeName) || Object.values(imp.aliases ?? {}).includes(typeName)) && !inConfinement(imp.source, consumerFile, file));
   const importedDecl = (typeName: string, consumerFile: string): string | null => {
     if ((classToFiles.get(typeName)?.length ?? 0) < 2) return null;
     // An import renaming the type (`import { Engine as Motor }`, `import Lathe from`) names its module too.
@@ -3763,7 +3782,7 @@ function buildMemberTypes(
     for (const imp of imps) {
       pathMap ??= buildFilePathMap(analyses);
       const f = resolveTarget(imp.source, consumerFile, pathMap);
-      if (f && declAt.has(memberKey(f, typeName))) return f;
+      if (f && declAt.has(memberKey(f, typeName)) && inConfinement(imp.source, consumerFile, f)) return f;
     }
     // Where an import puts a whole unit in scope without naming what it uses (`uses Garage`), the one
     // imported file declaring the type is the one meant — as `typeFileFor` reads a parameter's type.
@@ -3823,7 +3842,7 @@ function buildMemberTypes(
   const fileOf = (typeName: string, consumerFile: string, skipOwnLocal = false): string | null =>
     (!skipOwnLocal && declAt.get(memberKey(consumerFile, typeName))?.fileLocal ? consumerFile : null) ??
     importedDecl(typeName, consumerFile) ??
-    pickDefinition(typeName, declaredFirst(typeName, inSpace((classToFiles.get(typeName) ?? []).filter((f) => (f === consumerFile && !(skipOwnLocal && declAt.get(memberKey(f, typeName))?.fileLocal)) || !declAt.get(memberKey(f, typeName))?.fileLocal || closureOf(consumerFile).has(f)), consumerFile)), consumerFile, (f, n) => declAt.get(memberKey(f, n)), (f) => languageOfFile.get(f), (f) => closureOf(consumerFile).has(f));
+    pickDefinition(typeName, declaredFirst(typeName, inSpace((classToFiles.get(typeName) ?? []).filter((f) => !confinedAway(typeName, consumerFile, f) && ((f === consumerFile && !(skipOwnLocal && declAt.get(memberKey(f, typeName))?.fileLocal)) || !declAt.get(memberKey(f, typeName))?.fileLocal || closureOf(consumerFile).has(f))), consumerFile)), consumerFile, (f, n) => declAt.get(memberKey(f, n)), (f) => languageOfFile.get(f), (f) => closureOf(consumerFile).has(f));
 
   // One type declared across several files of a directory — a Go struct
   // whose methods sit in sibling files (each file carries a stub class with
@@ -8456,7 +8475,18 @@ function importedTypeRef(ctx: LinkContext, typeName: string, sourceFile: string,
   // file is a package's: its class is not some project class sharing the name.
   const language = ctx.languageOf.get(sourceFile) as Language | undefined;
   if (!target && language && pluginFor(language)?.importsBindNames) return { typeName: exported, typeFile: null };
-  return { typeName: exported, typeFile: typeFileFor(ctx, exported, sourceFile, projectId) };
+  const found = typeFileFor(ctx, exported, sourceFile, projectId);
+  return { typeName: exported, typeFile: found && withinImportConfinement(ctx, imp.source, sourceFile, found) ? found : null };
+}
+
+/** Whether `file` lies in the directory the import's path is confined to (`importConfinement`); true when it has none. */
+function withinImportConfinement(ctx: LinkContext, source: string, importingFile: string, file: string, name?: string): boolean {
+  const language = ctx.languageOf.get(importingFile) as Language | undefined;
+  const plugin = language ? pluginFor(language) : undefined;
+  const dir = plugin?.importConfinement?.(importingFile, source, importResolveContext(ctx));
+  if (dir === null || dir === undefined || dir === "" || file.startsWith(`${dir}/`)) return true;
+  // A module of the unit that re-exports the name from elsewhere (`pub use other::Garage;`) is the language's own answer.
+  return !!name && plugin?.resolveImport?.(importingFile, source, name, importResolveContext(ctx)) === file;
 }
 
 /**
@@ -8836,6 +8866,43 @@ function isNameableFrom(ctx: LinkContext, file: string, typeName: string, source
  * type is not a project class or is ambiguous.
  */
 function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, projectId: string): string | null {
+  const named = typeFileByImportedNamespace(ctx, typeName, sourceFile);
+  if (named !== undefined) return named;
+  const file = typeFileForInner(ctx, typeName, sourceFile, projectId);
+  if (!file) return file;
+  // A type the file's own import names through a path confined to the importer's unit (`importConfinement`)
+  // lives inside it: a namesake outside is no answer.
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  const imports = ctx.analysisByFile.get(sourceFile)?.imports;
+  if (!imports || !pluginFor((ctx.languageOf.get(sourceFile) ?? "") as Language)?.importConfinement) return file;
+  const binding = imports.filter((imp) => imp.specifiers.includes(typeName) || Object.values(imp.aliases ?? {}).includes(typeName));
+  return binding.length > 0 && binding.every((imp) => !withinImportConfinement(ctx, imp.source, sourceFile, file, typeName)) ? null : file;
+}
+
+/**
+ * Where classes are looked up by namespace (`classNamesByEvidence`), a type the file's own `use` names is the class
+ * declared in exactly that namespace — wherever its directory sits, and never a namesake of another namespace.
+ * Undefined when no import binds the name or the namespace names no unique class (the other rules decide); null when
+ * an import binds it and no project class is declared there (a package's class).
+ */
+function typeFileByImportedNamespace(ctx: LinkContext, typeName: string, sourceFile: string): string | null | undefined {
+  const language = ctx.languageOf.get(sourceFile) as Language | undefined;
+  const sep = language ? manifestFor(language)?.classNamesByEvidence?.separator : undefined;
+  if (!sep || typeName.includes(sep)) return undefined;
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  const source = ctx.analysisByFile.get(sourceFile);
+  const imp = source?.imports.find((i) => i.isType && i.specifiers.includes(typeName) && !i.aliases?.[typeName]);
+  if (!source || !imp) return undefined;
+  const candidates = nameableClassFiles(ctx, typeName, sourceFile).filter((f) => ctx.languageOf.get(f) === language && !ctx.classAt.get(memberKey(f, typeName))?.extension);
+  if (candidates.length === 0) return undefined;
+  const named = filesNamedByEvidence(ctx, source, sep, typeName, candidates);
+  if (named.length === 1) return named[0]!;
+  // No class there: a package's, when every candidate states another namespace; else the other rules decide.
+  const states = (f: string): boolean => !!(ctx.analysisByFile!.get(f)?.declaredNamespace || ctx.analysisByFile!.get(f)?.classes.some((c) => c.namespace));
+  return named.length === 0 && candidates.every(states) ? null : undefined;
+}
+
+function typeFileForInner(ctx: LinkContext, typeName: string, sourceFile: string, projectId: string): string | null {
   // `League::Club` where constants are looked up lexically: the class at that path, or none.
   const path = lexicalPathRef(ctx, typeName, sourceFile, projectId);
   if (path !== undefined) return path?.typeFile ?? null;
@@ -10407,14 +10474,14 @@ function buildReverseReferenceLinks(
       if (imp.isType) continue;
 
       const targetFile = resolveTarget(imp.source, analysis.filePath, filePathMap);
-      if (!targetFile || targetFile === analysis.filePath) continue;
+      if (!targetFile || targetFile === analysis.filePath || !withinImportConfinement(ctx, imp.source, analysis.filePath, targetFile)) continue;
 
       const targetSymbols = symbolIndex.get(targetFile);
       if (!targetSymbols) continue;
 
       for (const spec of imp.specifiers) {
         // `import pump from "./tyre"` names the module's default export, by whatever name the module gives it.
-        const own = defaultBinding(imp, spec) && !targetSymbols.has(spec)
+        const own = defaultBinding(imp, spec)
           ? analysisAt.get(targetFile)?.exports.find((e) => e.kind === "default")?.sourceName
           : undefined;
         const name = own ?? imp.aliases?.[spec] ?? spec;

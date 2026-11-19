@@ -3809,6 +3809,22 @@ export function buildComponentGraph(
     return pickByPathAffinity(sameProject.length > 0 ? sameProject : others, (c) => c, fromFile);
   };
 
+  // Where classes are looked up by namespace (`classNamesByEvidence`), a `use` of `League\Club\Squad` names the file
+  // declaring `Squad` in exactly that namespace: a namesake of another namespace is no candidate.
+  const byNamespace = (from: FileAnalysis, imp: { source: string; isType?: boolean }, candidates: string[]): string[] => {
+    const sep = manifestFor(from.language)?.classNamesByEvidence?.separator;
+    if (!sep || !imp.isType || !imp.source.includes(sep)) return candidates;
+    const wanted = imp.source.replace(/^\\/, "").toLowerCase();
+    return candidates.filter((c) => {
+      const other = byPath.get(c);
+      if (!other || other.language !== from.language) return true;
+      return other.classes.some((cl) => {
+        const ns = cl.namespace ?? other.declaredNamespace;
+        return `${ns ? ns + sep : ""}${cl.name}`.toLowerCase() === wanted;
+      });
+    });
+  };
+
   // File base names (without extension, LOWERCASED — Pascal and friends match
   // units case-insensitively) → declaring files.
   const baseNameToFiles = new Map<string, string[]>();
@@ -4083,7 +4099,7 @@ export function buildComponentGraph(
         if (candidates) {
           // Self is dropped BEFORE the pick (an import never targets its own
           // file) so a same-named import from elsewhere can still resolve.
-          const target = pickScoped(candidates, a.filePath);
+          const target = pickScoped(byNamespace(a, imp, candidates), a.filePath);
           if (target) addRef(target);
         }
       }
@@ -4132,7 +4148,7 @@ export function buildComponentGraph(
       const lastSegment = guessNames ? imp.source.split(/[./\\]/).filter(Boolean).pop() : undefined;
       if (lastSegment) {
         const candidates = baseNameToFiles.get(lastSegment.toLowerCase());
-        const target = candidates ? pickScoped(candidates, a.filePath) : null;
+        const target = candidates ? pickScoped(byNamespace(a, imp, candidates), a.filePath) : null;
         if (target) {
           // A bare namespace import (`using X.Y.Z;`, no named binding) only
           // implies a dependency when the file actually uses a symbol named like
