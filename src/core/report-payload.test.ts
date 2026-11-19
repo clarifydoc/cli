@@ -160,6 +160,23 @@ describe("buildReportPayload wire encoding", () => {
     expect(enc("di-binding")).not.toBe(enc("dispatch:mediatr"));
   });
 
+  it("carries a link's binding sites and gate kind in tail slots, written only when present", () => {
+    const row = (extra: object) =>
+      (buildReportPayload({
+        ...(summary as object),
+        symbolLinks: [
+          { sourceFile: "src/a.ts", sourceSymbol: "f", sourceLine: 1, callName: "g", targetFile: "src/b.ts", targetSymbol: "g", targetLine: 2, strategy: "dispatch:mediatr", ...extra },
+        ],
+      } as unknown as ProjectAnalysis).symbolLinks[0] as unknown[]);
+    expect(row({}).length).toBe(8);
+    const bound = row({ viaUsage: [{ file: "src/b.ts", line: 7 }] });
+    expect(bound[8]).toEqual([[1, 7]]);
+    expect(bound.length).toBe(9);
+    const open = row({ strategy: "dispatch:renders-open", relation: "reference" });
+    expect(open[8]).toBe(0);
+    expect(open[9]).toBe(3);
+  });
+
   it("emits linkGraph and complexity as tuples", () => {
     const l = payload.linkGraph[0];
     expect(l[0]).toBe(0);

@@ -217,6 +217,12 @@ function strategyCode(strategy: string | undefined): number {
 }
 
 /**
+ * The strategies the usage gate (`usageGate` in symbol-graph.ts) tells apart, which the `dispatch` strategy code cannot:
+ * a tail slot of the row, 1-based. APPEND only; the viewer's `report/decode.ts` holds the same list.
+ */
+export const GATE_KINDS: readonly string[] = ["dispatch:template-ref", "dispatch:renders", "dispatch:renders-open"];
+
+/**
  * symbolLinks wire row (the payload's biggest field — 58k rows on a 5k-file
  * corpus repeated ~90 chars of KEY NAMES per row as objects):
  *   [sourceFile, sourceSymbol, sourceLine, callName, targetFile, targetSymbol, targetLine, meta?]
@@ -236,7 +242,11 @@ function encodeSymbolLink(
     ref(l.sourceFile), sym(l.sourceSymbol), l.sourceLine, sym(l.callName),
     ref(l.targetFile), sym(l.targetSymbol), l.targetLine,
   ];
-  if (meta !== 0) row.push(meta);
+  // Rare tail slots, written only on a link that has them: [7] meta, [8] viaUsage as [fileRef, line] pairs, [9] gate kind.
+  const kind = GATE_KINDS.indexOf(l.strategy) + 1;
+  if (meta !== 0 || l.viaUsage?.length || kind) row.push(meta);
+  if (l.viaUsage?.length || kind) row.push(l.viaUsage?.length ? l.viaUsage.map((u: { file: string; line: number }) => [ref(u.file), u.line]) : 0);
+  if (kind) row.push(kind);
   return row;
 }
 
