@@ -26,7 +26,9 @@ export function ignoreSuggestions(files: readonly string[], generatedRoots: read
     const count = posix.reduce((n, f) => (f.startsWith(prefix) ? n + 1 : n), 0);
     if (count > 0) out.push({ root, kind, files: count });
   }
-  return out.sort((a, b) => b.files - a.files || (a.root < b.root ? -1 : a.root > b.root ? 1 : 0));
+  // A root inside another listed root is covered by it: one entry, its files counted once.
+  const outer = out.filter((s) => !out.some((o) => o !== s && s.root.startsWith(`${o.root}/`)));
+  return outer.sort((a, b) => b.files - a.files || (a.root < b.root ? -1 : a.root > b.root ? 1 : 0));
 }
 
 /**
@@ -38,7 +40,7 @@ export function ignoreSuggestionLines(suggestions: readonly IgnoreSuggestion[], 
   const total = suggestions.reduce((n, s) => n + s.files, 0);
   return [
     `${total} analyzed file${total === 1 ? "" : "s"} sit under generated or vendored folders — add them to .clarifydocignore to cut noise and run time:`,
-    ...suggestions.slice(0, limit).map((s) => `  /${s.root}/   # ${s.files} file${s.files === 1 ? "" : "s"}, ${s.kind}`),
+    ...suggestions.slice(0, limit).map((s) => `  /${s.root}/   # ${s.files} file${s.files === 1 ? "" : "s"}, ${s.kind === "generated" ? "generated — its routes and calls leave the map too" : "vendored"}`),
     ...(suggestions.length > limit ? [`  … ${suggestions.length - limit} more`] : []),
   ];
 }

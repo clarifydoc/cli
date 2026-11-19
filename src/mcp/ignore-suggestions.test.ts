@@ -26,8 +26,12 @@ describe("ignoreSuggestions", () => {
     ]);
     expect(ignoreSuggestionLines(found).join("\n")).toBe(
       "5 analyzed files sit under generated or vendored folders — add them to .clarifydocignore to cut noise and run time:\n" +
-        "  /third_party/   # 3 files, vendored\n  /api/generated/   # 2 files, generated",
+        "  /third_party/   # 3 files, vendored\n  /api/generated/   # 2 files, generated — its routes and calls leave the map too",
     );
+  });
+
+  it("lists a root inside another listed root once", () => {
+    expect(ignoreSuggestions(["gen/a.ts", "gen/third_party/b.ts", "gen/third_party/c.ts"], ["gen"])).toEqual([{ root: "gen", kind: "generated", files: 3 }]);
   });
 
   it("says nothing when there is no such root", () => {
