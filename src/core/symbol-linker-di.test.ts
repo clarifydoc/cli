@@ -479,7 +479,7 @@ describe("symbol-linker — typed receivers", () => {
       expect(out.map((l) => [l.callName, l.targetSymbol])).toEqual([["theFixture.getFixtureState", "Case.getFixtureState"]]);
     });
 
-    it("types a local initialized in several branches by its one class, or links each arm AMBIGUOUS when they differ", () => {
+    it("types a local initialized in several branches only when every call returns the same class", () => {
       const sheet = file("lib/Sheet.php", [cls("Sheet", { methods: [
         returning("getCell", "Cell", 3), returning("getCellAt", "Cell", 5), returning("createRun", "Run", 7),
       ] })], { language: "php" });
@@ -495,14 +495,10 @@ describe("symbol-linker — typed receivers", () => {
         ] } as ReturnType<typeof method>],
       })], { language: "php" });
       const out = callsFrom(buildSymbolLinks([sheet, cellCls, run, svc]), "app/Export.php");
-      expect(out.map((l) => [l.callName, l.targetSymbol, l.confidence])).toEqual([
-        ["a.getFont", "Cell.getFont", "INFERRED"],
-        ["b.getFont", "Cell.getFont", "AMBIGUOUS"],
-        ["b.getFont", "Run.getFont", "AMBIGUOUS"],
-      ]);
+      expect(out.map((l) => [l.callName, l.targetSymbol])).toEqual([["a.getFont", "Cell.getFont"]]);
     });
 
-    it("types a local by a member read off its initializer call, each arm of a conditional agreeing or linked AMBIGUOUS", () => {
+    it("types a local by a member read off its initializer call, each arm of a conditional agreeing", () => {
       const garage = file("app/Garage.java", [
         cls("Garage", { properties: [prop("clubs", "ClubApi")] }),
         cls("ClubApi", { methods: [returning("list", null, 12)] }),
@@ -514,17 +510,13 @@ describe("symbol-linker — typed receivers", () => {
         methods: [{ ...method("run", [call("api.list"), call("other.list")]), localTypes: [
           { name: "api", type: "", from: "factory.garage().clubs" },
           { name: "api", type: "", from: "factory.clubApi()" },
-          // The arms disagree: each arm's class is linked, AMBIGUOUS.
+          // The arms disagree: neither class is the local's.
           { name: "other", type: "", from: "factory.leagueApi()" },
           { name: "other", type: "", from: "factory.clubApi()" },
         ] } as ReturnType<typeof method>],
       })], { language: "java" });
       const out = callsFrom(buildSymbolLinks([garage, svc]), "web/Clubs.java").filter((l) => l.strategy === "injection");
-      expect(out.map((l) => [l.callName, l.targetSymbol, l.confidence])).toEqual([
-        ["api.list", "ClubApi.list", "INFERRED"],
-        ["other.list", "LeagueApi.list", "AMBIGUOUS"],
-        ["other.list", "ClubApi.list", "AMBIGUOUS"],
-      ]);
+      expect(out.map((l) => [l.callName, l.targetSymbol])).toEqual([["api.list", "ClubApi.list"]]);
     });
 
     it("unwraps the language's task type when the initializer is awaited", () => {

@@ -683,7 +683,7 @@ function scanBody(
           const picked = switchRecordEntries(node);
           const locals = picked
             ? [{ local: { name: name.text, type: "", from: `${name.text}[]`, indexOrigin: picked.indexOrigin }, annotated: false }]
-            : conditionalLocals(children, name.text) ?? [declaredLocal(node, children, name.text, ctx)];
+            : conditionalLocals(children, name.text, node.startIndex) ?? [declaredLocal(node, children, name.text, ctx)];
           const list = bindings.get(name.text);
           if (list) list.push(...locals);
           else bindings.set(name.text, locals);
@@ -1012,7 +1012,7 @@ function initializerLocal(value: Node, name: string): { local: LocalType; annota
  * arm, each the call it is initialized from — the linker types the name only
  * when the arms agree. Null for any other initializer (or an annotated one).
  */
-function conditionalLocals(children: readonly Node[], name: string): Array<{ local: LocalType; annotated: boolean } | null> | null {
+function conditionalLocals(children: readonly Node[], name: string, choice: number): Array<{ local: LocalType; annotated: boolean } | null> | null {
   let value: Node | null = null;
   for (let i = 1; i < children.length; i++) {
     if (children[i]!.type === "type_annotation") return null;
@@ -1024,7 +1024,10 @@ function conditionalLocals(children: readonly Node[], name: string): Array<{ loc
   return arms.map((arm) => {
     let a = arm;
     while (a?.type === "parenthesized_expression") a = a.namedChild(0);
-    return a ? initializerLocal(a, name) : null;
+    const typed = a ? initializerLocal(a, name) : null;
+    // The arms are one choice: a caller may link each (see `LocalType.choice`).
+    if (typed?.local.from) typed.local.choice = choice;
+    return typed;
   });
 }
 

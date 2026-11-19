@@ -97,6 +97,14 @@ describe("receivers with several candidate types", () => {
         "export function libUnion(x: Headers | ClubApi) {",
         "  x.getAll();",
         "}",
+        "export function separate(opt: { relegate: boolean }) {",
+        "  if (opt.relegate) { const w = useClubApi(); w.reset(); }",
+        "  else { const w = usePlayerApi(); w.getAll(); }",
+        "}",
+        "export function sameName(opt: { relegate: boolean }) {",
+        "  if (opt.relegate) { const w = useClubApi(); w.getAll(); }",
+        "  else { const w = usePlayerApi(); w.getAll(); }",
+        "}",
         "export function awaited() {",
         "  const c = makeClubApi();",
         "  return c.then((a) => a.getAll());",
@@ -104,6 +112,58 @@ describe("receivers with several candidate types", () => {
         "export async function awaited2() {",
         "  const c = await makeClubApi();",
         "  c.getAll();",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    await file("go/go.mod", "module example.com/league\n\ngo 1.21\n");
+    await file(
+      "go/league/league.go",
+      [
+        "package league",
+        "",
+        "type SeekableGarage struct{}",
+        "func (g *SeekableGarage) Close() error { return nil }",
+        "func NewSeekableGarage() (*SeekableGarage, error) { return &SeekableGarage{}, nil }",
+        "type Garage struct{}",
+        "func (g *Garage) Close() error { return nil }",
+        "func NewGarage() (*Garage, error) { return &Garage{}, nil }",
+        "type Relegation struct{}",
+        "func (r *Relegation) Start(o Options) {}",
+        "type Promotion struct{}",
+        "func (r *Promotion) Start(o Options) {}",
+        "type Options struct{ Relegate, Promote bool }",
+        "func NewRelegation() *Relegation { return &Relegation{} }",
+        "func NewPromotion() *Promotion { return &Promotion{} }",
+        "",
+      ].join("\n"),
+    );
+    await file(
+      "go/app/garage.go",
+      [
+        "package app",
+        "",
+        'import "example.com/league/league"',
+        "",
+        "func TestGarage(t *testing.T) {",
+        '\tt.Run("seekable", func(t *testing.T) {',
+        "\t\tw, _ := league.NewSeekableGarage()",
+        "\t\tw.Close()",
+        "\t})",
+        '\tt.Run("plain", func(t *testing.T) {',
+        "\t\tw, _ := league.NewGarage()",
+        "\t\tw.Close()",
+        "\t})",
+        "}",
+        "func StartSeason(opt league.Options) {",
+        "\tif opt.Relegate {",
+        "\t\tw := league.NewRelegation()",
+        "\t\tw.Start(opt)",
+        "\t}",
+        "\tif opt.Promote {",
+        "\t\tw := league.NewPromotion()",
+        "\t\tw.Start(opt)",
+        "\t}",
         "}",
         "",
       ].join("\n"),
@@ -122,7 +182,7 @@ describe("receivers with several candidate types", () => {
     await analyze({ projectRoot: dir, outputDir: join(dir, ".clarifydoc"), lsp: false, gitHistory: false });
   }, 60_000);
   afterAll(async () => {
-    if (!process.env.KEEP) await rm(dir, { recursive: true, force: true }); else console.log("DIR", dir);
+    if (!process.env.KEEP) await rm(dir, { recursive: true, force: true }); else process.stderr.write("DIR " + dir + "\n");
   });
 
   const linksOf = async (fn: string) => {
@@ -166,6 +226,18 @@ describe("receivers with several candidate types", () => {
     const links = await linksOf("libUnion");
     expect(links.some((l) => l.targetFile.endsWith("Headers.ts"))).toBe(false);
     expect(shape(links, "x.getAll").every((s) => s.startsWith("ClubApi.getAll"))).toBe(true);
+  });
+  it("never fans a name declared separately in two blocks to both classes", async () => {
+    expect(shape(await linksOf("separate"), "w.reset").every((x) => !x.endsWith("AMBIGUOUS"))).toBe(true);
+    expect(shape(await linksOf("sameName"), "w.getAll").every((x) => !x.endsWith("AMBIGUOUS"))).toBe(true);
+  });
+  it("never fans a Go name declared in two closures or two blocks to both types", async () => {
+    const summary = await loadReportSummary(join(dir, ".clarifydoc"));
+    const go = (summary.symbolLinks ?? []).filter((l) => l.sourceFile === "go/app/garage.go" && (l.callName === "w.Close" || l.callName === "w.Start") && l.relation !== "reference");
+    expect(go.filter((l) => l.confidence === "AMBIGUOUS")).toEqual([]);
+    // each link, if any, lands on its own block's type: a test double per type would be wrong
+    expect(new Set(go.map((l) => `${l.sourceLine}:${l.targetSymbol}`)).size).toBe(go.length);
+    for (const l of go) expect(go.filter((o) => o.sourceLine === l.sourceLine).length).toBe(1);
   });
   it("types a factory returning an awaited local as what the local holds", async () => {
     expect(shape(await linksOf("awaited2"), "c.getAll")).toEqual(["ClubApi.getAll:INFERRED"]);

@@ -285,11 +285,14 @@ describe("typed locals (FunctionInfo.localTypes)", () => {
         const garage = useGarage(slug).clubs;
       }`);
     // `half` has an arm no call types: never typed.
-    expect(r.functions.find((fn) => fn.name === "useClubs")!.localTypes).toEqual([
-      { name: "api", type: "", from: "useGarage().clubs" },
-      { name: "api", type: "", from: "useClubApi()" },
+    // The arms of one conditional share a `choice` (where the declaration starts); a plain declaration has none.
+    const locals = r.functions.find((fn) => fn.name === "useClubs")!.localTypes!;
+    expect(locals).toEqual([
+      { name: "api", type: "", from: "useGarage().clubs", choice: expect.any(Number) },
+      { name: "api", type: "", from: "useClubApi()", choice: expect.any(Number) },
       { name: "garage", type: "", from: "useGarage().clubs" },
     ]);
+    expect(locals[0]!.choice).toBe(locals[1]!.choice);
   });
 
   it("reads module-scope locals for the file's <setup> (a Vue <script setup>, a module's top level)", async () => {

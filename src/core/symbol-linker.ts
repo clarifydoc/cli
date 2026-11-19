@@ -3712,6 +3712,8 @@ interface InjectionPoint {
    * class-level method returning `self` gives (a scope). Absent for an instance.
    */
   classSide?: true;
+  /** One of several candidates a run-time choice picks between (a conditional initializer's arm, a union's member). */
+  choice?: true;
 }
 
 /**
@@ -7145,17 +7147,23 @@ function resolveThroughDeclaredType(
   if (point) return linkThroughPoint(ctx, analysis, sourceFile, point, leafName, mkLink);
   if (branches.length === 0) return collectionExtensionLink(ctx, analysis, sourceFile, sourceSymbol, consumer, receiver, leafName, mkLink);
   if (branches.length < 2) return null;
-  // A local typed differently per branch (`const api = slug ? guestApi(slug).clubs : playerApi().clubs`), or a
+  // A local typed differently per branch (`const api = slug ? guestApi(slug).clubs : playerApi().clubs`, one conditional initializer), or a
   // parameter declared `Club | Player` / `Club & Named`: each candidate class that declares the member is linked.
   // Candidates reaching ONE method — a base all of them inherit it from — link once per class (that body runs
   // whichever the branch gave, on that branch's class). Candidates reaching different methods each link, AMBIGUOUS:
   // a run-time choice picks one and nothing says which. A candidate declaring no such member is skipped; when only
   // one declares it, that link stays INFERRED (the member names its class).
+  const fanOut = branches.every((b) => b.choice);
   const out: SymbolLink[] = [];
   for (const b of branches) {
     const p = walkChain(ctx, b, receiver.slice(1), false);
     const link = p ? linkThroughPoint(ctx, analysis, sourceFile, p, leafName, mkLink) : null;
-    if (!link) continue;
+    if (!link) {
+      if (fanOut) continue;
+      return null;
+    }
+    // Not a choice (separate declarations): every candidate must reach ONE method, else the local stays untyped.
+    if (!fanOut && out[0] && (out[0].targetFile !== link.targetFile || out[0].targetSymbol !== link.targetSymbol)) return null;
     if (!out.some((o) => o.targetFile === link.targetFile && o.targetSymbol === link.targetSymbol && o.viaType === link.viaType && o.viaTypeFile === link.viaTypeFile)) out.push(link);
   }
   if (out.length === 0) return null;
@@ -8250,7 +8258,13 @@ function scopedName(
     if (typed) return typed;
     // Typed differently per branch (`slug ? useGuestApi(slug).explore : usePlayerApi()`): each
     // branch's type, for a caller that follows the chain on each.
-    if (each.length > 1 && branches) branches.push(...each);
+    // Only the arms of ONE conditional initializer are a choice; separate declarations of the name (one per
+    // block or closure) are not, and keep the one-method rule.
+    if (each.length > 1 && branches) {
+      const arms = inits.filter((l) => l.from);
+      const oneChoice = arms[0]!.choice !== undefined && arms.every((l) => l.choice === arms[0]!.choice);
+      branches.push(...(oneChoice ? each.map((q) => ({ ...q, choice: true as const })) : each));
+    }
     // A local that reassigns a parameter (`$repo = $this->fallback()`) keeps
     // the parameter's declared type when the call states none.
     local = undefined;
@@ -8270,7 +8284,7 @@ function scopedName(
           // A candidate that is no project class (a library's `Response`, a primitive) may be what the value is
           // and may declare the member: no candidate decides then, and no namesake of it is guessed.
           if (!ref?.typeFile || !ctx.classAt.has(memberKey(ref.typeFile, declaredTypeName(ctx, ref.typeFile, ref.typeName)))) { points.length = 0; break; }
-          points.push({ typeName: ref.typeName, typeFile: ref.typeFile, member: name, consumer, ...(param && !param.injected ? { container: false } : {}) });
+          points.push({ typeName: ref.typeName, typeFile: ref.typeFile, member: name, consumer, choice: true, ...(param && !param.injected ? { container: false } : {}) });
         }
         branches.push(...points);
       }
