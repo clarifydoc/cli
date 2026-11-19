@@ -37,7 +37,7 @@ export class FSharpDataSourceExtractor extends DataSourceExtractor {
       const urlNode = first?.type === "tuple_expression" ? first.namedChildren[0] : first;
       const url = urlNode ? stringValue(urlNode) : null;
       if (url && (url.startsWith("/") || /^https?:\/\//.test(url))) {
-        sources.push(this.ds({ kind: "api-call", name: `${method} ${url}`, target: url, line: node.startPosition.row + 1 }));
+        sources.push(this.ds({ kind: "api-call", name: `${method} ${url}`, target: url, line: node.startPosition.row + 1, column: node.startPosition.column }));
       }
     }
   }
