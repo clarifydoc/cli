@@ -668,6 +668,9 @@ function joinUrl(base: string | null, path: string): string {
 /** Dependency-injection annotations: `@Autowired`, `@Inject`, `@Value("${x}")`, qualified or with a Kotlin use-site target. */
 const VALUE_ANNOTATION_RE = /^@(?:\w+:)?(?:[\w.]+\.)?Value(?![\w.])/;
 
+/** Types of Spring's core.env package that read a configuration key by name. */
+const SPRING_ENVIRONMENT_TYPES = new Set(["Environment", "ConfigurableEnvironment", "PropertyResolver", "ConfigurablePropertyResolver"]);
+
 export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["java", "kotlin"];
 
@@ -705,6 +708,8 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   private isKafkaClientFile = false;
   /** The file imports the Dapr SDK (`io.dapr.client`, `io.dapr.Topic`). */
   private isDaprFile = false;
+  /** The file imports Spring's `Environment` (`org.springframework.core.env`). */
+  private isSpringEnvFile = false;
   private topicDefaults = new Map<string, string>();
   /** Fields and parameters `@Value` fills: the configuration key each holds. */
   private configFields = new Map<string, { key: string; fallback?: string }>();
@@ -764,6 +769,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     this.isJooqFile = /jooq/i.test(text);
     this.isRoomFile = /\bandroidx\.room\b/.test(text);
     this.isDaprFile = /\bio\.dapr\b/.test(text);
+    this.isSpringEnvFile = /\borg\.springframework\.core\.env\b/.test(text);
     this.isKafkaClientFile = /\borg\.apache\.kafka\.clients\b/.test(text);
     this.isHibernateSearchFile = /\borg\.hibernate\.search\b/.test(text);
     this.isKeycloakHttpFile = /\borg\.keycloak\.[\w.]*\bSimpleHttp\b/.test(text);
@@ -1467,6 +1473,17 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     }
 
     // 7) Environment / config reads.
+    // Spring's `Environment.getProperty("league.token")` reads a configuration key, like `@Value`; the receiver's
+    // declared type decides (an untyped one, `java.util.Properties` or a project class stays a plain read).
+    if (this.isSpringEnvFile && (method === "getRequiredProperty" || method === "getProperty")) {
+      const leaf = receiverLeaf(receiver);
+      const declared = /^[\w$]+$/.test(leaf) ? (localDeclaredType(node, leaf) ?? this.fieldTypes.get(leaf) ?? null) : null;
+      if (declared && SPRING_ENVIRONMENT_TYPES.has(declared)) {
+        const key = new RegExp(`\\b${method}\\s*\\(\\s*"([A-Za-z_][\\w.-]*)"`).exec(node.text)?.[1];
+        if (key) sources.push({ ...this.ds({ kind: "env", name: method, target: key, line }), configRead: { kind: "key" } });
+        return;
+      }
+    }
     if (method === "getProperty" || method === "getenv") {
       // A receiver declared as something else than a configuration holder (a JCR `Node`,
       // a bean) reads its own property, not the environment.

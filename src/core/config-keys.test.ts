@@ -36,6 +36,10 @@ public class ScoreboardTest {
     city: y
 cup:
   name: z
+referee:
+  name: a
+  fee: 1
+  shift: 2
 `,
   "app/src/main/java/com/example/league/Scoreboard.java": `package com.example.league;
 
@@ -60,6 +64,39 @@ public class Scoreboard {
 
     @Value("\${other.thing}")
     private String other;
+}
+`,
+  "app/src/main/java/com/example/league/Referee.java": `package com.example.league;
+
+import java.util.Properties;
+import org.springframework.core.env.Environment;
+import org.springframework.stereotype.Component;
+
+@Component
+public class Referee {
+    private final Environment env;
+    private final Properties props = new Properties();
+    private final LeagueSettings settings = new LeagueSettings();
+
+    public String read(Environment local) {
+        String a = env.getProperty("referee.name");
+        String b = env.getProperty("referee.fee", "x");
+        String c = local.getRequiredProperty("referee.shift");
+        String d = props.getProperty("cup.name");
+        String e = settings.getProperty("cup.name");
+        String f = unknown.getProperty("cup.name");
+        return a + b + c + d + e + f;
+    }
+}
+`,
+  "app/src/main/kotlin/com/example/league/Linesman.kt": `package com.example.league
+
+import org.springframework.core.env.Environment
+import org.springframework.stereotype.Component
+
+@Component
+class Linesman(private val environment: Environment) {
+    fun token(): String? = environment.getProperty("league.token")
 }
 `,
   "billing/pom.xml": `<project><artifactId>billing</artifactId></project>
@@ -149,6 +186,16 @@ describe("Spring configuration keys", () => {
       expect.objectContaining({ file: "app/src/main/java/com/example/league/Scoreboard.java", line: 10, via: "value" }),
     ]));
     expect(row("app/src/main/resources/application.yml", "league.season-length")!.consumers).toHaveLength(2);
+  });
+
+  it("joins Environment.getProperty on a typed receiver like @Value, and no namesake receiver", () => {
+    const consumers = (key: string) => row("app/src/main/resources/application.yml", key)?.consumers.filter((c) => /Referee|Linesman/.test(c.file)) ?? [];
+    expect(consumers("referee.name").map((c) => c.file)).toEqual(["app/src/main/java/com/example/league/Referee.java"]);
+    expect(consumers("referee.fee").map((c) => c.line)).toEqual([15]);
+    expect(consumers("referee.shift").map((c) => c.line)).toEqual([16]);
+    expect(consumers("league.token").map((c) => c.file)).toEqual(["app/src/main/kotlin/com/example/league/Linesman.kt"]);
+    // Properties, a project class and an untyped receiver read nothing of the configuration.
+    expect(consumers("cup.name")).toEqual([]);
   });
 
   it("reads a Kotlin @Value with an escaped dollar", () => {
