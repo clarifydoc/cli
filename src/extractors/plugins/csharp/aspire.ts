@@ -1,4 +1,5 @@
 import type { DeployedResourceFact, DeployedServiceKind } from "../../../types/analysis.js";
+import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 /**
  * A .NET Aspire AppHost (`DistributedApplication.CreateBuilder(args)`) as an
@@ -124,20 +125,7 @@ function matching(s: string, open: number): number {
 }
 
 function splitArgs(s: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let quote = false;
-  let start = 0;
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i]!;
-    if (quote) { if (c === "\\") i++; else if (c === '"') quote = false; continue; }
-    if (c === '"') quote = true;
-    else if (c === "(" || c === "<" || c === "[" || c === "{") depth++;
-    else if (c === ")" || c === ">" || c === "]" || c === "}") depth--;
-    else if (c === "," && depth === 0) { out.push(s.slice(start, i).trim()); start = i + 1; }
-  }
-  if (s.trim()) out.push(s.slice(start).trim());
-  return out;
+  return s.trim() ? splitTopLevelWith(s, { brackets: "()<>[]{}", quotes: "\"", escapes: "\"", trim: true, tail: "keep" }) : [];
 }
 
 /** A plain string literal's value (`name: "api"` too); undefined for anything else. */
