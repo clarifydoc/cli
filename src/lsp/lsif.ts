@@ -13,13 +13,21 @@ import { scipPathMapper } from "./scip.js";
  * definition result; that result's item ranges are the targets. Paths are the
  * documents' URIs relative to `metaData.projectRoot`, mapped onto the
  * analysis by `scipPathMapper` when the dump was built at another root.
+ * `metaData.positionEncoding` (`utf-8` / `utf-16` / `utf-32`, default
+ * UTF-16) is converted to the queries' UTF-16 columns from the project file
+ * the same way SCIP converts a document's encoding.
  */
 
 interface Position { line: number; character: number }
 interface Range { start: Position; end: Position; doc?: string }
 
+/** What `metaData.positionEncoding` counts; unset / `utf-16` leaves offsets as written. */
+export type LsifPositionEncoding = "utf8" | "utf16" | "utf32";
+
 export interface LsifDump {
   tool?: string;
+  /** From `metaData.positionEncoding`; unset means UTF-16 (the LSIF default). */
+  positionEncoding?: LsifPositionEncoding;
   /** Document path (relative to the dump's project root) → its ranges. */
   documents: Map<string, Range[]>;
   /** Range → the definition ranges its symbol resolves to. */
@@ -48,9 +56,36 @@ function elements(text: string): Element[] {
 
 const key = (id: unknown) => String(id);
 
+function parseEncoding(raw: unknown): LsifPositionEncoding | undefined {
+  if (raw === "utf-8" || raw === "utf8") return "utf8";
+  if (raw === "utf-16" || raw === "utf16") return "utf16";
+  if (raw === "utf-32" || raw === "utf32") return "utf32";
+  return undefined;
+}
+
+/**
+ * A dump's character offset on one line as UTF-16 code units. UTF-8 and
+ * UTF-32 offsets differ from them only past a non-ASCII character, and the
+ * line's text says where; without it the offset stands as written, which is
+ * right for an ASCII line.
+ */
+function toUtf16(enc: LsifPositionEncoding | undefined, offset: number, text: string | undefined): number {
+  if (!enc || enc === "utf16" || offset === 0) return offset;
+  if (text === undefined) return offset;
+  let units = 0;
+  let counted = 0;
+  for (const ch of text) {
+    if (counted >= offset) break;
+    counted += enc === "utf32" ? 1 : Buffer.byteLength(ch, "utf8");
+    units += ch.length;
+  }
+  return units + Math.max(0, offset - counted);
+}
+
 export function decodeLsif(text: string): LsifDump {
   let root = "";
   let tool: string | undefined;
+  let positionEncoding: LsifPositionEncoding | undefined;
   const docPath = new Map<string, string>();
   const ranges = new Map<string, Range>();
   const next = new Map<string, string>();
@@ -62,6 +97,7 @@ export function decodeLsif(text: string): LsifDump {
       if (e.label === "metaData") {
         root = String(e.projectRoot ?? "");
         tool = (e.toolInfo as { name?: string } | undefined)?.name;
+        positionEncoding = parseEncoding(e.positionEncoding);
       } else if (e.label === "document") docPath.set(key(e.id), String(e.uri ?? ""));
       else if (e.label === "range") ranges.set(key(e.id), { start: e.start as Position, end: e.end as Position });
       continue;
@@ -91,6 +127,7 @@ export function decodeLsif(text: string): LsifDump {
   for (const [id, r] of ranges) idOf.set(r, id);
   return {
     tool,
+    positionEncoding,
     documents,
     definitionsOf(range: Range): Range[] {
       let at: string | undefined = idOf.get(range);
@@ -109,7 +146,12 @@ export function decodeLsif(text: string): LsifDump {
 }
 
 /** Answers to the layer-2 questions from an LSIF dump; a definition outside the analysis is not a target. */
-export function lsifAnswers(dump: LsifDump, queries: readonly DefinitionQuery[], analysisFiles: ReadonlySet<string>): DefinitionAnswerFile {
+export function lsifAnswers(
+  dump: LsifDump,
+  queries: readonly DefinitionQuery[],
+  analysisFiles: ReadonlySet<string>,
+  lineText?: (path: string, line0: number) => string | undefined,
+): DefinitionAnswerFile {
   const map = scipPathMapper([...dump.documents.keys()].map((path) => ({ path, occurrences: [] })), analysisFiles);
   const byPath = new Map<string, Range[]>();
   for (const [path, list] of dump.documents) {
@@ -121,9 +163,11 @@ export function lsifAnswers(dump: LsifDump, queries: readonly DefinitionQuery[],
     const list = byPath.get(q.file);
     if (!list) continue;
     const line0 = q.line - 1;
+    // Queries count UTF-16 code units; the dump counts what metaData.positionEncoding says.
+    const col = (line: number, c: number) => toUtf16(dump.positionEncoding, c, lineText?.(q.file, line));
     const inside = (r: Range) =>
-      (line0 > r.start.line || (line0 === r.start.line && q.column >= r.start.character)) &&
-      (line0 < r.end.line || (line0 === r.end.line && q.column < r.end.character));
+      (line0 > r.start.line || (line0 === r.start.line && q.column >= col(r.start.line, r.start.character))) &&
+      (line0 < r.end.line || (line0 === r.end.line && q.column < col(r.end.line, r.end.character)));
     // The innermost range at the position.
     const at = list.filter(inside).sort((a, b) => (a.end.line - a.start.line) - (b.end.line - b.start.line) || (a.end.character - a.start.character) - (b.end.character - b.start.character))[0];
     if (!at) continue;

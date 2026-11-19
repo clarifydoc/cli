@@ -8,9 +8,22 @@ import { decodeLsif, lsifAnswers } from "./lsif.js";
 import type { DefinitionQuery } from "./lsp-enhancer.js";
 
 /** An LSIF writer: a document per file, a use range chained to a result set, a definition result naming the defining range. */
-function dump(root: string, uses: Array<{ file: string; line0: number; col: number; defFile: string | null; defLine0: number }>, asArray = false): string {
+function dump(
+  root: string,
+  uses: Array<{ file: string; line0: number; col: number; defFile: string | null; defLine0: number }>,
+  asArray = false,
+  positionEncoding?: string,
+): string {
   let id = 1;
-  const out: object[] = [{ id: id++, type: "vertex", label: "metaData", version: "0.4.3", projectRoot: root, toolInfo: { name: "lsif-tsc" } }];
+  const out: object[] = [{
+    id: id++,
+    type: "vertex",
+    label: "metaData",
+    version: "0.4.3",
+    projectRoot: root,
+    toolInfo: { name: "lsif-tsc" },
+    ...(positionEncoding !== undefined ? { positionEncoding } : {}),
+  }];
   const docs = new Map<string, number>();
   const doc = (file: string) => {
     if (!docs.has(file)) {
@@ -57,6 +70,43 @@ describe("lsifAnswers", () => {
         ],
       });
     }
+  });
+
+  describe("position encoding", () => {
+    // `const club = "⚽🏆"; run()` — two football emoji (2 UTF-16 units, 4 UTF-8 bytes, 1 code point each) before the call.
+    const line = 'const club = "\u26bd\u{1f3c6}"; run()';
+    const utf16At = line.indexOf("run");
+    const bytesAt = Buffer.byteLength(line.slice(0, utf16At), "utf8");
+    const pointsAt = [...line.slice(0, utf16At)].length;
+    const files = new Set(["src/a.ts", "src/b.ts"]);
+    const hit = [{ file: "src/a.ts", line: 1, column: utf16At, targets: [{ file: "src/b.ts", line: 10 }] }];
+    const lineText = (p: string, l: number) => (p === "src/a.ts" && l === 0 ? line : undefined);
+    const run = (enc: string | undefined, col: number) =>
+      decodeLsif(dump("file:///repo", [{ file: "src/a.ts", line0: 0, col, defFile: "src/b.ts", defLine0: 9 }], false, enc));
+
+    it("reads metaData.positionEncoding", () => {
+      expect(run("utf-8", 0).positionEncoding).toBe("utf8");
+      expect(run("utf-32", 0).positionEncoding).toBe("utf32");
+      expect(run("utf-16", 0).positionEncoding).toBe("utf16");
+      expect(run(undefined, 0).positionEncoding).toBeUndefined();
+    });
+
+    it("converts UTF-8 byte offsets to the query's UTF-16 columns from the project file", () => {
+      expect(bytesAt).not.toBe(utf16At);
+      expect(lsifAnswers(run("utf-8", bytesAt), [q("src/a.ts", 1, utf16At)], files, lineText).answers).toEqual(hit);
+      // The byte offset taken as UTF-16 would miss.
+      expect(lsifAnswers(run(undefined, bytesAt), [q("src/a.ts", 1, utf16At)], files, lineText).answers).toEqual([]);
+    });
+
+    it("converts UTF-32 offsets (code points)", () => {
+      expect(pointsAt).not.toBe(utf16At);
+      expect(lsifAnswers(run("utf-32", pointsAt), [q("src/a.ts", 1, utf16At)], files, lineText).answers).toEqual(hit);
+    });
+
+    it("leaves UTF-16 and unspecified dumps as they are (ASCII-identical)", () => {
+      expect(lsifAnswers(run("utf-16", utf16At), [q("src/a.ts", 1, utf16At)], files, lineText).answers).toEqual(hit);
+      expect(lsifAnswers(run(undefined, utf16At), [q("src/a.ts", 1, utf16At)], files).answers).toEqual(hit);
+    });
   });
 });
 

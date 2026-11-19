@@ -133,21 +133,21 @@ export async function updateLsp(options: UpdateLspOptions): Promise<UpdateLspRes
       }
     }
     let file: import("../lsp/answers-source.js").DefinitionAnswerFile;
+    // A dump/index that counts UTF-8 bytes or code points and embeds no text: its lines come from the project's own files.
+    const lines = new Map<string, string[] | null>();
+    const lineText = (rel: string, line0: number) => {
+      if (!lines.has(rel)) {
+        try {
+          lines.set(rel, readFileSync(join(projectRoot, rel), "utf8").split(/\r?\n/));
+        } catch {
+          lines.set(rel, null);
+        }
+      }
+      return lines.get(rel)?.[line0];
+    };
     if (options.scip) {
       const { scipFileAnswers } = await import("../lsp/scip.js");
       const queries = await planDefinitionQueries(projectRoot, perFileAnalyses, existingLinks);
-      // A document that counts UTF-8 bytes or code points and embeds no text: its lines come from the project's own files.
-      const lines = new Map<string, string[] | null>();
-      const lineText = (rel: string, line0: number) => {
-        if (!lines.has(rel)) {
-          try {
-            lines.set(rel, readFileSync(join(projectRoot, rel), "utf8").split(/\r?\n/));
-          } catch {
-            lines.set(rel, null);
-          }
-        }
-        return lines.get(rel)?.[line0];
-      };
       const scipFiles = [options.scip].flat().map((f) => resolve(f));
       const scip = scipFileAnswers(scipFiles, queries, new Set(perFileAnalyses.map((a) => a.filePath)), lineText);
       file = scip;
@@ -156,7 +156,7 @@ export async function updateLsp(options: UpdateLspOptions): Promise<UpdateLspRes
       const { decodeLsif, lsifAnswers } = await import("../lsp/lsif.js");
       const dump = decodeLsif(await readFile(resolve(options.lsif), "utf8"));
       const queries = await planDefinitionQueries(projectRoot, perFileAnalyses, existingLinks);
-      file = lsifAnswers(dump, queries, new Set(perFileAnalyses.map((a) => a.filePath)));
+      file = lsifAnswers(dump, queries, new Set(perFileAnalyses.map((a) => a.filePath)), lineText);
       if (verbose) console.log(`  LSIF: ${dump.documents.size} documents, ${file.answers.length}/${queries.length} questions answered`);
     } else file = await readDefinitionAnswers(resolve(options.answers!));
     answers = answersDefinitionSource(file, (f, line) => declared.has(`${f}:${line}`));
