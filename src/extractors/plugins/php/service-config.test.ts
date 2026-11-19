@@ -15,8 +15,9 @@ return [
     expect(entries.map((e) => [e.key, e.value])).toEqual([
       ["services.league.url", "http://league-api:8080"],
       ["services.archive.url", "http://league-archive:8080"],
+      ["services.mail.from", ""],
     ]);
-    expect(phpServiceConfig.envNamesFor!("services.league.url")).toEqual(["LEAGUE_API_URL"]);
+    expect(entries[0]!.envNames).toEqual(["LEAGUE_API_URL"]);
   });
 
   it("reads what a base expression names", () => {

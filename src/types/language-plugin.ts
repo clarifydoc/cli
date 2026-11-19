@@ -232,6 +232,11 @@ export interface ConfigEntry {
   profile?: string;
   /** A test profile: it never decides where production calls go. */
   test?: boolean;
+  /**
+   * Environment variables that override this key, as the config file names
+   * them (`env('LEAGUE_API_URL', …)`). Added to what `envNamesFor` derives.
+   */
+  envNames?: string[];
   /** An environment variable the profile sets (launchSettings `environmentVariables`), not a configuration key. */
   env?: boolean;
   /** A URL the project itself listens on (`applicationUrl`, Kestrel `Urls`), not one it calls. */

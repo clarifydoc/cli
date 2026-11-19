@@ -96,7 +96,9 @@ export function readProjectConfig(
     spec.parse(text, path).flatMap((entry) => {
       if (entry.serviceName) return /^[A-Za-z][\w.-]*$/.test(entry.value) ? [{ ...entry, file }] : [];
       const value = urlValue(entry.value);
-      return value ? [{ ...entry, value, file }] : [];
+      if (value) return [{ ...entry, value, file }];
+      // No address written (`env('X')` without a default): the variables it names still count.
+      return entry.envNames?.length ? [{ ...entry, value: "", file }] : [];
     }),
   );
 }

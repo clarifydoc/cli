@@ -138,12 +138,27 @@ export function resolveCallOrigins(input: {
 
   const sameKey = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
+  /**
+   * The environment variables that set a reference: its own name for an env
+   * ref; for a config key, what the language derives by convention and what
+   * the project's own config entries for that key name (`ConfigEntry.envNames`).
+   */
+  const envNamesOf = (ref: CallBaseRef, project: string, language: string): string[] => {
+    if (ref.kind === "env") return [ref.key];
+    if (ref.kind !== "config") return [];
+    const names = new Set(serviceConfigFor(language)?.envNamesFor?.(ref.key) ?? []);
+    for (const c of config.get(project) ?? []) {
+      if (!c.test && !c.listen && !c.env && c.envNames && sameKey(c.key, ref.key)) for (const n of c.envNames) names.add(n);
+    }
+    return [...names];
+  };
+
   /** Every value stated for the reference, as seen from the caller's project. */
   const valuesOf = (ref: CallBaseRef, project: string, language: string): Array<{ value: string; evidence: Evidence; fallback?: true }> => {
     if (ref.kind === "literal") return [{ value: ref.key, evidence: { step: "literal", detail: ref.key } }];
     if (ref.kind === "service") return [{ value: `http://${ref.key}`, evidence: { step: "service", detail: ref.key } }];
     if (ref.kind === "client") return [];
-    const envNames = ref.kind === "env" ? [ref.key] : (serviceConfigFor(language)?.envNamesFor?.(ref.key) ?? []);
+    const envNames = envNamesOf(ref, project, language);
     const out: Array<{ value: string; evidence: Evidence }> = [];
     for (const s of deployment?.services ?? []) {
       if (s.project !== project) continue;
@@ -152,7 +167,7 @@ export function resolveCallOrigins(input: {
       }
     }
     for (const c of config.get(project) ?? []) {
-      if (c.test || c.listen) continue;
+      if (c.test || c.listen || !c.value) continue;
       const hit = c.env ? envNames.some((n) => sameKey(n, c.key)) : ref.kind === "config" && sameKey(c.key, ref.key);
       if (hit) out.push({ value: c.value, evidence: { step: c.env ? "env" : "config", detail: `${c.key}=${c.value}`, file: c.file, ...(c.line ? { line: c.line } : {}) } });
     }
@@ -171,7 +186,7 @@ export function resolveCallOrigins(input: {
     if (values.length === 0) {
       // Stated, but not valued here: keep what would value it, for a
       // deployment this analysis does not hold.
-      const envNames = found.ref.kind === "env" ? [found.ref.key] : found.ref.kind === "config" ? (serviceConfigFor(a.language)?.envNamesFor?.(found.ref.key) ?? []) : [];
+      const envNames = envNamesOf(found.ref, a.projectId, a.language);
       return { baseRef: found.ref, ...(envNames.length ? { envNames } : {}), confidence: "INFERRED", evidence: found.evidence };
     }
 

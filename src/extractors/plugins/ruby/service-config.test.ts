@@ -14,7 +14,12 @@ test:
       ["services.league_url", "http://league-api:3000", undefined, undefined],
       ["services.league_url", "http://league-archive:3000", "test", true],
     ]);
-    expect(rubyServiceConfig.envNamesFor!("services.league_url")).toEqual(["LEAGUE_URL"]);
+    expect(entries[0]!.envNames).toEqual(["LEAGUE_URL"]);
+  });
+
+  it("keeps the env name of a variable written without a default", () => {
+    const entries = yml!.parse(`default:\n  league_url: <%= ENV.fetch("LEAGUE_URL") %>\n`, "config/services.yml");
+    expect(entries).toMatchObject([{ key: "services.league_url", value: "", envNames: ["LEAGUE_URL"] }]);
   });
 
   it("reads config.x settings per environment", () => {

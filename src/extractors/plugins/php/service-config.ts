@@ -10,9 +10,6 @@ import type { ConfigEntry, ConfigSourceSpec, ServiceConfigSpec } from "../../../
  * Leaf module (the static manifest imports it): types only.
  */
 
-/** Config key → the environment variables the files wire to it (`services.league.url` ← `LEAGUE_API_URL`). */
-const envOfKey = new Map<string, Set<string>>();
-
 /** A PHP string literal at `at` (single or double quoted, no interpolation): [value, end]. */
 function literalAt(text: string, at: number): [string, number] | null {
   const q = text[at];
@@ -76,11 +73,8 @@ function arrayEntries(text: string, prefix: string): ConfigEntry[] {
         const env = /^(?:env|getenv)\s*\(\s*(?:'([^']*)'|"([^"]*)")\s*(?:,\s*([\s\S]*?))?\)\s*$/.exec(src.slice(valueAt, end).trim());
         if (lit && src.slice(lit[1], end).trim() === "") out.push({ key: full, value: lit[0], line: lineAt(valueAt) });
         else if (env) {
-          const names = envOfKey.get(full) ?? new Set<string>();
-          names.add((env[1] ?? env[2])!);
-          envOfKey.set(full, names);
           const fb = env[3] ? literalAt(env[3].trim(), 0) : null;
-          if (fb) out.push({ key: full, value: fb[0], line: lineAt(valueAt) });
+          out.push({ key: full, value: fb ? fb[0] : "", line: lineAt(valueAt), envNames: [(env[1] ?? env[2])!] });
         }
       }
       i = end;
@@ -136,6 +130,4 @@ export function phpBaseRefOf(expr: string): CallBaseRef | null {
 export const phpServiceConfig: ServiceConfigSpec = {
   sources: [configArrays],
   baseRefOf: phpBaseRefOf,
-  // Where `config/services.php` writes `'url' => env('LEAGUE_API_URL', …)`, that variable overrides the key.
-  envNamesFor: (key) => [...(envOfKey.get(key) ?? [])],
 };

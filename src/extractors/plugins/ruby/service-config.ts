@@ -12,15 +12,6 @@ import { yamlKeys } from "../shared/config-keys.js";
  * Leaf module (the static manifest imports it): types and the config-key kit only.
  */
 
-/** Config key → the environment variables the files wire to it (`services.league_url` ← `LEAGUE_URL`). */
-const envOfKey = new Map<string, Set<string>>();
-
-const remember = (key: string, env: string): void => {
-  const names = envOfKey.get(key) ?? new Set<string>();
-  names.add(env);
-  envOfKey.set(key, names);
-};
-
 /** The environments a Rails YAML file's top-level sections name; `default` sections are no profile. */
 const SHARED_SECTION = /^(?:default|defaults|shared|common)$/i;
 const ENV_SECTION = /^(?:development|test|production|staging|default|defaults|shared|common)$/i;
@@ -40,16 +31,15 @@ const configYaml: ConfigSourceSpec = {
     // ERB values read as their fallback: the YAML reader sees plain scalars.
     const plain = lines.map((l) => l.replace(/<%=\s*([\s\S]*?)\s*%>/g, (_m, code: string) => {
       const env = ENV_READ.exec(code);
-      return env ? (env[2] ?? env[4] ?? "") : "";
+      return env ? (env[2] ?? env[4] ?? "''") : "''";
     }));
     return yamlKeys(plain.join("\n")).map((k): ConfigEntry => {
       const parts = k.key.split(".");
       const section = ENV_SECTION.test(parts[0]!) && parts.length > 1 ? parts.shift()! : null;
       const key = [base, ...parts].join(".");
       const env = ENV_READ.exec(lines[k.line - 1] ?? "");
-      if (env) remember(key, (env[1] ?? env[3])!);
       const profile = section && !SHARED_SECTION.test(section) ? section : undefined;
-      return { key, value: k.value, line: k.line, ...(profile ? { profile } : {}), ...(profile && TEST_PROFILE.test(profile) ? { test: true } : {}) };
+      return { key, value: k.value, line: k.line, ...(env ? { envNames: [(env[1] ?? env[3])!] } : {}), ...(profile ? { profile } : {}), ...(profile && TEST_PROFILE.test(profile) ? { test: true } : {}) };
     });
   },
 };
@@ -67,10 +57,9 @@ const configX: ConfigSourceSpec = {
       if (!m) continue;
       const key = `x.${m[1]}`;
       const env = ENV_READ.exec(m[2]!);
-      if (env) remember(key, (env[1] ?? env[3])!);
       const written = env ? (env[2] ?? env[4]) : /^(["'])([^"'#]*)\1/.exec(m[2]!)?.[2];
-      if (!written) continue;
-      out.push({ key, value: written, line: i + 1, ...(profile ? { profile } : {}), ...(profile && TEST_PROFILE.test(profile) ? { test: true } : {}) });
+      if (!written && !env) continue;
+      out.push({ key, value: written ?? "", line: i + 1, ...(env ? { envNames: [(env[1] ?? env[3])!] } : {}), ...(profile ? { profile } : {}), ...(profile && TEST_PROFILE.test(profile) ? { test: true } : {}) });
     }
     return out;
   },
@@ -108,5 +97,4 @@ export function rubyBaseRefOf(expr: string): CallBaseRef | null {
 export const rubyServiceConfig: ServiceConfigSpec = {
   sources: [configYaml, configX],
   baseRefOf: rubyBaseRefOf,
-  envNamesFor: (key) => [...(envOfKey.get(key) ?? [])],
 };

@@ -6,7 +6,7 @@ import type { ProjectConfigValue } from "./config-values.js";
 
 const noImports = { localFor: () => null, sourceFor: () => null, namespacesFor: () => [] };
 
-const analysis = (filePath: string, projectId: string, language: "csharp" | "typescript", regs: HttpClientRegistration[] = []) =>
+const analysis = (filePath: string, projectId: string, language: "csharp" | "typescript" | "php", regs: HttpClientRegistration[] = []) =>
   ({ filePath, projectId, language, httpClientRegistrations: regs }) as unknown as FileAnalysis;
 
 const call = (filePath: string, target: string, extra: Partial<DataSourceInfo> = {}) =>
@@ -154,6 +154,30 @@ describe("resolveCallOrigins", () => {
     expect(calls[1]).toMatchObject({ target: "/ext/items" });
     expect(calls[1]).not.toHaveProperty("origin");
     expect(calls[2]).not.toHaveProperty("origin");
+  });
+
+  it("takes each project's own env names for one config key from its config entries", () => {
+    const dep: DeploymentModel = {
+      ...deployment,
+      services: [
+        { name: "a", composeFile: "docker-compose.yml", kind: "app", project: "a", urlEnv: { LEAGUE_A_URL: "http://fleet:8080" } },
+        { name: "b", composeFile: "docker-compose.yml", kind: "app", project: "b", urlEnv: { LEAGUE_B_URL: "http://legacy:8080" } },
+        { name: "fleet", composeFile: "docker-compose.yml", kind: "app", project: "fleet" },
+        { name: "legacy", composeFile: "docker-compose.yml", kind: "app", project: "legacy" },
+      ],
+    };
+    const ref = { kind: "config" as const, key: "services.league.url" };
+    const [ca, cb] = run(
+      [call("a/L.php", "/api/clubs", { baseRef: ref }), call("b/L.php", "/api/clubs", { baseRef: ref })],
+      [analysis("a/L.php", "a", "php"), analysis("b/L.php", "b", "php")],
+      {
+        a: [{ key: "services.league.url", value: "http://elsewhere:1", envNames: ["LEAGUE_A_URL"], file: "a/config/services.php" }],
+        b: [{ key: "services.league.url", value: "http://elsewhere:1", envNames: ["LEAGUE_B_URL"], file: "b/config/services.php" }],
+      },
+      dep,
+    );
+    expect(ca!.origin).toMatchObject({ project: "fleet" });
+    expect(cb!.origin).toMatchObject({ project: "legacy" });
   });
 });
 
