@@ -2,10 +2,13 @@ import { describe, it, expect } from "vitest";
 import { cpSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, statSync } from "fs";
 import { execFileSync } from "child_process";
 import { tmpdir } from "os";
-import { join, resolve } from "path";
+import { dirname, join, resolve } from "path";
 import { editedFile, fileStem, framed, normalizeHookInput, runHook, searchTerm } from "./hooks.js";
-import { CLIENTS, applyPlans, explorerTools, mcpSnippet, pinnedLauncher, planClaudeHooks, planCodexHooks, planCopilotHooks, planGitHooks, planGuidance, planHooks, planMcpConfig, planPlugin, planSkills, projectFacts, selfCommand, userServerKey } from "./install.js";
-import { parseJsonc } from "./jsonc.js";
+import { CLIENTS, applyPlans, versionPinnedLauncher, explorerTools, mcpSnippet, pinnedLauncher, planClaudeHooks, planCodexHooks, planCopilotHooks, planGitHooks, planGuidance, planHooks, planMcpConfig, planPlugin, planSkills, projectFacts, selfCommand, userServerKey } from "./install.js";
+import { parseJsonc, removeJsoncMember, upsertJsoncMember } from "./jsonc.js";
+import { applyRemoval, planRemoval } from "./remove.js";
+import { TOOL_VERSION } from "../core/version.js";
+import { readdirSync } from "fs";
 import { buildMcpServer } from "../mcp/server.js";
 
 describe("hook payloads", () => {
@@ -473,6 +476,204 @@ describe("the Claude Code plugin", () => {
     expect(listed).toEqual(readOnly);
     for (const p of plans) {
       for (const m of p.content.matchAll(/\bclarifydoc_[a-z_]+/g)) expect(registered.has(m[0]), `${p.file} names ${m[0]}`).toBe(true);
+    }
+  });
+});
+
+describe("mcp --print-config --pin", () => {
+  it("names the version of this CLI, the same on every machine", () => {
+    const pinned = versionPinnedLauncher("linux");
+    expect(pinned).toEqual({ command: "npx", args: ["-y", `clarifydoc@${TOOL_VERSION}`] });
+    const entry = JSON.parse(mcpSnippet("claude-code", "/repo", pinned).snippet).mcpServers.clarifydoc;
+    expect(entry).toEqual({ command: "npx", args: ["-y", `clarifydoc@${TOOL_VERSION}`, "mcp"] });
+    // The version in the entry is the one TOOL_VERSION says, not a copy that can drift.
+    expect(entry.args[1]).toBe(`clarifydoc@${TOOL_VERSION}`);
+    expect(JSON.parse(mcpSnippet("windsurf", "/repo", pinned).snippet).mcpServers.clarifydoc.args).toEqual(["-y", `clarifydoc@${TOOL_VERSION}`, "mcp", "/repo"]);
+    expect(versionPinnedLauncher("win32").command).toBe("cmd");
+    // An unpinned snippet keeps the launcher it is given (the local-install behaviour).
+    expect(mcpSnippet("claude-code", "/repo", { command: "clarifydoc", args: [] }).snippet).toContain('"command": "clarifydoc"');
+  });
+});
+
+describe("jsonc member removal", () => {
+  it("undoes an insert byte for byte, keeping comments", () => {
+    for (const text of ['{\n  "a": 1\n}\n', '// mine\n{\n  "a": 1, // one\n  "mcpServers": {\n    "x": {}\n  },\n}\n', '{ "theme": "One Dark" }\n', "{}\n"]) {
+      const added = upsertJsoncMember(text, "mcpServers", "clarifydoc", { command: "c", args: ["mcp"] })!;
+      expect(added).not.toBe(text);
+      expect(removeJsoncMember(added, "mcpServers", "clarifydoc")).toBe(text.trim() === "{}" ? "{}\n" : text);
+    }
+  });
+  it("is a no-op where the member is not, and refuses what is not an object", () => {
+    expect(removeJsoncMember('{ "a": 1 }', "mcpServers", "clarifydoc")).toBe('{ "a": 1 }');
+    expect(removeJsoncMember('{ "mcpServers": { "x": 1 } }', "mcpServers", "clarifydoc")).toBe('{ "mcpServers": { "x": 1 } }');
+    expect(removeJsoncMember("[1]", "mcpServers", "clarifydoc")).toBeNull();
+  });
+});
+
+describe("install --remove", () => {
+  /** Every file below the given directories, by path, with its text. */
+  const snapshot = (...dirs: string[]) => {
+    const out: Record<string, string> = {};
+    const walk = (d: string) => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const p = join(d, e.name);
+        if (e.isDirectory()) {
+          if (e.name === ".git" && existsSync(join(p, "hooks"))) walk(join(p, "hooks"));
+          else if (e.name !== ".git") walk(p);
+        } else out[p] = readFileSync(p, "utf8");
+      }
+    };
+    for (const d of dirs) walk(d);
+    return out;
+  };
+
+  const withHome = <T,>(home: string, f: () => T): T => {
+    const saved = { HOME: process.env.HOME, COPILOT_HOME: process.env.COPILOT_HOME, USERPROFILE: process.env.USERPROFILE, APPDATA: process.env.APPDATA };
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    delete process.env.COPILOT_HOME;
+    delete process.env.APPDATA;
+    try {
+      return f();
+    } finally {
+      for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  };
+
+  const self = { command: "clarifydoc", args: [] };
+
+  /** What `clarifydoc install` does for these clients with every kind switched on. */
+  const installAll = (root: string, clients: readonly (typeof CLIENTS)[number][]) => {
+    const plans = clients.map((c) => planMcpConfig(c, root, self));
+    plans.push(...planHooks(clients, root, self, plans));
+    plans.push(...planSkills(root));
+    plans.push(...planGitHooks(root, {}, self));
+    plans.push(planGuidance(root, "AGENTS.md"), planGuidance(root, "CLAUDE.md"));
+    // CLAUDE.md is a plan of its own file, not a second plan on AGENTS.md
+    applyPlans(plans.filter((p) => !p.skip), false);
+  };
+
+  const put = (file: string, text: string) => {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, text);
+  };
+
+  it("leaves every file byte for byte as it was before install, and deletes what install made", () => {
+    const base = mkdtempSync(join(tmpdir(), "remove-"));
+    const root = join(base, "project");
+    const home = join(base, "home");
+    mkdirSync(root);
+    mkdirSync(home);
+    try {
+      execFileSync("git", ["init", "-q"], { cwd: root });
+      const clients = ["claude-code", "cursor", "vscode", "opencode", "windsurf", "claude-desktop", "codex", "copilot", "zed"] as const;
+      withHome(home, () => {
+        put(join(root, "AGENTS.md"), "# Team rules\n\nRun the tests.\n");
+        put(join(root, "CLAUDE.md"), "Be brief.\n");
+        put(join(root, ".mcp.json"), `${JSON.stringify({ mcpServers: { other: { command: "x", args: ["y"] } } }, null, 2)}\n`);
+        put(join(root, ".cursor", "mcp.json"), `${JSON.stringify({ mcpServers: { a: { command: "a" } } }, null, 2)}\n`);
+        put(join(root, ".vscode", "mcp.json"), '// editor\n{\n  "servers": {\n    "keep": { "command": "k" }, // mine\n  },\n}\n');
+        put(join(root, "opencode.jsonc"), '{\n  "$schema": "https://opencode.ai/config.json",\n  // pit wall\n  "model": "y"\n}\n');
+        put(join(root, ".zed", "settings.json"), '{\n  "theme": "One Dark"\n}\n');
+        put(join(root, ".claude", "settings.json"), `${JSON.stringify({ hooks: { PreToolUse: [{ matcher: "Write", hooks: [{ type: "command", command: "lint --quick" }] }] }, model: "opus" }, null, 2)}\n`);
+        put(join(root, ".git", "hooks", "post-commit"), "#!/bin/sh\necho committed\n");
+        put(join(home, ".codex", "config.toml"), 'model = "gpt"\n\n[mcp_servers.docs]\ncommand = "docs"\n');
+        put(join(home, ".copilot", "mcp-config.json"), `${JSON.stringify({ mcpServers: { x: { type: "local", command: "x" } } }, null, 2)}\n`);
+        const claudeDesktop = mcpSnippet("claude-desktop", root, self).file;
+        put(claudeDesktop, `${JSON.stringify({ mcpServers: { y: { command: "y" } }, other: 1 }, null, 2)}\n`);
+        put(join(home, ".codeium", "windsurf", "mcp_config.json"), `${JSON.stringify({ mcpServers: { b: { command: "b" } } }, null, 2)}\n`);
+
+        const before = snapshot(root, home);
+        installAll(root, clients);
+        const installed = snapshot(root, home);
+        expect(installed).not.toEqual(before);
+        expect(Object.values(installed).some((t) => t.includes("clarifydoc"))).toBe(true);
+
+        const dry = planRemoval({ root });
+        expect(dry.length).toBeGreaterThan(8);
+        // --print: nothing is touched.
+        applyRemoval(dry, true, root);
+        expect(snapshot(root, home)).toEqual(installed);
+
+        const report = applyRemoval(planRemoval({ root }), false, root);
+        expect(report.errors).toEqual([]);
+        expect(report.skipped).toEqual([]);
+        const after = snapshot(root, home);
+        expect(after).toEqual(before);
+        expect(existsSync(join(root, ".claude", "skills"))).toBe(false);
+        expect(existsSync(join(home, ".copilot", "hooks"))).toBe(false);
+
+        // Idempotent: a second removal has nothing to do.
+        const again = applyRemoval(planRemoval({ root }), false, root);
+        expect(again).toEqual({ removed: [], edited: [], skipped: [], errors: [] });
+        expect(snapshot(root, home)).toEqual(before);
+      });
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("deletes the files install made whole and removes nothing from a project that never had them", () => {
+    const base = mkdtempSync(join(tmpdir(), "remove-"));
+    const root = join(base, "project");
+    const home = join(base, "home");
+    mkdirSync(root);
+    mkdirSync(home);
+    try {
+      withHome(home, () => {
+        execFileSync("git", ["init", "-q"], { cwd: root });
+        put(join(root, "notes.txt"), "mine\n");
+        expect(applyRemoval(planRemoval({ root }), false, root)).toEqual({ removed: [], edited: [], skipped: [], errors: [] });
+        installAll(root, ["claude-code", "codex", "copilot"]);
+        expect(existsSync(join(root, ".mcp.json"))).toBe(true);
+        applyRemoval(planRemoval({ root }), false, root);
+        expect(Object.keys(snapshot(root, home)).filter((f) => !f.endsWith(".sample"))).toEqual([join(root, "notes.txt")]);
+      });
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses unbalanced or doubled markers and a config it cannot read, editing nothing", () => {
+    const base = mkdtempSync(join(tmpdir(), "remove-"));
+    const root = join(base, "project");
+    mkdirSync(root);
+    try {
+      withHome(join(base, "home"), () => {
+        const lone = "mine\n<!-- clarifydoc:start -->\nstuff\n";
+        const doubled = "<!-- clarifydoc:start -->\na\n<!-- clarifydoc:end -->\nmid\n<!-- clarifydoc:start -->\nb\n<!-- clarifydoc:end -->\n";
+        put(join(root, "AGENTS.md"), lone);
+        put(join(root, "CLAUDE.md"), doubled);
+        put(join(root, ".mcp.json"), '{ "mcpServers": { "clarifydoc": { "command": ');
+        const report = applyRemoval(planRemoval({ root }), false, root);
+        expect(report.skipped.map((s) => s.file).sort()).toEqual([join(root, ".mcp.json"), join(root, "AGENTS.md"), join(root, "CLAUDE.md")].sort());
+        expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toBe(lone);
+        expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).toBe(doubled);
+      });
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a person's own hook in an entry it shares, and another project's user-level server", () => {
+    const base = mkdtempSync(join(tmpdir(), "remove-"));
+    const root = join(base, "project");
+    const home = join(base, "home");
+    mkdirSync(root);
+    try {
+      withHome(home, () => {
+        const shared = { hooks: { PreToolUse: [{ matcher: "Grep|Glob|Bash", hooks: [{ type: "command", command: "mine --check" }, { type: "command", command: "clarifydoc hook pre-search", timeout: 10 }] }] } };
+        put(join(root, ".claude", "settings.json"), `${JSON.stringify(shared, null, 2)}\n`);
+        const other = { mcpServers: { clarifydoc: { command: "clarifydoc", args: ["mcp", "/elsewhere"] }, "clarifydoc-here": { command: "clarifydoc", args: ["mcp", root] } } };
+        const windsurf = join(home, ".codeium", "windsurf", "mcp_config.json");
+        put(windsurf, `${JSON.stringify(other, null, 2)}\n`);
+        applyRemoval(planRemoval({ root, clients: ["windsurf"] }), false, root);
+        expect(JSON.parse(readFileSync(join(root, ".claude", "settings.json"), "utf8")).hooks.PreToolUse[0].hooks).toEqual([{ type: "command", command: "mine --check" }]);
+        expect(JSON.parse(readFileSync(windsurf, "utf8"))).toEqual({ mcpServers: { clarifydoc: other.mcpServers.clarifydoc } });
+      });
+    } finally {
+      rmSync(base, { recursive: true, force: true });
     }
   });
 });

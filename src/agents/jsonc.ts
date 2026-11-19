@@ -10,8 +10,8 @@
  * the caller leaves the file alone.
  */
 
-/** The text with comments and trailing commas blanked to spaces (newlines kept), strings untouched. */
-export function maskJsonc(text: string): string {
+/** The text with comments blanked to spaces (newlines kept), strings untouched, commas kept. */
+function maskComments(text: string): string {
   const out = text.split("");
   let i = 0;
   while (i < text.length) {
@@ -32,8 +32,13 @@ export function maskJsonc(text: string): string {
     }
     i++;
   }
-  // Trailing commas: a comma whose next token closes the object or array.
-  const masked = out.join("");
+  return out.join("");
+}
+
+/** The text with comments and trailing commas blanked to spaces (newlines kept), strings untouched. */
+export function maskJsonc(text: string): string {
+  const masked = maskComments(text);
+  const out = masked.split("");
   for (let j = 0; j < masked.length; j++) {
     if (masked[j] === '"') {
       j = stringEnd(masked, j) - 1;
@@ -89,6 +94,89 @@ export function upsertJsoncMember(text: string, top: string, name: string, value
   }
   const expected = { ...doc, [top]: { ...((doc[top] as Record<string, unknown> | undefined) ?? {}), [name]: value } };
   return sameJson(parseJsonc(out), expected) ? out : null;
+}
+
+/**
+ * `text` without `doc[top][name]`, every other byte kept: the member's own
+ * line (or the comma beside it) goes with it, and an object left empty goes
+ * too — `top` itself when `name` was its only member. The text unchanged when
+ * the member is not there. Null when the text is not a JSONC object or the
+ * edit does not read back as exactly that removal.
+ */
+export function removeJsoncMember(text: string, top: string, name: string): string | null {
+  const before = parseJsonc(text);
+  if (!isObject(before)) return null;
+  const topValue = before[top];
+  if (topValue === undefined) return text;
+  if (!isObject(topValue)) return null;
+  if (!(name in topValue)) return text;
+  let out = cutMember(text, [top], name);
+  if (out === null) return null;
+  // The object is empty now (a comment inside it keeps it): it goes as well.
+  const mid = parseJsonc(out);
+  if (isObject(mid) && isObject(mid[top]) && Object.keys(mid[top] as object).length === 0 && !hasComment(out, [top])) out = cutMember(out, [], top);
+  if (out === null) return null;
+  const inner = { ...topValue };
+  delete inner[name];
+  const { [top]: _dropped, ...rest } = before;
+  const after = parseJsonc(out);
+  return sameJson(after, { ...before, [top]: inner }) || (Object.keys(inner).length === 0 && sameJson(after, rest)) ? out : null;
+}
+
+/** Whether the object at `path` holds a comment (so it is not just empty). */
+function hasComment(text: string, path: string[]): boolean {
+  const masked = maskJsonc(text);
+  let open = skipWs(masked, 0);
+  for (const key of path) {
+    const o = membersOf(masked, open);
+    const m = o?.members.find((x) => x.key === key);
+    if (!m) return false;
+    open = m.valueStart;
+  }
+  const obj = membersOf(masked, open);
+  if (!obj) return false;
+  return text.slice(open + 1, obj.close) !== masked.slice(open + 1, obj.close);
+}
+
+/** The text with member `name` of the object at `path` cut out. Null when the structure is not what is expected. */
+function cutMember(text: string, path: string[], name: string): string | null {
+  const masked = maskJsonc(text);
+  let open = skipWs(masked, 0);
+  for (const key of path) {
+    const o = membersOf(masked, open);
+    const m = o?.members.find((x) => x.key === key);
+    if (!m) return null;
+    open = m.valueStart;
+  }
+  const obj = membersOf(masked, open);
+  if (!obj) return null;
+  const k = obj.members.findIndex((x) => x.key === name);
+  if (k < 0) return null;
+  const m = obj.members[k]!;
+  // Commas as the text has them (maskJsonc blanks a trailing one).
+  const commas = maskComments(text);
+  let after = m.valueEnd;
+  while (after < obj.close && /\s/.test(commas[after]!)) after++;
+  const comma = commas[after] === "," ? after : -1;
+  const nl = text.lastIndexOf("\n", m.keyStart - 1);
+  const ownLine = /^[ \t]*$/.test(text.slice(nl + 1, m.keyStart));
+  let startCut = ownLine && nl >= 0 ? nl : m.keyStart;
+  if (!(ownLine && nl >= 0)) while (startCut > 0 && (text[startCut - 1] === " " || text[startCut - 1] === "\t")) startCut--;
+  const endCut = comma >= 0 ? comma + 1 : m.valueEnd;
+  let prevComma = -1;
+  if (comma < 0 && k > 0) {
+    const prev = obj.members[k - 1]!;
+    for (let i = prev.valueEnd; i < m.keyStart; i++) if (commas[i] === ",") prevComma = i;
+  }
+  let out = text.slice(0, startCut) + text.slice(endCut);
+  if (prevComma >= 0) out = out.slice(0, prevComma) + out.slice(prevComma + 1);
+  // The only member went: `{}` again, unless something (a comment) is still inside.
+  if (obj.members.length === 1) {
+    const shift = out.length - text.length;
+    const inside = out.slice(open + 1, obj.close + shift);
+    if (inside.trim() === "") out = out.slice(0, open + 1) + out.slice(obj.close + shift);
+  }
+  return out;
 }
 
 interface Member {

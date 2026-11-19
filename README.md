@@ -164,6 +164,8 @@ clarifydoc ask routes path=/api/users  # Call one MCP tool from a shell or CI (-
 clarifydoc install --hooks --skills    # Wire ClarifyDoc into agent hosts (MCP entry, hooks, skills)
 clarifydoc install --git-hooks         # Refresh the analysis in the background after commit, merge, checkout
                                        # (a file whose clarifydoc markers are unbalanced or reversed is left as it is, and install says why)
+clarifydoc install --remove [--print]  # Undo install: take ClarifyDoc's entries out of the agent configs again (--json for a report)
+clarifydoc mcp --print-config cursor --pin  # The MCP entry as `npx -y clarifydoc@<version>`, the same on every machine
 ```
 
 `lsp-update` writes `lsp-enhancement.json` alongside `project-summary.json` (`--emit-queries <file>` writes the

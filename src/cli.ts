@@ -858,8 +858,43 @@ program
   .option("--command <launcher>", "Start ClarifyDoc with this command in the entries and hooks written (default: the way this CLI was started)")
   .option("--no-mcp", "Write no MCP server entry — only the hooks, skills, guidance or git hooks asked for")
   .option("--plugin <dir>", "Write an agent plugin into <dir> instead (Claude Code, Codex, Copilot CLI): the MCP server entry, the skills and an explorer subagent")
+  .option("--remove", "Undo install instead: take ClarifyDoc's entries out of the agent configs (every client and kind unless named: --client, --hooks, --skills, --guidance, --git-hooks, --no-mcp, --plugin), leaving everything else as it was. With --print, only say what would change", false)
+  .option("--json", "With --remove: print the report (removed, edited, skipped, errors) as JSON", false)
   .action(async (path: string, options) => {
     const root = resolve(path);
+    if (options.remove) {
+      const { CLIENTS: known } = await import("./agents/install.js");
+      const { applyRemoval, planRemoval, renderRemovalReport } = await import("./agents/remove.js");
+      const named = options.client as string[] | undefined;
+      const bad = (named ?? []).filter((c) => !(known as readonly string[]).includes(c));
+      if (bad.length) {
+        console.error(`Unknown client(s): ${bad.join(", ")}. Known: ${known.join(", ")}.`);
+        process.exitCode = 1;
+        return;
+      }
+      // Flags that name a kind narrow the removal to those kinds (an MCP entry when a client is named); none names everything.
+      const kinds = Boolean(options.hooks || options.skills || options.guidance || options.gitHooks || named);
+      let plugin: { dir: string; tools: Array<{ name: string; readOnly?: boolean }> } | undefined;
+      if (options.plugin) {
+        const { buildMcpServer } = await import("./mcp/server.js");
+        plugin = { dir: resolve(options.plugin), tools: buildMcpServer({ projectRoot: root, allowAnalyze: false, allowColdStart: false }).tools };
+      }
+      const actions = planRemoval({
+        root,
+        ...(named ? { clients: named as never } : {}),
+        mcp: options.mcp !== false && (!kinds || Boolean(named)),
+        hooks: !kinds || Boolean(options.hooks),
+        skills: !kinds || Boolean(options.skills),
+        gitHooks: !kinds || Boolean(options.gitHooks),
+        guidance: kinds ? (options.guidance ? (typeof options.guidance === "string" ? options.guidance : true) : false) : true,
+        ...(plugin ? { plugin } : {}),
+      });
+      const report = applyRemoval(actions, options.print, root);
+      if (options.json) console.log(JSON.stringify(report, null, 2));
+      else for (const line of renderRemovalReport(report, options.print)) console.log(line);
+      if (report.errors.length) process.exitCode = 1;
+      return;
+    }
     const { CLIENTS, applyPlans, planGitHooks, planGuidance, planHooks, planMcpConfig, planPlugin, planSkills, projectFacts, selfCommand } = await import("./agents/install.js");
     // A launcher that outlives this install (an editor's stable shim) instead of this process's own path.
     const self = options.command ? { command: options.command as string, args: [] } : selfCommand();
@@ -1021,6 +1056,7 @@ program
   .option("--max-files <n>", "Maximum number of files to analyze", wholeNumber(1))
   .option("--include <globs...>", "Additional file patterns to include")
   .option("--exclude <globs...>", "Additional file patterns to exclude")
+  .option("--pin", "With --print-config: start ClarifyDoc as `npx -y clarifydoc@<this version>` — the same on every machine, for an entry that is committed or shared — instead of this machine's launcher (an app that does not see the shell PATH may not find npx)", false)
   .option("--print-config <client>", "Print the MCP entry for a client and exit, without serving: claude-code | cursor | vscode | windsurf | gemini | codex | claude-desktop | zed | opencode | cline | kilo | copilot | all")
   .option("--http", "Serve over HTTP (POST /mcp, plus a GET event stream for notifications) instead of stdio; one analysis shared by every client", false)
   .option("--port <n>", "HTTP port with --http (0 = any free port)", wholeNumber(0), 3737)
@@ -1030,7 +1066,8 @@ program
   .option("--tools <profile>", "Tools to offer: all, core (status, search, explain, trace, file, extract, impact, analyze), or names comma-separated", "all")
   .action(async (path: string, options) => {
     if (options.printConfig) {
-      const { CLIENTS, mcpSnippet } = await import("./agents/install.js");
+      const { CLIENTS, mcpSnippet, selfCommand, versionPinnedLauncher } = await import("./agents/install.js");
+      const self = options.pin ? versionPinnedLauncher() : selfCommand();
       const { locateProjectRoot: locate } = await import("./mcp/server.js");
       const root = path ? resolve(path) : locate(process.cwd()).root;
       const wanted = options.printConfig === "all" ? [...CLIENTS] : [options.printConfig];
@@ -1041,7 +1078,7 @@ program
         return;
       }
       for (const c of wanted) {
-        const { file, snippet } = mcpSnippet(c as (typeof CLIENTS)[number], root);
+        const { file, snippet } = mcpSnippet(c as (typeof CLIENTS)[number], root, self);
         console.log(`# ${c} — add to ${file} (or: clarifydoc install --client ${c})\n${snippet}`);
       }
       return;

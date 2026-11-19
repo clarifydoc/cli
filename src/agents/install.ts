@@ -50,6 +50,15 @@ export function selfCommand(argv?: string, platform: NodeJS.Platform = process.p
 }
 
 /**
+ * A launcher that is the same on every machine: `npx -y clarifydoc@<this version>`, for an entry committed or
+ * shared (`--pin`) instead of one box's `node <absolute path>`. On Windows through `cmd /c`, as `selfCommand` does.
+ */
+export function versionPinnedLauncher(platform: NodeJS.Platform = process.platform, version: string = TOOL_VERSION): Launcher {
+  const pkg = `clarifydoc@${version}`;
+  return platform === "win32" ? { command: "cmd", args: ["/c", "npx", "-y", pkg] } : { command: "npx", args: ["-y", pkg] };
+}
+
+/**
  * The launcher for a file outside the project, read by an app that may not
  * start with the shell's PATH (Claude Desktop, an editor started from the
  * dock, Copilot's hooks): `node <the installed script>` by absolute path
@@ -73,7 +82,7 @@ interface Planned {
 }
 
 /** A JSON config's object: `{}` when the file is missing or empty, null when it is there but not plain JSON. */
-function readJson(path: string): Record<string, unknown> | null {
+export function readJson(path: string): Record<string, unknown> | null {
   let text: string;
   try {
     text = readFileSync(path, "utf8");
@@ -89,7 +98,7 @@ function readJson(path: string): Record<string, unknown> | null {
   }
 }
 
-const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+export const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
 /** What a merge sets: the whole config, and the one member `content[top][name]` it adds or replaces. */
 interface Merged {
@@ -130,7 +139,7 @@ const kiloConfig = (root: string) => firstExisting(root, ["kilo.jsonc", "kilo.js
 /** Where GitHub Copilot CLI keeps its user config: `$COPILOT_HOME`, else `~/.copilot`. */
 const copilotHome = () => process.env.COPILOT_HOME || join(homedir(), ".copilot");
 
-const pretty = (v: unknown) => `${JSON.stringify(v, null, 2)}\n`;
+export const pretty = (v: unknown) => `${JSON.stringify(v, null, 2)}\n`;
 
 /** Where Claude Desktop reads its MCP servers on this platform. */
 function claudeDesktopConfig(): string {
@@ -193,7 +202,7 @@ export function mcpSnippet(client: Client, root: string, self: Launcher = selfCo
 }
 
 /** The project a user-level entry serves: the last argument after `mcp`. */
-function entryRoot(entry: unknown): string | undefined {
+export function entryRoot(entry: unknown): string | undefined {
   const args = (entry as { args?: unknown })?.args;
   if (!Array.isArray(args)) return undefined;
   const i = args.lastIndexOf("mcp");
@@ -219,7 +228,7 @@ export function userServerKey(servers: Record<string, unknown>, root: string): s
 }
 
 /** `[mcp_servers.<name>]` tables of a Codex config.toml, with their args. */
-function codexServers(toml: string): Record<string, { args?: string[] }> {
+export function codexServers(toml: string): Record<string, { args?: string[] }> {
   const out: Record<string, { args?: string[] }> = {};
   for (const m of toml.matchAll(/^\[mcp_servers\.([\w-]+)\]\n((?:(?!\[)[^\n]*\n?)*)/gm)) {
     const args = /^args\s*=\s*(\[.*\])\s*$/m.exec(m[2]!)?.[1];
@@ -334,8 +343,8 @@ const shellLine = (words: readonly string[]) => words.map((w) => (/^[\w@%+=:,./-
 /** The same line for PowerShell: the call operator, each word single-quoted when it needs it. */
 const powershellLine = (words: readonly string[]) => `& ${words.map((w) => (/^[\w@%+=:,./-]+$/.test(w) ? w : `'${w.replace(/'/g, "''")}'`)).join(" ")}`;
 
-const CODEX_HOOK_START = "# clarifydoc:hooks:start";
-const CODEX_HOOK_END = "# clarifydoc:hooks:end";
+export const CODEX_HOOK_START = "# clarifydoc:hooks:start";
+export const CODEX_HOOK_END = "# clarifydoc:hooks:end";
 
 /**
  * Codex's hooks: its shell tool is `Bash` and it follows Claude Code's hook
@@ -431,8 +440,8 @@ export function planHooks(clients: readonly Client[], root: string, self: Launch
   return out;
 }
 
-const HOOK_START = "# clarifydoc:start";
-const HOOK_END = "# clarifydoc:end";
+export const HOOK_START = "# clarifydoc:start";
+export const HOOK_END = "# clarifydoc:end";
 
 /** The git events that move the working tree, and when each should refresh. */
 const NOT_REBASING = '[ ! -d "$(git rev-parse --git-path rebase-merge)" ] && [ ! -d "$(git rev-parse --git-path rebase-apply)" ]';
@@ -574,10 +583,10 @@ export function findMarkedRegion(text: string, start: string, end: string): Mark
   return { kind: "damaged", reason: starts ? `its start marker \`${start}\` has no end marker \`${end}\`` : `its end marker \`${end}\` has no start marker \`${start}\`` };
 }
 
-const damagedNote = (reason: string) => `${reason}. Fix or remove the markers by hand and run install again; nothing was changed`;
+export const damagedNote = (reason: string) => `${reason}. Fix or remove the markers by hand and run install again; nothing was changed`;
 
-const START = "<!-- clarifydoc:start -->";
-const END = "<!-- clarifydoc:end -->";
+export const GUIDANCE_START = "<!-- clarifydoc:start -->";
+export const GUIDANCE_END = "<!-- clarifydoc:end -->";
 
 /**
  * The ClarifyDoc section of AGENTS.md (or CLAUDE.md), between markers so a
@@ -589,11 +598,11 @@ export function planGuidance(root: string, file = "AGENTS.md", facts: string[] =
   const path = join(root, file);
   const existing = existsSync(path) ? readFileSync(path, "utf8") : "";
   const projectPart = facts.length ? `\n### In this project\n\n${facts.map((f) => `- ${f}`).join("\n")}\n` : "";
-  const section = `${START}\n${AGENT_GUIDANCE.trimEnd()}\n${projectPart}${END}\n`;
-  const region = findMarkedRegion(existing, START, END);
+  const section = `${GUIDANCE_START}\n${AGENT_GUIDANCE.trimEnd()}\n${projectPart}${GUIDANCE_END}\n`;
+  const region = findMarkedRegion(existing, GUIDANCE_START, GUIDANCE_END);
   if (region.kind === "damaged") return { file: path, content: section, skip: damagedNote(region.reason) };
   const content = region.kind === "one"
-    ? `${existing.slice(0, region.start)}${section}${existing.slice(region.end + END.length).replace(/^\n/, "")}`
+    ? `${existing.slice(0, region.start)}${section}${existing.slice(region.end + GUIDANCE_END.length).replace(/^\n/, "")}`
     : `${existing.trimEnd()}${existing.trim() ? "\n\n" : ""}${section}`;
   return { file: path, content };
 }
