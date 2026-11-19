@@ -372,6 +372,8 @@ function scanBody(
   // name → every binding seen (null = a binding whose type is not stated).
   const bindings = new Map<string, Array<{ local: LocalType; annotated: boolean } | null>>();
   const reassigned = new Set<string>();
+  // Assignment nodes `assignedArms` stated as bindings.
+  const armAssignments = new Set<number>();
   // Flow order, for an alias of a name bound more than once: each declaration or `=` of a name, at what offset (source order), whether
   // (`nested`: inside a block of its own) and the type it states (null when it states none).
   const timeline = new Map<string, Array<{ at: number; nested: boolean; type: string | null; declared: boolean }>>();
@@ -711,9 +713,11 @@ function scanBody(
           // A conditional initializer binds the name once per arm (`slug ? publicApi() : userApi()`).
           // A store picked by an IIFE `switch` on a prop: the local reads the record its cases state (`store[]`, one entry per case).
           const picked = switchRecordEntries(node);
+          const armed = picked ? null : assignedArms(node, children, body);
+          if (armed) for (const a of armed.assignments) armAssignments.add(a.id);
           const locals = picked
             ? [{ local: { name: name.text, type: "", from: `${name.text}[]`, indexOrigin: picked.indexOrigin }, annotated: false }]
-            : conditionalLocals(children, name.text, node.startIndex) ?? [declaredLocal(node, children, name.text, ctx)];
+            : armed?.locals ?? conditionalLocals(children, name.text, node.startIndex) ?? [declaredLocal(node, children, name.text, ctx)];
           const list = bindings.get(name.text);
           if (list) list.push(...locals);
           else bindings.set(name.text, locals);
@@ -779,7 +783,8 @@ function scanBody(
           }
         }
         if (left?.type === "identifier") {
-          reassigned.add(left.text);
+          // The arms of the if/else a declaration is followed by are its typed bindings, not a reassignment (`assignedArms`).
+          if (!armAssignments.has(node.id)) reassigned.add(left.text);
           const right = node.childForFieldName("right");
           let stated: string | null = null;
           if (type === "assignment_expression" && right) {
@@ -1037,6 +1042,80 @@ function initializerLocal(value: Node, name: string): { local: LocalType; annota
   }
   if (!from) return null;
   return { local: awaited ? { name, type: "", from, awaited } : { name, type: "", from }, annotated: false };
+}
+
+/**
+ * `let api; if (x) { api = useClubApi() } else { api = useLeagueApi() }`: the declaration without an initializer, followed
+ * directly by an if / else-if / else chain (or a `switch` with a `default`) whose every arm is ONE plain assignment of the
+ * name — one local per arm, sharing a `choice`. Null for anything else: an arm assigning twice or nested deeper, a chain
+ * without its final else, a name read or written between the declaration and the end of the statement (a call there
+ * would be typed by an arm that has not run) or assigned anywhere else in the body (the later `=` rebinds it, which the
+ * caller's `reassigned` check refuses).
+ */
+function assignedArms(declarator: Node, children: readonly Node[], body: Node): { locals: Array<{ local: LocalType; annotated: boolean } | null>; assignments: Node[] } | null {
+  const name = children[0]?.text;
+  const decl = declarator.parent;
+  if (!name || children.length !== 1 || !decl || (decl.type !== "lexical_declaration" && decl.type !== "variable_declaration") || decl.namedChildren.length !== 1) return null;
+  let next = decl.nextNamedSibling;
+  while (next?.type === "comment") next = next.nextNamedSibling;
+  if (!next) return null;
+  const armsOf = (stmt: Node): Node[][] | null => {
+    const stmts = (n: Node | null): Node[] => (!n ? [] : n.type === "statement_block" ? n.namedChildren.filter((c) => c.type !== "comment") : [n]);
+    if (stmt.type === "if_statement") {
+      const out: Node[][] = [];
+      let cur: Node | null = stmt;
+      while (cur) {
+        out.push(stmts(cur.childForFieldName("consequence")));
+        const alt: Node | null = cur.childForFieldName("alternative");
+        const inner: Node | null = alt ? (alt.namedChildren.find((c) => c.type !== "comment") ?? null) : null;
+        if (!inner) return null;
+        if (inner.type === "if_statement") cur = inner;
+        else {
+          out.push(stmts(inner));
+          cur = null;
+        }
+      }
+      return out;
+    }
+    if (stmt.type === "switch_statement") {
+      const cases = stmt.childForFieldName("body")?.namedChildren.filter((c) => c.type === "switch_case" || c.type === "switch_default") ?? [];
+      if (!cases.some((c) => c.type === "switch_default")) return null;
+      const out: Node[][] = [];
+      for (const c of cases) {
+        const own = c.namedChildren.filter((x, i) => x.type !== "comment" && !(c.type === "switch_case" && i === 0) && x.type !== "break_statement");
+        if (own.length === 0 && c.type === "switch_case") continue;
+        out.push(own);
+      }
+      return out;
+    }
+    return null;
+  };
+  const arms = armsOf(next);
+  if (!arms || arms.length < 2) return null;
+  const assignments: Node[] = [];
+  const locals: Array<{ local: LocalType; annotated: boolean } | null> = [];
+  for (const arm of arms) {
+    const own = arm.filter((s) => {
+      const e = s.type === "expression_statement" ? s.namedChild(0) : null;
+      return e?.type === "assignment_expression" && e.childForFieldName("left")?.text === name && e.children.some((c) => c.type === "=");
+    });
+    if (own.length !== 1) return null;
+    const assignment = own[0]!.namedChild(0)!;
+    let right = assignment.childForFieldName("right");
+    while (right?.type === "parenthesized_expression") right = right.namedChild(0);
+    const typed = right ? initializerLocal(right, name) : null;
+    if (!typed?.local.from) return null;
+    typed.local.choice = declarator.startIndex;
+    assignments.push(assignment);
+    locals.push(typed);
+  }
+  // Every other mention of the name starts after the statement; the arms' own assignments are the exception.
+  const own = new Set(assignments.map((a) => a.childForFieldName("left")!.id));
+  for (const id of body.descendantsOfType(["identifier", "shorthand_property_identifier"])) {
+    if (!id || id.text !== name || id.id === children[0]!.id || own.has(id.id)) continue;
+    if (id.startIndex < next.endIndex) return null;
+  }
+  return { locals, assignments };
 }
 
 /**

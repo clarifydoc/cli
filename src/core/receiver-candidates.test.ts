@@ -73,6 +73,36 @@ describe("receivers with several candidate types", () => {
         "  if (slug) { api = useClubApi(); } else { api = usePlayerApi(); }",
         "  api.getAll();",
         "}",
+        "export function switched(kind: number) {",
+        "  let api;",
+        "  switch (kind) {",
+        "    case 1: api = useClubApi(); break;",
+        "    default: api = usePlayerApi();",
+        "  }",
+        "  api.getAll();",
+        "}",
+        "export function twoIfs(a: boolean, b: boolean) {",
+        "  let api;",
+        "  if (a) { api = useClubApi(); }",
+        "  if (b) { api = usePlayerApi(); }",
+        "  api.getAll();",
+        "}",
+        "export function noElse(a: boolean) {",
+        "  let api;",
+        "  if (a) { api = useClubApi(); } else if (!a) { api = usePlayerApi(); }",
+        "  api.getAll();",
+        "}",
+        "export function readBefore(a: boolean) {",
+        "  let api;",
+        "  api?.getAll();",
+        "  if (a) { api = useClubApi(); } else { api = usePlayerApi(); }",
+        "}",
+        "export function reassignedAfter(a: boolean) {",
+        "  let api;",
+        "  if (a) { api = useClubApi(); } else { api = usePlayerApi(); }",
+        "  api.getAll();",
+        "  api = useClubApi();",
+        "}",
         "export function unknownArm(slug: string, other: any) {",
         "  const api = slug ? useClubApi() : other.make();",
         "  api.getAll();",
@@ -199,8 +229,16 @@ describe("receivers with several candidate types", () => {
     expect(shape(links, "api.reset").every((s) => s.startsWith("ClubApi.reset"))).toBe(true);
     expect(links.some((l) => l.targetFile.includes("Garage"))).toBe(false);
   });
-  it("leaves a local assigned on both sides of an if/else untyped (the later assignment is no fact today)", async () => {
-    expect(shape(await linksOf("branched"), "api.getAll")).toEqual([]);
+  it("links a local assigned on each arm of one if/else (or a switch with a default) once per arm, AMBIGUOUS", async () => {
+    const want = ["ClubApi.getAll:AMBIGUOUS", "PlayerApi.getAll:AMBIGUOUS"];
+    expect(shape(await linksOf("branched"), "api.getAll")).toEqual(want);
+    expect(shape(await linksOf("switched"), "api.getAll")).toEqual(want);
+  });
+  it("leaves a reassigned local untyped when its assignments are no single if/else, or it is read or written outside it", async () => {
+    for (const fn of ["twoIfs", "noElse", "readBefore", "reassignedAfter"]) {
+      expect(shape(await linksOf(fn), "api.getAll")).toEqual([]);
+      expect((await linksOf(fn)).some((l) => l.targetFile.includes("Garage"))).toBe(false);
+    }
   });
   it("leaves a local with an unresolved arm untyped", async () => {
     expect(shape(await linksOf("unknownArm"), "api.getAll")).toEqual([]);
