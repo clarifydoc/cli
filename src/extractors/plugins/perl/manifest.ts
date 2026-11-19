@@ -1,6 +1,8 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { PERL_DOCS } from "../../shared/doc-comment-specs.js";
 import { cpanPackageManager } from "./package-manifests.js";
+import { perlTestCommand } from "./test-command.js";
+import { perlProjectCommands } from "./project-commands.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -11,6 +13,8 @@ import { cpanPackageManager } from "./package-manifests.js";
 export const perlManifest: LanguagePluginManifest = {
   docComments: PERL_DOCS,
   language: "perl",
+  testCommand: perlTestCommand,
+  projectCommands: perlProjectCommands,
   shebangInterpreter: /^perl\d*(?:\.\d+)*$/,
   shebangInterpreterNames: ["perl"],
   family: "perl",
