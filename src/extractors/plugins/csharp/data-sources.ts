@@ -1065,7 +1065,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     if (node.type === "interface_declaration") {
       if (this.refitFile) {
         for (const c of refitInterfaceCalls(node)) {
-          sources.push(this.ds({ kind: "api-call", name: c.verb, target: c.target, line: c.line, baseRef: { kind: "client", key: c.client } }));
+          sources.push(this.ds({ kind: "api-call", name: c.verb, target: c.target, line: c.line, column: c.column, baseRef: { kind: "client", key: c.client } }));
         }
       }
       return;
@@ -1121,7 +1121,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       const sentBy = sender?.type === "invocation_expression" ? /^(?:Execute)?(Get|Post|Put|Delete|Patch|Head|Options)Async$/.exec(sender.childForFieldName("function")?.text.replace(/<.*$/, "").replace(/^.*\./, "") ?? "")?.[1]?.toUpperCase() : undefined;
       const verb = sentBy ?? (local ? this.restRequestVerbs.get(local) : undefined) ?? stated ?? "GET";
       const target = first && /^[@$]*"/.test(first) ? this.evalUri(first, node.startPosition.row + 1, 0) : null;
-      if (first) sources.push(this.ds({ kind: "api-call", name: verb, target, line: node.startPosition.row + 1 }));
+      if (first) sources.push(this.ds({ kind: "api-call", name: verb, target, line: node.startPosition.row + 1, column: node.startPosition.column }));
       return;
     }
     if (node.type !== "invocation_expression") return;
@@ -1159,7 +1159,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       const verb = FLURL_SEND.exec(fn.childForFieldName("name")?.text.replace(/<.*$/, "") ?? "")?.[1];
       const flurl = verb ? this.flurlRequest(fn.childForFieldName("expression"), node.startPosition.row + 1) : null;
       if (verb && flurl) {
-        sources.push(this.ds({ kind: "api-call", name: verb.toUpperCase(), target: flurl.target, line: node.startPosition.row + 1, ...(flurl.client ? { client: flurl.client } : {}) }));
+        sources.push(this.ds({ kind: "api-call", name: verb.toUpperCase(), target: flurl.target, line: node.startPosition.row + 1, column: node.startPosition.column, ...(flurl.client ? { client: flurl.client } : {}) }));
         return;
       }
     }
@@ -1613,6 +1613,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
           name: verb ? `${verb} ${target ?? method}` : method,
           target,
           line: node.startPosition.row + 1,
+          column: node.startPosition.column,
           ...(client ? { baseRef: client } : {}),
           ...(reads ? { responseReads: reads } : {}),
           ...(body ? { requestBody: body } : {}),

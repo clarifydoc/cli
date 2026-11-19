@@ -27,6 +27,7 @@ export interface RefitCall {
   target: string;
   client: string;
   line: number;
+  column: number;
 }
 
 /** The requests a Refit interface declares, one per method carrying a verb attribute. */
@@ -43,7 +44,7 @@ export function refitInterfaceCalls(iface: Node): RefitCall[] {
       if (!hit) continue;
       const path = hit[2]!.split("?")[0]!;
       const tail = path === "" || path === "/" ? "" : path.startsWith("/") ? path : `/${path}`;
-      out.push({ verb: hit[1]!.toUpperCase(), target: `\${${name}}${tail || "/"}`, client: name, line: list.startPosition.row + 1 });
+      out.push({ verb: hit[1]!.toUpperCase(), target: `\${${name}}${tail || "/"}`, client: name, line: list.startPosition.row + 1, column: list.startPosition.column });
       break;
     }
   }
