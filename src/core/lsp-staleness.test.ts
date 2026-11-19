@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { loadReportSummary } from "./report-payload.js";
@@ -64,5 +64,34 @@ describe("loadReportSummary — LSP delta age guard", () => {
     const s = await loadReportSummary(dir);
     expect(s.symbolLinks.map((l) => l.callName)).toEqual(["fromLsp"]);
     expect(s.lspStats?.stale).toBeUndefined();
+  });
+});
+
+describe("loadReportSummary — one bad record never aborts the merge", () => {
+  it("carries the valid added links past a malformed one, and still marks the delta stale", async () => {
+    writeAnalysis("2026-05-02T00:00:00.000Z", "2026-05-01T00:00:00.000Z");
+    const lspPath = join(dir, "lsp-enhancement.json");
+    const delta = JSON.parse(readFileSync(lspPath, "utf-8"));
+    writeFileSync(join(dir, "manifest.json"), JSON.stringify({
+      version: 1, entries: { "a.ts": { sha256: "h1" }, "b.ts": { sha256: "h2" } },
+    }));
+    delta.added = { links: [null, { callName: "broken" }, LSP_LINK], files: { "a.ts": "h1", "b.ts": "h2" } };
+    writeFileSync(lspPath, JSON.stringify(delta));
+    const s = await loadReportSummary(dir);
+    expect(s.symbolLinks.map((l) => l.callName)).toEqual(["fresh", "fromLsp"]);
+    expect(s.lspStats?.stale).toBe(true);
+    expect(s.lspStats?.carried).toBe(1);
+  });
+
+  it("merges a fresh delta's graphs past a malformed blast row", async () => {
+    writeAnalysis("2026-05-01T00:00:00.000Z", "2026-05-02T00:00:00.000Z");
+    const lspPath = join(dir, "lsp-enhancement.json");
+    const delta = JSON.parse(readFileSync(lspPath, "utf-8"));
+    delta.blastRadius = [null, { filePath: "a.ts" }];
+    writeFileSync(lspPath, JSON.stringify(delta));
+    const s = await loadReportSummary(dir);
+    expect(s.symbolLinks.map((l) => l.callName)).toEqual(["fromLsp"]);
+    expect(s.lspStats?.enhancedAt).toBe("2026-05-02T00:00:00.000Z");
+    expect((s.blastRadius as { filePath: string }[]).map((b) => b.filePath)).toEqual(["a.ts"]);
   });
 });

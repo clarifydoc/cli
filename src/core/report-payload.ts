@@ -525,7 +525,8 @@ export async function loadReportSummary(dir: string): Promise<ProjectAnalysis> {
         const key = (l: ProjectAnalysis["symbolLinks"][number]) => `${l.sourceFile}\0${l.sourceLine}\0${l.callName}\0${l.targetFile}\0${l.targetSymbol}`;
         const have = new Set(summary.symbolLinks.map(key));
         for (const l of lsp.added.links) {
-          if (!same(l.sourceFile) || !same(l.targetFile) || have.has(key(l))) continue;
+          // One malformed record is skipped; it never costs the others.
+          if (!l || typeof l !== "object" || !same(l.sourceFile) || !same(l.targetFile) || have.has(key(l))) continue;
           summary.symbolLinks.push(l);
           have.add(key(l));
           carried++;
@@ -575,7 +576,9 @@ export async function loadReportSummary(dir: string): Promise<ProjectAnalysis> {
           });
         }
       }
-      const lspBlast = lsp.blastRadius as BlastRadiusInfo[];
+      const lspBlast = (lsp.blastRadius as (BlastRadiusInfo | null)[]).filter(
+        (b): b is BlastRadiusInfo => !!b && typeof b === "object" && typeof b.filePath === "string",
+      );
       const lspFiles = new Set<string>();
       for (const info of lspBlast) {
         lspFiles.add(info.filePath);
