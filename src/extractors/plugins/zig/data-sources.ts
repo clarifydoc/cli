@@ -46,7 +46,7 @@ export class ZigDataSourceExtractor extends DataSourceExtractor {
       url = uriOf(args[1], this.uris);
     }
     if (method && url && (url.startsWith("/") || /^https?:\/\//.test(url))) {
-      sources.push(this.ds({ kind: "api-call", name: `${method} ${url}`, target: url, line: node.startPosition.row + 1 }));
+      sources.push(this.ds({ kind: "api-call", name: `${method} ${url}`, target: url, line: node.startPosition.row + 1, column: node.startPosition.column }));
     }
   }
 }
