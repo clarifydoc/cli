@@ -127,8 +127,8 @@ export function maybe(x: Club | undefined) { x?.rename("a"); }
     expect(targets(summary, "bound", "x.rename")).toEqual(["club.ts:Club.rename:1"]);
     expect(targets(summary, "maybe", "x?.rename")).toEqual(["club.ts:Club.rename:1"]);
   });
-  it("never picks among two named members", () => {
-    expect(targets(summary, "both", "x.rename")).toEqual([]);
+  it("links each named member that declares the member (AMBIGUOUS, one per class)", () => {
+    expect(targets(summary, "both", "x.rename")).toEqual(["club.ts:Club.rename:1", "club.ts:Named.rename:2"]);
   });
 });
 
