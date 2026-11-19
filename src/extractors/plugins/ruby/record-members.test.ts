@@ -164,7 +164,8 @@ describe("calls on members a macro declares, and an ivar typed through its owner
 
   it("links a call on a Struct member, `Registry.instance` and a sig-typed result to their definitions", () => {
     expect(target(25, "s.total")).toEqual(["app/services/macros.rb::Score.total"]);
-    expect(target(26, "Registry.instance")).toEqual(["app/services/macros.rb::Registry.instance"]);
+    // The accessor, and the method called on what it returns.
+    expect(target(26, "Registry.instance")).toEqual(["app/services/macros.rb::Registry.instance", "app/services/macros.rb::Registry.register"]);
     expect(target(28, "lk.score.total")).toEqual(["app/services/macros.rb::Score.total"]);
   });
 });

@@ -11,6 +11,7 @@ import { RAILS_RENDER_CALL_PATTERNS } from "./render-patterns.js";
 import { rubyModelFinders } from "./autoload.js";
 import type { CallInfo, RouteInfo, RouteFact, ClassInfo, FunctionInfo, DataSourceInfo, HttpClientRegistration, CallBaseRef } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
+import { joinConstantClassHeaders } from "./constant-class-headers.js";
 import { extractCallsFromBody, extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
 import { escapeRegex } from "../shared/path-utils.js";
 import { addRubyWhereFields, withRubyArgOrigins, withRubyArgOriginsInClasses } from "./arg-origins.js";
@@ -651,6 +652,32 @@ function addBlockParamTypes(lines: readonly string[], fn: FunctionInfo, associat
     }
   }
   return elements;
+}
+
+/**
+ * `got = lk.score` — a local assigned once from a reader chain off a typed local: typed by what the chain returns
+ * (`localTypes` from the chain), as an inline `lk.score.total` is followed. A name the method assigns twice, or
+ * binds as a parameter, stays untyped, and so does a chain whose head is no typed local.
+ */
+function addLocalFromReaderChain(lines: readonly string[], fn: FunctionInfo): void {
+  const typedHeads = new Set((fn.localTypes ?? []).filter((l) => l.type && !l.field).map((l) => l.name));
+  if (typedHeads.size === 0) return;
+  const assigned = new Map<string, number>();
+  const chains = new Map<string, string>();
+  for (const [, text] of bodyLines(lines, fn)) {
+    const code = text.replace(/\s#.*$/, "");
+    // Every write counts — `got ||= x`, `got += 1`, `got, rest = pair` — not only the plain assignment.
+    for (const w of code.matchAll(/(?<![\w.@$:])([a-z_]\w*)\s*(?:,[^=]*)?(?:[-+*\/|&]{1,2})?=(?![=~>])/g)) assigned.set(w[1]!, (assigned.get(w[1]!) ?? 0) + 1);
+    const m = /^\s*([a-z_]\w*)\s*=(?!=)\s*(.*?)\s*$/.exec(code);
+    if (!m) continue;
+    const chain = /^([a-z_]\w*)((?:\.[a-z_]\w*[?!]?){1,3})$/.exec(m[2]!);
+    if (chain && typedHeads.has(chain[1]!)) chains.set(m[1]!, `${chain[1]}${chain[2]}`.replace(/(\.[a-z_]\w*[?!]?)/g, "$1()"));
+  }
+  const formals = new Set(fn.params.map((x) => x.name));
+  for (const [name, chain] of chains) {
+    if (assigned.get(name) !== 1 || formals.has(name) || typedHeads.has(name) || fn.localTypes?.some((l) => l.name === name)) continue;
+    (fn.localTypes ??= []).push({ name, type: "", from: chain });
+  }
 }
 
 /** A head read off a reader method of the class's own (`self.club()`), which the linker types by what it returns. */
@@ -1447,7 +1474,8 @@ export const rubySpec: RegexLangSpec = {
    * is closer to interface-implementation than inheritance, so this maps
    * naturally onto the existing field.
    */
-  extractClasses: (lines: string[], fns: FunctionInfo[]) => {
+  extractClasses: (source: string[], fns: FunctionInfo[]) => {
+    const lines = joinConstantClassHeaders(source);
     const classes = extractClassesWithSpec(lines, rubySpec);
     if (classes.length === 0) return classes;
     // A concern's `class_methods do` block is the `ClassMethods` module its includers are extended with.
@@ -1497,6 +1525,7 @@ export const rubySpec: RegexLangSpec = {
         addAnonymousClassCalls(code, m);
         const elements = addBlockParamTypes(code, m, associations, bound);
         addTypedLocalCalls(code, m, elements);
+        addLocalFromReaderChain(code, m);
         rewriteConstantLocals(lines, m);
         addMemberChainCalls(code, m, associations, bound);
         addJobDispatchCalls(lines, m);

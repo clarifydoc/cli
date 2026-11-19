@@ -56,6 +56,8 @@ interface SymbolDef {
   reexport?: boolean;
   /** A method of the class object (`FunctionInfo.classLevel`), every definition of the name being one. */
   classLevel?: true;
+  /** `FunctionInfo.returnsInstance`: its `self` return is an instance of the receiver's class. */
+  returnsInstance?: true;
   /**
    * Position of the parameter whose declared type the function returns as written (`identity<T>(c: T): T`):
    * a call hands back the type of that argument when the written type names no class.
@@ -1007,6 +1009,7 @@ function buildSymbolIndex(
           returnType: overloadReturn(prev, method.returnType),
           ...(method.declaredReturnType && !prev ? { declaredReturn: method.declaredReturnType } : {}),
           ...(method.classLevel && (!prev || prev.classLevel) ? { classLevel: true as const } : {}),
+          ...(method.returnsInstance && (!prev || prev.returnsInstance) ? { returnsInstance: true as const } : {}),
         });
         // Also store unqualified as fallback (if not already taken by a function). A constructor
         // its name does not mark (Dart's `Event.openPage`) is reached through its type only: by its
@@ -7744,7 +7747,7 @@ function methodResult(ctx: LinkContext, point: InjectionPoint, method: string, a
   const next = returnedPoint(ctx, instanceReturn(def), hit.file, point, awaited) ?? statedResultPoint(ctx, hit.file, def, point.consumer, awaited, point);
   // A class-level method returning `self` gives the class object, or a query of it (a scope): its
   // class-level methods answer next.
-  return next && def?.classLevel && SELF_TYPES.has(def.returnType?.trim() ?? "") ? { ...next, classSide: true } : next;
+  return next && def?.classLevel && !def.returnsInstance && SELF_TYPES.has(def.returnType?.trim() ?? "") ? { ...next, classSide: true } : next;
 }
 
 /**

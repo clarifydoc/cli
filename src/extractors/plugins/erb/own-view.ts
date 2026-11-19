@@ -40,15 +40,26 @@ export const railsOwnView: RouteResolver = {
         exits.add(`${d.controller.split("::").pop()}#${d.action}`);
       }
     }
-    /** Every controller of that leaf name defining the action (a namesake in another namespace counts: doubt refuses). */
+    /** The class declarations of that leaf name (a namesake in another namespace counts: doubt refuses). */
+    const classesOf = (leaf: string) => ruby.flatMap((a) => a.classes.filter((c) => c.name.split("::").pop() === leaf));
+    /**
+     * The bodies of the action a controller answers, with the leaf of the class that defines them: its own, else
+     * the nearest base's (`class Secured < BaseClubs` serves the base's `join`, redirect and all).
+     */
     const bodiesOf = (controller: string, action: string) => {
-      const leaf = controller.split("::").pop()!;
-      const found = [];
-      for (const a of ruby) for (const c of a.classes) if (c.name.split("::").pop() === leaf) {
-        const m = c.methods.find((f) => f.name === action);
-        if (m) found.push(m);
+      let leaf = controller.split("::").pop()!;
+      for (const seen = new Set<string>(); !seen.has(leaf); ) {
+        seen.add(leaf);
+        const declared = classesOf(leaf);
+        const found = declared.flatMap((c) => c.methods.filter((f) => f.name === action));
+        if (found.length > 0) return { leaf, found, doubt: false };
+        const bases = new Set(declared.map((c) => c.extends?.split("::").pop()).filter((b): b is string => !!b));
+        if (bases.size === 0) break;
+        // Two bases, or a base of the same leaf name (`Admin::Clubs < Clubs`): doubt refuses.
+        if (bases.size > 1 || seen.has([...bases][0]!)) return { leaf, found: [], doubt: true };
+        leaf = [...bases][0]!;
       }
-      return found;
+      return { leaf: controller.split("::").pop()!, found: [], doubt: false };
     };
 
     for (const view of views) {
@@ -60,8 +71,10 @@ export const railsOwnView: RouteResolver = {
         const handler = `${controller}#${key[2]}`;
         const rows = rowsOf.get(handler) ?? [];
         if (new Set(rows.map((r) => r.path)).size !== 1) continue;
-        if (exits.has(`${controller.split("::").pop()}#${key[2]}`)) continue;
-        if (bodiesOf(controller, key[2]!).some((body) => body.calls.some((c) => /^(?:render|redirect_to|redirect_back|head|respond_to|send_data|send_file)/.test(c.name.split(".").pop() ?? "")))) continue;
+        const { leaf, found, doubt } = bodiesOf(controller, key[2]!);
+        if (doubt) continue;
+        if (exits.has(`${controller.split("::").pop()}#${key[2]}`) || exits.has(`${leaf}#${key[2]}`)) continue;
+        if (found.some((body) => body.calls.some((c) => /^(?:render|redirect_to|redirect_back|head|respond_to|send_data|send_file)/.test(c.name.split(".").pop() ?? "")))) continue;
         const r = rows[0]!;
         const by: NonNullable<ScreenInfo["renderedBy"]>[number] = { filePath: r.filePath, method: "GET", path: r.path, line: r.line };
         screen.renderedBy = [by];

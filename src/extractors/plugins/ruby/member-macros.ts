@@ -93,7 +93,7 @@ export function addMacroMembers(lines: readonly string[], cls: ClassInfo, classe
   // which classes extend this one is no fact of this file).
   for (let i = cls.line; i < limit; i++) {
     if (/^\s*include\s+(?:::)?Singleton\s*$/.test(lines[i] ?? "") && (isOwn ??= ownLineTest(cls, classes))(i)) {
-      add("instance", i + 1, i + 1, "Singleton", { classLevel: true });
+      add("instance", i + 1, i + 1, "Singleton", { classLevel: true, returnType: "self", returnsInstance: true });
       break;
     }
   }

@@ -1558,6 +1558,12 @@ export interface FunctionInfo {
    */
   classLevel?: true;
   /**
+   * A class-level method whose `self` return type (`SELF_TYPES`) is an INSTANCE of the receiver's class, not the
+   * class object (a singleton accessor: Ruby `include Singleton`'s `instance`), so a call on the result is an
+   * instance call on whichever class the call names, subclass included. Absent otherwise.
+   */
+  returnsInstance?: true;
+  /**
    * A function with no declaration of its own — an inline closure given a pseudo-name — written in a method of this
    * class: value flow reads `this.x` / `widget.x` in it as that class's receiver and its locals as the method's.
    * Absent for declared functions.
