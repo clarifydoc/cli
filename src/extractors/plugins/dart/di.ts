@@ -509,7 +509,7 @@ function classLevelCall(rhs: string): { from: string; awaited?: boolean } | null
   const chain = /^(?:this\s*\.\s*)?([a-z_$][\w$]*(?:\s*[?!]?\.\s*[a-z_$][\w$]*)+)\s*\(/.exec(body);
   if (!chain || closeOf(body, chain[0].length - 1) !== body.length) {
     // `pick()`, `await fetch()`, `topClub()`: a bare call — a method of the enclosing class (implicit `this`) or a top-level function — typed by its declared return type.
-    const bare = /^([a-z_$][\w$]*)\s*(?:<[^()]*>)?\s*\(/.exec(body);
+    const bare = /^([a-z_$][\w$]*)\s*(?:<[\w$.,?\s<>]*>)?\s*\(/.exec(body);
     if (bare && !BARE_CALL_NOT_A_FUNCTION.has(bare[1]!) && closeOf(body, bare[0].length - 1) === body.length) return { from: `${bare[1]}()`, ...(awaited ? { awaited: true } : {}) };
     return null;
   }

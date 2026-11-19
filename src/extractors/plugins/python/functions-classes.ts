@@ -10,6 +10,7 @@ import {
   typeVarBounds,
   typeParameterBounds,
   annotationToken,
+  collectClassVariableTypes,
   collectInstanceAttributes,
   collectLocalTypes,
   collectionParams,
@@ -412,6 +413,9 @@ export class PythonExtractor extends FunctionClassExtractor {
       if (isEnum) collectEnumMembers(body, name, properties);
       else {
         collectAnnotatedAttributes(body, properties);
+        // Only a class variable a method calls through (`self.car.sign()`): a pydantic `model_config = ConfigDict(…)` is no field; one a method assigns on the instance (`self.car = …`) may hold another type.
+        const calledThrough = new Set(methods.flatMap((m) => m.calls.map((c) => /^(?:self|cls)\.(\w+)\./.exec(c.name)?.[1] ?? "")));
+        properties.push(...collectClassVariableTypes(body, new Set(properties.map((p) => p.name)), (call) => isOrmFieldCall(call) || isFieldCall(call)).filter((p) => calledThrough.has(p.name) && !held.has(p.name)));
         // `self.repo = repo` in `__init__` (or any method): the instance
         // attributes a class-level annotation did not already declare.
         const assigning = parsed.filter((p) => p.assignsSelf);

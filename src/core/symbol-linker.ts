@@ -5962,6 +5962,12 @@ function resolveCallToDefinitionBody(
         for (const body of definitionsBeside(ctx, impFile, declarations, call.name)) if (body.file !== sourceFile) hits.set(body.file, body.def);
       }
       const d = symbolIn(ctx, impFile, call.name);
+      if (!d && wildcard && !sharesScope) {
+        // `from app.hub import *` where hub itself only star-imports `app.club`: the definition is where the chain ends.
+        const through = starChainDefinition(ctx, impFile, call.name, 0, new Set([sourceFile]));
+        if (through && !hits.has(through.file)) hits.set(through.file, through.def);
+        continue;
+      }
       if (!d || d.name.includes(".")) continue;
       if (wildcard && !sharesScope) {
         ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
@@ -6585,6 +6591,35 @@ function functionThroughNamespace(
 /** `from m import *` — every exported name, none spelled out. */
 function isWildcardImport(imp: { isNamespace: boolean; specifiers: readonly string[] }): boolean {
   return imp.isNamespace && imp.specifiers.length === 0;
+}
+
+/** Longest chain of star imports followed to the file that defines a name. */
+const MAX_STAR_CHAIN = 3;
+
+/**
+ * The ONE definition of `name` behind the star imports of `file` (`from app.club import *` in a hub that declares
+ * nothing itself), followed up to {@link MAX_STAR_CHAIN} hops; null when none or several files define it.
+ */
+function starChainDefinition(ctx: LinkContext, file: string, name: string, depth: number, seen: Set<string>): { file: string; def: SymbolDef } | null {
+  if (depth >= MAX_STAR_CHAIN || seen.has(file)) return null;
+  seen.add(file);
+  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+  const analysis = ctx.analysisByFile.get(file);
+  if (!analysis) return null;
+  const found = new Map<string, { file: string; def: SymbolDef }>();
+  for (const imp of analysis.imports) {
+    if (!isWildcardImport(imp) || imp.executes) continue;
+    const next = importPath(ctx, imp.source, file);
+    if (!next || next === file) continue;
+    const d = symbolIn(ctx, next, name);
+    if (d) {
+      if (!d.name.includes(".") && starForwards(ctx.analysisByFile.get(next), d.name)) found.set(next, { file: next, def: d });
+      continue;
+    }
+    const deeper = starChainDefinition(ctx, next, name, depth + 1, seen);
+    if (deeper) found.set(deeper.file, deeper);
+  }
+  return found.size === 1 ? [...found.values()][0]! : null;
 }
 
 /** Whether a star re-export of `file` carries `name`: one of its own exports, or anything when it declares none. */
@@ -7436,7 +7471,9 @@ function importedFunctionLink(
   // it is imported when the file does not define it.
   const shared = (importsShareScope(analysis.language) || !!pluginFor(analysis.language as Language)?.directoryNamesShared) && !analysis.functions.some((f) => f.name === name);
   // A function an import puts in scope by bare name (`ImportInfo.inScope`: Dart, Kotlin) is called as the file's own is.
-  const scoped = !shared && !analysis.functions.some((f) => f.name === name) && !!inScopeMember(ctx, analysis, name);
+  const dotAt = sourceSymbol.indexOf(".");
+  const ownMember = dotAt > 0 && !sourceSymbol.startsWith("route:") && !!symbolIn(ctx, sourceFile, `${sourceSymbol.slice(0, dotAt)}.${name}`);
+  const scoped = !shared && !ownMember && !analysis.functions.some((f) => f.name === name) && !symbolIn(ctx, sourceFile, name) && !!inScopeMember(ctx, analysis, name);
   const writes = (fn: FunctionInfo | null | undefined): CallInfo | undefined =>
     fn?.calls.find((c) => c.name === name && (c.kind === "cross-file" || ((shared || scoped) && c.kind === "internal")));
   const own = findEnclosingCallable(analysis, sourceSymbol);

@@ -1164,6 +1164,34 @@ export function collectInstanceAttributes(
 }
 
 /**
+ * Class variables a class body assigns a construction — `car = Car()` — typed as the class built, the way
+ * `self.car = Car()` is; read through `self.car`. A name assigned twice, annotated, or in
+ * `skip`, and a call `ignored` says is no construction (an ORM column, a pydantic `Field`), is left out.
+ */
+export function collectClassVariableTypes(body: Node, skip: ReadonlySet<string>, ignored: (call: Node) => boolean): PropertyInfo[] {
+  const seen = new Map<string, number>();
+  const facts = new Map<string, ValueFact>();
+  for (const stmt of body.namedChildren) {
+    if (stmt.type !== "expression_statement") continue;
+    const a = stmt.namedChild(0);
+    if (a?.type !== "assignment") continue;
+    const left = a.childForFieldName("left");
+    if (left?.type !== "identifier") continue;
+    seen.set(left.text, (seen.get(left.text) ?? 0) + 1);
+    const right = a.childForFieldName("right");
+    if (a.childForFieldName("type") || right?.type !== "call" || ignored(right)) continue;
+    const fact = valueFact(right, () => UNKNOWN);
+    if (typeof fact === "object" && fact.type) facts.set(left.text, fact);
+  }
+  const out: PropertyInfo[] = [];
+  for (const [name, fact] of facts) {
+    if (skip.has(name) || seen.get(name) !== 1) continue;
+    out.push({ name, type: fact.type, visibility: name.startsWith("_") ? "private" : "public", isStatic: true, isReadonly: false });
+  }
+  return out;
+}
+
+/**
  * The parameters a constructor assigns unchanged to instance attributes
  * (`self.model = model` → model ← model); an attribute assigned twice, or
  * from anything else as well, is left out.
