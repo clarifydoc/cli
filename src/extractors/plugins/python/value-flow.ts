@@ -587,9 +587,10 @@ export function pythonValueFlow(body: Node, scope: FlowScope): Fact[] {
     while (head?.type === "attribute") head = unwrap(head.childForFieldName("object"));
     if (head?.type === "identifier" && isExternal(head.text)) return;
     let index = 0;
+    let spread = false;
     for (const a of args.namedChildren) {
       if (a.type === "comment") continue;
-      if (a.type === "list_splat" || a.type === "dictionary_splat") break;
+      if (a.type === "list_splat" || a.type === "dictionary_splat") { spread = true; continue; }
       if (a.type === "keyword_argument") {
         // `schedule(callback=on_full_time)`: the value binds the formal of that name, never one by position.
         const label = a.childForFieldName("name")?.text;
@@ -597,6 +598,8 @@ export function pythonValueFlow(body: Node, scope: FlowScope): Fact[] {
         if (label && kwFrom) facts.push({ kind: "arg", call: name, line, index: -1, name: label, from: kwFrom });
         continue;
       }
+      // After a splat the written indices are unknown (a keyword argument still names its formal).
+      if (spread) continue;
       const from = sourceCell(a, "arg", line);
       if (from) facts.push({ kind: "arg", call: name, line, index, from });
       index++;

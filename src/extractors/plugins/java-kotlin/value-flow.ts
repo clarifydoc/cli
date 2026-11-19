@@ -993,7 +993,7 @@ class Flow {
       if (platform && Flow.isLambda(a)) return;
       const label = args.labels[index] ?? null;
       // A named argument whose label could not be read, or a positional one after a named one, binds nothing.
-      if (args.named && label === null && args.nodes.slice(0, index).some((_, i) => args.labels[i] !== null)) return;
+      if (label === "" || (args.named && label === null && args.labels.slice(0, index).some((l) => l !== null))) return;
       const from = this.valueCell(a);
       if (!from) return;
       if (label !== null) this.push({ kind: "arg", call, line, index: -1, name: label, from });
@@ -1032,7 +1032,8 @@ class Flow {
       if (inner) {
         nodes.push(inner);
         // `schedule(callback = ::onFullTime)`: the label binds the formal of that name.
-        const label = isNamed && a.namedChildren.length >= 2 && a.namedChildren[0]!.type === "simple_identifier" ? a.namedChildren[0]!.text : null;
+        // `""` marks a named argument whose label could not be read: it binds nothing.
+        const label = !isNamed ? null : a.namedChildren.length >= 2 && a.namedChildren[0]!.type === "simple_identifier" ? a.namedChildren[0]!.text : "";
         labels.push(label);
       }
     }

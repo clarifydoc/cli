@@ -656,7 +656,7 @@ export function csharpValueFlow(
       const from = cellFor(sources, `a${line}_${call.startPosition.column}_${index}_`, line);
       // A named argument (`Schedule(callback: OnFullTime)`) binds the formal of that name, never one by position.
       if (!from) return;
-      // The grammar states the label as the argument's `name` field (`argumentsOf` leaves it to other readers).
+      // This grammar states the label as the argument's `name` field; `argumentsOf` reads only a `name_colon` child, so `a.name` stays null.
       const label = a.name ?? a.expr.parent?.childForFieldName("name")?.text ?? null;
       if (label !== null) emit({ kind: "arg", call: callName, line, index: -1, name: label, from });
       else emit({ kind: "arg", call: callName, line, index, from });
