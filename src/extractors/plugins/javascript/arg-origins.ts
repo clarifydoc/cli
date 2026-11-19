@@ -454,8 +454,9 @@ function queryResultOf(call: Node, path: readonly string[], depth: number): Foun
   const last = found?.steps?.[found.steps.length - 1];
   if (!found || found.kind === "literal" || last?.kind !== "helper" || last.field) return null;
   const read = path[0] === "value" ? path.slice(1) : path;
-  if (read.length === 0) return found;
-  return { ...found, steps: [...found.steps!.slice(0, -1), { ...last, field: read.join(".") }] };
+  const steps = found.steps!.slice(0, -1);
+  if (read.length === 0) return { ...found, steps: [...steps, { ...last, query: true }] };
+  return { ...found, steps: [...steps, { ...last, field: read.join("."), query: true }] };
 }
 
 /** Calls whose result is the router's, the props' or a wrapper's, never a composable's for a value. */

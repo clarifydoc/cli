@@ -1426,8 +1426,10 @@ export type ValueStep =
   /**
    * Returned by the function `name`, called at `line` with the value as its argument `index` (the call's other
    * arguments are literals), then its property `field` when one is read (only past a `returned` step's expansion).
+   * `query` marks the function as a data query's options (TanStack `useQuery(optionsFn(id))`): what the query
+   * returns derives from the value only when the options' fetch function passes it on.
    */
-  | { kind: "helper"; name: string; line: number; index: number; field?: string }
+  | { kind: "helper"; name: string; line: number; index: number; field?: string; query?: true }
   /**
    * The member `key` of the object the function `name` returns (a composable: `const { club } =
    * useClub(() => props.clubId)` at `line`, the value its argument `index`), then its property `field` when one is

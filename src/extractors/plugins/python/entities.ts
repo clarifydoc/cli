@@ -1035,12 +1035,14 @@ function resolveEntityAttributes(analyses: FileAnalysis[]): void {
   const python = analyses.filter((a) => a.language === "python");
   if (!python.some((a) => a.dataSources?.some((d) => d.entityAttribute))) return;
   const classes = new Map<string, ClassInfo[]>();
+  const fileOfClass = new Map<ClassInfo, FileAnalysis>();
   const entities = new Set<string>();
   const subclasses = new Map<string, Set<string>>();
   const basesOf = (c: ClassInfo): string[] => [c.extends ?? "", ...(c.implements ?? [])].map(classNamed).filter(Boolean);
   for (const a of python) {
     for (const c of a.classes ?? []) {
       (classes.get(c.name) ?? classes.set(c.name, []).get(c.name)!).push(c);
+      fileOfClass.set(c, a);
       if (c.decorators?.includes("entity")) entities.add(c.name);
       for (const b of basesOf(c)) (subclasses.get(b) ?? subclasses.set(b, new Set()).get(b)!).add(c.name);
     }
@@ -1110,8 +1112,32 @@ function resolveEntityAttributes(analyses: FileAnalysis[]): void {
     }
     return null;
   };
+  /**
+   * The entity a class's own constructor stores in `attr` by naming it (`self.model = Club`).
+   * Every class of that name must agree: a namesake in another file that stores something else
+   * makes the class unknowable (null), and one that stores nothing is no evidence either way.
+   */
+  const assignedIn = (name: string, attr: string): Set<string> | null => {
+    const found = new Set<string>();
+    for (const c of classes.get(name) ?? []) {
+      const init = c.methods.find((m) => m.name === "__init__");
+      if (!init) continue;
+      for (const m of fileOfClass.get(c)?.dataMutations ?? []) {
+        if (m.kind !== "assignment" || m.line < init.line || m.line > init.endLine || !/^(?:self|cls)\./.test(m.target) || m.target.replace(/^\w+\./, "") !== attr) continue;
+        const value = (m.value ?? "").trim();
+        if (!CLASS_ARG.test(value)) continue;
+        // A class that is no project entity stored there: a namesake may hold something else.
+        if (!entities.has(classNamed(value))) return null;
+        found.add(classNamed(value));
+      }
+    }
+    return found.size > 1 ? null : found;
+  };
   /** The models constructions of `name` put in `attr`; null when one cannot be told, empty when it is never constructed. */
   const modelsOf = (name: string, attr: string): Set<string> | null => {
+    const assigned = assignedIn(name, attr);
+    if (!assigned) return null;
+    if (assigned.size > 0) return assigned;
     const builds = constructions.get(name) ?? [];
     if (builds.length === 0) return new Set();
     const declared = declaredOn(name, attr);

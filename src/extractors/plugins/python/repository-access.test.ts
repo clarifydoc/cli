@@ -351,3 +351,30 @@ describe("Python repository methods outside the verb list", () => {
     expect(controller.dataSources.map((d) => [d.name, d.entity, d.access])).toEqual([["self._mixins(league_id).get_one", "ClubModel", "read"]]);
   });
 });
+
+/** A subclass constructor that names the model itself (`self.model = Club`), never constructed in the project (a framework builds it). */
+describe("Python model a subclass constructor names", () => {
+  const at = (c: any, line: number, endLine: number) => Object.assign(c, { line, endLine });
+  const ctor = (line: number, endLine: number): any => at(method("__init__", [], null, [{ name: "session", type: null, defaultValue: null }]), line, endLine);
+  const assign = (line: number, value: string): any => ({ kind: "assignment", target: "self.model", value, line });
+  const row = (line: number): any => ({ kind: "database", name: "self.session.query", target: null, entityAttribute: "model", access: "read", calls: [], line });
+  const models = () => file("app/models.py", [cls("Club", { extends: "Base", decorators: ["entity", "sqlalchemy"] }), cls("Player", { extends: "Base", decorators: ["entity", "sqlalchemy"] })]);
+
+  it("types the base's self.model from the one subclass that sets it", () => {
+    const repo = file("app/repo.py", [at(cls("Repository"), 1, 8), at(cls("ClubRepository", { extends: "Repository", methods: [ctor(11, 13)] }), 10, 14)]);
+    (repo as any).dataMutations = [assign(13, "Club")];
+    repo.dataSources = [row(6)];
+    new PythonEntityExtractor().reconcileProject([models(), repo]);
+    expect(repo.dataSources[0]!.entity).toBe("Club");
+  });
+
+  it("links nothing when a same-named repository elsewhere names another model", () => {
+    const repo = file("app/repo.py", [at(cls("Repository"), 1, 8), at(cls("ClubRepository", { extends: "Repository", methods: [ctor(11, 13)] }), 10, 14)]);
+    (repo as any).dataMutations = [assign(13, "Club")];
+    repo.dataSources = [row(6)];
+    const decoy = file("other/repo.py", [at(cls("Repository"), 1, 8), at(cls("ClubRepository", { extends: "Repository", methods: [ctor(5, 7)] }), 4, 8)]);
+    (decoy as any).dataMutations = [assign(6, "Player")];
+    new PythonEntityExtractor().reconcileProject([models(), repo, decoy]);
+    expect(repo.dataSources[0]!.entity).toBeUndefined();
+  });
+});

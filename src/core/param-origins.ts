@@ -158,6 +158,9 @@ export function computeParamOrigins(input: {
       if (step.kind === "helper") {
         const target = targetOf(file, step.line, step.name);
         if (!target) return null;
+        // A data query's options function: what the query returns derives from the value only where the
+        // function's fetch passes it on (`queryFn: () => getClub(id)`), not when the id only keys the cache.
+        if (step.query && !handsParam(fnNamed(target.file, target.symbol)?.fn, step.index)) return null;
         out.push({ ...step, file, target });
       } else if (step.kind === "returned") {
         // A composable's member: followed only where the composable states how it derives from that parameter.
@@ -185,6 +188,10 @@ export function computeParamOrigins(input: {
     }
     return out;
   };
+
+  /** Does the function hand its parameter `index` (as it is, or a value built from it) to a call? */
+  const handsParam = (fn: FunctionInfo | undefined, index: number): boolean =>
+    !!fn?.calls.some((c) => c.argOrigins?.some((a) => a.origin.kind === "param" && a.origin.index === index));
 
   type Leaf = { origin: ParamOrigin["origin"]; hops: ParamOrigin["hops"]; via: Step[]; confidence: Confidence };
 

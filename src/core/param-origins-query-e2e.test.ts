@@ -53,11 +53,21 @@ describe("paramOrigins through a composable's query result, end to end", () => {
           "export function retirePlayer(id: number) {",
           "\treturn axios.post(`/api/players/${id}/retire`)",
           "}",
+          "export function listSquads() {",
+          "\treturn axios.get(`/api/squads`)",
+          "}",
+          "export function closeSquad(id: number) {",
+          "\treturn axios.post(`/api/squads/${id}/close`)",
+          "}",
         ].join("\n"),
         "src/api/queries.ts": [
-          "import {getClub} from './clubs'",
+          "import {getClub, listSquads} from './clubs'",
           "export function clubQuery(id: number) {",
           "\treturn {queryKey: ['club', id], queryFn: () => getClub(id)}",
+          "}",
+          // Keyed by the id, but the fetch drops it.
+          "export function squadsQuery(id: number) {",
+          "\treturn {queryKey: ['squads', id], queryFn: () => listSquads()}",
           "}",
           "export function normalizeClub(raw: any) {",
           "\treturn {...raw}",
@@ -87,20 +97,34 @@ describe("paramOrigins through a composable's query result, end to end", () => {
           "\treturn {club, clubId}",
           "}",
         ].join("\n"),
+        "src/composables/useSquadsQuery.ts": [
+          "import {computed, type MaybeRefOrGetter, toValue} from 'vue'",
+          "import {useQuery} from '@tanstack/vue-query'",
+          "import {squadsQuery} from '@/api/queries'",
+          "export function useSquadsQuery(clubId: MaybeRefOrGetter<number>) {",
+          "\tconst query = useQuery(computed(() => squadsQuery(toValue(clubId))))",
+          "\tconst squads = computed(() => query.data.value)",
+          "\treturn {squads}",
+          "}",
+        ].join("\n"),
         "src/views/ClubView.vue": [
           "<template>",
+          "\t<button @click=\"close\">Close</button>",
           "\t<button @click=\"remove\">Remove</button>",
           "\t<button @click=\"archive\">Archive</button>",
           "\t<button @click=\"retire\">Retire</button>",
           "\t<button @click=\"removeOther\">Other</button>",
           "</template>",
           "<script setup lang=\"ts\">",
-          "import {deleteClub, archiveSquad, retirePlayer} from '@/api/clubs'",
+          "import {deleteClub, archiveSquad, retirePlayer, closeSquad} from '@/api/clubs'",
           "import {useClubQuery} from '@/composables/useClubQuery'",
+          "import {useSquadsQuery} from '@/composables/useSquadsQuery'",
           "import {useOtherQuery} from '@/composables/useOtherQuery'",
           "const props = defineProps<{ clubId: number }>()",
           "const {club, squad, player} = useClubQuery(() => props.clubId)",
           "const {club: other} = useOtherQuery(() => props.clubId)",
+          "const {squads} = useSquadsQuery(() => props.clubId)",
+          "async function close() { await closeSquad(squads.value.id) }",
           "async function remove() { await deleteClub(club.value.id) }",
           "async function archive() { await archiveSquad(squad.value.id) }",
           "async function retire() { await retirePlayer(player.value.id) }",
@@ -115,6 +139,7 @@ describe("paramOrigins through a composable's query result, end to end", () => {
           "app.delete('/api/clubs/:id', (req, res) => res.json({}))",
           "app.post('/api/squads/:id/archive', (req, res) => res.json({}))",
           "app.post('/api/players/:id/retire', (req, res) => res.json({}))",
+          "app.post('/api/squads/:id/close', (req, res) => res.json({}))",
           "module.exports = app",
         ].join("\n"),
     });
@@ -145,6 +170,10 @@ describe("paramOrigins through a composable's query result, end to end", () => {
     const r = row("/api/players/${id}/retire", "retire")!;
     expect(r.origin).toMatchObject({ kind: "route-param", name: "clubId" });
     expect(steps(r)).toEqual(["returned:useClubQuery", "helper:clubQuery", "helper:normalizeClub>id"]);
+  });
+
+  it("leaves a query unknown when its fetch drops the id the key holds", () => {
+    expect(row("/api/squads/${id}/close", "close")?.origin.kind).toBe("unknown");
   });
 
   it("leaves a query keyed by a literal unknown", () => {
