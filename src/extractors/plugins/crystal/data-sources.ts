@@ -91,10 +91,10 @@ const HTTP_VERBS = /^(?:get|post|put|patch|delete|head|options)$/;
 
 function httpCalls(lines: string[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
-  const push = (method: string, target: string, line: number) => {
+  const push = (method: string, target: string, line: number, column: number) => {
     const url = urlOf(target);
     if (!url.startsWith("/") && !/^https?:\/\//i.test(url) && !url.startsWith("{")) return;
-    out.push({ kind: "api-call", name: `${method} ${url}`, target: url, calls: [], line });
+    out.push({ kind: "api-call", name: `${method} ${url}`, target: url, calls: [], line, column });
   };
   // `client = HTTP::Client.new(URI.parse("https://api.example.com"))` / `HTTP::Client.new("api.example.com")`.
   const clients = new Map<string, string>();
@@ -105,13 +105,13 @@ function httpCalls(lines: string[]): DataSourceInfo[] {
   for (let i = 0; i < lines.length; i++) {
     const line = codeOf(lines[i]!);
     for (const m of line.matchAll(/\b(?:HTTP::Client|Crest|Halite)\.(\w+)\s*\(?\s*"([^"]+)"/g)) {
-      if (HTTP_VERBS.test(m[1]!)) push(m[1]!.toUpperCase(), m[2]!, i + 1);
+      if (HTTP_VERBS.test(m[1]!)) push(m[1]!.toUpperCase(), m[2]!, i + 1, m.index!);
     }
-    for (const m of line.matchAll(/\bHTTP::Client\.exec\s*\(?\s*"(\w+)"\s*,\s*"([^"]+)"/g)) push(m[1]!.toUpperCase(), m[2]!, i + 1);
-    for (const m of line.matchAll(/\bCrest::Request\.execute\s*\(\s*:(\w+)\s*,\s*"([^"]+)"/g)) push(m[1]!.toUpperCase(), m[2]!, i + 1);
+    for (const m of line.matchAll(/\bHTTP::Client\.exec\s*\(?\s*"(\w+)"\s*,\s*"([^"]+)"/g)) push(m[1]!.toUpperCase(), m[2]!, i + 1, m.index!);
+    for (const m of line.matchAll(/\bCrest::Request\.execute\s*\(\s*:(\w+)\s*,\s*"([^"]+)"/g)) push(m[1]!.toUpperCase(), m[2]!, i + 1, m.index!);
     for (const m of line.matchAll(/(?<![\w.])@?([a-z_]\w*)\.(\w+)\s*\(?\s*"(\/[^"]*)"/g)) {
       const base = clients.get(m[1]!);
-      if (base && HTTP_VERBS.test(m[2]!)) push(m[2]!.toUpperCase(), base + m[3]!, i + 1);
+      if (base && HTTP_VERBS.test(m[2]!)) push(m[2]!.toUpperCase(), base + m[3]!, i + 1, m.index!);
     }
   }
   return out;
