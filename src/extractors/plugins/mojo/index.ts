@@ -74,7 +74,7 @@ function extractMojoDataSources(lines: string[]): DataSourceInfo[] {
   }
   for (let i = 0; i < lines.length; i++) {
     for (const m of lines[i]!.matchAll(/\b(\w+)\.(get|post|put|patch|delete)\(\s*["']((?:https?:\/\/|\/)[^"']*)["']/g)) {
-      if (http.has(m[1]!)) out.push({ kind: "api-call", name: `${m[2]!.toUpperCase()} ${m[3]}`, target: m[3]!, calls: [], line: i + 1 });
+      if (http.has(m[1]!)) out.push({ kind: "api-call", name: `${m[2]!.toUpperCase()} ${m[3]}`, target: m[3]!, calls: [], line: i + 1, column: m.index! });
     }
   }
   return out.sort((a, b) => a.line - b.line);
