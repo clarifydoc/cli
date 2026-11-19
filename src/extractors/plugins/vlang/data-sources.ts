@@ -72,19 +72,19 @@ const HTTP_VERB: Record<string, string> = {
 
 function httpCalls(lines: string[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
-  const push = (method: string, target: string, line: number) => {
+  const push = (method: string, target: string, line: number, column: number) => {
     if (!target.startsWith("/") && !/^https?:\/\//i.test(target)) return;
-    out.push({ kind: "api-call", name: `${method} ${target}`, target: target.replace(/\$\{\s*([\w.]+?)\s*\}/g, (_m, v: string) => `{${v.split(".").pop()}}`), calls: [], line });
+    out.push({ kind: "api-call", name: `${method} ${target}`, target: target.replace(/\$\{\s*([\w.]+?)\s*\}/g, (_m, v: string) => `{${v.split(".").pop()}}`), calls: [], line, column });
   };
   lines.forEach((line, i) => {
     if (/^\s*\/\//.test(line)) return;
     for (const m of line.matchAll(/\bhttp\.(\w+)\s*\(\s*(['"])([^'"]+)\2/g)) {
       const method = HTTP_VERB[m[1]!];
-      if (method) push(method, m[3]!, i + 1);
+      if (method) push(method, m[3]!, i + 1, m.index!);
     }
     for (const m of line.matchAll(/\bhttp\.fetch\s*\(([^)]*)/g)) {
       const url = /\burl\s*:\s*(['"])([^'"]+)\1/.exec(m[1]!)?.[2];
-      if (url) push((/\bmethod\s*:\s*\.(\w+)/.exec(m[1]!)?.[1] ?? "get").toUpperCase(), url, i + 1);
+      if (url) push((/\bmethod\s*:\s*\.(\w+)/.exec(m[1]!)?.[1] ?? "get").toUpperCase(), url, i + 1, m.index!);
     }
   });
   return out;
