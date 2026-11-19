@@ -132,20 +132,20 @@ const REST_TEMPLATE: Record<string, string> = {
 
 function httpCalls(lines: string[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
-  const push = (method: string, target: string, line: number) => {
+  const push = (method: string, target: string, line: number, column: number) => {
     if (!target.startsWith("/") && !/^https?:\/\//i.test(target)) return;
-    out.push({ kind: "api-call", name: `${method} ${target}`, target, calls: [], line });
+    out.push({ kind: "api-call", name: `${method} ${target}`, target, calls: [], line, column });
   };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     for (const m of line.matchAll(/\.(\w+)\s*\(\s*["']([^"']+)["']/g)) {
       const method = REST_TEMPLATE[m[1]!];
-      if (method && /restTemplate|template|rest/i.test(line.slice(0, m.index))) push(method, m[2]!, i + 1);
+      if (method && /restTemplate|template|rest/i.test(line.slice(0, m.index))) push(method, m[2]!, i + 1, m.index!);
     }
-    for (const m of line.matchAll(/\.exchange\s*\(\s*["']([^"']+)["']\s*,\s*HttpMethod\.(\w+)/g)) push(m[2]!.toUpperCase(), m[1]!, i + 1);
-    for (const m of line.matchAll(/\bHttpRequest\.(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s*\(\s*["']([^"']+)["']/g)) push(m[1]!, m[2]!, i + 1);
-    for (const m of line.matchAll(/\bnew\s+URL\s*\(\s*["']([^"']+)["']\s*\)/g)) push("GET", m[1]!, i + 1);
-    for (const m of line.matchAll(/["'](https?:\/\/[^"']+)["']\.toURL\s*\(\s*\)/g)) push("GET", m[1]!, i + 1);
+    for (const m of line.matchAll(/\.exchange\s*\(\s*["']([^"']+)["']\s*,\s*HttpMethod\.(\w+)/g)) push(m[2]!.toUpperCase(), m[1]!, i + 1, m.index!);
+    for (const m of line.matchAll(/\bHttpRequest\.(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s*\(\s*["']([^"']+)["']/g)) push(m[1]!, m[2]!, i + 1, m.index!);
+    for (const m of line.matchAll(/\bnew\s+URL\s*\(\s*["']([^"']+)["']\s*\)/g)) push("GET", m[1]!, i + 1, m.index!);
+    for (const m of line.matchAll(/["'](https?:\/\/[^"']+)["']\.toURL\s*\(\s*\)/g)) push("GET", m[1]!, i + 1, m.index!);
   }
   return out;
 }
