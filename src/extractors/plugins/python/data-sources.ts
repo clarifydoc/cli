@@ -317,6 +317,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
             ...(locust ? { baseExpr: "self.client" } : {}),
             ...(receiverKey && this.baseClients.has(receiverKey) ? { client: receiverKey } : {}),
             line: node.startPosition.row + 1,
+            column: node.startPosition.column,
             ...(body ? { requestBody: body } : {}),
             ...(reads ? { responseReads: reads } : {}),
           }));
