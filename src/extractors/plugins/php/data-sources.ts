@@ -134,11 +134,21 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
    * plain PHP) is no model access — unless its receiver is a PDO handle.
    */
   private namespaced = false;
+  /** Guzzle client variable → its `base_uri` expression as written (`$client`, `$this->http`). */
+  private clientBases = new Map<string, string>();
 
   override beginFile(_tree: unknown, sourceText: string): void {
     this.curlUrls = new Map();
     this.curlMethods = new Map();
     this.constants = new Map();
+    this.clientBases = new Map();
+    if (sourceText.includes("base_uri")) {
+      for (const m of sourceText.matchAll(/(\$\w+(?:->\w+)?)\s*=\s*new\s+\\?(?:GuzzleHttp\\)?Client\s*\(\s*\[[^\]]*?['"]base_uri['"]\s*=>\s*((?:[^,\]()]|\([^)]*\))+?)\s*(?:,|\]|$)/gm)) {
+        // One name bound to two different bases (a `$client` per method) states neither.
+        const prev = this.clientBases.get(m[1]!);
+        this.clientBases.set(m[1]!, prev !== undefined && prev !== m[2]!.trim() ? "" : m[2]!.trim());
+      }
+    }
     this.namespaced = /^\s*(?:namespace\s+[\w\\]+|use\s+\\?[A-Z][\w\\]*)/m.test(sourceText);
     if (!sourceText.includes("define") && !sourceText.includes("const")) return;
     for (const m of sourceText.matchAll(/^[ \t]*(?:define\(\s*(['"])(\w+)\1\s*,|(?:(?:public|protected|private)\s+)?const\s+(\w+)\s*=)\s*(['"])([^'"\n]*)\4/gm)) {
@@ -491,7 +501,45 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
    * argument; a verb method takes the URL first. A variable URL is a
    * `{$name}` runtime part.
    */
-  private httpRequest(node: Node, method: string, callText: string): { name: string; target: string | null } {
+  private httpRequest(node: Node, method: string, callText: string): { name: string; target: string | null; baseExpr?: string } {
+    const r = this.httpRequestPlain(node, method, callText);
+    if (r.target !== null && /^[a-z][a-z0-9+.-]*:\/\//i.test(r.target)) return r;
+    const base = this.baseExprOf(node, method);
+    if (!base) return r;
+    return { ...r, target: base.target ?? r.target, baseExpr: base.expr };
+  }
+
+  /**
+   * The configured base behind a request: `Http::get(config('services.x.url') . '/clubs')`
+   * (target = the rest), `$client->get('/clubs')` on a Guzzle client built with a
+   * `base_uri`, `Http::baseUrl(env('X'))->get('/clubs')`. Core reads the expression.
+   */
+  private baseExprOf(node: Node, method: string): { expr: string; target?: string } | null {
+    const at = /^(request|send)$/i.test(method) ? 1 : 0;
+    const arg = node.childForFieldName("arguments")?.children.filter((c) => c.type === "argument")[at];
+    const expr = arg?.namedChildren[arg.namedChildren.length - 1];
+    if (expr?.type === "binary_expression" && expr.childForFieldName("operator")?.text === ".") {
+      const parts: Node[] = [];
+      const flat = (n: Node): void => {
+        if (n.type === "binary_expression" && n.childForFieldName("operator")?.text === ".") { flat(n.childForFieldName("left")!); flat(n.childForFieldName("right")!); } else parts.push(n);
+      };
+      flat(expr);
+      const head = parts[0]!;
+      if (head.type === "function_call_expression" && /^(?:config|env|getenv)$/.test(head.childForFieldName("function")?.text ?? "")) {
+        const rest = parts.slice(1).map((n) => (n.type === "string" || n.type === "encapsed_string" ? n.text.replace(/^['"]|['"]$/g, "") : n.type === "variable_name" ? `{${n.text}}` : "{…}")).join("");
+        return { expr: head.text, target: rest };
+      }
+    }
+    const recv = node.childForFieldName("object");
+    if (!recv) return null;
+    const known = this.clientBases.get(recv.text.trim());
+    if (known) return { expr: known };
+    if (known === "") return null;
+    const chained = /^Http::baseUrl\(\s*([\s\S]+?)\s*\)(?:->\w+\([^)]*\))*$/.exec(recv.text.trim());
+    return chained ? { expr: chained[1]! } : null;
+  }
+
+  private httpRequestPlain(node: Node, method: string, callText: string): { name: string; target: string | null } {
     if (/^(request|send)$/i.test(method)) {
       const verb = (this.stringArgAt(node, 0) ?? this.argText(node, 0)?.replace(/^[\w\\]+::/, ""))?.toUpperCase();
       if (verb && /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/.test(verb)) return { name: verb, target: this.urlArgAt(node, 1) };

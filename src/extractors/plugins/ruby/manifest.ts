@@ -1,3 +1,4 @@
+import { rubyServiceConfig } from "./service-config.js";
 import { rubyMigrationFiles } from "./migration-files.js";
 import { rubyProjectCommands } from "./project-commands.js";
 import { rubyTestCommand } from "./test-command.js";
@@ -57,6 +58,7 @@ export const rubyManifest: LanguagePluginManifest = {
   // `club.stadium` calls the reader `has_one :stadium` (or a `def stadium`) declares.
   parenlessMemberReads: true,
   packageManagers: [rubygemsPackageManager],
+  serviceConfig: rubyServiceConfig,
   packageEcosystems: ["rubygems"],
   parsing: "regex",
   extensions: [".rb", ".rake", ".jbuilder"],

@@ -1,3 +1,4 @@
+import { rubyBaseRefOf } from "./service-config.js";
 import { rspecFunctions, withDescribedClass } from "./rspec.js";
 import { rubyBlockEndsOf, rubyCodeLinesOf } from "./blocks.js";
 import { extractRubyScheduledJobs } from "./scheduled-jobs.js";
@@ -1179,7 +1180,13 @@ function extractRubyHttpCalls(lines: string[]): DataSourceInfo[] {
     const key = `${verb}:${target ?? ""}@${line}:${col}`;
     if (seen.has(key)) return;
     seen.add(key);
-    out.push({ kind: "api-call", name: verb, target, calls: [], line, ...(client ? { client } : {}) });
+    // `"#{ENV['LEAGUE_URL']}/clubs"`: the base is read from configuration; core resolves it.
+    const lead = target ? /^#\{([^}]+)\}(\/[\s\S]*)?$/.exec(target) : null;
+    const based = lead && rubyBaseRefOf(lead[1]!) ? lead : null;
+    out.push({
+      kind: "api-call", name: verb, target: based ? (based[2] ?? "/") : target, calls: [], line,
+      ...(client ? { client } : {}), ...(based ? { baseExpr: based[1]!.trim() } : {}),
+    });
   };
 
   for (let i = 0; i < lines.length; i++) {

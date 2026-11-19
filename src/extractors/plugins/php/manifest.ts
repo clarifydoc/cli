@@ -1,3 +1,4 @@
+import { phpServiceConfig } from "./service-config.js";
 import { phpCollectionElement } from "./collection-element.js";
 import { phpMigrationFiles } from "./migration-files.js";
 import { phpProjectCommands } from "./project-commands.js";
@@ -25,6 +26,7 @@ export const phpManifest: LanguagePluginManifest = {
   // A userland function ignores arguments past its parameters; too few is the error.
   callArity: { extraAllowed: true },
   packageManagers: [composerPackageManager],
+  serviceConfig: phpServiceConfig,
   packageEcosystems: ["composer"],
   parsing: "tree-sitter",
   // `.inc`: the include files older PHP keeps its code in (`include "db.inc"`); one with no PHP in it is refused (meta.ts).
