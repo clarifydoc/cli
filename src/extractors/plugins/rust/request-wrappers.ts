@@ -252,7 +252,10 @@ export function rustClientRequests(rc: RustCode): DataSourceInfo[] {
     const fn = fnAt(rc, m.index);
     // The verb is a literal one, or a parameter of the wrapper its callers name.
     if (!verb && !(param && fn?.params.has(param))) continue;
-    out.push({ kind: "api-call", name: verb ?? "request", target: rustUrlArg(args[1]!, fn?.params), calls: [], line: lineAt(rc, m.index + m[0].length - 1) });
+    const line = lineAt(rc, m.index + m[0].length - 1);
+    // The call starts at its `.request`; a chain broken across lines keeps no column.
+    const column = lineAt(rc, m.index) === line ? m.index - rc.lineStarts[line - 1]! : undefined;
+    out.push({ kind: "api-call", name: verb ?? "request", target: rustUrlArg(args[1]!, fn?.params), calls: [], line, ...(column !== undefined ? { column } : {}) });
   }
   return out;
 }

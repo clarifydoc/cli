@@ -338,13 +338,14 @@ export function extractRustDataSources(lines: string[]): DataSourceInfo[] {
       continue;
     }
 
-    const req = line.match(REQWEST_RE) ?? chainedClientCall(lines, i);
+    const direct = line.match(REQWEST_RE);
+    const req = direct ?? chainedClientCall(lines, i);
     if (req) {
       const name = /\(\s*&?([a-z_]\w*)\s*[),]/.exec(line.slice(req.index ?? 0))?.[1];
       // A local's URL, else the wrapper's own parameter (`client.get(url)` in `fn fetch(url: &str)`) as a hole its callers fill.
       const viaHelper = req[2] === undefined ? urlOfHelperCall(lines, line, req.index ?? 0) : undefined;
       const target = req[2] ?? (viaHelper !== undefined ? viaHelper : urlOfLocal(lines, i, name) ?? (name && paramsAt(i)?.has(name) ? `\${${name}}` : null));
-      sources.push({ kind: "api-call", name: req[1]!.toUpperCase(), target, calls: [], line: lineNo });
+      sources.push({ kind: "api-call", name: req[1]!.toUpperCase(), target, calls: [], line: lineNo, column: direct ? direct.index! : line.search(/\S/) });
       continue;
     }
 
