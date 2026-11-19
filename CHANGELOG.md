@@ -3,6 +3,17 @@
 User-facing changes to the `clarifydoc` CLI, its MCP server and its library exports. Earlier versions are
 recorded in the git history only.
 
+## 1.1.1 — 2026-11-19
+
+Extractor 1.708.0 → 1.709.0: every cached analysis is read again once.
+
+### Fixed
+
+- A folder `.clarifydocignore` (or `.clarifydoc/ignore`) names is now out of every reader, not only the source
+  walk: its compose files, Dockerfiles, Kubernetes manifests, Terraform, CloudFormation and GitOps releases no longer
+  become containers in the deployment map, and its CI pipelines, config files, package manifests and Markdown are no
+  longer read. A checked-out copy of another project beside yours stops showing up in the architecture diagram.
+
 ## 1.1.0 — 2026-11-19
 
 Extractor 1.674.0 → 1.708.0: every cached analysis is read again once.
