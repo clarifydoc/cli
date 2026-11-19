@@ -70,9 +70,27 @@ const FILES: Record<string, string> = {
     "  final s = File('a.txt').readAsStringSync();",
     "}",
   ].join("\n"),
+  "swift/Svc.swift": [
+    "import Foundation",
+    "class Club { func sleep() {} func wait() {} }",
+    "class Svc {",
+    "  func bad(club: Club) async {",
+    "    Thread.sleep(forTimeInterval: 1)",
+    "    usleep(5)",
+    '    let l = FileManager.default.contentsOfDirectory(atPath: "/")',
+    "    club.sleep()",
+    "    club.wait()",
+    "    try? await Task.sleep(nanoseconds: 5)",
+    "  }",
+    "  func sync(club: Club) {",
+    "    Thread.sleep(forTimeInterval: 1)",
+    "    usleep(5)",
+    "  }",
+    "}",
+  ].join("\n"),
 };
 
-describe("blocking-in-async for C#, Kotlin, Rust and Dart", () => {
+describe("blocking-in-async for C#, Kotlin, Rust, Dart and Swift", () => {
   let dir: string;
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), "clarifydoc-blocking-"));
@@ -102,6 +120,9 @@ describe("blocking-in-async for C#, Kotlin, Rust and Dart", () => {
         "kt/Svc.kt:6 Svc.bad",
         "rs/main.rs:5 bad",
         "rs/main.rs:6 bad",
+        "swift/Svc.swift:5 Svc.bad",
+        "swift/Svc.swift:6 Svc.bad",
+        "swift/Svc.swift:7 Svc.bad",
       ].sort(),
     );
   });
