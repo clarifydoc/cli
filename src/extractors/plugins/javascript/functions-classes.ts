@@ -867,19 +867,47 @@ function mutatesCollection(text: string, name: string): boolean {
 
 /**
  * The names a function body declares in its own scope — a `const`/`let`/`var` declarator (also destructured, or a
- * loop variable) and a `catch` variable — never one inside a nested function, and never a plain assignment, which
- * writes the outer binding and keeps its declared type.
+ * loop variable), a `catch` variable, the name of a nested function or class declaration and the parameters of an
+ * inline callback — never a declaration inside a nested function, and never a plain assignment, which writes the
+ * outer binding and keeps its declared type.
  */
 function ownBindings(body: Node): Set<string> {
   const out = new Set<string>();
   const names = (pattern: Node | null): void => {
     if (!pattern) return;
     if (pattern.type === "identifier" || pattern.type === "shorthand_property_identifier_pattern") out.add(pattern.text);
-    else for (const c of pattern.namedChildren) names(c.type === "pair_pattern" ? c.childForFieldName("value") : c);
+    else if (pattern.type === "assignment_pattern" || pattern.type === "object_assignment_pattern") names(pattern.childForFieldName("left") ?? pattern.namedChild(0));
+    else for (const c of pattern.namedChildren) names(c.type === "pair_pattern" ? c.childForFieldName("value") : c.childForFieldName("pattern") ?? c);
   };
   const visit = (node: Node): void => {
     for (const c of node.namedChildren) {
-      if (SEPARATE_SCOPES.has(c.type) || FUNCTION_EXPRESSIONS.has(c.type)) continue;
+      if (FUNCTION_EXPRESSIONS.has(c.type)) {
+        // An inline callback's parameters are its own, but the body's calls are read as one scope, so the name is
+        // untyped for the whole body; its declarations stay the callback's.
+        const list = c.childForFieldName("parameters") ?? c.childForFieldName("parameter");
+        if (list?.type === "identifier") out.add(list.text);
+        else for (const p of list?.namedChildren ?? []) names(p.childForFieldName("pattern") ?? p);
+        // Callbacks nested in it: their parameters only.
+        const inner = (n: Node): void => {
+          for (const k of n.namedChildren) {
+            if (FUNCTION_EXPRESSIONS.has(k.type)) {
+              const l = k.childForFieldName("parameters") ?? k.childForFieldName("parameter");
+              if (l?.type === "identifier") out.add(l.text);
+              else for (const p of l?.namedChildren ?? []) names(p.childForFieldName("pattern") ?? p);
+            }
+            inner(k);
+          }
+        };
+        inner(c);
+        continue;
+      }
+      if (SEPARATE_SCOPES.has(c.type) || c.type === "method_definition") {
+        // A nested `function repo() {}` / `class repo {}` declares its own name here; its body is its own.
+        const declared = c.childForFieldName("name");
+        if (declared?.type === "identifier" || declared?.type === "type_identifier") out.add(declared.text);
+        else if (c.type === "method_definition") for (const p of c.childForFieldName("parameters")?.namedChildren ?? []) names(p.childForFieldName("pattern") ?? p);
+        continue;
+      }
       if (c.type === "variable_declarator") names(c.childForFieldName("name"));
       else if (c.type === "catch_clause") names(c.childForFieldName("parameter"));
       // `for (const kinds of groups)`: the loop variable sits in the statement's `left`, beside a `const`/`let`/`var` token.

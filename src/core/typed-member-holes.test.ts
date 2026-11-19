@@ -500,6 +500,12 @@ const MODULE_FILES: Record<string, string> = {
     "  const repo = make();",
     "  for (const c of repo.all()) axios.get(`/api/items/${c.kind}`);",
     "}",
+    "export function shadowedByArrow(list: any[]) {",
+    "  list.forEach((repo) => { for (const c of repo.all()) axios.get(`/api/items/${c.kind}`); });",
+    "}",
+    "export function shadowedNested(list: any[][]) {",
+    "  list.forEach((row) => row.forEach((repo) => { for (const c of repo.all()) axios.get(`/api/items/${c.kind}`); }));",
+    "}",
     "let late: ClubRepo;",
     "describe('club sync', () => {",
     "  beforeEach(() => { late = new ClubRepo(); });",
@@ -602,10 +608,13 @@ describe("a URL hole over a module-level receiver and over a collection the file
   it("lets a parameter or a call-initialized local of the name hide the module's receiver", () => {
     expect(reached("web/src/module.ts", 16)).toEqual(["/api/items/city", "/api/items/sport"]);
     expect(reached("web/src/module.ts", 20)).toEqual([]);
+    // A callback's own parameter named like the module's receiver is not that receiver.
+    expect(reached("web/src/module.ts", 23)).toEqual([]);
+    expect(reached("web/src/module.ts", 26)).toEqual([]);
     // A plain assignment in a nested callback writes the module's `late`, which keeps its declared type.
-    expect(reached("web/src/module.ts", 26)).toEqual(["/api/items/cup", "/api/items/league"]);
+    expect(reached("web/src/module.ts", 32)).toEqual(["/api/items/cup", "/api/items/league"]);
     // A nested function's own `const repo` does not hide the module's from the function around it.
-    expect(reached("web/src/module.ts", 31)).toEqual(["/api/items/cup", "/api/items/league"]);
+    expect(reached("web/src/module.ts", 37)).toEqual(["/api/items/cup", "/api/items/league"]);
   });
 
   it("reads the strings an array of object literals writes, at module level, `as const`, local or wrapped over lines", () => {
