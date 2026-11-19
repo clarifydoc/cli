@@ -303,7 +303,7 @@ function handedArgs(node: Node): string[] | null {
   // A hook / composable (`useTableSort(sortBy, resetPage)`): what it is handed is what its body calls by the
   // parameter's name — a function or object named by an identifier, or a callback arrow that only calls one.
   if (HOOK_NAME.test(fn.text)) {
-    const handed = args.map((a) => (chain(a) || isParam(a) || a.type === "identifier" && a.text !== "undefined" ? a.text : callbackTarget(a)));
+    const handed = args.map((a) => (chain(a) || isParam(a) || a.type === "identifier" && a.text !== "undefined" && !memberParam(a) ? a.text : callbackTarget(a)));
     return handed;
   }
   if (!args.some((a) => chain(a) || isParam(a))) return null;
@@ -326,12 +326,16 @@ function callbackTarget(arg: Node): string {
   return callee && /^[\w$]+(?:\.[\w$]+)*$/.test(callee.text) ? `=>${callee.text}` : "";
 }
 
-/** Whether the innermost enclosing function is a function expression assigned to a member (`this.run = function (score) {…}`) taking `name` as a parameter. */
+/** Whether the nearest enclosing function taking `name` as a parameter is a function expression assigned to a member of `this` (`this.run = function (score) {…}`). */
 function ownedByMemberFunction(node: Node, name: string): boolean {
-  const fn = enclosingFunctionNode(node);
-  if (!fn || (fn.type !== "function_expression" && fn.type !== "arrow_function")) return false;
-  const parent = fn.parent;
-  return parent?.type === "assignment_expression" && parent.childForFieldName("left")?.type === "member_expression" && paramNames(fn).includes(name);
+  for (let fn = enclosingFunctionNode(node); fn; fn = enclosingFunctionNode(fn)) {
+    if (!paramNames(fn).includes(name)) continue;
+    if (fn.type !== "function_expression" && fn.type !== "arrow_function") return false;
+    const parent = fn.parent;
+    const left = parent?.type === "assignment_expression" ? parent.childForFieldName("left") : null;
+    return left?.type === "member_expression" && left.childForFieldName("object")?.type === "this";
+  }
+  return false;
 }
 
 /** Names the innermost enclosing function binds as parameters (`(key, api, { page })`). */

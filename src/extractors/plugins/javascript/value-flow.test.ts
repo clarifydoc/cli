@@ -253,6 +253,9 @@ describe("value-flow (js): a member function's own parameter shadows a module fu
   it("hands the parameter on nowhere", async () => {
     expect(await reached(["function Squad() { this.run = function (score) { return apply(score, 1); }; }"])).toEqual([]);
   });
+  it("sees through a callback nested in the member function", async () => {
+    expect(await reached(["function Squad() { this.run = function (score) { [1].forEach((x) => apply(score, x)); }; }"])).toEqual([]);
+  });
   it("still hands the module function on where the name is not the parameter", async () => {
     expect(await reached(["function handed() { return apply(score, 1); }"])).toHaveLength(1);
     expect(await reached(["function Club() { this.run = function (other) { return apply(score, other); }; }"])).toHaveLength(1);

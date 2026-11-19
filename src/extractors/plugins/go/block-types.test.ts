@@ -26,6 +26,12 @@ func ShadowBlock() {
 	m.Play()
 }
 
+func Before() {
+	p := Match{}
+	p.Play()
+	type Match struct{ n int }
+}
+
 func Plain() { m := Match{}; m.Play() }
 `,
 };
@@ -57,6 +63,10 @@ describe.each([["antlr", undefined], ["regex", "no-antlr"]])("Go block-local typ
   it("links neither the construction nor the method of a type the function declares itself", () => {
     expect(rows("Shadow")).toEqual([]);
     expect(rows("ShadowBlock")).toEqual([]);
+  });
+
+  it("keeps the link of a use that comes before the declaration", () => {
+    expect(rows("Before")).toEqual(["Match->Match", "p.Play->Match.Play"]);
   });
 
   it("keeps the package type where no local type shadows it", () => {

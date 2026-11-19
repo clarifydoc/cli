@@ -112,7 +112,7 @@ function statedDeclarationType(code: string, name: string, constructors?: GoCons
 }
 
 /** `type Match struct{…}` / `type Match interface{…}` / `type Match int` / `type Match = X` declared inside a function body. */
-const BLOCK_TYPE_DECL_RE = /(?:^|[;{])\s*type\s+([A-Za-z_]\w*)(?:\[[^\]]*\])?\s+(?:=\s*)?[\w*\[\]]/;
+const BLOCK_TYPE_DECL_RE = /(?:^|[;{])\s*type\s+([A-Za-z_]\w*)(?:\[[^\]]*\])?\s+(?:=\s*)?[\w*\[\]]/g;
 
 /**
  * A type the body declares itself (`func Shadow() { type Match struct{ n int }; m := Match{}; m.Play() }`) hides the
@@ -120,17 +120,20 @@ const BLOCK_TYPE_DECL_RE = /(?:^|[;{])\s*type\s+([A-Za-z_]\w*)(?:\[[^\]]*\])?\s+
  * project class stands for. They are dropped, and the locals listed as untyped so no namesake is guessed for their calls.
  */
 export function hideShadowedTypes(lines: readonly string[], fn: FunctionInfo): void {
-  const hidden = new Set<string>();
+  const hidden = new Map<string, number>();
   for (let ln = fn.line; ln <= fn.endLine; ln++) {
     const code = stripGoComment(lines[ln - 1] ?? "");
-    const m = BLOCK_TYPE_DECL_RE.exec(ln === fn.line ? code.slice(code.indexOf("{") + 1 || code.length) : code);
-    if (m) hidden.add(m[1]!);
+    for (const m of (ln === fn.line ? code.slice(code.indexOf("{") + 1 || code.length) : code).matchAll(BLOCK_TYPE_DECL_RE)) {
+      if (!hidden.has(m[1]!)) hidden.set(m[1]!, ln);
+    }
   }
   if (hidden.size === 0) return;
   const bare = (t: string): string => t.replace(/^[*&\[\]]+/, "").replace(/\[.*$/, "");
   const untyped = new Set(fn.untypedLocals);
   const kept = (fn.localTypes ?? []).filter((l) => {
-    if (!hidden.has(bare(l.type))) return true;
+    const type = bare(l.type);
+    // Locals carry no line: a type the function also built before declaring its own keeps its locals typed.
+    if (!hidden.has(type) || fn.calls.some((c) => c.name === type && c.line < hidden.get(type)!)) return true;
     untyped.add(l.name);
     return false;
   });
@@ -139,7 +142,9 @@ export function hideShadowedTypes(lines: readonly string[], fn: FunctionInfo): v
     else delete fn.localTypes;
     fn.untypedLocals = [...untyped];
   }
-  fn.calls = fn.calls.filter((c) => !hidden.has(c.name) && !hidden.has(bare(c.receiverType ?? "")));
+  // A use of the package type before the declaration keeps its link.
+  const hides = (name: string, line: number): boolean => line >= (hidden.get(name) ?? Infinity);
+  fn.calls = fn.calls.filter((c) => !hides(c.name, c.line) && !hides(bare(c.receiverType ?? ""), c.line));
 }
 
 /**
