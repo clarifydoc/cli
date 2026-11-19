@@ -562,7 +562,7 @@ const MODEL_FINDER_CHAIN = new RegExp(`^[A-Z][\\w:]*\\.(?:${rubyModelFinders.mem
 function addTypedLocalCalls(lines: readonly string[], fn: FunctionInfo, elementHeads: ReadonlySet<string> = new Set()): void {
   // Typed by its construction, or by the model finder it is assigned (`club = Club.find(id)`), or the element of a typed collection a block iterates.
   // An instance variable typed by what assigns it (`field`) is written `@club.promote`.
-  const typed = (fn.localTypes ?? []).filter((l) => (l.field ? l.type || l.from : l.type || MODEL_FINDER_CHAIN.test(l.from ?? "")) || elementHeads.has(l.name));
+  const typed = (fn.localTypes ?? []).filter((l) => (l.field ? l.type || l.from : l.type || MODEL_FINDER_CHAIN.test(l.from ?? "") || (l.choice !== undefined && /\.new\(\)$/.test(l.from ?? ""))) || elementHeads.has(l.name));
   if (typed.length === 0) return;
   const fields = new Set(typed.filter((l) => l.field).map((l) => l.name));
   const plain = new Set(typed.filter((l) => !l.field).map((l) => l.name));

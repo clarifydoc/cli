@@ -311,6 +311,70 @@ const IVAR_MULTI_RE = /^\s*(@\w+(?:\s*,\s*@\w+)+)\s*=(?![=~>])\s*(.+?)\s*$/;
 /** Block parameters `|repo, i|` rebind names. */
 const BLOCK_PARAMS_RE = /\|([^|]*)\|/g;
 
+/** An arm of a conditional initializer as a `from` chain: `AdminApi.new(db)` → `AdminApi.new()`, `Clubs.admin(x)` → `Clubs.admin()`. */
+function armFrom(text: string): string | null {
+  const t = text.trim();
+  if (new RegExp(String.raw`^${CONST}\.new\b(?:\s*\([^()]*\))?$`).test(t)) return `${constructedClass(t)}.new()`;
+  return rubyCallChain(t);
+}
+
+/** The index of the first top-level (outside brackets) place where `re` (anchored with `^`) matches `text`, or -1. */
+function topLevelIndex(text: string, re: RegExp): number {
+  let depth = 0;
+  for (let k = 0; k < text.length; k++) {
+    const c = text[k]!;
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (depth === 0 && re.test(text.slice(k))) return k;
+  }
+  return -1;
+}
+
+/** The arms of `cond ? a : b` (nested ternaries flattened); null for anything that is not one. */
+function ternaryArms(rhs: string): string[] | null {
+  const q = topLevelIndex(rhs, /^\s\?\s/);
+  if (q < 0) return null;
+  const rest = rhs.slice(q + 3);
+  const c = topLevelIndex(rest, /^\s:\s/);
+  if (c < 0) return null;
+  const arms = [rest.slice(0, c).trim(), rest.slice(c + 3).trim()];
+  const out: string[] = [];
+  for (const arm of arms) {
+    const bare = arm.replace(/^\(\s*([\s\S]*?)\s*\)$/, "$1");
+    out.push(...(ternaryArms(bare) ?? [arm]));
+  }
+  return out;
+}
+
+/**
+ * The arms of an `if … else … end` expression assigned to a local: one line (`if admin then A else B end`) or the
+ * lines below `rhs` up to its `end` (`if` / `elsif` / `else`, each branch ONE expression, a final `else` required).
+ * Returns the arms and the index of the `end` line (the line itself for a one-line form), or null.
+ */
+function ifArms(rhs: string, rest: readonly string[], at: number): { arms: string[]; end: number } | null {
+  const one = /^if\s+.+?\s+then\s+(.+?)\s+else\s+(.+?)\s+end$/.exec(rhs.trim());
+  if (one) return { arms: [one[1]!, one[2]!], end: at };
+  if (!/^if\s+[^;]+$/.test(rhs.trim()) || /\bthen\b/.test(rhs)) return null;
+  const arms: string[] = [];
+  let want: "expr" | "branch" = "expr";
+  let sawElse = false;
+  for (let j = at + 1; j < rest.length; j++) {
+    const line = codeOf(rest[j]!).trim();
+    if (!line) continue;
+    if (want === "expr") {
+      if (/^(?:if|unless|case|while|until|begin|else|elsif|end)\b/.test(line)) return null;
+      arms.push(line);
+      want = "branch";
+    } else if (/^elsif\s+\S/.test(line)) want = "expr";
+    else if (line === "else" && !sawElse) {
+      sawElse = true;
+      want = "expr";
+    } else if (line === "end") return sawElse && arms.length >= 2 ? { arms, end: j } : null;
+    else return null;
+  }
+  return null;
+}
+
 /** A line's code: string contents blanked, trailing `#` comment cut. */
 function codeOf(line: string): string {
   const code = blankStringLiterals(line);
@@ -342,10 +406,32 @@ export function extractRubyLocalTypes(bodyLines: readonly string[], fn: { params
     if (paramNames.has(name)) return paramFact(fn.params.find((p) => p.name === name));
     return table.get(name) ?? UNKNOWN;
   };
+  // Locals initialised by a conditional expression: one entry per arm, sharing a `choice` (see `LocalType.choice`).
+  const armed = new Map<string, LocalType[]>();
+  const assignedAt = new Set<string>();
   for (let i = 0; i < bodyLines.length; i++) {
     let raw = bodyLines[i]!;
     if (raw.trimStart().startsWith("#")) continue;
     let code = codeOf(raw);
+    const conditional = LOCAL_ASSIGN_RE.exec(code);
+    if (conditional) {
+      const name = conditional[1]!;
+      const rhs = rhsOf(raw, code, code.indexOf(name) + name.length);
+      const found = ifArms(rhs, bodyLines, i);
+      const texts = found?.arms ?? (/^if\b/.test(rhs.trim()) ? null : ternaryArms(rhs.trim()));
+      const froms = texts?.map(armFrom);
+      if (texts && froms!.every((f) => f)) {
+        // A name bound anywhere else in the method says nothing about which arm a call reads.
+        if (assignedAt.has(name)) armed.delete(name);
+        else armed.set(name, froms!.map((from) => ({ name, type: "", from: from!, choice: i })));
+        assignedAt.add(name);
+        table.assign(name, UNKNOWN);
+        if (found) i = found.end;
+        continue;
+      }
+      if (assignedAt.has(name)) armed.delete(name);
+      assignedAt.add(name);
+    }
     // `builder = PlayerBuilder.new(` with its arguments on the lines below: read the whole call.
     if (/=\s*[A-Z][\w:]*\.new\s*\($/.test(code.trimEnd())) {
       let depth = 0;
@@ -359,7 +445,11 @@ export function extractRubyLocalTypes(bodyLines: readonly string[], fn: { params
     for (const m of code.matchAll(BLOCK_PARAMS_RE)) {
       for (const n of m[1]!.split(",")) {
         const name = n.trim().replace(/^[*&]+/, "");
-        if (/^[a-z_]\w*$/.test(name)) table.assign(name, UNKNOWN);
+        if (/^[a-z_]\w*$/.test(name)) {
+          table.assign(name, UNKNOWN);
+          armed.delete(name);
+          assignedAt.add(name);
+        }
       }
     }
     const m = LOCAL_ASSIGN_RE.exec(code);
@@ -369,6 +459,11 @@ export function extractRubyLocalTypes(bodyLines: readonly string[], fn: { params
   const out: LocalType[] = [];
   for (const name of table.order) {
     if (paramNames.has(name)) continue;
+    const arms = armed.get(name);
+    if (arms) {
+      out.push(...arms);
+      continue;
+    }
     const fact = table.get(name);
     if (!fact) continue;
     const local: LocalType = { name, type: fact.type };

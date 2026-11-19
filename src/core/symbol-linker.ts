@@ -7332,7 +7332,11 @@ function chainPoint(
     if (!point && rest[0] && /^[A-Z]/.test(head.name)) {
       const imported = importedTypeRef(ctx, head.name, sourceFile, analysis.projectId);
       const typeFile = imported ? imported.typeFile : typeFileFor(ctx, head.name, sourceFile, analysis.projectId);
-      if (typeFile) point = { typeName: imported?.typeName ?? head.name, typeFile, member: "", consumer, container: false };
+      if (typeFile) {
+        point = { typeName: imported?.typeName ?? head.name, typeFile, member: "", consumer, container: false };
+        // `Club.new().train()` (`constructorCalls`): the call constructs the class named, so the chain goes on from the instance.
+        if (rest[0]!.call && constructorCallsOf(analysis.language).some((c) => nameKey(analysis.language, c) === nameKey(analysis.language, rest[0]!.name))) rest = rest.slice(1);
+      }
     }
     // `store.NewRepo()` — a function reached through an imported package or
     // module: the chain goes on from what that function is declared to return.
