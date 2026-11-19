@@ -100,17 +100,25 @@ export function rustImportConfinement(importingFile: string, source: string, ctx
   if (src === null) return null;
   // A module on the written path that re-exports another crate's item, module or glob (`pub use other::m;`,
   // `pub use other::m as n;`, `pub use other::types::*;`) hands the path over: it is no longer confined.
-  const foreign = (from: string): boolean => workspaceCrate(from.split("::")[0]!, ctx) !== null;
-  const segs = source.split("::").slice(1).filter((x) => x && x !== "*");
+  const segs = source.replace(/\./g, "::").split("::").slice(1).filter((x) => x && x !== "*");
+  // Another crate's path: not a keyword, no child module of the module holding the `use`, and a workspace crate.
+  const foreign = (from: string, holder: string): boolean => {
+    const head = from.split("::")[0]!;
+    return !["crate", "self", "super"].includes(head) && !exactModuleFile(selfDirOf(holder, ctx), [head], ctx) && workspaceCrate(head, ctx) !== null;
+  };
   let cur: string | null = moduleFile(src, [], ctx);
-  for (let i = 0; cur && i <= segs.length; i++) {
-    if (ctx.globImportsOf(cur).some((g) => foreign(g))) return null;
-    const seg = segs[i];
-    if (seg === undefined) break;
-    const named = ctx.namedImportOf?.(cur, seg);
-    if (named && foreign(named.source)) return null;
-    cur = exactModuleFile(src, segs.slice(0, i + 1), ctx);
+  for (let i = 0; cur && i < segs.length; i++) {
+    const next = exactModuleFile(src, segs.slice(0, i + 1), ctx);
+    if (next) {
+      cur = next;
+      continue;
+    }
+    // The segment is no module of the crate: a re-export of the module holding the path may name it.
+    const named = ctx.namedImportOf?.(cur, segs[i]!);
+    if (named && foreign(named.source, cur)) return null;
+    break;
   }
+  if (cur && ctx.globImportsOf(cur).some((g) => foreign(g, cur!))) return null;
   return src;
 }
 
