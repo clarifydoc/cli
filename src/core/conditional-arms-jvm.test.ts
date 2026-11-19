@@ -31,6 +31,7 @@ describe("Java and Kotlin conditional initializer arms", () => {
         'class ClubApi { fun load() = "c"; fun reset() = "r" }',
         'class PlayerApi { fun load() = "p" }',
         'class Player { fun load() = "decoy"; fun reset() = "decoy" }',
+        "enum class Kind { Club, League }",
         "class Factory {",
         "  fun clubs(): ClubApi = ClubApi()",
         "  fun players(): PlayerApi = PlayerApi()",
@@ -44,6 +45,11 @@ describe("Java and Kotlin conditional initializer arms", () => {
         "  fun armed(x: Boolean): String { val api = if (x) f.clubs() else f.players(); return api.load() }",
         "  fun chained(k: Int): String { val api = if (k > 1) f.clubs() else if (k > 0) f.players() else f.clubs(); return api.load() }",
         "  fun oneDeclares(x: Boolean): String { val api = if (x) f.clubs() else f.players(); return api.reset() }",
+        "  fun whenArms(k: Kind): String { val api = when (k) { Kind.Club -> f.clubs()\n Kind.League -> f.players()\n else -> f.clubs() }; return api.load() }",
+        "  fun whenOneDeclares(k: Kind): String { val api = when (k) { Kind.Club -> f.clubs()\n else -> f.players() }; return api.reset() }",
+        "  fun whenNoElse(k: Kind): String { val api = when (k) { Kind.Club -> f.clubs()\n Kind.League -> f.players() }; return api.load() }",
+        "  fun whenBlock(k: Kind): String { val api = when (k) { Kind.Club -> { log(); f.clubs() }\n else -> f.players() }; return api.load() }",
+        "  fun whenNotCall(k: Kind): String { val api = when (k) { Kind.Club -> f.clubs()\n else -> null }; return api.load() }",
         "  fun separate(x: Boolean): String {",
         "    if (x) { val w = f.clubs(); return w.load() } else { val w = f.players(); return w.load() }",
         "  }",
@@ -84,6 +90,15 @@ describe("Java and Kotlin conditional initializer arms", () => {
     });
     it("never fans separate declarations of one name", async () => {
       expect(await links("Svc.separate", "w.load")).toEqual([]);
+    });
+    it("links each arm of a when with an else", async () => {
+      expect(await links("Svc.whenArms", "api.load")).toEqual(["ClubApi.load:AMBIGUOUS", "PlayerApi.load:AMBIGUOUS"]);
+      expect(await links("Svc.whenOneDeclares", "api.reset")).toEqual(["ClubApi.reset:INFERRED"]);
+    });
+    it("leaves a when without else, with a block arm or a non-call arm untyped", async () => {
+      expect(await links("Svc.whenNoElse", "api.load")).toEqual([]);
+      expect(await links("Svc.whenBlock", "api.load")).toEqual([]);
+      expect(await links("Svc.whenNotCall", "api.load")).toEqual([]);
     });
   });
 });

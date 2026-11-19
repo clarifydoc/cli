@@ -1041,7 +1041,7 @@ function extractLocalTypes(body: Node | null, language: JkLang): LocalType[] {
 }
 
 /**
- * The arms of a conditional initializer (Java `c ? a() : b()`, Kotlin `if (c) a() else b()` with a bare expression in each
+ * The arms of a conditional initializer (Java `c ? a() : b()`, Kotlin `if (c) a() else b()` or a `when` with an `else`, a bare expression in each
  * branch), nested conditionals flattened; null for anything else, so every arm is a plain expression the caller reads.
  */
 function conditionalArms(init: Node | null | undefined, language: JkLang): Node[] | null {
@@ -1055,6 +1055,15 @@ function conditionalArms(init: Node | null | undefined, language: JkLang): Node[
     const bodies = node.namedChildren.filter((c) => c.type === "control_structure_body");
     // A branch that is one expression; a block (several statements) says nothing about what the local holds.
     arms = bodies.length === 2 ? bodies.map((b) => (b.namedChildCount === 1 ? b.namedChild(0) : null)) : [];
+  } else if (language === "kotlin" && node.type === "when_expression") {
+    // `when (k) { A -> a() ; B -> b() ; else -> c() }`: an `else` entry is required (an exhaustive `when` over an
+    // enum or sealed type is not told apart), every entry one expression.
+    const entries = node.namedChildren.filter((c) => c.type === "when_entry");
+    if (entries.length < 2 || !entries[entries.length - 1]!.children.some((c) => c.type === "else")) return null;
+    arms = entries.map((e) => {
+      const body = e.namedChildren.find((c) => c.type === "control_structure_body");
+      return body && body.namedChildCount === 1 ? body.namedChild(0) : null;
+    });
   } else return null;
   const out: Node[] = [];
   for (const arm of arms) {
