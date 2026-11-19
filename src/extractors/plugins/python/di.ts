@@ -602,7 +602,7 @@ export function collectLocalTypes(
 ): LocalType[] {
   const table = new FactTable();
   const paramNames = new Set(params.map((p) => p.name));
-  const fromCalls = new Map<string, Map<string, { from: string; awaited: boolean; index?: number; element?: true }>>();
+  const fromCalls = new Map<string, Map<string, { from: string; awaited: boolean; index?: number; element?: true; choice?: number }>>();
   // Also assigned something other than a call (or `None`): hides its `from` calls.
   const untyped = new Set<string>();
   // `q = p` / `(q := p)`: names assigned from another plain name, which the linker types as that name.
@@ -890,6 +890,18 @@ export function collectLocalTypes(
       }
       const call = right ? initializerCall(right) : null;
       if (!call) {
+        // `api = clubs() if x else players()`: each arm's call, marked as one choice.
+        const arms = right ? conditionalCalls(right) : null;
+        if (right && arms) {
+          const calls = fromCalls.get(name) ?? fromCalls.set(name, new Map()).get(name)!;
+          for (const arm of arms) {
+            const key = `${arm.awaited ? "await " : ""}${arm.from}`;
+            // The same call written elsewhere (or under another conditional) is no single choice.
+            const held = calls.get(key);
+            calls.set(key, held && held.choice !== right.startIndex ? arm : { ...arm, choice: right.startIndex });
+          }
+          return;
+        }
         if (right?.type === "identifier" && right.text !== name) aliasAt(name, right.text, stmt);
         else untyped.add(name);
         return;
@@ -939,7 +951,7 @@ export function collectLocalTypes(
       if (heads && !calls && !untyped.has(name) && heads.size === 1) out.push({ name, type: "", aliasOf: [...heads][0]! });
       if (!calls || untyped.has(name) || heads) continue;
       for (const c of calls.values()) {
-        out.push({ name, type: "", from: c.from, ...(c.awaited ? { awaited: true as const } : {}), ...(c.index !== undefined ? { fromIndex: c.index } : {}), ...(c.element ? { element: true as const } : {}) });
+        out.push({ name, type: "", from: c.from, ...(c.awaited ? { awaited: true as const } : {}), ...(c.index !== undefined ? { fromIndex: c.index } : {}), ...(c.element ? { element: true as const } : {}), ...(c.choice !== undefined ? { choice: c.choice } : {}) });
       }
       continue;
     }
@@ -1064,6 +1076,29 @@ export const PY_BUILTIN_CALLS: ReadonlySet<string> = new Set([
 ]);
 
 /** An initializer that is a call (optionally awaited), spelled for `localTypes[].from`. */
+/**
+ * The calls the arms of a conditional expression make (`clubs() if x else players()`, nested ones flattened), or null
+ * when the value is no conditional or an arm is no call that states no type of its own.
+ */
+function conditionalCalls(right: Node): Array<{ from: string; awaited: boolean }> | null {
+  let node: Node | null = right;
+  while (node?.type === "parenthesized_expression") node = node.namedChild(0);
+  if (node?.type !== "conditional_expression") return null;
+  // Named children in source order: value, condition, alternative.
+  const parts = node.namedChildren.filter((c) => c.type !== "comment");
+  if (parts.length !== 3) return null;
+  const out: Array<{ from: string; awaited: boolean }> = [];
+  for (const arm of [parts[0]!, parts[2]!]) {
+    const nested = conditionalCalls(arm);
+    const calls = nested ?? [initializerCall(arm)];
+    for (const c of calls) {
+      if (!c) return null;
+      out.push(c);
+    }
+  }
+  return out;
+}
+
 function initializerCall(right: Node): { from: string; awaited: boolean } | null {
   let node: Node | null = right;
   let awaited = false;

@@ -773,6 +773,20 @@ function rebinds(text: string, name: string): boolean {
   return forms.some((f) => new RegExp(f).test(text));
 }
 
+/** The arms of `c ? a() : b()` (nested ones flattened); null for a short `?:` or anything else. */
+function conditionalArms(node: Node | null | undefined): Node[] | null {
+  let n = node;
+  while (n?.type === "parenthesized_expression") n = n.namedChild(0);
+  if (n?.type !== "conditional_expression") return null;
+  const arms = [n.childForFieldName("body"), n.childForFieldName("alternative")];
+  const out: Node[] = [];
+  for (const arm of arms) {
+    if (!arm) return null;
+    out.push(...(conditionalArms(arm) ?? [arm]));
+  }
+  return out;
+}
+
 /**
  * Locals whose type the body states, so the symbol linker can resolve
  * `$x->method()` to `Type::method`:
@@ -794,7 +808,14 @@ function extractLocalTypes(
   // Initializer calls wait: a type the body states anywhere beats them. Each
   // distinct call is kept (`$t = $v->createText()` / `$t = $v->createTextRun()`);
   // the linker types the local only when their return types agree.
-  const fromCalls = new Map<string, Set<string>>();
+  // The value is the `choice` the call is an arm of (a conditional initializer), undefined for a plain one.
+  const fromCalls = new Map<string, Map<string, number | undefined>>();
+  const noteFrom = (name: string, from: string, choice?: number): void => {
+    const calls = fromCalls.get(name) ?? new Map<string, number | undefined>();
+    // The same call under another initializer (or none) is no single choice.
+    calls.set(from, calls.has(from) && calls.get(from) !== choice ? undefined : choice);
+    fromCalls.set(name, calls);
+  };
   // `$q = $p`: the variable another one was assigned from; a name also assigned anything else is no alias.
   const aliasFroms = new Map<string, Set<string>>();
   const otherAssigned = new Set<string>();
@@ -819,7 +840,7 @@ function extractLocalTypes(
   const add = (name: string | undefined, type: string, qualifier?: string, from?: string): void => {
     if (!name || seen.has(name)) return;
     if (!type && !qualifier) {
-      if (from) fromCalls.set(name, (fromCalls.get(name) ?? new Set()).add(from));
+      if (from) noteFrom(name, from);
       return;
     }
     seen.add(name);
@@ -895,7 +916,13 @@ function extractLocalTypes(
         }
         if (looked) add(name, looked.type, looked.qualifier);
         // `$w = PHPExcel_IOFactory::createWriter(…)` — typed by what the call returns.
-        else add(name, "", undefined, callChainText(right, "php") ?? undefined);
+        else if (callChainText(right, "php")) add(name, "", undefined, callChainText(right, "php")!);
+        else {
+          // `$api = $x ? clubs() : players()`: each arm's call, marked as one choice.
+          const arms = conditionalArms(right);
+          const calls = arms?.map((arm) => callChainText(arm, "php"));
+          if (!seen.has(name) && calls && calls.every((c) => c)) for (const c of calls) noteFrom(name, c!, right.startIndex);
+        }
       }
     }
     for (const c of n.children) walk(c);
@@ -936,7 +963,7 @@ function extractLocalTypes(
     if (typed.length === 0) out.push(...list);
     else if (typed.length === list.length && new Set(typed.map((e) => e.type)).size === 1) out.push(typed[0]!);
   }
-  for (const [name, froms] of fromCalls) if (!seen.has(name)) for (const from of froms) out.push({ name, type: "", from });
+  for (const [name, froms] of fromCalls) if (!seen.has(name)) for (const [from, choice] of froms) out.push({ name, type: "", from, ...(choice !== undefined ? { choice } : {}) });
   for (const [name, heads] of aliasFroms) {
     if (heads.size === 1 && !seen.has(name) && !fromCalls.has(name) && !otherAssigned.has(name) && !rebinds(body.text, name)) {
       const head = [...heads][0]!;
