@@ -100,7 +100,8 @@ function parseSwiftParam(paramText: string): ParamInfo | null {
   const m = text.match(/^(?:([a-zA-Z_]\w*)\s+)?([a-zA-Z_]\w*)\s*:\s*(?:(?:inout|borrowing|consuming)\s+)?([^=]+?)\s*(?:=\s*(.+))?$/);
   if (!m) return /^[a-zA-Z_]\w*$/.test(text) ? { name: text, type: null, defaultValue: null } : null;
   // `callback handler: …` is called as `callback:` and read as `handler`; `_ id` takes no label at all.
-  const label = m[1];
+  // A modifier written before the name (`inout buf: T`, `isolated actor: A`) is no label: the parameter is called by its name.
+  const label = m[1] && !/^(?:inout|borrowing|consuming|isolated|sending|__owned|__shared)$/.test(m[1]) ? m[1] : undefined;
   return { name: m[2]!, type: m[3]!.trim(), defaultValue: m[4]?.trim() ?? null, ...(label && label !== m[2] ? { argumentLabel: label } : {}) };
 }
 

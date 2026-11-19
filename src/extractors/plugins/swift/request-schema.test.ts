@@ -118,8 +118,8 @@ describe("Swift request access", () => {
   it("parses labelled, unlabelled, inout and defaulted parameters", () => {
     const [fn] = functions('func f(_ id: UUID, for name: String = "x", inout buf: [UInt8], req: Request) {\n}');
     expect(fn.params).toEqual([
-      { name: "id", type: "UUID", defaultValue: null },
-      { name: "name", type: "String", defaultValue: '"x"' },
+      { name: "id", type: "UUID", defaultValue: null, argumentLabel: "_" },
+      { name: "name", type: "String", defaultValue: '"x"', argumentLabel: "for" },
       { name: "buf", type: "[UInt8]", defaultValue: null },
       { name: "req", type: "Request", defaultValue: null },
     ]);
