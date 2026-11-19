@@ -50,7 +50,7 @@ export function extractClojureDataSources(lines: string[]): DataSourceInfo[] {
 
     const http = line.match(CLJ_HTTP_RE);
     if (http) {
-      sources.push({ kind: "api-call", name: http[1]!.toUpperCase(), target: http[2]!, calls: [], line: lineNo });
+      sources.push({ kind: "api-call", name: http[1]!.toUpperCase(), target: http[2]!, calls: [], line: lineNo, column: http.index! });
       continue;
     }
 
