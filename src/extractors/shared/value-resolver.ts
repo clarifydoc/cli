@@ -27,6 +27,7 @@
 
 import type { Confidence } from "../../types/analysis.js";
 import { BEST_RANK } from "./confidence.js";
+import { splitTopLevel as splitTopLevelWith } from "./split-top-level.js";
 
 /**
  * A captured value expression. `lit` carries already-unquoted content for a
@@ -212,34 +213,7 @@ export function foldValue(expr: ValueExpr, scope: Scope, opts: FoldOptions = {})
  * Ruby concat capture (previously three near-identical copies).
  */
 export function splitTopLevel(text: string, sep: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let quote: string | null = null;
-  let cur = "";
-  for (const ch of text) {
-    if (quote) {
-      cur += ch;
-      if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === "'" || ch === '"' || ch === "`") {
-      quote = ch;
-      cur += ch;
-    } else if (ch === "(" || ch === "[" || ch === "{") {
-      depth++;
-      cur += ch;
-    } else if (ch === ")" || ch === "]" || ch === "}") {
-      depth--;
-      cur += ch;
-    } else if (ch === sep && depth === 0) {
-      out.push(cur);
-      cur = "";
-    } else {
-      cur += ch;
-    }
-  }
-  if (cur.trim().length > 0) out.push(cur);
-  return out;
+  return splitTopLevelWith(text, { sep });
 }
 
 /** Strip one layer of matching quotes/backticks from a literal's text. */
