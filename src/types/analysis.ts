@@ -2829,6 +2829,15 @@ export interface DataSourceInfo {
    * attribute (`FileAnalysis.attributeReads`), with the verb those scripts agree on.
    */
   urlAttribute?: string;
+  /**
+   * An `env` row that reads a configuration key, not an environment variable
+   * (`target` is the key): Spring `@Value("${league.token}")` (`key`),
+   * `@ConfigurationProperties(prefix = "league")` (`prefix`: every key below
+   * it), a Terraform `variable "x"` block (`variable`: the `x` a `*.tfvars`
+   * beside it sets). Core joins it to the key the project's config files
+   * state (`ProjectAnalysis.configKeys`).
+   */
+  configRead?: { kind: "key" | "prefix" | "variable" };
   calls: CallInfo[];
   line: number;
   /**
@@ -5417,6 +5426,12 @@ export interface ProjectAnalysis {
    */
   deployment?: DeploymentModel;
   /**
+   * Configuration keys (Spring `application*.yml` / `.properties`, Terraform
+   * `*.tfvars`) with the code that reads each — `@Value`, `@ConfigurationProperties`,
+   * a `variable` block. Only keys something reads; names, never values.
+   */
+  configKeys?: ConfigKeyUse[];
+  /**
    * Environment variables the code reads, where, and which deployed services
    * set them (`core/env-vars.ts`) — names only, never values.
    */
@@ -5763,4 +5778,18 @@ export interface TaintFacts {
   summaries: Array<{ name: string; line: number; sinks: Array<{ param: number; line: number; category: SecurityCategory; cwe: string; what: string; callee: string; path: TaintStep[] }> }>;
   /** Handler calls into functions the file does not declare, with the arguments carrying request input. */
   calls: Array<{ line: number; callee: string; args: Array<{ index: number; from: number; path: TaintStep[] }> }>;
+}
+
+/** A configuration key a file sets and the code that reads it (`ProjectAnalysis.configKeys`). */
+export interface ConfigKeyUse {
+  key: string;
+  /** Project-relative posix path of the config file setting it, and its line. */
+  file: string;
+  line?: number;
+  project?: string;
+  /** The profile the file or document is for (`application-prod.yml`). */
+  profile?: string;
+  /** A test profile: only test code reads it. */
+  test?: boolean;
+  consumers: Array<{ file: string; line: number; project?: string; via: "value" | "prefix" | "variable" }>;
 }

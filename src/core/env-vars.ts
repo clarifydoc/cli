@@ -1,3 +1,4 @@
+import { serviceConfigFor } from "../extractors/registry.js";
 import type { DeploymentModel, FileAnalysis } from "../types/analysis.js";
 
 /**
@@ -38,11 +39,18 @@ export function joinEnvVars(
   isAuthored: (file: string) => boolean,
 ): EnvVarUse[] {
   const byName = new Map<string, EnvVarUse>();
+  const deployedKeys = new Set((deployment?.services ?? []).flatMap((s) => s.envKeys ?? []));
   for (const a of analyses) {
     if (!isAuthored(a.filePath)) continue;
     for (const ds of a.dataSources) {
       if (ds.kind !== "env") continue;
-      const name = envVarName(ds);
+      // A configuration key the language binds from the environment too (`league.token` ← `LEAGUE_TOKEN`):
+      // a read of it is a read of the variable a deployment sets.
+      const derived = ds.configRead?.kind === "key" && ds.target && !envVarName(ds)
+        ? (serviceConfigFor(a.language)?.envNamesFor?.(ds.target) ?? []).find((n) => deployedKeys.has(n))
+        : undefined;
+      // A `prefix` or Terraform `variable` row is no variable, whatever its text resembles.
+      const name = derived ?? (ds.configRead && ds.configRead.kind !== "key" ? null : envVarName(ds));
       if (!name) continue;
       const use = byName.get(name) ?? byName.set(name, { name, readBy: [], setBy: [] }).get(name)!;
       if (use.readBy.length < 50) use.readBy.push({ file: a.filePath, line: ds.line, ...(a.projectId ? { project: a.projectId } : {}) });

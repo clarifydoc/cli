@@ -1,4 +1,4 @@
-import type { RouteFact } from "../../../types/analysis.js";
+import type { DataSourceInfo, RouteFact } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { parseHcl, type HclBlock } from "../../shared/hcl.js";
 
@@ -69,6 +69,15 @@ export const terraformSpec: RegexLangSpec = {
   classPatterns: [],
   importPatterns: [],
   lineCommentPrefixes: ["#", "//"],
+  // `variable "x" {` reads the key `x` a `*.tfvars` file beside it sets.
+  extractDataSources: (lines) => {
+    const out: DataSourceInfo[] = [];
+    lines.forEach((l, i) => {
+      const name = /^\s*variable\s+"([^"]+)"/.exec(l)?.[1];
+      if (name) out.push({ kind: "env", name: `variable "${name}"`, target: name, configRead: { kind: "variable" }, calls: [], line: i + 1 });
+    });
+    return out;
+  },
   extractRoutes: (lines, _classes, _file, _fns, facts) => {
     collectTerraformFacts(lines.join("\n"), facts);
     return [];

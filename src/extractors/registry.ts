@@ -841,6 +841,21 @@ export const ROUTE_BASE_SPECS: ReadonlyArray<{ languages: ReadonlySet<Language>;
   return [...bySpec].map(([spec, languages]) => ({ languages, spec }));
 })();
 
+/**
+ * The plugins that read configuration files (`ServiceConfigSpec.sources`), each spec once with the
+ * languages whose code reads what those files set (manifests share a spec).
+ */
+export const CONFIG_SPECS: ReadonlyArray<{ languages: ReadonlySet<Language>; spec: ServiceConfigSpec }> = (() => {
+  const bySpec = new Map<ServiceConfigSpec, Set<Language>>();
+  for (const m of ALL_MANIFESTS) {
+    if (!m.serviceConfig?.sources?.length) continue;
+    const langs = bySpec.get(m.serviceConfig) ?? new Set<Language>();
+    langs.add(m.language);
+    bySpec.set(m.serviceConfig, langs);
+  }
+  return [...bySpec].map(([spec, languages]) => ({ languages, spec }));
+})();
+
 /** How a language's programs are configured to reach other services (undefined: the plugin says nothing). */
 export function serviceConfigFor(language: string): ServiceConfigSpec | undefined {
   return MANIFEST_BY_LANGUAGE.get(language as Language)?.serviceConfig;

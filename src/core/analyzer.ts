@@ -114,6 +114,7 @@ import { isTestFile } from "./test-file-detector.js";
 import { composeScreenNavigation } from "./screen-navigation.js";
 import { checkContracts } from "./contract-check.js";
 import { joinEnvVars } from "./env-vars.js";
+import { joinConfigKeys, readConfigKeys } from "./config-keys.js";
 import { crossFileTaint } from "./cross-file-taint.js";
 import { ciRunEntries, detectCiDeploys } from "./ci-pipelines.js";
 import { loadCodeOwners } from "./code-owners.js";
@@ -1842,6 +1843,8 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   };
   // Environment variables: where the code reads each one, and which deployed services set it.
   const envVars = joinEnvVars(allAnalyses, deployment, (f) => !isUnauthored(f) && !isTestFile(f));
+  // Configuration keys the project's config files set, with the code that reads each.
+  const configKeys = joinConfigKeys(allAnalyses, await readConfigKeys(projectRoot, subProjects), (f) => !isUnauthored(f), (f, l) => isTestFile(f, l));
 
   // The per-file scanner already skips minified sources; this catches issues
   // cached by older extractor versions and everything under generatedRoots.
@@ -2692,6 +2695,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
     ...(historySecrets ? { historySecrets } : {}),
     deployment,
     ...(envVars.length > 0 ? { envVars } : {}),
+    ...(configKeys.length > 0 ? { configKeys } : {}),
     ...(ciDeploys.length > 0 ? { ciDeploys } : {}),
   };
 

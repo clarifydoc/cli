@@ -874,14 +874,23 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       // By the annotation's NAME (`@field:Value`): a substring test read
       // `@RequestParam(defaultValue = "x")` and `@JsonValue` as injections.
       if (VALUE_ANNOTATION_RE.test(text)) {
-        // `@Value("${league.season:2024}")` reads configuration — the key, its default dropped.
-        const configKey = /Value\s*\(\s*(?:value\s*=\s*)?"\$\{([^}:]+)/.exec(text)?.[1]?.trim();
-        sources.push(this.ds({
-          kind: "env",
-          name: text.replace(/^@/, ""),
-          target: configKey ?? null,
-          line: node.startPosition.row + 1,
-        }));
+        // `@Value("${league.season:2024}")` reads configuration — each key, its default dropped. A key
+        // spelled like an environment variable (`${LEAGUE_TOKEN}`) is that variable (`envVars`).
+        const literal = /Value\s*\(\s*(?:value\s*=\s*)?"((?:[^"\\]|\\.)*)"/.exec(text)?.[1] ?? "";
+        const keys = [...literal.matchAll(/\\?\$\{\s*([^}:\s]+)/g)].map((m) => m[1]!);
+        const line = node.startPosition.row + 1;
+        if (keys.length === 0) sources.push(this.ds({ kind: "env", name: text.replace(/^@/, ""), target: null, line }));
+        for (const key of keys) {
+          sources.push({
+            ...this.ds({ kind: "env", name: /^[A-Z][A-Z0-9_]*$/.test(key) ? key : text.replace(/^@/, ""), target: key, line }),
+            configRead: { kind: "key" },
+          });
+        }
+      }
+      // `@ConfigurationProperties(prefix = "league")` binds every key below the prefix.
+      if (/^@(?:\w+:)?(?:[\w.]+\.)?ConfigurationProperties(?![\w.])/.test(text)) {
+        const prefix = /ConfigurationProperties\s*\(\s*(?:(?:prefix|value)\s*=\s*)?"([^"]+)"/.exec(text)?.[1];
+        if (prefix) sources.push({ ...this.ds({ kind: "env", name: "ConfigurationProperties", target: prefix, line: node.startPosition.row + 1 }), configRead: { kind: "prefix" } });
       }
 
       // Dapr's `@Topic(name = "club-created", pubsubName = "pubsub")` on a handler: it consumes the topic.

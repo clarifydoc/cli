@@ -221,6 +221,11 @@ export interface ConfigSourceSpec {
   glob?: { deep: number; limit: number };
   /** Every key → string value the file sets. Core keeps only URL-shaped values and drops the rest unread. */
   parse(text: string, path: string): ConfigEntry[];
+  /**
+   * The file states keys other code reads, never addresses (Terraform `*.tfvars`): it joins readers
+   * (`DataSourceInfo.configRead`) and is never read as a service address.
+   */
+  keysOnly?: boolean;
 }
 
 /** A configuration value as a file states it. */

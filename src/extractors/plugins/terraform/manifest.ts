@@ -1,3 +1,4 @@
+import { terraformServiceConfig } from "./tfvars.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 
 /**
@@ -10,4 +11,5 @@ export const terraformManifest: LanguagePluginManifest = {
   parsing: "regex",
   extensions: [".tf"],
   importTarget: false,
+  serviceConfig: terraformServiceConfig,
 };
