@@ -292,7 +292,11 @@ function declaredTypeOf(file: FileAnalysis, line: number, name: string): string 
     const param = fn.params.find((p) => p.name === name);
     if (param) return param.type;
   }
-  return null;
+  // A module-level name (`const repo = new Repo()`, `const clubs: Club[] = …`): the file's `<setup>` states its
+  // type, read only when no function around the line declares the name itself.
+  const moduleLocal = file.functions.find((f) => f.name === "<setup>")?.localTypes?.filter((t) => t.name === name) ?? [];
+  const stated = moduleLocal.length === 1 && !moduleLocal[0]!.from && !moduleLocal[0]!.element && !moduleLocal[0]!.destructured ? moduleLocal[0]! : null;
+  return stated?.type || null;
 }
 
 /**

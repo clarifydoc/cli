@@ -455,3 +455,153 @@ describe("a URL hole over an awaited loop and over this in a nested plain functi
     expect(reached("web/src/nested.ts", 15)).toEqual(["/api/items/city", "/api/items/sport"]);
   });
 });
+
+const MODULE_FILES: Record<string, string> = {
+  "web/package.json": JSON.stringify({ name: "league-web", dependencies: { axios: "^1.6.0" } }),
+  "web/src/types.ts": [
+    "export type ClubKind = 'league' | 'cup';",
+    "export interface Club { id: number; kind: ClubKind }",
+    "export type CarKind = 'sport' | 'city';",
+    "export interface Car { id: number; kind: CarKind }",
+  ].join("\n"),
+  "web/src/clubRepo.ts": [
+    "import type { Club } from './types';",
+    "export class ClubRepo {",
+    "  all(): Club[] { return []; }",
+    "  async load(): Promise<Club[]> { return []; }",
+    "}",
+  ].join("\n"),
+  "web/src/carRepo.ts": [
+    "import type { Car } from './types';",
+    "export class CarRepo {",
+    "  all(): Car[] { return []; }",
+    "}",
+  ].join("\n"),
+  // A module-level receiver names its type once, for every function below.
+  "web/src/module.ts": [
+    "import axios from 'axios';",
+    "import { ClubRepo } from './clubRepo';",
+    "import { CarRepo } from './carRepo';",
+    "const repo = new ClubRepo();",
+    "const cars = new CarRepo();",
+    "export function syncClubs() {",
+    "  for (const c of repo.all()) axios.get(`/api/items/${c.kind}`);",
+    "}",
+    "export async function loadClubs() {",
+    "  for (const c of await repo.load()) axios.get(`/api/items/${c.kind}`);",
+    "}",
+    "export function syncCars() {",
+    "  cars.all().forEach((c) => axios.get(`/api/items/${c.kind}`));",
+    "}",
+    "export function shadowed(repo: CarRepo) {",
+    "  for (const c of repo.all()) axios.get(`/api/items/${c.kind}`);",
+    "}",
+    "export function shadowedByCall(make: () => unknown) {",
+    "  const repo = make();",
+    "  for (const c of repo.all()) axios.get(`/api/items/${c.kind}`);",
+    "}",
+    "export function shadowedByArrow(list: any[]) {",
+    "  list.forEach((repo) => { for (const c of repo.all()) axios.get(`/api/items/${c.kind}`); });",
+    "}",
+  ].join("\n"),
+  // Collections the file writes as object literals: the strings written are the values.
+  "web/src/literals.ts": [
+    "import axios from 'axios';",
+    "const kinds = [{ kind: 'league' }, { kind: 'cup' }];",
+    "const frozen = [{ kind: 'sport' }, { kind: 'city' }] as const;",
+    "const mixed = [{ kind: 'league' }, { other: 1 }];",
+    "const computed = [{ kind: 'league' }, { kind: String(Math.random()) }];",
+    "const spread = [{ kind: 'league', ...extra }, { kind: 'cup' }];",
+    "const grown = [{ kind: 'league' }];",
+    "grown.push({ kind: 'cup' });",
+    "const wrapped = [",
+    "  { kind: 'sport' },",
+    "  { kind: 'city' },",
+    "];",
+    "export function fromModule() {",
+    "  for (const k of kinds) axios.get(`/api/items/${k.kind}`);",
+    "}",
+    "export function fromFrozen() {",
+    "  frozen.forEach((k) => axios.get(`/api/items/${k.kind}`));",
+    "}",
+    "export function fromLocal() {",
+    "  const own = [{ kind: 'friendly' }, { kind: 'cup' }];",
+    "  for (const k of own) axios.get(`/api/items/${k.kind}`);",
+    "}",
+    "export function unevenLiteral() {",
+    "  for (const k of mixed) axios.get(`/api/items/${k.kind}`);",
+    "}",
+    "export function computedLiteral() {",
+    "  for (const k of computed) axios.get(`/api/items/${k.kind}`);",
+    "}",
+    "export function parameter(items: any[]) {",
+    "  for (const k of items) axios.get(`/api/items/${k.kind}`);",
+    "}",
+    "export function shadowedParam(kinds: any[]) {",
+    "  for (const k of kinds) axios.get(`/api/items/${k.kind}`);",
+    "}",
+    "export function spreadLiteral() {",
+    "  for (const k of spread) axios.get(`/api/items/${k.kind}`);",
+    "}",
+    "export function grownLiteral() {",
+    "  for (const k of grown) axios.get(`/api/items/${k.kind}`);",
+    "}",
+    "export function wrappedLiteral() {",
+    "  for (const k of wrapped) axios.get(`/api/items/${k.kind}`);",
+    "}",
+    "export function shadowedDestructured(load: () => { kinds: any[] }) {",
+    "  const { kinds } = load();",
+    "  for (const k of kinds) axios.get(`/api/items/${k.kind}`);",
+    "}",
+  ].join("\n"),
+  "api/package.json": JSON.stringify({ name: "league-api", dependencies: { express: "^4.18.0" } }),
+  "api/src/server.js": [
+    "const express = require('express');",
+    "const app = express();",
+    ...["league", "cup", "friendly", "sport", "city", "other"].map((k) => `app.get('/api/items/${k}', (req, res) => res.json({}));`),
+    "app.listen(3000);",
+  ].join("\n"),
+};
+
+describe("a URL hole over a module-level receiver and over a collection the file writes", () => {
+  let dir: string;
+  let links: ApiRouteLink[] = [];
+  const reached = (file: string, line: number) =>
+    [...new Set(links.filter((l) => l.source === file && l.sourceLine === line && l.routePath.startsWith("/api/items/") && !l.routePath.includes("+")).map((l) => l.routePath))].sort();
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "typed-member-holes-module-"));
+    for (const [rel, src] of Object.entries(MODULE_FILES)) {
+      await mkdir(join(dir, "src", dirname(rel)), { recursive: true });
+      await writeFile(join(dir, "src", rel), src);
+    }
+    await analyze({ projectRoot: join(dir, "src"), outputDir: join(dir, "out"), lsp: false, gitHistory: false } as never);
+    links = (await loadReportSummary(join(dir, "out"))).apiRouteLinks ?? [];
+  }, 120_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("types a loop over a call on a module-level receiver by that call's declared result, each class its own", () => {
+    expect(reached("web/src/module.ts", 7)).toEqual(["/api/items/cup", "/api/items/league"]);
+    expect(reached("web/src/module.ts", 10)).toEqual(["/api/items/cup", "/api/items/league"]);
+    expect(reached("web/src/module.ts", 13)).toEqual(["/api/items/city", "/api/items/sport"]);
+  });
+
+  it("lets a parameter or a call-initialized local of the name hide the module's receiver", () => {
+    expect(reached("web/src/module.ts", 16)).toEqual(["/api/items/city", "/api/items/sport"]);
+    expect(reached("web/src/module.ts", 20)).toEqual([]);
+    expect(reached("web/src/module.ts", 23)).toEqual([]);
+  });
+
+  it("reads the strings an array of object literals writes, at module level, `as const`, local or wrapped over lines", () => {
+    expect(reached("web/src/literals.ts", 14)).toEqual(["/api/items/cup", "/api/items/league"]);
+    expect(reached("web/src/literals.ts", 17)).toEqual(["/api/items/city", "/api/items/sport"]);
+    expect(reached("web/src/literals.ts", 21)).toEqual(["/api/items/cup", "/api/items/friendly"]);
+    expect(reached("web/src/literals.ts", 42)).toEqual(["/api/items/city", "/api/items/sport"]);
+  });
+
+  it("leaves a literal collection that does not write the member everywhere, writes it open (a spread, a push, a computed value), is hidden by a parameter or destructuring, or is untyped, a wildcard", () => {
+    for (const line of [24, 27, 30, 33, 36, 39, 46]) expect(reached("web/src/literals.ts", line)).toEqual([]);
+  });
+});

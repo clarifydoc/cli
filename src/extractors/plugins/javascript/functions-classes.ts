@@ -48,6 +48,10 @@ interface ScanContext {
   dispatchMappers: ReadonlySet<string>;
   /** Top-level `const x = 'literal'` of the file (see `moduleStringConstants`). */
   moduleStrings: ReadonlyMap<string, string>;
+  /** Top-level `const x = [{ k: "a" }, …]` of the file: the element each literal writes (see `moduleLiteralCollections`). */
+  moduleCollections?: ReadonlyMap<string, { element: string; map: boolean }>;
+  /** Names the file declares at top level with a type of their own (see `moduleTypedNames`): a function rebinding one reads its own. */
+  moduleTyped?: ReadonlySet<string>;
   /** Classes function bodies declare, by name: whether the class is reported (its name is the file's only one). */
   localClasses: ReadonlyMap<string, boolean>;
   /** Members of the file's own object types, for a destructured parameter annotated with one (see `destructuredParamTypes`). */
@@ -86,6 +90,40 @@ function moduleStringConstants(root: Node): Map<string, string> {
       const name = d.type === "variable_declarator" ? d.childForFieldName("name") : null;
       const value = d.childForFieldName("value");
       if (name?.type === "identifier" && value?.type === "string" && value.text.length <= 202) out.set(name.text, stripQuotes(value.text));
+    }
+  }
+  return out;
+}
+
+/**
+ * Top-level `const kinds = [{ kind: "league" }, …]` of the file, by name: the element type each literal writes
+ * (see `literalElementType`), which a loop in any function of the file ranges over.
+ */
+function moduleLiteralCollections(root: Node, sourceText: string): Map<string, { element: string; map: boolean }> {
+  const out = new Map<string, { element: string; map: boolean }>();
+  for (const stmt of root.namedChildren) {
+    const decl = stmt.type === "export_statement" ? stmt.childForFieldName("declaration") : stmt;
+    if (decl?.type !== "lexical_declaration" || decl.children[0]?.type !== "const") continue;
+    for (const d of decl.namedChildren) {
+      const name = d.type === "variable_declarator" ? d.childForFieldName("name") : null;
+      const value = d.childForFieldName("value");
+      const element = name?.type === "identifier" && value && !d.children.some((c) => c.type === "type_annotation") ? literalElementType(value) : null;
+      if (name && element && !mutatesCollection(sourceText, name.text)) out.set(name.text, { element, map: false });
+    }
+  }
+  return out;
+}
+
+/** Names the file declares at top level with a type of their own (an annotation, `new X()`) or as a literal collection. */
+function moduleTypedNames(root: Node): Set<string> {
+  const out = new Set<string>();
+  for (const stmt of root.namedChildren) {
+    const decl = stmt.type === "export_statement" ? stmt.childForFieldName("declaration") : stmt;
+    if (decl?.type !== "lexical_declaration" && decl?.type !== "variable_declaration") continue;
+    for (const d of decl.namedChildren) {
+      const name = d.type === "variable_declarator" ? d.childForFieldName("name") : null;
+      const value = d.childForFieldName("value");
+      if (name?.type === "identifier" && (value?.type === "new_expression" || value?.type === "array" || d.children.some((c) => c.type === "type_annotation"))) out.add(name.text);
     }
   }
   return out;
@@ -454,7 +492,21 @@ function scanBody(
   // Collections whose element type the source states (a parameter or an annotated local), by name; the
   // variables a `for … of` over one and the callbacks it hands its elements to bind are typed as the element.
   const collections = new Map<string, { element: string; map: boolean }>();
+  for (const [name, c] of ctx.moduleCollections ?? []) collections.set(name, c);
+  // A module-level name this body binds itself (a parameter of an arrow, a destructuring, a loop variable, an
+  // assignment) is its own there: the module's collection is dropped and the name is stated untyped.
+  const rebound: string[] = [];
+  if (ctx.moduleTyped?.size) {
+    const bodyText = body.text;
+    for (const name of ctx.moduleTyped) {
+      if (!bodyText.includes(name) || paramNames.has(name) || !rebindsName(bodyText, name)) continue;
+      rebound.push(name);
+      collections.delete(name);
+    }
+  }
   for (const p of params) {
+    // A parameter of the name hides the module's collection.
+    collections.delete(p.name);
     const c = collectionElement(p.type);
     if (c) collections.set(p.name, c);
   }
@@ -620,7 +672,12 @@ function scanBody(
         if (name?.type === "identifier") {
           const annotation = children.find((c) => c.type === "type_annotation");
           const stated = annotation ? collectionElement(annotation.text.replace(/^:\s*/, "")) : null;
+          const written = !annotation && !stated ? declaratorValue(children) : null;
+          const literal = written && node.parent?.children[0]?.type === "const" && !mutatesCollection(body.text, name.text) ? literalElementType(written) : null;
+          // A local of the name hides the module's collection; a literal one is typed by what it writes.
           if (stated) collections.set(name.text, stated);
+          else if (literal) collections.set(name.text, { element: literal, map: false });
+          else if (ctx.moduleCollections?.has(name.text)) collections.delete(name.text);
           // A conditional initializer binds the name once per arm (`slug ? publicApi() : userApi()`).
           // A store picked by an IIFE `switch` on a prop: the local reads the record its cases state (`store[]`, one entry per case).
           const picked = switchRecordEntries(node);
@@ -750,6 +807,8 @@ function scanBody(
     if (hiddenTypes.has(first.local.type)) continue;
     localTypes.push(first.local);
   }
+  // A module-level name the body rebinds without a type of its own (an arrow's parameter, a destructuring): untyped here.
+  for (const name of rebound) if (!localTypes.some((l) => l.name === name)) localTypes.push({ name, type: "" });
   return { extraCalls, localTypes, returnedSpreads, returnedFrom };
 }
 
@@ -798,6 +857,72 @@ function declaredLocal(
     return initializerLocal(value, name);
   }
   return { local: qualifier ? { name, type, qualifier } : { name, type }, annotated: annotation !== null };
+}
+
+/** Whether the code writes to the collection `name` (`name.push(…)`, `name[i] = …`), which opens it past what its literal states. */
+function mutatesCollection(text: string, name: string): boolean {
+  const n = name.replace(/\$/g, "\\$");
+  return new RegExp(`(?<![\\w$.])${n}\\s*(?:\\.\\s*(?:push|unshift|splice|fill|copyWithin|sort|reverse|pop|shift)\\b|\\[[^\\]]*\\]\\s*=(?!=))`).test(text);
+}
+
+/**
+ * Whether `text` (a function body) binds `name` itself — a declaration (also destructured or a loop variable), a
+ * parameter of a function or arrow, a `catch` variable, or an assignment — so a module-level `name` is not the one
+ * it reads there.
+ */
+function rebindsName(text: string, name: string): boolean {
+  const n = name.replace(/\$/g, "\\$");
+  const forms = [
+    `\\b(?:const|let|var)\\s+(?:(?!\\b(?:of|in)\\b)[^=;])*?(?<![\\w$.])${n}(?![\\w$])`,
+    `\\([^()]*(?<![\\w$.])${n}(?![\\w$])[^()]*\\)\\s*=>`,
+    `(?<![\\w$.])${n}\\s*=>`,
+    `\\bfunction\\b[^(]*\\([^()]*(?<![\\w$.])${n}(?![\\w$])`,
+    `\\bcatch\\s*\\(\\s*${n}(?![\\w$])`,
+    `(?<![\\w$.])${n}\\s*=(?![=>])`,
+  ];
+  return new RegExp(forms.join("|")).test(text);
+}
+
+/** The value a declarator's children assign, when there is one. */
+function declaratorValue(children: readonly Node[]): Node | null {
+  const eq = children.findIndex((c) => c.type === "=");
+  return eq >= 0 ? children[eq + 1] ?? null : null;
+}
+
+/**
+ * The element type an array literal of object literals writes for itself: `[{ kind: "league" }, { kind: "cup" }]`
+ * holds `{ kind: "league" | "cup" }` — each key every element states as a plain string, its values the union. Null for
+ * anything else (an element that is not an object literal, a spread, a computed key, no shared string key).
+ */
+function literalElementType(value: Node): string | null {
+  let array: Node | null = value;
+  while (array && (array.type === "as_expression" || array.type === "satisfies_expression" || array.type === "parenthesized_expression")) array = array.namedChild(0);
+  if (array?.type !== "array") return null;
+  const elements = array.namedChildren.filter((c) => c.type !== "comment");
+  if (elements.length === 0 || elements.length > 16 || !elements.every((e) => e.type === "object")) return null;
+  const perElement = elements.map((obj) => {
+    const keys = new Map<string, string>();
+    const unsure = new Set<string>();
+    for (const pair of obj.namedChildren) {
+      // A spread can state any key, so no key of this object is known.
+      if (pair.type === "spread_element") return new Map<string, string>();
+      if (pair.type !== "pair") continue;
+      const key = pair.childForFieldName("key");
+      const v = pair.childForFieldName("value");
+      if (key?.type !== "property_identifier") continue;
+      const text = v?.type === "string" ? v.text.slice(1, -1) : "";
+      // A key written twice is read by its last writer; a value that is no plain string leaves the key open.
+      if (keys.has(key.text) || unsure.has(key.text) || text === "" || /["'`\\\n$]/.test(text)) {
+        keys.delete(key.text);
+        unsure.add(key.text);
+      } else keys.set(key.text, text);
+    }
+    return keys;
+  });
+  const shared = [...perElement[0]!.keys()].filter((k) => perElement.every((m) => m.has(k)));
+  if (shared.length === 0) return null;
+  const members = shared.map((k) => `${k}: ${[...new Set(perElement.map((m) => `"${m.get(k)}"`))].join(" | ")}`);
+  return `{ ${members.join("; ")} }`;
 }
 
 /**
@@ -2056,6 +2181,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       dispatchProps: sourceText.includes("connect(") ? dispatchPropsOf(tree.rootNode) : new Map(),
       dispatchMappers: sourceText.includes("connect(") ? dispatchMappersOf(tree.rootNode) : new Set(),
       moduleStrings: sourceText.includes("class ") ? moduleStringConstants(tree.rootNode) : new Map(),
+      moduleCollections: /\[\s*\{/.test(sourceText) ? moduleLiteralCollections(tree.rootNode, sourceText) : new Map(),
+      moduleTyped: /\bnew\s|\[\s*\{|:\s*[A-Z]/.test(sourceText) ? moduleTypedNames(tree.rootNode) : new Set(),
       localClasses: sourceText.includes("class ") ? localClassesOf(tree.rootNode) : new Map(),
       objectTypes: /\(\s*\{/.test(sourceText) ? objectTypesOf(tree.rootNode) : new Map(),
     };
