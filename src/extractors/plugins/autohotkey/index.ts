@@ -95,11 +95,11 @@ function ahkDataSources(lines: string[]): DataSourceInfo[] {
     if (m) http.add(m[1]!.toLowerCase());
   }
   for (let i = 0; i < lines.length; i++) {
-    const push = (method: string, url: string) => {
-      if (/^(?:https?:\/\/|\/)/.test(url)) out.push({ kind: "api-call", name: `${method} ${url}`, target: url, calls: [], line: i + 1 });
+    const push = (method: string, url: string, column: number) => {
+      if (/^(?:https?:\/\/|\/)/.test(url)) out.push({ kind: "api-call", name: `${method} ${url}`, target: url, calls: [], line: i + 1, column });
     };
-    for (const m of lines[i]!.matchAll(/\b(\w+)\.Open\(\s*["'](\w+)["']\s*,\s*["']([^"']+)["']/gi)) if (http.has(m[1]!.toLowerCase())) push(m[2]!.toUpperCase(), m[3]!);
-    for (const m of lines[i]!.matchAll(/\b(?:Download\(\s*["']|UrlDownloadToFile\s*,\s*)([^"',]+)/gi)) push("GET", m[1]!.trim());
+    for (const m of lines[i]!.matchAll(/\b(\w+)\.Open\(\s*["'](\w+)["']\s*,\s*["']([^"']+)["']/gi)) if (http.has(m[1]!.toLowerCase())) push(m[2]!.toUpperCase(), m[3]!, m.index!);
+    for (const m of lines[i]!.matchAll(/\b(?:Download\(\s*["']|UrlDownloadToFile\s*,\s*)([^"',]+)/gi)) push("GET", m[1]!.trim(), m.index!);
   }
   return out.sort((a, b) => a.line - b.line);
 }
