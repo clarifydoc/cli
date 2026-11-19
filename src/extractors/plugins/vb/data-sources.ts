@@ -56,7 +56,7 @@ function extractComHttpCalls(lines: string[]): DataSourceInfo[] {
     const target = m[2]! + (m[3] ? `{${m[3]}}` : "");
     if (!target.startsWith("/") && !/^https?:/i.test(target)) continue;
     const method = m[1]!.toUpperCase();
-    out.push({ kind: "api-call", name: `${method} ${target}`, target, calls: [], line: i + 1 });
+    out.push({ kind: "api-call", name: `${method} ${target}`, target, calls: [], line: i + 1, column: m.index });
   }
   return out;
 }
@@ -150,6 +150,7 @@ function extractVbHttpClientCalls(lines: string[], _classes: ClassInfo[]): DataS
         target: path,
         calls: [],
         line: i + 1,
+        column: m.index,
       });
     }
   }
