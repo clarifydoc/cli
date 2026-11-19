@@ -13,6 +13,7 @@ import { addRegexMethodValues } from "./method-values-regex.js";
 import { extractGoRoutes, type ClosureCalls } from "./routes.js";
 import { extractHumaRoutes } from "./huma.js";
 import { extractGoDataSources } from "./data-sources.js";
+import { extractGoHttpClientRegistrations } from "./http-clients.js";
 import { extractGoRequestAccess } from "./request-access.js";
 import { extractGoClasses } from "./classes.js";
 import { goAddressedTypes } from "./addressed-types.js";
@@ -227,6 +228,8 @@ export const goSpec: RegexLangSpec = {
   },
   // Package-level string values another package's `config.ApiUri` resolves to (core/module-values.ts).
   extractModuleValues: extractGoModuleValues,
+  // A resty client or URL holder with a stated base: the origin of the requests made through it.
+  extractHttpClientRegistrations: extractGoHttpClientRegistrations,
   // Typed package-level variables (`var first = &Club{}`) a bare name in the file's functions reaches.
   extractModuleBindings: (lines) => goPackageVars(lines).map((v) => ({ name: v.name, type: v.type, line: v.line, exported: false })),
   // Calls naming the endpoint of a request factory (`NewInternalRequest(ctx, reqURL, "POST")`).

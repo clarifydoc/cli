@@ -5,6 +5,7 @@ import { goFunctions, goRequestFactoryRows, servedInProcess } from "./path-arg-c
 import { dbAccessFor, dbVerbTable } from "../shared/db-access.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { extractXormDataSources } from "./xorm.js";
+import { goRegisteredClients } from "./http-clients.js";
 import { daprRow } from "../shared/dapr-pubsub.js";
 
 
@@ -181,6 +182,12 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
   const awsMessaging = lines.some((l) => /"github\.com\/aws\/aws-sdk-go-v2\/service\/(?:sqs|sns)"/.test(l));
   const hasResty = lines.some((l) => /go-resty|resty\.New/.test(l));
   let functions: ReturnType<typeof goFunctions> | undefined;
+  // Clients and URL holders the file gives a base: a request naming one carries it as its `client`.
+  const baseClients = hasResty || lines.some((l) => /\bhttp\./.test(l)) ? goRegisteredClients(lines) : new Set<string>();
+  const restyClient = (text: string): { client?: string } => {
+    const name = /(?:\w+\.)*(\w+)\s*\.R\(\)/.exec(text)?.[1];
+    return name && baseClients.has(name) ? { client: name } : {};
+  };
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
@@ -224,7 +231,7 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
       const rest = restyText.slice(resty.index! + resty[0].length);
       const urlArg = resty[2] ? undefined : /^\s*([A-Za-z_]\w*)\s*[,)]/.exec(rest)?.[1];
       const target = resty[2] ?? (urlArg ? localUrl(lines, verbIdx, urlArg) ?? (constants ??= stringConstants(lines)).get(urlArg) ?? null : concatUrl(rest));
-      sources.push({ kind: "api-call", name: resty[1]!.toUpperCase(), target, calls: [], line: verbIdx + 1 });
+      sources.push({ kind: "api-call", name: resty[1]!.toUpperCase(), target, calls: [], line: verbIdx + 1, ...restyClient(restyText) });
       i = restyEnd;
       continue;
     }
@@ -232,7 +239,7 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
       const rest = line.slice(resty.index! + resty[0].length);
       const urlArg = resty[2] ? undefined : /^\s*([A-Za-z_]\w*)\s*[,)]/.exec(rest)?.[1];
       const target = resty[2] ?? (urlArg ? localUrl(lines, i, urlArg) ?? (constants ??= stringConstants(lines)).get(urlArg) ?? null : concatUrl(rest));
-      sources.push({ kind: "api-call", name: resty[1]!.toUpperCase(), target, calls: [], line: lineNo });
+      sources.push({ kind: "api-call", name: resty[1]!.toUpperCase(), target, calls: [], line: lineNo, ...restyClient(line) });
       continue;
     }
 
@@ -421,6 +428,15 @@ export function extractGoDataSources(lines: string[]): DataSourceInfo[] {
         calls: [],
         line: lineNo,
       });
+    }
+  }
+
+  // A request whose URL starts at a registered holder (`a.baseURL + "/clubs"`) goes through it.
+  if (baseClients.size > 0) {
+    for (const d of sources) {
+      if (d.kind !== "api-call" || d.client) continue;
+      const held = /^\$\{(?:\w+\.)*(\w+)\}/.exec(d.target ?? "")?.[1];
+      if (held && baseClients.has(held)) d.client = held;
     }
   }
 

@@ -1,3 +1,4 @@
+import { extractPythonHttpClientRegistrations } from "./http-clients.js";
 import { DjangoTemplateUrlResolver } from "./django/template-links.js";
 import { DjangoCommandResolver } from "./django/commands.js";
 import { DrfViewSetActionResolver } from "./django/viewset-actions.js";
@@ -211,6 +212,8 @@ export const pythonMeta: LanguagePluginMeta = {
     // providers, `injector` bindings (see di.ts).
     diBindings: (tree, sourceText) => extractPythonDiBindings(tree, sourceText),
     typeAliases: (tree) => extractPythonTypeAliases(tree),
+    // `httpx.Client(base_url=…)` held in a name: the base a request through it reaches (see http-clients.ts).
+    httpClientRegistrations: (tree, sourceText) => extractPythonHttpClientRegistrations(tree, sourceText),
     nameAliases: (tree) => extractPythonNameAliases(tree),
     // A script's or module's own `repo = ClubRepo()` types the calls its top-level statements make.
     topLevelLocalTypes: (tree, sourceText) => pythonTopLevelLocalTypes(tree.rootNode, sourceText),

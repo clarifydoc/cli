@@ -1,4 +1,4 @@
-import type { Node } from "web-tree-sitter";
+import type { Node, Tree } from "web-tree-sitter";
 import { dbAccessFor, dbVerbTable, sqlVerbAccess } from "../shared/db-access.js";
 import type { DataSourceInfo, FileAnalysis, JsonSchemaNode, Language } from "../../../types/analysis.js";
 import { DataSourceExtractor, type ProjectApiCall } from "../../data-sources/base.js";
@@ -7,6 +7,7 @@ import { joinedTableRows, routineCalled, tableFrom } from "../shared/sql-string-
 import { pythonResponseReads } from "./response-reads.js";
 import { pythonWhereFields } from "./arg-origins.js";
 import { escapeRegex } from "../shared/path-utils.js";
+import { extractPythonHttpClientRegistrations, pythonClientKey } from "./http-clients.js";
 import { DAPR_TOPIC_RE, daprRow } from "../shared/dapr-pubsub.js";
 
 export class PythonDataSourceExtractor extends DataSourceExtractor {
@@ -63,6 +64,8 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
   private dapr = false;
   /** The file names urllib: a bare `urlopen(…)` is `urllib.request.urlopen`. */
   private urllib = false;
+  /** Names this file binds to an HTTP client with a stated base (`client`, `self.http`): their requests carry the name as `client`. */
+  private baseClients = new Set<string>();
 
   /** String constants of the module and its classes: `QUEUE = "matches"`, `Queues.TRANSFERS` for `class Queues: TRANSFERS = "transfers"`. */
   private constants = new Map<string, string>();
@@ -78,6 +81,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
     this.urllib = /\burllib2?\b/.test(sourceText);
     this.signatures = new Map();
     this.sourceText = sourceText;
+    this.baseClients = new Set(extractPythonHttpClientRegistrations(tree as Tree, sourceText).map((r) => r.client));
     this.canvas = this.celery || /\b(?:chord|group|chain)\s*\(|\blink(?:_error)?\s*=/.test(sourceText);
     if (sourceText.includes(".s(") || sourceText.includes(".si(") || sourceText.includes(".signature(")) {
       for (const m of sourceText.matchAll(/^[ \t]*([A-Za-z_]\w*)\s*=\s*(?:[A-Za-z_]\w*\.)*([A-Za-z_]\w*)\.(?:s|si|signature)\(/gm)) {
@@ -303,6 +307,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
           const based = http.target ? statedBase(http.target, node) : null;
           // A Locust user's `self.client` sends to the host the run is started against (`--host`,
           // `LOCUST_HOST`): an app path behind a base nobody states here.
+          const receiverKey = this.baseClients.size > 0 && fn!.type === "attribute" ? pythonClientKey(fn!.childForFieldName("object")) : null;
           const locust = !based && /^self\.client\.\w+$/.test(fnName) && /\bfrom\s+locust\b|\bimport\s+locust\b/.test(this.sourceText) && http.target?.startsWith("/");
           sources.push(this.ds({
             kind: "api-call",
@@ -310,6 +315,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
             target: based ? based.target : (http.target ? statedPath(http.target, node) ?? http.target : http.target),
             ...(based ? { baseRef: { kind: "literal" as const, key: based.origin } } : {}),
             ...(locust ? { baseExpr: "self.client" } : {}),
+            ...(receiverKey && this.baseClients.has(receiverKey) ? { client: receiverKey } : {}),
             line: node.startPosition.row + 1,
             ...(body ? { requestBody: body } : {}),
             ...(reads ? { responseReads: reads } : {}),
