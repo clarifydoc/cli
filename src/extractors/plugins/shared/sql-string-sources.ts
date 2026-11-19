@@ -53,6 +53,8 @@ const SQL_START_AT_RE = new RegExp(`^${SQL_START_RE.source}`, "i");
 /** MySQL's statement modifiers, dropped from the verb. */
 const VERB_MODIFIER_RE = /\s+(?:LOW_PRIORITY|DELAYED|HIGH_PRIORITY|QUICK|IGNORE)\b/g;
 
+/** What a bare name is made of: letters (any script), combining marks, digits and `_` — Unicode, so `équipe` and `球员` are names; needs the `u` flag. */
+const NAME_CLASS = String.raw`\p{L}\p{M}\p{N}_`;
 /**
  * A table token: bracketed/quoted/backticked or a bare (possibly dotted) name.
  * A schema written before a quoted name (`"public"."Orders"`, `[dbo].[Users]`,
@@ -61,7 +63,7 @@ const VERB_MODIFIER_RE = /\s+(?:LOW_PRIORITY|DELAYED|HIGH_PRIORITY|QUICK|IGNORE)
  * `rdb$database`, Oracle's `v$session` — but never start with one, so a
  * template hole (`FROM ${table}`) is not a name.
  */
-const TABLE = String.raw`(?:(?:\[[^\]]+\]|"[^"]+"|\x60[^\x60]+\x60|\w+)\.(?=[\["\x60]))?(?:\[([^\]]+)\]|"([^"]+)"|\x60([^\x60]+)\x60|([\w.]+(?:\$[\w.$]*)?))`;
+const TABLE = String.raw`(?:(?:\[[^\]]+\]|"[^"]+"|\x60[^\x60]+\x60|[${NAME_CLASS}]+)\.(?=[\["\x60]))?(?:\[([^\]]+)\]|"([^"]+)"|\x60([^\x60]+)\x60|([${NAME_CLASS}.]+(?:\$[${NAME_CLASS}.$]*)?))`;
 
 /**
  * `FROM`/`JOIN` source. The trailing `(` capture distinguishes a TABLE from a
@@ -74,7 +76,7 @@ const TABLE = String.raw`(?:(?:\[[^\]]+\]|"[^"]+"|\x60[^\x60]+\x60|\w+)\.(?=[\["
  * names columns, never a table); `JOIN FETCH` is JPQL's, and `IS DISTINCT
  * FROM x` compares a value.
  */
-const FROM_JOIN_RE = new RegExp(String.raw`(?<!\bDISTINCT\s+)\b(?:FROM|JOIN(?:\s+FETCH)?|USING)\s+${TABLE}\s*(\()?`, "gi");
+const FROM_JOIN_RE = new RegExp(String.raw`(?<!\bDISTINCT\s+)\b(?:FROM|JOIN(?:\s+FETCH)?|USING)\s+${TABLE}\s*(\()?`, "giu");
 /**
  * Further comma-joined sources after a FROM source and its alias —
  * `FROM PLAYER P, TEAM T WHERE …`, the pre-ANSI join style older code is
@@ -82,15 +84,15 @@ const FROM_JOIN_RE = new RegExp(String.raw`(?<!\bDISTINCT\s+)\b(?:FROM|JOIN(?:\s
  */
 const COMMA_SOURCE_RE = new RegExp(
   String.raw`^\s*(?:(?:AS\s+)?(?!(?:WHERE|JOIN|INNER|LEFT|RIGHT|FULL|CROSS|NATURAL|ORDER|GROUP|ON|UNION|HAVING|LIMIT|FOR|INTO|SET|VALUES|PLAN|ROWS|FETCH|OFFSET)\b)\w+)?\s*,\s*${TABLE}\s*(\()?`,
-  "i",
+  "iu",
 );
 const WRITE_RE = new RegExp(
   String.raw`^(INSERT\s+(?:OR\s+\w+\s+)?(?:(?:LOW_PRIORITY|DELAYED|HIGH_PRIORITY|IGNORE)\s+)*INTO|UPDATE(?:\s+(?:LOW_PRIORITY|IGNORE)\b)*|DELETE\s+(?:(?:LOW_PRIORITY|QUICK|IGNORE)\s+)*FROM|REPLACE\s+(?:(?:LOW_PRIORITY|DELAYED)\s+)?INTO|MERGE\s+INTO|TRUNCATE\s+TABLE|ALTER\s+TABLE)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?${TABLE}`,
-  "i",
+  "iu",
 );
 const CREATE_DROP_RE = new RegExp(
   String.raw`^(CREATE\s+TABLE|DROP\s+TABLE)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?${TABLE}`,
-  "i",
+  "iu",
 );
 
 /**
@@ -98,11 +100,11 @@ const CREATE_DROP_RE = new RegExp(
  * NAME(…)` (anywhere — the phrase is unambiguous), JDBC/ODBC `{call name(?)}`
  * and `CALL name(…)` at the start, and T-SQL `EXEC name @p` at the start.
  */
-const EXECUTE_PROCEDURE_RE = new RegExp(String.raw`\bEXECUTE\s+PROCEDURE\s+${TABLE}`, "i");
-const CALL_RE = new RegExp(String.raw`^\s*\{?\s*CALL\s+${TABLE}\s*\(`, "i");
+const EXECUTE_PROCEDURE_RE = new RegExp(String.raw`\bEXECUTE\s+PROCEDURE\s+${TABLE}`, "iu");
+const CALL_RE = new RegExp(String.raw`^\s*\{?\s*CALL\s+${TABLE}\s*\(`, "iu");
 const EXEC_RE = new RegExp(
   String.raw`^\s*EXEC(?:UTE)?\s+(?!(?:IMMEDIATE|BLOCK|STATEMENT|AS|sp_executesql)\b)(?:@\w+\s*=\s*)?${TABLE}`,
-  "i",
+  "iu",
 );
 
 /**
@@ -341,7 +343,7 @@ const CLAUSE_WORD_RE = /^(?:WHERE|JOIN|INNER|LEFT|RIGHT|FULL|OUTER|CROSS|NATURAL
  */
 function sourceAliases(sql: string): Map<string, string> {
   const out = new Map<string, string>();
-  for (const m of sql.matchAll(new RegExp(String.raw`\b(?:FROM|JOIN|USING)\s+${TABLE}\s+(?:AS\s+)?([A-Za-z_]\w*)`, "gi"))) {
+  for (const m of sql.matchAll(new RegExp(String.raw`\b(?:FROM|JOIN|USING)\s+${TABLE}\s+(?:AS\s+)?([A-Za-z_]\w*)`, "giu"))) {
     const alias = m[5]!;
     const name = captured(m);
     if (name && !CLAUSE_WORD_RE.test(alias)) out.set(alias.toLowerCase(), name);

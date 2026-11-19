@@ -48,7 +48,7 @@ function parseColumnLine(raw: string): PropertyInfo | null {
     return null;
   }
   // `column_name TYPE ...` or `[column_name] TYPE ...` or `"column_name" TYPE ...`
-  const m = line.match(/^(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([A-Za-z_]\w*))\s+/);
+  const m = line.match(/^(?:\[([^\]]+)\]|"([^"]+)"|`([^`]+)`|([\p{L}_][\p{L}\p{M}\p{N}_]*))\s+/u);
   if (!m) return null;
   const name = m[1] ?? m[2] ?? m[3] ?? m[4]!;
   const rest = line.slice(m[0].length).trim();
@@ -188,7 +188,7 @@ export function extractSqlClasses(lines: string[], _fns: FunctionInfo[]): ClassI
       if (!/^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:GLOBAL\s+TEMPORARY\s+|TEMPORARY\s+|TEMP\s+|UNLOGGED\s+)?TABLE\b/i.test(head)) head = line;
     }
     const tableMatch = head.match(
-      /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:GLOBAL\s+TEMPORARY\s+|TEMPORARY\s+|TEMP\s+|UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)/i,
+      /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:GLOBAL\s+TEMPORARY\s+|TEMPORARY\s+|TEMP\s+|UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\p{L}\p{M}\p{N}_$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\p{L}\p{M}\p{N}_$]+))*)/iu,
     );
     if (tableMatch) {
       const fqName = unquoteName(tableMatch[1]!);
@@ -205,7 +205,7 @@ export function extractSqlClasses(lines: string[], _fns: FunctionInfo[]): ClassI
           const prop = parseColumnLine(colLine);
           if (prop) properties.push(prop);
           // FOREIGN KEY (col) REFERENCES other_table → record as "implements"
-          const fk = colLine.match(/REFERENCES\s+((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)/i);
+          const fk = colLine.match(/REFERENCES\s+((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\p{L}\p{M}\p{N}_$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\p{L}\p{M}\p{N}_$]+))*)/iu);
           if (fk) {
             const target = unquoteName(fk[1]!);
             if (!implementsList.includes(target)) implementsList.push(target);
@@ -254,7 +254,7 @@ export function extractSqlClasses(lines: string[], _fns: FunctionInfo[]): ClassI
 
     // CREATE VIEW
     const viewMatch = line.match(
-      /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:MATERIALIZED\s+)?VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\w$]+))*)/i,
+      /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:MATERIALIZED\s+)?VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?((?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\p{L}\p{M}\p{N}_$]+)(?:\.(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\p{L}\p{M}\p{N}_$]+))*)/iu,
     );
     if (viewMatch) {
       const name = unquoteName(viewMatch[1]!);

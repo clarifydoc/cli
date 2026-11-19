@@ -336,3 +336,16 @@ describe("statementAccesses — comma source after a JOIN's ON, T-SQL DELETE ali
     expect(brief("Delete item from cart")).toEqual([]);
   });
 });
+
+describe("tables named with letters outside ASCII", () => {
+  const one = (sql: string) => sources(`cur.execute("${sql}")`).map((r) => [r.name, r.target]);
+  it("names an unquoted accented or CJK table", () => {
+    expect(one("SELECT * FROM 球员 WHERE id=1")).toEqual([["SELECT", "球员"]]);
+    expect(one("INSERT INTO équipe (id) VALUES (1)")).toEqual([["INSERT INTO", "équipe"]]);
+    expect(one("SELECT 1 FROM club c JOIN équipe_été e ON e.id = c.id")).toEqual([["SELECT", "club"], ["SELECT", "équipe_été"]]);
+  });
+  it("reads no table out of prose", () => {
+    expect(one("sélection de l'équipe")).toEqual([]);
+    expect(one("Sélectionnez une équipe from the list")).toEqual([]);
+  });
+});

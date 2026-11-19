@@ -991,6 +991,18 @@ describe("symbol-linker — explicit interface implementations", () => {
     const links = callsFrom(buildSymbolLinks([scout, analyst, coach, runner]), "src/Runner.cs");
     expect(links.map((l) => [l.callName, l.targetLine])).toEqual([["scout.Report", 5], ["analyst.Report", 9]]);
   });
+
+  it("sends a class-typed call to the public member, the interface-typed one to the explicit member", () => {
+    const car = file("src/ICar.cs", [cls("ICar", { kind: "interface", methods: [method("Start", [], [], 2)] })], { language: "csharp" });
+    for (const order of ["public-first", "explicit-first"]) {
+      const pub = method("Start", [], [], order === "public-first" ? 4 : 8);
+      const explicit = { ...method("Start", [], [], order === "public-first" ? 8 : 4), explicitInterface: "ICar" } as ReturnType<typeof method>;
+      const vehicle = file("src/Car.cs", [cls("Car", { implements: ["ICar"], methods: order === "public-first" ? [pub, explicit] : [explicit, pub] })], { language: "csharp" });
+      const garage = file("src/Garage.cs", [cls("Garage", { methods: [method("Go", [call("a.Start"), call("b.Start")], [param("a", "ICar"), param("b", "Car")], 3)] })], { language: "csharp" });
+      const links = callsFrom(buildSymbolLinks([car, vehicle, garage]), "src/Garage.cs");
+      expect(links.map((l) => [l.callName, l.targetLine]), order).toEqual([["a.Start", explicit.line], ["b.Start", pub.line]]);
+    }
+  });
 });
 
 describe("spec join to an implementing class method (generated interface absent)", () => {

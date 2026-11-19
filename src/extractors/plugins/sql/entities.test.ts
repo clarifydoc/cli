@@ -70,3 +70,15 @@ GO`.split("\n"));
     ]);
   });
 });
+
+describe("SQL schema operations on names outside ASCII", () => {
+  it("reads unquoted accented and CJK table names, columns and references", () => {
+    const ops = schemaOpsOf([
+      "CREATE TABLE 球员 (id INT PRIMARY KEY, équipe_id INT REFERENCES équipe(id));",
+      "ALTER TABLE équipe ADD COLUMN nom_court text;",
+    ]).map((o) => [o.op, o.table, o.column ?? "", o.to ?? ""].join(" ").trim());
+    expect(ops).toContain("create-table 球员");
+    expect(ops).toContain("add-foreign-key 球员 équipe_id équipe");
+    expect(ops).toContain("add-column équipe nom_court");
+  });
+});

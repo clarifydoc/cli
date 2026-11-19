@@ -58,6 +58,8 @@ interface SymbolDef {
   classLevel?: true;
   /** `FunctionInfo.returnsInstance`: its `self` return is an instance of the receiver's class. */
   returnsInstance?: true;
+  /** Every definition of the name is an explicit interface implementation (`FunctionInfo.explicitInterface`): no class-typed receiver reaches it. */
+  explicitOnly?: true;
   /**
    * Position of the parameter whose declared type the function returns as written (`identity<T>(c: T): T`):
    * a call hands back the type of that argument when the written type names no class.
@@ -995,17 +997,23 @@ function buildSymbolIndex(
 
       for (const method of cls.methods) {
         const qualified = `${cls.name}.${method.name}`;
-        const prev = fileSymbols.get(qualified);
+        const seen = fileSymbols.get(qualified);
+        // What an explicit interface implementation stored first is not an overload of the class's own member.
+        const prev = seen?.explicitOnly && !method.explicitInterface ? undefined : seen;
         // A class-level member beside an instance one of its name (a Kotlin companion's `foo` and the
         // class's own): the instance one answers `x.foo()`, the class-level one `X.foo()` (`X.self.foo`).
         if (method.classLevel && prev && !prev.classLevel && prev.line !== method.line) {
           fileSymbols.set(`${cls.name}.self.${method.name}`, { name: qualified, line: method.line, endLine: method.endLine, classLevel: true });
           continue;
         }
+        // An explicit interface implementation shares its name with the class's own member: the member a
+        // class-typed receiver reaches is the latter, whichever line comes first.
+        if (method.explicitInterface && prev && !prev.explicitOnly) continue;
         fileSymbols.set(qualified, {
           name: qualified,
           line: method.line,
           endLine: method.endLine,
+          ...(method.explicitInterface ? { explicitOnly: true as const } : {}),
           returnType: overloadReturn(prev, method.returnType),
           ...(method.declaredReturnType && !prev ? { declaredReturn: method.declaredReturnType } : {}),
           ...(method.classLevel && (!prev || prev.classLevel) ? { classLevel: true as const } : {}),
@@ -1014,11 +1022,13 @@ function buildSymbolIndex(
         // Also store unqualified as fallback (if not already taken by a function). A constructor
         // its name does not mark (Dart's `Event.openPage`) is reached through its type only: by its
         // bare name it would be a candidate for every `x.openPage()` on a value.
-        if (!fileSymbols.has(method.name) && !method.isConstructor) {
+        const bare = fileSymbols.get(method.name);
+        if ((!bare || (bare.explicitOnly && !method.explicitInterface && bare.name === qualified)) && !method.isConstructor) {
           fileSymbols.set(method.name, {
             name: qualified,
             line: method.line,
             endLine: method.endLine,
+            ...(method.explicitInterface ? { explicitOnly: true as const } : {}),
           });
         }
       }

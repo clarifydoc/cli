@@ -95,7 +95,7 @@ const DIALECT_RANK = new Map(["postgresql", "postgres", "pg", "mysql", "mariadb"
 // ─── Per file: the schema changes a script states ───────────────────────────
 
 /** One name part, bare or quoted in any dialect's quotes. */
-const IDENT_PART = String.raw`(?:\[[^\]]+\]|"[^"]+"|` + "`[^`]+`" + String.raw`|[\w$]+)`;
+const IDENT_PART = String.raw`(?:\[[^\]]+\]|"[^"]+"|` + "`[^`]+`" + String.raw`|[\p{L}\p{M}\p{N}_$]+)`;
 /** A name, schema-qualified or not: `accounting."order"`, `[dbo].[Match]`, `league.club`. */
 const IDENT = String.raw`(?:${IDENT_PART}(?:\.${IDENT_PART})*)`;
 const unquote = (s: string): string => s.replace(/[[\]"`]/g, "");
@@ -163,7 +163,7 @@ const NOT_A_COLUMN = /^(?:CONSTRAINT|PRIMARY|FOREIGN|UNIQUE|CHECK|INDEX|KEY|FULL
 export function schemaOpsOf(lines: string[]): SchemaOp[] {
   const ops: SchemaOp[] = [];
   for (const { text, line } of statements(lines)) {
-    const create = new RegExp(String.raw`^CREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:GLOBAL\s+)?(?:TEMPORARY|TEMP)\s+|UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(${IDENT})`, "i").exec(text);
+    const create = new RegExp(String.raw`^CREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:GLOBAL\s+)?(?:TEMPORARY|TEMP)\s+|UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(${IDENT})`, "iu").exec(text);
     if (create) {
       const table = unquote(create[1]!);
       ops.push({ op: "create-table", table, line });
@@ -171,10 +171,10 @@ export function schemaOpsOf(lines: string[]): SchemaOp[] {
       const close = open >= 0 ? matchingParen(text, open) : -1;
       for (const el of open >= 0 && close > open ? actions(text.slice(open + 1, close)) : []) {
         const e = el.replace(/\s+/g, " ").trim();
-        const ref = new RegExp(String.raw`\bREFERENCES\s+(${IDENT})`, "i").exec(e);
+        const ref = new RegExp(String.raw`\bREFERENCES\s+(${IDENT})`, "iu").exec(e);
         if (!ref) continue;
-        const tableFk = new RegExp(String.raw`^(?:CONSTRAINT\s+${IDENT}\s+)?FOREIGN\s+KEY\s*\(\s*(${IDENT})`, "i").exec(e);
-        const col = tableFk ? tableFk[1]! : NOT_A_COLUMN.test(e) ? null : new RegExp(String.raw`^(${IDENT})`).exec(e)?.[1];
+        const tableFk = new RegExp(String.raw`^(?:CONSTRAINT\s+${IDENT}\s+)?FOREIGN\s+KEY\s*\(\s*(${IDENT})`, "iu").exec(e);
+        const col = tableFk ? tableFk[1]! : NOT_A_COLUMN.test(e) ? null : new RegExp(String.raw`^(${IDENT})`, "u").exec(e)?.[1];
         if (col) ops.push({ op: "add-foreign-key", table, column: unquote(col), to: unquote(ref[1]!), line });
       }
       continue;
@@ -185,33 +185,33 @@ export function schemaOpsOf(lines: string[]): SchemaOp[] {
       for (const t of drop[1]!.split(",")) ops.push({ op: "drop-table", table: unquote(t.trim()), line });
       continue;
     }
-    const renameTable = new RegExp(String.raw`^RENAME\s+TABLE\s+(${IDENT})\s+TO\s+(${IDENT})`, "i").exec(text);
+    const renameTable = new RegExp(String.raw`^RENAME\s+TABLE\s+(${IDENT})\s+TO\s+(${IDENT})`, "iu").exec(text);
     if (renameTable) {
       ops.push({ op: "rename-table", table: unquote(renameTable[1]!), to: unquote(renameTable[2]!), line });
       continue;
     }
-    const alter = new RegExp(String.raw`^ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(${IDENT})\s+([\s\S]+)$`, "i").exec(text);
+    const alter = new RegExp(String.raw`^ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(${IDENT})\s+([\s\S]+)$`, "iu").exec(text);
     if (!alter) continue;
     const table = unquote(alter[1]!);
     for (const act of actions(alter[2]!)) {
       const a = act.replace(/\s+/g, " ").trim();
       let m: RegExpExecArray | null;
-      if ((m = new RegExp(String.raw`^RENAME\s+TO\s+(${IDENT})`, "i").exec(a))) {
+      if ((m = new RegExp(String.raw`^RENAME\s+TO\s+(${IDENT})`, "iu").exec(a))) {
         ops.push({ op: "rename-table", table, to: unquote(m[1]!), line });
-      } else if ((m = new RegExp(String.raw`^RENAME\s+(?:COLUMN\s+)?(${IDENT})\s+TO\s+(${IDENT})`, "i").exec(a))) {
+      } else if ((m = new RegExp(String.raw`^RENAME\s+(?:COLUMN\s+)?(${IDENT})\s+TO\s+(${IDENT})`, "iu").exec(a))) {
         ops.push({ op: "rename-column", table, column: unquote(m[1]!), to: unquote(m[2]!), line });
-      } else if ((m = new RegExp(String.raw`^CHANGE\s+(?:COLUMN\s+)?(${IDENT})\s+(${IDENT})`, "i").exec(a))) {
+      } else if ((m = new RegExp(String.raw`^CHANGE\s+(?:COLUMN\s+)?(${IDENT})\s+(${IDENT})`, "iu").exec(a))) {
         if (unquote(m[1]!) !== unquote(m[2]!)) ops.push({ op: "rename-column", table, column: unquote(m[1]!), to: unquote(m[2]!), line });
-      } else if ((m = new RegExp(String.raw`^ADD\s+(?:CONSTRAINT\s+${IDENT}\s+)?FOREIGN\s+KEY\s*\(\s*(${IDENT})[^)]*\)\s*REFERENCES\s+(${IDENT})`, "i").exec(a))) {
+      } else if ((m = new RegExp(String.raw`^ADD\s+(?:CONSTRAINT\s+${IDENT}\s+)?FOREIGN\s+KEY\s*\(\s*(${IDENT})[^)]*\)\s*REFERENCES\s+(${IDENT})`, "iu").exec(a))) {
         ops.push({ op: "add-foreign-key", table, column: unquote(m[1]!), to: unquote(m[2]!), line });
       } else if ((m = /^ADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(.+)$/i.exec(a)) && !NOT_A_COLUMN.test(m[1]!)) {
-        const def = new RegExp(String.raw`^(${IDENT})\s*([^\s(]+(?:\([^)]*\))?)?`).exec(m[1]!.replace(/^\(\s*|\s*\)$/g, ""));
+        const def = new RegExp(String.raw`^(${IDENT})\s*([^\s(]+(?:\([^)]*\))?)?`, "u").exec(m[1]!.replace(/^\(\s*|\s*\)$/g, ""));
         if (!def) continue;
         const column = unquote(def[1]!);
         ops.push({ op: "add-column", table, column, type: def[2] ?? null, line });
-        const ref = new RegExp(String.raw`\bREFERENCES\s+(${IDENT})`, "i").exec(m[1]!);
+        const ref = new RegExp(String.raw`\bREFERENCES\s+(${IDENT})`, "iu").exec(m[1]!);
         if (ref) ops.push({ op: "add-foreign-key", table, column, to: unquote(ref[1]!), line });
-      } else if ((m = new RegExp(String.raw`^DROP\s+(?:COLUMN\s+)?(?:IF\s+EXISTS\s+)?(${IDENT})`, "i").exec(a)) && !/^DROP\s+(?:CONSTRAINT|INDEX|KEY|PRIMARY|FOREIGN|DEFAULT|CHECK)\b/i.test(a)) {
+      } else if ((m = new RegExp(String.raw`^DROP\s+(?:COLUMN\s+)?(?:IF\s+EXISTS\s+)?(${IDENT})`, "iu").exec(a)) && !/^DROP\s+(?:CONSTRAINT|INDEX|KEY|PRIMARY|FOREIGN|DEFAULT|CHECK)\b/i.test(a)) {
         ops.push({ op: "drop-column", table, column: unquote(m[1]!), line });
       }
     }

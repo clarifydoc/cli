@@ -405,3 +405,15 @@ $$;`);
     expect(out.seed_league!.calls).toEqual(["make_kit", "recalc_table", "club_log"]);
   });
 });
+
+describe("SQL tables named with letters outside ASCII", () => {
+  it("reads unquoted accented and CJK names as tables, with their foreign keys, beside an ASCII one", () => {
+    const classes = sqlSpec.extractClasses!(
+      "CREATE TABLE équipe (id INT PRIMARY KEY);\nCREATE TABLE 球员 (id INT PRIMARY KEY, équipe_id INT REFERENCES équipe(id), nom_complet TEXT);\nCREATE TABLE club (id INT PRIMARY KEY);".split("\n"),
+      [],
+    );
+    expect(classes.map((c) => c.name)).toEqual(["équipe", "球员", "club"]);
+    expect(classes[1]!.implements).toEqual(["équipe"]);
+    expect(classes[1]!.properties.map((p) => p.name)).toEqual(["id", "équipe_id", "nom_complet"]);
+  });
+});
