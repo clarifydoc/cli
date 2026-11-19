@@ -3,6 +3,7 @@ import type { RouteInfo, RouteParamInfo } from "../../../../types/analysis.js";
 import { extractCalls } from "../../../shared/call-graph.js";
 import { applyRouteMeta } from "../../../shared/route-metadata.js";
 import { escapeRegex } from "../../shared/path-utils.js";
+import { joinRootedPath } from "../../../shared/route-paths.js";
 
 /**
  * Javalin and Spark (sparkjava) — the two Java micro-frameworks whose routes
@@ -143,10 +144,8 @@ function lambdaOf(a: Node): { param: string | null; body: Node } | null {
   return null;
 }
 
-const joinPath = (prefixes: readonly string[], path: string): string => {
-  const parts = [...prefixes, path].map((p) => p.replace(/^\/+|\/+$/g, "")).filter(Boolean);
-  return ("/" + parts.join("/")).replace(/<([^>]+)>/g, "{$1}");
-};
+const joinPath = (prefixes: readonly string[], path: string): string =>
+  joinRootedPath([...prefixes, path], { collapse: false }).replace(/<([^>]+)>/g, "{$1}");
 
 export function extractJavalinSparkRoutes(root: Node, sourceText: string, routes: RouteInfo[]): void {
   const framework: Framework | null = /\bio\.javalin\b/.test(sourceText) ? "javalin" : /\bspark\.Spark\b|import\s+(?:static\s+)?spark\.\*/.test(sourceText) ? "spark" : null;
