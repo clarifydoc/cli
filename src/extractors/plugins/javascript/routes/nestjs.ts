@@ -6,6 +6,7 @@ import { stripQuotes } from "../../../shared/node-helpers.js";
 import { applyRouteMeta, boundParam, guardMiddlewareCalls, inferredParam, withInheritedGuards, type GuardAttr } from "../../../shared/route-metadata.js";
 import { collectClassGuardFacts, inheritedClassGuards } from "../../shared/class-guards.js";
 import { CONSTANT_REF } from "./path-helpers.js";
+import { joinRootedPath } from "../../../shared/route-paths.js";
 
 /**
  * NestJS decorator routing.
@@ -263,10 +264,7 @@ function controllerScope(classBody: Node): ControllerScope {
 }
 
 /** `users` + `:id` → `/users/:id`; empty parts collapse to `/`. */
-function joinPath(prefix: string, path: string): string {
-  const parts = [prefix, path].map((p) => p.replace(/^\/+|\/+$/g, "")).filter((p) => p.length > 0);
-  return "/" + parts.join("/");
-}
+const joinPath = (prefix: string, path: string): string => joinRootedPath([prefix, path], { collapse: false });
 
 /** The decorator run this decorator belongs to (contiguous decorator siblings) and the method after it. */
 function decoratorRun(dec: Node): { decorators: Node[]; method: Node | null } {
