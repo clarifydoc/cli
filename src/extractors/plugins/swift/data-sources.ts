@@ -145,10 +145,11 @@ export function extractSwiftDataSources(lines: string[]): DataSourceInfo[] {
       // `AF.request(url, method: .post)` names its method; without one Alamofire sends GET.
       const stated = http[1] === "request" ? /\bmethod:\s*(?:HTTPMethod)?\.(\w+)|\bmethod:\s*HTTPMethod\(\s*rawValue:\s*"(\w+)"/.exec(line.slice(http.index! + http[0].length)) : null;
       const verb = http[1] === "request" ? (stated?.[1] ?? stated?.[2] ?? "get").toUpperCase() : http[1]!.toUpperCase();
-      sources.push({ kind: "api-call", name: verb, target: http[2]!, calls: [], line: lineNo });
+      sources.push({ kind: "api-call", name: verb, target: http[2]!, calls: [], line: lineNo, column: http.index! });
       continue;
     }
-    if (URLSESSION_RE.test(line) && (hasURLSession ||= lines.some((l) => /URLSession/.test(l)))) {
+    const session = URLSESSION_RE.exec(line);
+    if (session && (hasURLSession ||= lines.some((l) => /URLSession/.test(l)))) {
       const inline = line.match(URL_LITERAL_RE)?.[1] ?? null;
       const sent = urlSessionRequest(lines, i);
       sources.push({
@@ -157,6 +158,7 @@ export function extractSwiftDataSources(lines: string[]): DataSourceInfo[] {
         target: inline ?? sent.target,
         calls: [],
         line: lineNo,
+        column: session.index,
       });
       continue;
     }
