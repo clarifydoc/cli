@@ -14,13 +14,13 @@ export function extractHaxeDataSources(lines: string[], _classes: ClassInfo[]): 
   const out = extractSqlStringDataSources(sqlLines);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
-    const push = (method: string, url: string) => {
+    const push = (method: string, url: string, column: number) => {
       const target = url.replace(/\$\{?(\w+)\}?/g, "{$1}");
-      if (/^(?:https?:\/\/|\/)/.test(target)) out.push({ kind: "api-call", name: `${method} ${target}`, target, calls: [], line: i + 1 });
+      if (/^(?:https?:\/\/|\/)/.test(target)) out.push({ kind: "api-call", name: `${method} ${target}`, target, calls: [], line: i + 1, column });
     };
-    for (const m of line.matchAll(/new\s+(?:haxe\.|sys\.)?Http\s*\(\s*["']([^"']+)["']/g)) push(/\.request\s*\(\s*true\s*\)/.test(lines.slice(i, i + 6).join(" ")) ? "POST" : "GET", m[1]!);
-    for (const m of line.matchAll(/\bHttp\.requestUrl\s*\(\s*["']([^"']+)["']/g)) push("GET", m[1]!);
-    for (const m of line.matchAll(/\bfetch\s*\(\s*["']([^"']+)["'](?:\s*,\s*\{[^}]*method\s*:\s*["'](\w+)["'])?/g)) push((m[2] ?? "GET").toUpperCase(), m[1]!);
+    for (const m of line.matchAll(/new\s+(?:haxe\.|sys\.)?Http\s*\(\s*["']([^"']+)["']/g)) push(/\.request\s*\(\s*true\s*\)/.test(lines.slice(i, i + 6).join(" ")) ? "POST" : "GET", m[1]!, m.index!);
+    for (const m of line.matchAll(/\bHttp\.requestUrl\s*\(\s*["']([^"']+)["']/g)) push("GET", m[1]!, m.index!);
+    for (const m of line.matchAll(/\bfetch\s*\(\s*["']([^"']+)["'](?:\s*,\s*\{[^}]*method\s*:\s*["'](\w+)["'])?/g)) push((m[2] ?? "GET").toUpperCase(), m[1]!, m.index!);
   }
   return out.sort((a, b) => a.line - b.line);
 }
