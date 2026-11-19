@@ -20,10 +20,10 @@ const bindings = (src: string) => extractRubyDiBindings(src.replace(/^\n/, "").s
 describe("Ruby parameters", () => {
   it("types a parameter by its constructing default and keeps the old names", () => {
     expect(parseRubyParam("repo: PlayerRepo.new")).toEqual({ name: "repo", type: "PlayerRepo", defaultValue: "PlayerRepo.new" });
-    expect(parseRubyParam("repo = ::Repos::SqlPlayerRepo.new(db)")).toEqual({ name: "repo", type: "Repos::SqlPlayerRepo", defaultValue: "::Repos::SqlPlayerRepo.new(db)" });
+    expect(parseRubyParam("repo = ::Repos::SqlPlayerRepo.new(db)")).toEqual({ name: "repo", type: "Repos::SqlPlayerRepo", defaultValue: "::Repos::SqlPlayerRepo.new(db)", argumentLabel: "_" });
     expect(parseRubyParam("repo:")).toEqual({ name: "repo", type: null, defaultValue: null });
-    expect(parseRubyParam("repo = build_repo")).toEqual({ name: "repo", type: null, defaultValue: "build_repo" });
-    expect(parseRubyParam("opts = {}")).toEqual({ name: "opts", type: null, defaultValue: "{}" });
+    expect(parseRubyParam("repo = build_repo")).toEqual({ name: "repo", type: null, defaultValue: "build_repo", argumentLabel: "_" });
+    expect(parseRubyParam("opts = {}")).toEqual({ name: "opts", type: null, defaultValue: "{}", argumentLabel: "_" });
     expect(parseRubyParam("*args")?.name).toBe("*args");
     expect(parseRubyParam("&block")?.name).toBe("&block");
     expect(parseRubyParam("...")?.name).toBe("...");

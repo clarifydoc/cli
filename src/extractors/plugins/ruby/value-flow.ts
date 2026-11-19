@@ -345,9 +345,13 @@ class Reader {
     splitTopLevel(argsText).forEach((raw, index) => {
       const text = raw.trim();
       // A block argument (`&m`) binds the callee's `&blk` formal, which a written index cannot name: not stated.
-      if (text === "" || text.startsWith("*") || text.startsWith("&") || /^[a-z_]\w*:\s/.test(text) || /=>/.test(text)) return;
-      const from = this.cellFor(text, line);
-      if (from) this.facts.push({ kind: "arg", call, line, index, from });
+      if (text === "" || text.startsWith("*") || text.startsWith("&") || /=>/.test(text)) return;
+      // `schedule(callback: method(:on_full_time))`: the value binds the keyword formal of that name (a positional
+      // formal of the same name is not one, `ParamInfo.argumentLabel`), never one by position.
+      const kw = /^([a-z_]\w*):\s+([\s\S]+)$/.exec(text);
+      const from = this.cellFor(kw ? kw[2]!.trim() : text, line);
+      if (!from) return;
+      this.facts.push(kw ? { kind: "arg", call, line, index: -1, name: kw[1]!, from } : { kind: "arg", call, line, index, from });
     });
   }
 

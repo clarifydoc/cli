@@ -557,3 +557,43 @@ describe("Ruby value flow: do … end closures held in a value", () => {
     expect(flow).toEqual(["Club.run@26 cb.call -> club.rb::Club.kick_off"]);
   });
 });
+
+describe("Ruby value flow: keyword arguments", () => {
+  it("binds a keyword argument to the keyword formal of that name, never by position or to a positional one", async () => {
+    const { flow } = await links({
+      "club.rb": rb(
+        "class Club",
+        "  def on_full_time; end",
+        "  def on_kickoff; end",
+        "  def on_whistle; end",
+        "  def plan",
+        "    schedule(when: 1, callback: method(:on_full_time))",
+        "    schedule_late(callback: method(:on_kickoff), when: 2)",
+        "    options(callback: method(:on_whistle))",
+        "    positional(callback: method(:on_whistle))",
+        "    nothing(unknown: method(:on_whistle))",
+        "  end",
+        "  def schedule(when: nil, callback: nil)",
+        "    callback.call",
+        "  end",
+        "  def schedule_late(when: nil, callback: nil)",
+        "    callback.call",
+        "  end",
+        "  def options(opts = {})",
+        "    opts.call",
+        "  end",
+        "  def positional(callback = nil)",
+        "    callback.call",
+        "  end",
+        "  def nothing(callback: nil)",
+        "    callback.call",
+        "  end",
+        "end",
+      ),
+    });
+    expect(flow).toEqual([
+      "Club.schedule@13 callback.call -> club.rb::Club.on_full_time",
+      "Club.schedule_late@16 callback.call -> club.rb::Club.on_kickoff",
+    ]);
+  });
+});

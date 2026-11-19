@@ -76,7 +76,10 @@ export function parseRubyParam(text: string): ParamInfo | null {
   const m = /^([a-z_]\w*)\s*(?::(?!:)\s*([\s\S]*)|=\s*([\s\S]+))?$/.exec(t);
   if (!m) return null;
   const value = (m[2] ?? m[3])?.trim() || null;
-  return { name: m[1]!, type: value ? constructedClass(value) : null, defaultValue: value };
+  const param: ParamInfo = { name: m[1]!, type: value ? constructedClass(value) : null, defaultValue: value };
+  // A call writes `name:` only for a keyword parameter; a positional one (`name`, `name = x`) is never named.
+  if (m[2] === undefined) param.argumentLabel = "_";
+  return param;
 }
 
 /**
