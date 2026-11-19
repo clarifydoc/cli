@@ -109,6 +109,8 @@ export function extractWithRegex(
   if (diBindings && diBindings.length > 0) analysis.diBindings = diBindings;
   const addressed = spec.extractAddressedTypes?.(lines);
   if (addressed && addressed.length > 0) analysis.addressedTypes = addressed;
+  const testSuites = spec.extractTestSuites?.(lines);
+  if (testSuites && testSuites.length > 0) analysis.testSuites = testSuites;
   const typeAliases = spec.extractTypeAliases?.(lines);
   if (typeAliases && typeAliases.length > 0) analysis.typeAliases = typeAliases;
   const macros = spec.extractMacros?.(lines, analysis);

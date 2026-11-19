@@ -696,6 +696,12 @@ export interface FileAnalysis {
    */
   addressedTypes?: string[];
   /**
+   * Test suites the file runs through a runner function — the suite's type and the top-level test that runs it
+   * (Go testify: `suite.Run(t, new(GarageSuite))` in `TestGarageSuite`). A runner that selects a suite's methods
+   * by name takes it from here (`ProjectAnalysis.testSuites`). Omitted where the file states none.
+   */
+  testSuites?: Array<{ type: string; runner: string }>;
+  /**
    * Type aliases the file declares (TypeScript `type Repo = ClubRepository`,
    * Go `type Repo = store.ClubRepo`, C# `using Repo = League.ClubRepository;`,
    * Rust `type Repo = Arc<dyn ClubStore>;`, Python `Repo = ClubRepository` /
@@ -5339,6 +5345,8 @@ export interface ProjectAnalysis {
    * by its title (core/test-functions.ts).
    */
   testFunctions?: Record<string, TestFunctionRow[]>;
+  /** Test file → suite type → the runner function that runs it (`FileAnalysis.testSuites`); files stating none are left out. */
+  testSuites?: Record<string, Record<string, string>>;
   /** Other tools' SARIF this analysis joined (`--import-sarif`): results read, and how many landed on analyzed files. */
   importedFindings?: Array<{ source: string; tool: string; results: number; matched: number }>;
 

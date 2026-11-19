@@ -1222,6 +1222,8 @@ export interface TestTarget {
    * runner filtering by line takes, `rspec spec/club_spec.rb:12`). Absent when none is marked.
    */
   cases?: Array<{ path: string[]; line: number; hook?: true }>;
+  /** Suite types the file runs → the runner function that runs each (`FileAnalysis.testSuites`). Absent when none is stated. */
+  suites?: Record<string, string>;
 }
 
 /** What a test command is built from besides the tests: the project's packages and the manifests declaring them. */

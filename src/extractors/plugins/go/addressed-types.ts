@@ -9,7 +9,7 @@
 const IDENT = "[A-Za-z_]\\w*";
 
 /** Code with comments and string literals blanked, line by line (block comments and raw strings across lines). */
-function code(lines: readonly string[]): string[] {
+export function code(lines: readonly string[]): string[] {
   const out: string[] = [];
   let block = false;
   let raw = false;

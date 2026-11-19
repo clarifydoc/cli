@@ -29,6 +29,13 @@ export function collectTestFunctions(analyses: readonly FileAnalysis[]): Record<
   return out;
 }
 
+/** Test file → suite type → the runner function running it (`FileAnalysis.testSuites`). */
+export function collectTestSuites(analyses: readonly FileAnalysis[]): Record<string, Record<string, string>> {
+  const out: Record<string, Record<string, string>> = {};
+  for (const a of analyses) if (a.testSuites?.length) out[a.filePath] = Object.fromEntries(a.testSuites.map((s) => [s.type, s.runner]));
+  return out;
+}
+
 /**
  * Test file → the project files it replaces with a test double (`ProjectAnalysis.mockedModules`):
  * each `FileAnalysis.mockedModules` specifier resolved to the one project file it names, as a

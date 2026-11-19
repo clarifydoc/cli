@@ -993,7 +993,8 @@ function testCommandsFor(summary: ProjectAnalysis, tests: readonly TestTarget[])
       // A helper only tests call is reached in turn by the cases calling it.
       return row && row.kind !== "helper" ? [{ path: testFilterPath(row), line: row.line, ...(row.kind === "hook" ? { hook: true as const } : {}) }] : [];
     });
-    const t: TestTarget = cases.length ? { ...target, cases } : target;
+    const suites = summary.testSuites?.[target.file];
+    const t: TestTarget = { ...target, ...(cases.length ? { cases } : {}), ...(suites ? { suites } : {}) };
     const language = EXTENSION_TO_LANGUAGE[t.file.slice(t.file.lastIndexOf(".")).toLowerCase()];
     if (!language) continue;
     (byLanguage.get(language) ?? byLanguage.set(language, []).get(language)!).push(t);

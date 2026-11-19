@@ -17,6 +17,7 @@ import { extractGoHttpClientRegistrations } from "./http-clients.js";
 import { extractGoRequestAccess } from "./request-access.js";
 import { extractGoClasses, hideShadowedTypes } from "./classes.js";
 import { goAddressedTypes } from "./addressed-types.js";
+import { goTestSuites } from "./test-suites.js";
 import { extractGoDiBindings } from "./di-bindings.js";
 import { extractGoTypeAliases } from "./type-aliases.js";
 import { thriftHandlerFacts } from "../shared/thrift-handlers.js";
@@ -203,6 +204,7 @@ export const goSpec: RegexLangSpec = {
   extractDiBindings: (lines) => extractGoDiBindings(lines),
   extractTypeAliases: extractGoTypeAliases,
   extractAddressedTypes: goAddressedTypes,
+  extractTestSuites: goTestSuites,
   // Scheduled jobs: entry points a clock runs.
   extractEntryPoints: (lines) => extractGoScheduledJobs(lines),
 
