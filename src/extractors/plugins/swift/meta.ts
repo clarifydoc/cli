@@ -3,6 +3,7 @@ import { extendRegexControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { swiftSpec } from "./index.js";
 import { swiftPackages } from "./packages.js";
+import { swiftTupleElements } from "./tuple-elements.js";
 import { swiftManifest } from "./manifest.js";
 import { swiftRequestSchema } from "./request-schema.js";
 import { swiftReachability } from "./reachability.js";
@@ -49,6 +50,8 @@ export const swiftMeta: LanguagePluginMeta = {
   builtinTypes: SWIFT_BUILTINS,
   // `var club: Optional<Club>` is the `Club?` spelled long: `club?.save()` and `club!.save()` reach `Club.save`.
   transparentTypeWrappers: ["Optional"],
+  // `let (club, player) = load()` over a declared `(Club, Player)` / `(club: Club, player: Player)`.
+  tupleElementsOf: swiftTupleElements,
   requestSchema: swiftRequestSchema,
   // SwiftData @Model and Core Data NSManagedObject classes (see entities.ts).
   entities: new SwiftEntityExtractor(),

@@ -1,6 +1,7 @@
 import type { CallInfo, DiBinding, FunctionInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { CallPattern } from "../shared/regex-base.js";
 import { blankStringLiterals } from "../shared/regex-base.js";
+import { swiftTupleElements } from "./tuple-elements.js";
 import { callFrom, declaredTypes, settleAnonymousReceivers, swiftFlowLocals, uniqueLocals } from "./local-flow.js";
 import { codeOf, splitArgs, closeOf, continuedBelow, statementsWithLine } from "../shared/code-lines.js";
 export { continuedBelow };
@@ -407,6 +408,31 @@ function reassigned(bodyLines: string[], name: string): boolean {
 
 const LOCAL_RE = /^\s*(?:(?:if|guard|while)\s+)?(?:let|var)\s+([a-zA-Z_]\w*)\s*(?::\s*([^=]+?))?\s*(?:=\s*(.+?))?\s*(?:\belse\s*\{.*|\{\s*)?$/;
 
+/** `let (club, player) = load()`, `var (a, _): (Club, Player) = load()`: a tuple pattern, its annotation, its initializer. */
+const TUPLE_LOCAL_RE = /^\s*(?:let|var)\s*\(([^()]*)\)\s*(?::\s*([^=]+?))?\s*=\s*(.+?)\s*$/;
+
+/**
+ * The locals a tuple pattern binds: each plain name at its position is typed by the annotation's element, else a
+ * local of the initializer call's result at that index (`fromIndex`), which the linker types through the tuple the
+ * function declares. A wildcard or a nested pattern only takes up a position.
+ */
+function tupleLocals(names: string, annotation: string | undefined, init: string): NonNullable<FunctionInfo["localTypes"]> {
+  const out: NonNullable<FunctionInfo["localTypes"]> = [];
+  const declared = annotation ? swiftTupleElements(annotation) : null;
+  if (annotation && !declared) return out;
+  const call = declared ? null : callFrom(init, true);
+  if (!declared && !call) return out;
+  names.split(",").forEach((raw, index) => {
+    const name = raw.trim();
+    if (!/^[a-z_]\w*$/.test(name) || name === "_") return;
+    const element = declared?.[index];
+    if (declared) {
+      if (element && /^[A-Z]/.test(element)) out.push({ name, type: element });
+    } else if (call) out.push({ name, type: "", ...call, fromIndex: index });
+  });
+  return out;
+}
+
 /**
  * Locals whose type the body states — `let r: UserRepo = …`, `let r =
  * PgRepo()`, `let r = container.resolve(UserRepo.self)!`, `let r =
@@ -418,6 +444,11 @@ export function extractSwiftLocalTypes(
 ): NonNullable<FunctionInfo["localTypes"]> {
   const out: NonNullable<FunctionInfo["localTypes"]> = [];
   for (const [i, statement, last] of statementsWithLine(bodyLines, ["let", "var"])) {
+    const tuple = TUPLE_LOCAL_RE.exec(statement);
+    if (tuple) {
+      out.push(...tupleLocals(tuple[1]!, tuple[2]?.trim(), tuple[3]!));
+      continue;
+    }
     const m = statement.match(LOCAL_RE);
     if (!m) continue;
     if (last && m[3] && continuedBelow(bodyLines, i)) continue;
