@@ -1932,7 +1932,16 @@ export interface LanguagePluginManifest {
    * TypeScript's Markdown pages: `{ extensions: [".md", ".mdx"], under: ["pages"] }`
    * so `src/pages/club.md` is a page and a root `README.md` is not.
    */
-  pathScopedExtensions?: ReadonlyArray<{ extensions: readonly string[]; under: readonly string[] }>;
+  pathScopedExtensions?: ReadonlyArray<{
+    extensions: readonly string[];
+    under: readonly string[];
+    /**
+     * Discovery admits such a file only when the nearest `package.json` above it
+     * matches (a docs folder's `pages/notes.md` in a project without the framework
+     * stays unread). Absent: admitted wherever the path matches.
+     */
+    packageJsonMatches?: RegExp;
+  }>;
   /**
    * Directories discovery skips as build output that this ecosystem keeps
    * SOURCE in, and the marker that says so — `bin/` is .NET's build output

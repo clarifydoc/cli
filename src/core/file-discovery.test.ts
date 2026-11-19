@@ -171,17 +171,28 @@ describe("discoverFiles — secret-looking names and skipped source directories"
     expect(files).not.toContain("tooling/bin/lint.rb");
   });
 
-  it("reads Markdown pages under pages/ only, never a README or docs file", async () => {
-    write("package.json", '{ "name": "club-site" }\n');
-    write("README.md", "# Club\n");
-    write("docs/guide.md", "# Guide\n");
-    write("src/pages/club.md", "# Club page\n");
-    write("src/pages/league.mdx", "# League page\n");
+  it("reads Markdown pages under pages/ only in a project whose framework routes them", async () => {
+    write("site/package.json", '{ "dependencies": { "astro": "^4" } }\n');
+    write("site/README.md", "# Club\n");
+    write("site/docs/guide.md", "# Guide\n");
+    write("site/src/pages/club.md", "# Club page\n");
+    write("site/src/pages/league.mdx", "# League page\n");
+    write("next/package.json", '{ "dependencies": { "next": "14", "@next/mdx": "14" } }\n');
+    write("next/pages/match.mdx", "# Match\n");
+    write("next/pages/notes.md", "# not routed by Next MDX\n");
+    // Decoys: a docs repo, a wiki and a Python project with a pages/ folder.
+    write("docs/package.json", '{ "name": "club-docs" }\n');
+    write("docs/pages/notes.md", "# Notes\n");
+    write("wiki/pages/home.md", "# Home\n");
+    write("py/pyproject.toml", "[project]\nname='club'\n");
+    write("py/pages/x.md", "# x\n");
     const files = (await discoverFiles(root)).files.map((f) => f.relativePath);
-    expect(files).toContain("src/pages/club.md");
-    expect(files).toContain("src/pages/league.mdx");
-    expect(files).not.toContain("README.md");
-    expect(files).not.toContain("docs/guide.md");
+    expect(files).toContain("site/src/pages/club.md");
+    expect(files).toContain("site/src/pages/league.mdx");
+    expect(files).toContain("next/pages/match.mdx");
+    for (const out of ["site/README.md", "site/docs/guide.md", "next/pages/notes.md", "docs/pages/notes.md", "wiki/pages/home.md", "py/pages/x.md"]) {
+      expect(files).not.toContain(out);
+    }
   });
 
   it("admits an extension-less script whose #! line names a declared interpreter", async () => {

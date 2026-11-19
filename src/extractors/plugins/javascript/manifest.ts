@@ -152,8 +152,13 @@ export const typescriptManifest: LanguagePluginManifest = {
   serviceConfig: jsServiceConfig,
   parsing: "tree-sitter",
   extensions: [".ts", ".tsx", ".mts", ".cts", ".vue", ".svelte", ".astro"],
-  // Markdown pages under a `pages/` folder (vite-plugin-pages): not every README.
-  pathScopedExtensions: [{ extensions: [".md", ".mdx"], under: ["pages"] }],
+  // Markdown pages under a `pages/` folder: not every README.
+  // Only where the project's framework routes them: Astro and vite-plugin-pages take `.md`
+  // and `.mdx`, Next with MDX takes `.mdx`.
+  pathScopedExtensions: [
+    { extensions: [".md", ".mdx"], under: ["pages"], packageJsonMatches: /"(?:astro|vite-plugin-pages)"\s*:/ },
+    { extensions: [".mdx"], under: ["pages"], packageJsonMatches: /"(?:@next\/mdx|@mdx-js\/[^"]+)"\s*:/ },
+  ],
   // `*.d.ts` is skipped as compiler output, except in a hand-written types package.
   readmitFiles: [{ marker: "package.json", pattern: "**/*.d.ts", markerIs: isTypesOnlyPackage }],
   // A field is only reached through the instance (`this.x`); a bare name never is one.

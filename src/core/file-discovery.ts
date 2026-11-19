@@ -341,6 +341,7 @@ export async function discoverFiles(
     }
   }
 
+  const packageTexts = new Map<string, string>();
   let results: DiscoveredFile[] = [];
   const skippedSensitive: string[] = [];
 
@@ -356,6 +357,7 @@ export async function discoverFiles(
 
     const language = getLanguageForFile(relativePath) ?? shebangLanguage.get(relativePath) ?? null;
     if (!language) continue;
+    if (!pathScopedAdmitted(root, relativePath, language, packageTexts)) continue;
 
     if (isSensitive(relativePath, language)) {
       skippedSensitive.push(relativePath);
@@ -449,6 +451,34 @@ function shebangHeadLanguage(head: string): Language | null {
   // A generated script (autoconf's `configure`, a build tool's wrapper) says so in its first lines.
   if (lines.slice(1, 6).some((l) => /\b(?:generated|auto-?generated)\b/i.test(l))) return null;
   return getLanguageForShebang(lines[0]!);
+}
+
+/**
+ * A file claimed only through a path-scoped extension (Markdown under `pages/`) is read
+ * when one matching rule's `packageJsonMatches` accepts the nearest `package.json` above it.
+ * Any other file passes.
+ */
+function pathScopedAdmitted(root: string, relativePath: string, language: Language, cache: Map<string, string>): boolean {
+  const lastDot = relativePath.lastIndexOf(".");
+  const ext = lastDot < 0 ? "" : relativePath.slice(lastDot).toLowerCase();
+  if (EXTENSION_TO_LANGUAGE[ext]) return true;
+  const rules = PATH_SCOPED_EXTENSIONS.filter(
+    (r) => r.language === language && r.extension === ext && relativePath.split("/").slice(0, -1).includes(r.under),
+  );
+  if (rules.length === 0) return true;
+  if (rules.some((r) => !r.packageJsonMatches)) return true;
+  let dir = relativePath.split("/").slice(0, -1);
+  while (true) {
+    const key = dir.join("/");
+    let text = cache.get(key);
+    if (text === undefined) {
+      text = readText(resolve(root, key, "package.json"));
+      cache.set(key, text);
+    }
+    if (text) return rules.some((r) => r.packageJsonMatches!.test(text));
+    if (dir.length === 0) return false;
+    dir = dir.slice(0, -1);
+  }
 }
 
 function readText(path: string): string {

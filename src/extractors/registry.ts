@@ -366,10 +366,12 @@ export const PATH_SCOPED_EXTENSIONS: ReadonlyArray<{
   extension: string;
   /** Path segment that must appear (`pages` → `(^|/)pages/`). */
   under: string;
+  /** The manifest text the project must have (see `packageJsonMatches`). */
+  packageJsonMatches?: RegExp;
   /** Discovery glob: every file of that extension below a `pages` directory. */
   glob: string;
 }> = (() => {
-  const out: Array<{ language: Language; extension: string; under: string; glob: string }> = [];
+  const out: Array<{ language: Language; extension: string; under: string; glob: string; packageJsonMatches?: RegExp }> = [];
   const seen = new Map<string, Language>();
   for (const manifest of ALL_MANIFESTS) {
     for (const rule of manifest.pathScopedExtensions ?? []) {
@@ -378,7 +380,7 @@ export const PATH_SCOPED_EXTENSIONS: ReadonlyArray<{
         for (const under of rule.under) {
           const key = `${extension}\0${under.toLowerCase()}`;
           const owner = seen.get(key);
-          if (owner) {
+          if (owner && owner !== manifest.language) {
             throw new Error(
               `Path-scoped extension "${rawExt}" under "${under}" claimed by both ${owner} and ${manifest.language}`,
             );
@@ -389,6 +391,7 @@ export const PATH_SCOPED_EXTENSIONS: ReadonlyArray<{
             extension,
             under,
             glob: `**/${under}/**/*${extension}`,
+            ...(rule.packageJsonMatches ? { packageJsonMatches: rule.packageJsonMatches } : {}),
           });
         }
       }
