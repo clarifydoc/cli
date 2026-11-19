@@ -1,6 +1,7 @@
 import type { FunctionInfo, RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../types/analysis.js";
 import type { GuardAttr } from "../../shared/route-metadata.js";
 import { applyRouteMeta, boundParam, pathParamNames } from "../../shared/route-metadata.js";
+import { joinRootedPath } from "../../shared/route-paths.js";
 
 /**
  * Perl web frameworks — Catalyst (attribute-dispatched subs), Mojolicious
@@ -181,10 +182,7 @@ function controllerNamespace(lines: string[]): string {
   return "";
 }
 
-function joinPath(...parts: string[]): string {
-  const out = "/" + parts.join("/").split("/").filter(Boolean).join("/");
-  return out;
-}
+const joinPath = (...parts: string[]): string => joinRootedPath(parts);
 
 function findSubEnd(lines: string[], start: number): number {
   let depth = 0;
