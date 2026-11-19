@@ -184,7 +184,7 @@ async function findMarkers(
   root: string,
   ignore: readonly string[],
   prune: (dir: string) => boolean,
-): Promise<Array<{ dir: string; marker: string; markerMatches?: RegExp; requiresAnyOf?: readonly string[]; markers: string[] }>> {
+): Promise<Array<{ dir: string; marker: string; markerMatches?: RegExp; requiresAnyOf?: readonly string[]; directOnly?: true; markers: string[] }>> {
   const stem = (p: string) => p.replace(/^\*\*\//, "").replace(/\/\*\*$/, "");
   const own = SOURCE_DIRS.map((s) => ({ ...s, ignore: ignore.filter((p) => !s.marker.startsWith(stem(p) + "/")) }));
   const shared = ignore.filter((p) => own.every((s) => s.ignore.includes(p)));
@@ -207,6 +207,7 @@ async function findMarkers(
       marker: s.marker,
       ...(s.markerMatches ? { markerMatches: s.markerMatches } : {}),
       ...(s.requiresAnyOf ? { requiresAnyOf: s.requiresAnyOf } : {}),
+      ...(s.directOnly ? { directOnly: true as const } : {}),
       markers,
     };
   });
@@ -280,18 +281,28 @@ export async function discoverFiles(
   if (!options.include?.length && SOURCE_DIRS.length > 0) {
     const seen = new Set(entries);
     const dirs = new Set<string>();
-    for (const { dir, marker, markerMatches, requiresAnyOf, markers } of await findMarkers(root, ignore, prune)) {
+    const directDirs = new Set<string>();
+    const fullDirs = new Set<string>();
+    for (const { dir, marker, markerMatches, requiresAnyOf, directOnly, markers } of await findMarkers(root, ignore, prune)) {
       for (const m of markers) {
         if (markerMatches && !markerMatches.test(readText(resolve(root, m)))) continue;
         // The marker's own segments come off the hit; what is left is the directory beside it.
         const parent = m.split("/").slice(0, -marker.split("/").length).join("/");
         if (requiresAnyOf && !requiresAnyOf.some((p) => existsSync(resolve(root, parent, p)))) continue;
-        dirs.add(parent ? `${parent}/${dir}` : dir);
+        const found = parent ? `${parent}/${dir}` : dir;
+        dirs.add(found);
+        // Another marker admitting the same directory in full wins over the scripts-only one.
+        if (!directOnly) {
+          fullDirs.add(found);
+          directDirs.delete(found);
+        } else if (!fullDirs.has(found)) directDirs.add(found);
       }
     }
     for (const dir of dirs) {
       const inner = await glob(patterns, { cwd: resolve(root, dir), ignore, caseSensitiveMatch: false, links, prune });
       for (const e of inner) {
+        // A directory a manifest admits for its scripts only: nothing below it.
+        if (directDirs.has(dir) && e.includes("/")) continue;
         const path = `${dir}/${e}`;
         if (!seen.has(path)) { seen.add(path); entries.push(path); }
       }

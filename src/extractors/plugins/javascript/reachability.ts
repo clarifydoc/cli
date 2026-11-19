@@ -95,7 +95,10 @@ const TOOL_LOADED: readonly Rule[] = [
   [/\.worker\.[cm]?[jt]s$/, "web worker"],
   [/(?:^|\/)(?:scripts?|bin|tools)\//, "standalone script"],
   [/(?:^|\/)public\//, "static asset (served by URL)"],
-  [/(?:^|\/)(?:migrations?|seeds?|seeders)\//, "migration or seed (run by directory)"],
+  // `migrations/`, `data-migrations/`, `typeorm_migrations/`, `migration-scripts/`, `db/migrate/` — the
+  // word stands alone or joins its neighbours with `-`/`_` (`premigrations/` is no such folder).
+  [/(?:^|\/)(?:(?:[A-Za-z0-9]+[-_])*migrations?(?:[-_][A-Za-z0-9]+)*|seeds?|seeders|db\/migrate)\//, "migration or seed (run by directory)"],
+  [/(?:^|\/)codegen\.(?:[cm]?[jt]s)$/, "code generator config"],
   [/(?:^|\/)preload\.[cm]?[jt]s$/, "Electron preload"],
   [/(?:^|\/)src\/service-worker(?:\/index)?\.[jt]s$/, "SvelteKit service worker"],
   [/^src\/test\.ts$/, "Angular test entry"],
@@ -155,6 +158,15 @@ async function loadJsReachability(ctx: ReachabilityLoadContext): Promise<Reachab
   const packages: PackageRoot[] = [];
   for (const root of roots) {
     packages.push({ root, pkg: await readJson(join(ctx.projectRoot, root, "package.json")) });
+  }
+
+  // Each package's tsconfig text, read once for its output folders.
+  const tsconfigTexts = new Map<string, string>();
+  for (const root of roots) {
+    for (const name of ["tsconfig.json", "tsconfig.build.json"]) {
+      const text = await readText(join(ctx.projectRoot, root, name));
+      if (text) tsconfigTexts.set(`${root ? root + "/" : ""}${name}`, stripJsonc(text));
+    }
   }
 
   // Dependencies declared anywhere: an import of one is precisely external.
@@ -244,6 +256,46 @@ async function loadJsReachability(ctx: ReachabilityLoadContext): Promise<Reachab
     return null;
   };
 
+  // A package's compiled output folders (tsconfig `outDir`, `declarationDir`) and the source folder they mirror.
+  const outputDirsOf = new Map<string, Array<{ out: string; source: string[] }>>();
+  const outputDirs = (root: string): Array<{ out: string; source: string[] }> => {
+    const known = outputDirsOf.get(root);
+    if (known) return known;
+    const list: Array<{ out: string; source: string[] }> = [];
+    for (const f of [`${root ? root + "/" : ""}tsconfig.json`, `${root ? root + "/" : ""}tsconfig.build.json`]) {
+      const text = tsconfigTexts.get(f);
+      if (!text) continue;
+      let options: Record<string, unknown> = {};
+      try {
+        const parsed = (JSON.parse(text) as { compilerOptions?: Record<string, unknown> }).compilerOptions;
+        if (parsed && typeof parsed === "object") options = parsed;
+      } catch {
+        continue;
+      }
+      const value = (key: string): string | undefined => (typeof options[key] === "string" ? (options[key] as string) : undefined);
+      const rootDir = value("rootDir")?.replace(/^\.\//, "").replace(/\/+$/, "");
+      for (const dir of [value("outDir"), value("declarationDir")]) {
+        const out = dir ? normalize(dir) : "";
+        if (!out || out.startsWith("..")) continue;
+        list.push({ out, source: [...(rootDir ? [rootDir] : []), "src", ""] });
+      }
+    }
+    outputDirsOf.set(root, list);
+    return list;
+  };
+  /** `@club/web/dist/widget` → the source `src/widget.ts` the package's output folder is built from. */
+  const probeInOutputDir = (wsRoot: string, subpath: string): string | null => {
+    for (const { out, source } of outputDirs(wsRoot)) {
+      if (subpath !== out && !subpath.startsWith(out + "/")) continue;
+      const rest = subpath.slice(out.length).replace(/^\/+/, "");
+      for (const src of source) {
+        const hit = probe(under(wsRoot, src ? `${src}/${rest}` : rest));
+        if (hit) return hit;
+      }
+    }
+    return probeSource(under(wsRoot, subpath));
+  };
+
   const resolveCache = new Map<string, string[] | null>();
   const resolve = (fromFile: string, rawSource: string): string[] | null => {
     const source = rawSource.replace(/[?#].*$/, "");
@@ -298,7 +350,7 @@ async function loadJsReachability(ctx: ReachabilityLoadContext): Promise<Reachab
         const hit = probe(under(wsRoot, "src/index")) ?? probe(under(wsRoot, "index"));
         return hit ? [hit] : [];
       }
-      const hit = probe(under(wsRoot, subpath)) ?? probe(under(wsRoot, `src/${subpath}`));
+      const hit = probe(under(wsRoot, subpath)) ?? probe(under(wsRoot, `src/${subpath}`)) ?? probeInOutputDir(wsRoot, subpath);
       return hit ? [hit] : [];
     }
     if (declared.has(pkgName) || NODE_BUILTINS.has(pkgName)) return [];
@@ -465,6 +517,17 @@ async function loadJsReachability(ctx: ReachabilityLoadContext): Promise<Reachab
       for (const file of resolve(script.path, m[1]!) ?? []) manifestEntries.push({ file, reason: `script ${script.path}` });
     }
   }
+  // A code generator's configured outputs (`generates:` keys) are written by the tool, usually not committed
+  // or committed and never imported: generated, never judged.
+  const generatedOutputs: string[] = [];
+  for (const root of roots) {
+    for (const name of ["codegen.yml", "codegen.yaml", "codegen.ts", "codegen.js", "codegen.mjs", "codegen.cjs", "codegen.json"]) {
+      const config = await readText(join(ctx.projectRoot, root, name));
+      if (config) for (const key of generatesKeys(config, name)) generatedOutputs.push(under(root, key.replace(/^\.\//, "")) + (key.endsWith("/") ? "/" : ""));
+    }
+  }
+  const isGeneratedOutput = (file: string): boolean =>
+    generatedOutputs.some((g) => (g.endsWith("/") ? file.startsWith(g) : file === g));
   manifestEntries.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.reason < b.reason ? -1 : 1));
 
   return {
@@ -485,6 +548,7 @@ async function loadJsReachability(ctx: ReachabilityLoadContext): Promise<Reachab
 
     passiveReason(analysis: FileAnalysis, relPath: string): string | null {
       for (const [re, reason] of TOOL_LOADED) if (re.test(relPath)) return reason;
+      if (generatedOutputs.length > 0 && isGeneratedOutput(analysis.filePath)) return "code generator output";
       // No import, no export: a classic browser script, loaded by URL from
       // markup — often server-rendered (Razor, JSP, PHP, Delphi templates)
       // where `<script src>` is computed — not by any module. "Nothing
@@ -517,6 +581,58 @@ async function loadJsReachability(ctx: ReachabilityLoadContext): Promise<Reachab
       return [...(byComponentName.get(normTag(tag)) ?? [])];
     },
   };
+}
+
+/**
+ * The output paths a code generator's config names under `generates`: keys of a YAML map (by indentation) or
+ * of a JS/TS/JSON object (by braces). A trailing `/` names a preset's output folder; a glob names nothing.
+ */
+function generatesKeys(text: string, fileName: string): string[] {
+  const keys: string[] = [];
+  const keep = (k: string): void => {
+    const key = k.trim();
+    if (key && !/[*?{}[\]$]|^\.\.|^\//.test(key) && !/^https?:/.test(key)) keys.push(key);
+  };
+  if (/\.ya?ml$/.test(fileName)) {
+    const lines = text.split(/\r?\n/);
+    const at = lines.findIndex((l) => /^\s*generates\s*:\s*(?:#.*)?$/.test(l));
+    if (at < 0) return [];
+    const base = lines[at]!.search(/\S/);
+    let childIndent = -1;
+    for (const line of lines.slice(at + 1)) {
+      if (!line.trim() || /^\s*#/.test(line)) continue;
+      const indent = line.search(/\S/);
+      if (indent <= base) break;
+      if (childIndent < 0) childIndent = indent;
+      if (indent !== childIndent) continue;
+      const m = /^\s*(?:"([^"]+)"|'([^']+)'|([^\s:'"][^:]*?))\s*:/.exec(line);
+      if (m) keep(m[1] ?? m[2] ?? m[3]!);
+    }
+    return keys;
+  }
+  // Comments may hold quotes (`// don't edit`): out before the keys are read.
+  text = text.replace(/\/\*[\s\S]*?\*\/|(^|[^:"'`\\])\/\/[^\n]*/g, "$1");
+  const open = /\bgenerates["']?\s*:\s*\{/.exec(text);
+  if (!open) return [];
+  let depth = 0;
+  for (let i = open.index + open[0].length - 1; i < text.length; i++) {
+    const c = text[i]!;
+    if (c === "{" || c === "[") depth++;
+    else if (c === "}" || c === "]") {
+      depth--;
+      if (depth === 0) break;
+    } else if ((c === '"' || c === "'" || c === "`") && depth === 1) {
+      const end = text.indexOf(c, i + 1);
+      if (end < 0) break;
+      if (/^\s*:/.test(text.slice(end + 1, end + 8))) keep(text.slice(i + 1, end));
+      i = end;
+    } else if (c === '"' || c === "'" || c === "`") {
+      const end = text.indexOf(c, i + 1);
+      if (end < 0) break;
+      i = end;
+    }
+  }
+  return keys;
 }
 
 /** A command-line token naming a script file. */

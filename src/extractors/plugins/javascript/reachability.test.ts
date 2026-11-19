@@ -200,3 +200,37 @@ describe("globToRegExp", () => {
     expect(globToRegExp("src/*.{vue,ts}").test("src/a.js")).toBe(false);
   });
 });
+
+describe("JS reachability — tool-run folders, generators and output subpaths", () => {
+  it("treats folders named for migrations or seeds as tool-loaded, but not look-alikes", async () => {
+    const m = await model([]);
+    const passive = (p: string) => m.passiveReason?.(analysis(p, { imports: [{ source: "x" }] as never, exports: [{ name: "a" }] as never }), p, new Set(), () => undefined);
+    for (const p of ["src/migrations/1.ts", "src/data-migrations/1.ts", "src/typeorm_migrations/1.ts", "src/migration-scripts/1.ts", "src/db/migrate/1.ts", "db/seeds/a.ts"]) {
+      expect(passive(p), p).not.toBeNull();
+    }
+    for (const p of ["src/migration.ts", "src/migrationsHelper.ts", "src/premigrations/1.ts", "src/migrate/feature.ts", "src/seed-data/x.ts"]) expect(passive(p), p).toBeNull();
+  });
+
+  it("treats a code generator's configured outputs as generated and its config as a tool config", async () => {
+    const m = await model(["src/gql/types.ts", "src/gql/preset/a.ts", "src/gen/out.ts", "src/other.ts", "codegen.ts"], {
+      "codegen.yml": "schema: x\ngenerates:\n  src/gql/types.ts:\n    plugins: [typescript]\n  src/gql/preset/:\n    preset: client\n",
+    });
+    const passive = (p: string) => m.passiveReason?.(analysis(p, { imports: [{ source: "x" }] as never, exports: [{ name: "a" }] as never }), p, new Set(), () => undefined);
+    expect(passive("src/gql/types.ts")).not.toBeNull();
+    expect(passive("src/gql/preset/a.ts")).not.toBeNull();
+    expect(passive("src/other.ts")).toBeNull();
+    expect(passive("codegen.ts")).not.toBeNull();
+    const ts = await model(["src/gen/out.ts"], { "codegen.ts": "export default { generates: { 'src/gen/out.ts': { plugins: ['typescript'] } } };" });
+    expect(ts.passiveReason?.(analysis("src/gen/out.ts", { imports: [{ source: "x" }] as never, exports: [{ name: "a" }] as never }), "src/gen/out.ts", new Set(), () => undefined)).not.toBeNull();
+  });
+
+  it("maps a workspace package's output-folder subpath back to its source", async () => {
+    const m = await model(["packages/web/src/widget.ts", "packages/web/src/routers/app.ts"], {
+      "package.json": { name: "root", workspaces: ["packages/*"] },
+      "packages/web/package.json": { name: "@club/web" },
+      "packages/web/tsconfig.json": '{ "compilerOptions": { "paths": { "@/*": ["src/*"] }, "outDir": "dist", "declarationDir": "types/server" } }',
+    }, ["packages/web"]);
+    expect(m.resolve("app/main.ts", "@club/web/dist/widget")).toEqual(["packages/web/src/widget.ts"]);
+    expect(m.resolve("app/main.ts", "@club/web/types/server/routers/app")).toEqual(["packages/web/src/routers/app.ts"]);
+  });
+});

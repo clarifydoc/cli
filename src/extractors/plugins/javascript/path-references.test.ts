@@ -76,3 +76,27 @@ describe("path references — templates over same-file constants", () => {
     expect(extractPathReferences(src)).toEqual([]);
   });
 });
+
+describe("path references — computed module names", () => {
+  it("states a glob over what the literal part of a computed name can load", () => {
+    const src = [
+      "await import(`./plugins/${n}`);",
+      "await import(`./drivers/${n}.ts`);",
+      'await import("./cars/" + n);',
+      "const g = require(`./garages/${n}`);",
+      'const c = path.resolve("configs", `config.${mode}.ts`);',
+      "const d = path.join(__dirname, `loaders/${k}.js`);",
+    ].join("\n");
+    expect(extractPathReferences(src)).toEqual([
+      "./plugins/**", "./drivers/**/*.ts", "./cars/**", "./garages/**", "/configs/**/config.*.ts", "./loaders/**/*.js",
+    ]);
+  });
+
+  it("keeps a load from this very folder to that folder", () => {
+    expect(extractPathReferences("await import(`./${n}`); await import(`../${n}.js`);")).toEqual(["./*", "../*.js"]);
+  });
+
+  it("states nothing for a name with no literal directory, or a data path", () => {
+    expect(extractPathReferences("await import(name); await import(`${base}/x`); const p = path.join(dir, `uploads/${id}`);")).toEqual([]);
+  });
+});

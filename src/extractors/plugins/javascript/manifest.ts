@@ -203,8 +203,12 @@ export const javascriptManifest: LanguagePluginManifest = {
   importedFile: jsImportedFile,
   // Any parameter may be left out (it is `undefined`) and extra arguments are ignored.
   callArity: { missingAllowed: true, extraAllowed: true },
-  // A package's `bin/` scripts, when its package.json declares `bin`.
-  sourceDirs: [{ dir: "bin", marker: "package.json", markerMatches: /"bin"\s*:/ }],
+  // A package's `bin/` scripts, when its package.json declares `bin` — or, with none, when source
+  // sits beside it (a `bin/club.js` the scripts or a shebang run, requiring `../src/engine`).
+  sourceDirs: [
+    { dir: "bin", marker: "package.json", markerMatches: /"bin"\s*:/ },
+    { dir: "bin", marker: "package.json", requiresAnyOf: ["src", "lib", "app", "server", "index.js", "index.ts"], directOnly: true },
+  ],
   packageEcosystems: ["npm"],
   // `process.env.X` / `import.meta.env.X` bases; `.env` files are never read.
   serviceConfig: jsServiceConfig,

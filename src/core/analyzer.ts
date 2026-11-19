@@ -115,7 +115,7 @@ import { composeScreenNavigation } from "./screen-navigation.js";
 import { checkContracts } from "./contract-check.js";
 import { joinEnvVars } from "./env-vars.js";
 import { crossFileTaint } from "./cross-file-taint.js";
-import { detectCiDeploys } from "./ci-pipelines.js";
+import { ciRunEntries, detectCiDeploys } from "./ci-pipelines.js";
 import { loadCodeOwners } from "./code-owners.js";
 import { isGeneratedFile } from "./generated-file-detector.js";
 import { TOOL_VERSION } from "./version.js";
@@ -2476,6 +2476,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const deployEntries = [
     ...(deployment?.services ?? []).flatMap((s) => (s.entryFile ? [{ filePath: s.entryFile, reason: `deployment service ${s.name}` }] : [])),
     ...procfileEntries(["", ...subProjects.map((sp) => sp.root)], deployRepo),
+    ...(await ciRunEntries(projectRoot, deployRepo)),
   ];
   const deadCode = analyzeReachability({
     deployEntries,

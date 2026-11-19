@@ -49,6 +49,20 @@ export function vuePreprocess(
         analysis.exports.push({ name: "default", kind: "default", line: 1 });
       }
 
+      // `<script src="./club.ts">`: the component's script lives in that file — an import the SFC states
+      // without writing one. `<template src>` and `<style src>` are path references.
+      for (const tag of raw.matchAll(/<(script|template|style)\b([^>]*?)(?<![\w:@.-])src\s*=\s*(?:"([^"\n]+)"|'([^'\n]+)')[^>]*>/gi)) {
+        const src = tag[3] ?? tag[4]!;
+        // A module in the project: not a URL, not a protocol-relative or absolute path.
+        if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(src)) continue;
+        const line = raw.slice(0, tag.index).split("\n").length;
+        if (tag[1]!.toLowerCase() === "script") {
+          if (!analysis.imports.some((i) => i.source === src)) {
+            analysis.imports.push({ source: src, specifiers: [], isDefault: false, isNamespace: false, isType: false, line });
+          }
+        } else (analysis.pathReferences ??= []).push(src);
+      }
+
       // Reproduce the template's real nesting (with looped nodes marked) for
       // the screen builder — consumed uniformly across frameworks via
       // `analysis.templateTree`.

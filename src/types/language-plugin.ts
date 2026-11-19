@@ -1974,9 +1974,10 @@ export interface LanguagePluginManifest {
    * parent; the directory is read with the default ignores below it.
    * `markerMatches` narrows it to markers whose text matches (`package.json`
    * declaring `"bin"`). `requiresAnyOf` (paths beside the marker) additionally needs
-   * one of them to exist: a Gemfile kept only for tooling, with no `app/` or `lib/`, is no gem.
+   * one of them to exist: a Gemfile kept only for tooling, with no `app/` or `lib/`, is no gem. `directOnly`
+   * reads only the files directly in the directory, not what sits below (scripts, not a build tree).
    */
-  sourceDirs?: ReadonlyArray<{ dir: string; marker: string; markerMatches?: RegExp; requiresAnyOf?: readonly string[] }>;
+  sourceDirs?: ReadonlyArray<{ dir: string; marker: string; markerMatches?: RegExp; requiresAnyOf?: readonly string[]; directOnly?: true }>;
   /**
    * The interpreter name (the program a `#!` line runs — `ruby` in
    * `#!/usr/bin/env ruby`, after `env` and its flags) of this language's

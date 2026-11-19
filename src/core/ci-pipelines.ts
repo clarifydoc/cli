@@ -3,6 +3,7 @@ import { readFile } from "fs/promises";
 import { join, posix, resolve } from "path";
 import { glob } from "./glob.js";
 import { byOrdinal } from "./ordinal.js";
+import { entryFileOf, type RepoFiles } from "./dockerfiles.js";
 import { parseSimpleYaml, projectOfContext, type YamlMap, type YamlValue } from "./deployment.js";
 import type { CiDeploy, SubProject } from "../types/analysis.js";
 
@@ -301,4 +302,66 @@ export async function detectCiDeploys(projectRoot: string, subProjects: readonly
 
 function row(file: string, provider: Provider, workflow: string | undefined, job: string, line: number, triggers: string[], d: { kind: Kind; path?: string; via: string }): CiDeploy {
   return { file, provider, ...(workflow ? { workflow } : {}), job, line, triggers, kind: d.kind, ...(d.path ? { path: d.path } : {}), via: d.via };
+}
+
+/** Keys whose value is a command or a list of them, across the CI providers. */
+const RUN_KEYS = new Set(["run", "script", "before_script", "after_script", "bash", "command", "commands", "pwsh"]);
+
+/**
+ * The repository files the commands of a pipeline (`run:` / `script:` lines of GitHub, GitLab, Azure,
+ * CircleCI, Bitbucket) and of a Makefile start: `node ops/nightly.mjs`, `npx tsx jobs/sync.ts`. A step's
+ * `working-directory` (or its job's `defaults.run`) and a `cd x &&` before the command move where its path
+ * is read from. Language-agnostic: each command goes through `entryFileOf`, which names the file it starts.
+ */
+export async function ciRunEntries(projectRoot: string, repo: RepoFiles): Promise<Array<{ filePath: string; reason: string }>> {
+  const absRoot = resolve(projectRoot);
+  const found = await glob([".github/workflows/*.{yml,yaml}", "**/.gitlab-ci.yml", "azure-pipelines.{yml,yaml}", "**/azure-pipelines*.{yml,yaml}", ".circleci/config.yml", "bitbucket-pipelines.yml", "**/{Makefile,makefile,GNUmakefile}"], {
+    cwd: absRoot,
+    absolute: false,
+    dot: true,
+    deep: 4,
+    ignore: ["**/node_modules/**", "**/vendor/**"],
+  });
+  const out: Array<{ filePath: string; reason: string }> = [];
+  const seen = new Set<string>();
+  const add = (file: string, commands: string, workdir: string | undefined): void => {
+    for (const step of withCd(commands, workdir)) {
+      const line = (step.text ?? "").replace(/^[@+-]+/, "").trim();
+      if (!line || line.length > 500) continue;
+      const filePath = entryFileOf(line, step.workdir ?? "", repo);
+      if (!filePath || seen.has(`${file}\0${filePath}`)) continue;
+      seen.add(`${file}\0${filePath}`);
+      out.push({ filePath, reason: `run by ${file}` });
+    }
+  };
+  for (const file of found.map((f) => f.split("\\").join("/")).sort(byOrdinal).slice(0, 80)) {
+    let raw: string;
+    try {
+      raw = await readFile(join(absRoot, file), "utf8");
+    } catch {
+      continue;
+    }
+    if (raw.length > 500_000) continue;
+    if (/(?:^|\/)(?:[Mm]akefile|GNUmakefile)$/.test(file)) {
+      const dir = posix.dirname(file) === "." ? "" : posix.dirname(file);
+      // A recipe is the tab-indented lines; a continued line joins the next.
+      add(file, raw.replace(/\\\r?\n\s*/g, " ").split(/\r?\n/).filter((l) => l.startsWith("\t")).join("\n"), dir);
+      continue;
+    }
+    const walk = (v: YamlValue, workdir: string | undefined): void => {
+      if (Array.isArray(v)) {
+        for (const x of v) walk(x, workdir);
+        return;
+      }
+      if (!v || typeof v !== "object") return;
+      const here = str(v["working-directory"]) ?? str(v.workingDirectory) ?? str(v.working_directory) ?? str(map(map(v.defaults).run)["working-directory"]) ?? workdir;
+      for (const [k, x] of Object.entries(v)) {
+        if (RUN_KEYS.has(k) && (typeof x === "string" || Array.isArray(x))) {
+          add(file, list(x).filter((y): y is string => typeof y === "string").join("\n"), here);
+        } else walk(x, here);
+      }
+    };
+    walk(parseSimpleYaml(raw), undefined);
+  }
+  return out;
 }

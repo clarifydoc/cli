@@ -120,7 +120,7 @@ export function readDockerfile(absRoot: string, rel: string): DockerfileFacts | 
   }
 }
 
-const SCRIPT_EXT = /\.(?:py|js|mjs|cjs|ts|rb|php|pl|sh|go|lua|jl|r|R)$/;
+const SCRIPT_EXT = /\.(?:py|js|mjs|cjs|ts|mts|cts|tsx|jsx|rb|php|pl|sh|go|lua|jl|r|R)$/;
 const SOURCE_EXTS = [".ts", ".tsx", ".js", ".mjs", ".py", ".go", ".rb"];
 
 /** The repository as `entryFileOf` reads it, by repo-relative path. */

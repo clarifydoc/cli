@@ -16,6 +16,10 @@
  *     over `const PAGES = ["home", "squad"]` names `src/pages/home/main.tsx`
  *     and `src/pages/squad/main.tsx`
  *
+ *   - a module loaded by a computed name: ``import(`./plugins/${n}`)``, `require("./cars/" + n)`,
+ *     ``path.resolve("configs", `config.${mode}.ts`)`` — a glob over what the literal part can name
+ *     (`./plugins/**`, `/configs/**\/config.*.ts`), so every file it may load is kept and loads what it imports
+ *
  * Only the two module loaders may contribute globs. A config file's arbitrary
  * glob (eslint `files: ["**\/*.ts"]`, tailwind `content`) matches files without
  * loading them, and following one would mark the whole project reachable.
@@ -101,6 +105,88 @@ function templatePaths(sourceText: string): string[] {
   return out;
 }
 
+/** `import(` / `require(` whose argument is a template with a hole or a string joined to an expression. */
+const COMPUTED_LOAD_RE = /\b(?:import|require)\s*\(\s*(?:`([^`\n]*\$\{[^`\n]*)`|(["'])([^"'\n]*)\2\s*\+\s*[^+),;\n]+?(?:\s*\+\s*(["'])([^"'\n]*)\4)?\s*[,)])/g;
+/** `path.resolve(` / `path.join(` and its arguments up to a closing parenthesis (one nesting level). */
+const PATH_CALL_RE = /\bpath\s*\.\s*(?:resolve|join)\s*\(((?:[^()\n]|\([^()\n]*\))*)\)/g;
+const HOLE_ANY_RE = /\$\{[^}\n]*\}/;
+
+/**
+ * The glob a computed module name can match: the literal text before the first hole names a
+ * directory (up to its last `/`) and a file-name start, the text after the last hole its end.
+ * `./plugins/` + hole → `./plugins/**`, `./drivers/${n}.ts` → `./drivers/**\/*.ts`.
+ */
+function computedGlob(prefix: string, suffix: string, needsExtension: boolean): string | null {
+  const slash = prefix.lastIndexOf("/");
+  if (slash < 0) return null;
+  const dir = prefix.slice(0, slash).replace(/\/+$/, "");
+  const head = prefix.slice(slash + 1);
+  if (/[*?{}[\]]/.test(prefix + suffix)) return null;
+  const hasExt = /\.[A-Za-z0-9]+$/.test(suffix);
+  if (needsExtension && !/\.(?:[cm]?[jt]sx?|vue|svelte)$/.test(suffix)) return null;
+  if (dir === "") return null;
+  // `./${n}` names this one folder, not its subtree.
+  const shallow = dir === "." || dir === "..";
+  const tail = head === "" && suffix === "" ? (shallow ? "*" : "**") : `${shallow ? "" : "**/"}${head}*${suffix}${hasExt ? "" : "*"}`;
+  return `${dir}/${tail}`;
+}
+
+/** The globs of every module a computed name may load (see `computedGlob`). */
+function computedLoadGlobs(sourceText: string): string[] {
+  const out: string[] = [];
+  for (const m of sourceText.matchAll(COMPUTED_LOAD_RE)) {
+    let glob: string | null;
+    if (m[1] !== undefined) {
+      const first = m[1].indexOf("${");
+      const last = m[1].lastIndexOf("}");
+      glob = computedGlob(m[1].slice(0, first), m[1].slice(last + 1), false);
+    } else glob = computedGlob(m[3]!, m[5] ?? "", false);
+    if (glob) out.push(glob);
+  }
+  if (sourceText.includes("path")) {
+    for (const m of sourceText.matchAll(PATH_CALL_RE)) {
+      const args = splitArgs(m[1]!);
+      const last = args.pop()?.trim();
+      if (!last || !last.startsWith("`") || !HOLE_ANY_RE.test(last)) continue;
+      const base: string[] = [];
+      let fromHere = false;
+      let ok = true;
+      for (const a of args) {
+        const t = a.trim();
+        const lit = /^(["'])([^"'\n]*)\1$/.exec(t);
+        if (lit) base.push(lit[2]!.replace(/^\.\//, "").replace(/\/+$/, ""));
+        else if (/^__dirname$|^import\.meta\.dirname$/.test(t) && base.length === 0) fromHere = true;
+        else ok = false;
+      }
+      if (!ok || base.some((b) => b === "" || b.startsWith("..") || b.startsWith("/"))) continue;
+      const text = last.slice(1, -1);
+      const first = text.indexOf("${");
+      const end = text.lastIndexOf("}");
+      const file = computedGlob(`${base.length ? base.join("/") + "/" : ""}${text.slice(0, first)}`, text.slice(end + 1), true);
+      // A relative path is the working directory's (the project root) unless `__dirname` roots it.
+      if (file) out.push(fromHere ? `./${file}` : `/${file}`);
+    }
+  }
+  return out;
+}
+
+/** An argument list split at its top-level commas. */
+function splitArgs(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  let quote = "";
+  for (const c of text) {
+    if (quote) { cur += c; if (c === quote) quote = ""; continue; }
+    if (c === "`" || c === '"' || c === "'") { quote = c; cur += c; continue; }
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    if (c === "," && depth === 0) { out.push(cur); cur = ""; } else cur += c;
+  }
+  if (cur.trim()) out.push(cur);
+  return out;
+}
+
 export function extractPathReferences(sourceText: string): string[] {
   const out = new Set<string>();
 
@@ -133,6 +219,10 @@ export function extractPathReferences(sourceText: string): string[] {
   for (const m of sourceText.matchAll(SCRIPT_PATH_RE)) out.add(m[2]!);
 
   if (sourceText.includes("${")) for (const p of templatePaths(sourceText)) out.add(p);
+
+  if (sourceText.includes("import(") || sourceText.includes("require(") || sourceText.includes("path")) {
+    for (const g of computedLoadGlobs(sourceText)) out.add(g);
+  }
 
   return [...out];
 }
