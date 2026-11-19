@@ -11,7 +11,7 @@ export function cmakeProjectCommands(root: ProjectRootView): ProjectCommand[] {
   const out: ProjectCommand[] = [
     { kind: "build", command: "cmake -S . -B build && cmake --build build", source: "CMakeLists.txt" },
   ];
-  if (/\b(?:enable_testing|add_test|include\s*\(\s*CTest\s*\))/i.test(text) || /\w+_discover_tests\s*\(/.test(text)) {
+  if (/\b(?:enable_testing|add_test\s*\(|include\s*\(\s*CTest\s*\))/i.test(text) || /\w+_discover_tests\s*\(/.test(text)) {
     const discover = /\b(?:gtest|catch)_discover_tests\s*\(/i.test(text);
     out.push({ kind: "test", command: "ctest --test-dir build --output-on-failure", source: discover ? "CMakeLists.txt gtest_discover_tests" : "CMakeLists.txt" });
   }
@@ -28,6 +28,6 @@ export function ctestCommand(tests: readonly TestTarget[], ctx?: TestCommandCont
   if (!project || !tests.length) return null;
   const names = tests.flatMap((t) => t.names);
   const suites = [...new Set(names)].filter((n) => /^[A-Z]\w*\.\w+$/.test(n)).sort();
-  if (!project.source.includes("_discover_tests") || !suites.length || suites.length < names.length) return project.command;
+  if (!project.source.includes("_discover_tests") || !suites.length || suites.length < new Set(names).size) return project.command;
   return `ctest --test-dir build -R '^(${suites.map((n) => n.replace(".", "\\.")).join("|")})$'`;
 }
