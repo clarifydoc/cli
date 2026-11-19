@@ -28,7 +28,7 @@ export function extractRubyTestRequests(lines: readonly string[]): DataSourceInf
     for (const m of line.matchAll(REQUEST)) {
       const rest = line.slice(m.index! + m[0].length);
       if (/^\s*(?:,\s*to:|=>|,\s*:to\b)|\bdo\s*(?:\|[^|]*\|)?\s*$/.test(rest)) continue;
-      out.push({ kind: "api-call", name: m[1]!, target: m[3]!, calls: [], line: i + 1 });
+      out.push({ kind: "api-call", name: m[1]!, target: m[3]!, calls: [], line: i + 1, column: m.index! + m[0].indexOf(m[1]!) });
     }
   }
   return out;

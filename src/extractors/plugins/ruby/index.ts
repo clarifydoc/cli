@@ -1170,7 +1170,7 @@ export function extractRubyHttpClientRegistrations(lines: string[]): HttpClientR
   return out;
 }
 
-function extractRubyHttpCalls(lines: string[]): DataSourceInfo[] {
+export function extractRubyHttpCalls(lines: string[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
   const connectionCall = faradayConnectionNames(lines);
   const seen = new Set<string>();
@@ -1184,7 +1184,7 @@ function extractRubyHttpCalls(lines: string[]): DataSourceInfo[] {
     const lead = target ? /^#\{([^}]+)\}(\/[\s\S]*)?$/.exec(target) : null;
     const based = lead && rubyBaseRefOf(lead[1]!) ? lead : null;
     out.push({
-      kind: "api-call", name: verb, target: based ? (based[2] ?? "/") : target, calls: [], line,
+      kind: "api-call", name: verb, target: based ? (based[2] ?? "/") : target, calls: [], line, column: col,
       ...(client ? { client } : {}), ...(based ? { baseExpr: based[1]!.trim() } : {}),
     });
   };
