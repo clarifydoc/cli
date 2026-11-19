@@ -3,7 +3,7 @@ import { joinConfigFiles } from "./config-files.js";
 import type { FileAnalysis, SubProject } from "../types/analysis.js";
 
 const file = (filePath: string, extra: Partial<FileAnalysis> = {}, projectId = "app"): FileAnalysis =>
-  ({ filePath, language: "java", projectId, functions: [], classes: [], ...extra }) as unknown as FileAnalysis;
+  ({ filePath, language: "java", projectId, functions: [], classes: [], imports: [], ...extra }) as unknown as FileAnalysis;
 const subProjects = [{ id: "app", root: "app" }, { id: "billing", root: "billing" }] as unknown as SubProject[];
 const run = (analyses: FileAnalysis[], disk: string[] = []) => joinConfigFiles(analyses, subProjects, () => true, (f) => f.includes("/test/"), async (f) => disk.includes(f));
 

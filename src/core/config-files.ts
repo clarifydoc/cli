@@ -8,7 +8,7 @@ import type { ConfigFileUse, FileAnalysis, SubProject } from "../types/analysis.
  * Files the code opens by a path it spells out in literals (`FileAnalysis.filePathReads`), joined to the
  * file the analysis has at that path. Core names no language: a plugin states the literal parts, this
  * resolves them (`exists`: an analyzed file or one on disk) — beside the reading file, then at its sub-project's root, then at the analysis root, the
- * first file that exists, never by file name alone. A target that declares functions or classes is
+ * first file that exists, never by file name alone. A target that declares functions or classes, imports or draws a template is
  * code, not configuration; a path that leaves the analysis or is absolute resolves nowhere.
  */
 const MAX_CONSUMERS = 50;
@@ -52,7 +52,7 @@ export async function joinConfigFiles(
         if (byPath.has(candidate) || await exists(candidate)) { target = candidate; break; }
       }
       const analyzed = target ? byPath.get(target) : undefined;
-      if (!target || target === a.filePath || (analyzed && (analyzed.functions.length > 0 || analyzed.classes.length > 0))) continue;
+      if (!target || target === a.filePath || (analyzed && (analyzed.functions.length > 0 || analyzed.classes.length > 0 || analyzed.imports.length > 0 || (analyzed.templateTree?.length ?? 0) > 0))) continue;
       const project = analyzed?.projectId ?? innermost(target);
       const row = rows.get(target) ?? rows.set(target, { file: target, ...(project ? { project } : {}), consumers: [] }).get(target)!;
       if (row.consumers.length < MAX_CONSUMERS && !row.consumers.some((c) => c.file === a.filePath && c.line === read.line)) {

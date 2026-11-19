@@ -1480,8 +1480,10 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       const declared = /^[\w$]+$/.test(leaf) ? (localDeclaredType(node, leaf) ?? this.fieldTypes.get(leaf) ?? null) : null;
       if (declared && SPRING_ENVIRONMENT_TYPES.has(declared)) {
         const key = new RegExp(`\\b${method}\\s*\\(\\s*"([A-Za-z_][\\w.-]*)"`).exec(node.text)?.[1];
-        if (key) sources.push({ ...this.ds({ kind: "env", name: method, target: key, line }), configRead: { kind: "key" } });
-        return;
+        if (key) {
+          sources.push({ ...this.ds({ kind: "env", name: method, target: key, line }), configRead: { kind: "key" } });
+          return;
+        }
       }
     }
     if (method === "getProperty" || method === "getenv") {

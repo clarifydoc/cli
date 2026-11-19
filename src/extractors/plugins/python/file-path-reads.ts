@@ -23,7 +23,8 @@ export function extractPythonFilePathReads(tree: Tree, sourceText: string): File
     let parts: string[] | null = null;
     if (callee === "open") {
       const m = OPEN_ARGS.exec(args);
-      parts = m ? [unquote(m[1]!)] : null;
+      // A file opened to write or append is output, not something the code reads.
+      parts = m && !/,\s*(?:mode\s*=\s*)?["'][^"']*[wax+]/.test(args) ? [unquote(m[1]!)] : null;
     } else if (BUILDERS.has(callee)) {
       const m = BUILDER_ARGS.exec(args);
       parts = m ? [...m[1]!.matchAll(new RegExp(STRING, "g"))].map((x) => unquote(x[0])) : null;
