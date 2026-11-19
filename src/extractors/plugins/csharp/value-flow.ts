@@ -652,10 +652,14 @@ export function csharpValueFlow(
     if (handledCalls.has(call.id) || !callName || callName === "nameof") return;
     const args = argumentsOf(call);
     args.forEach((a, index) => {
-      if (a.name !== null) return;
       const sources = sourcesOf(a.expr, false);
       const from = cellFor(sources, `a${line}_${call.startPosition.column}_${index}_`, line);
-      if (from) emit({ kind: "arg", call: callName, line, index, from });
+      // A named argument (`Schedule(callback: OnFullTime)`) binds the formal of that name, never one by position.
+      if (!from) return;
+      // The grammar states the label as the argument's `name` field (`argumentsOf` leaves it to other readers).
+      const label = a.name ?? a.expr.parent?.childForFieldName("name")?.text ?? null;
+      if (label !== null) emit({ kind: "arg", call: callName, line, index: -1, name: label, from });
+      else emit({ kind: "arg", call: callName, line, index, from });
     });
   };
 

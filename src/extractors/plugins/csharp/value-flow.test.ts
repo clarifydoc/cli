@@ -447,3 +447,23 @@ describe("C# value flow: lambdas as values", () => {
     expect(links).toEqual(["Referee.Raise@4 Whistled?.Invoke -> League/Bench.cs::Bench.Substitute"]);
   });
 });
+
+describe("C# value flow: named arguments", () => {
+  const files = {
+    "League/Clock.cs": lines(
+      "namespace League;",
+      "public class Clock {",
+      "  public void OnFullTime() { }",
+      "  public void OnKickOff() { }",
+      "  public void Schedule(System.Action when, System.Action callback) { callback(); }",
+      "  public void ByName() { Schedule(callback: OnFullTime, when: OnKickOff); }",
+      "  public void UnknownName() { Schedule(missing: OnKickOff, callback: OnFullTime); }",
+      "}",
+    ),
+  };
+  it("binds a named argument to the formal of that name, never by position", async () => {
+    const links = flowLinks(await analyzeAll(files));
+    expect(links.some((l) => l.includes("callback") && l.endsWith("Clock.OnFullTime"))).toBe(true);
+    expect(links.some((l) => l.includes("callback") && l.endsWith("Clock.OnKickOff"))).toBe(false);
+  });
+});
