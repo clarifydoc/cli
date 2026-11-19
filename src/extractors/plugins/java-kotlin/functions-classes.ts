@@ -960,7 +960,14 @@ function extractLocalTypes(body: Node | null, language: JkLang): LocalType[] {
   // Initializer calls wait: a type the body states anywhere beats them. Each
   // distinct call is kept (locals of one name in sibling blocks); the linker
   // types the local only when their return types agree.
-  const fromCalls = new Map<string, Set<string>>();
+  // The value is the `choice` the call is an arm of (a conditional initializer), undefined for a plain initializer.
+  const fromCalls = new Map<string, Map<string, number | undefined>>();
+  const noteFrom = (name: string, from: string, choice?: number): void => {
+    const calls = fromCalls.get(name) ?? new Map<string, number | undefined>();
+    // The same call under another initializer (or none) is no single choice.
+    calls.set(from, calls.has(from) && calls.get(from) !== choice ? undefined : choice);
+    fromCalls.set(name, calls);
+  };
   const push = (name: string | null | undefined, rawType: string | null | undefined, init?: Node | null) =>
     pushFact(name, rawType, init ? expressionFact(init) : null, init);
   const pushFact = (name: string | null | undefined, rawType: string | null | undefined, fact: ExprFact | null, init?: Node | null) => {
@@ -971,7 +978,13 @@ function extractLocalTypes(body: Node | null, language: JkLang): LocalType[] {
       // `var dao = DaoFactory.getDAO()` / `val case = repo.find(id)` — typed
       // by what the call is declared to return; the linker reads that.
       const from = callChainText(init, language);
-      if (from) fromCalls.set(name, (fromCalls.get(name) ?? new Set()).add(from));
+      if (from) noteFrom(name, from);
+      else {
+        // `var api = x ? clubs() : players()` / `val api = if (x) clubs() else players()`: each arm's call, one choice.
+        const arms = conditionalArms(init, language);
+        const calls = arms?.map((arm) => callChainText(arm, language));
+        if (init && calls && calls.every((c) => c)) for (const c of calls) noteFrom(name, c!, init.startIndex);
+      }
       return;
     }
     let simple = simpleTypeName(declared);
@@ -1023,8 +1036,34 @@ function extractLocalTypes(body: Node | null, language: JkLang): LocalType[] {
     for (const child of n.children) visit(child);
   };
   visit(body);
-  for (const [name, froms] of fromCalls) if (!seen.has(name)) for (const from of froms) out.push({ name, type: "", from });
+  for (const [name, froms] of fromCalls) if (!seen.has(name)) for (const [from, choice] of froms) out.push({ name, type: "", from, ...(choice !== undefined ? { choice } : {}) });
   return out;
+}
+
+/**
+ * The arms of a conditional initializer (Java `c ? a() : b()`, Kotlin `if (c) a() else b()` with a bare expression in each
+ * branch), nested conditionals flattened; null for anything else, so every arm is a plain expression the caller reads.
+ */
+function conditionalArms(init: Node | null | undefined, language: JkLang): Node[] | null {
+  let node = init;
+  while (node?.type === "parenthesized_expression") node = node.namedChild(0);
+  if (!node) return null;
+  let arms: Array<Node | null>;
+  if (language === "java" && node.type === "ternary_expression") {
+    arms = [node.childForFieldName("consequence"), node.childForFieldName("alternative")];
+  } else if (language === "kotlin" && node.type === "if_expression" && node.children.some((c) => c.type === "else")) {
+    const bodies = node.namedChildren.filter((c) => c.type === "control_structure_body");
+    // A branch that is one expression; a block (several statements) says nothing about what the local holds.
+    arms = bodies.length === 2 ? bodies.map((b) => (b.namedChildCount === 1 ? b.namedChild(0) : null)) : [];
+  } else return null;
+  const out: Node[] = [];
+  for (const arm of arms) {
+    if (!arm) return null;
+    const nested = conditionalArms(arm, language);
+    if (nested) out.push(...nested);
+    else out.push(arm);
+  }
+  return out.length >= 2 ? out : null;
 }
 
 /**
