@@ -5,6 +5,7 @@ import { applyRouteMeta, inferredParam, withInheritedGuards } from "../../shared
 import { rubyBodyEnd, rubyCodeLinesOf } from "./blocks.js";
 import { enclosingModules } from "./index.js";
 import { extractRubyRequestAccess, guardsInBody, paramsFromAccess } from "./route-meta.js";
+import { joinRootedPath } from "../../shared/route-paths.js";
 
 /**
  * Grape APIs: `class Clubs < Grape::API` declares its endpoints as blocks
@@ -54,10 +55,7 @@ const SUBCLASS_RE = /^(\s*)class\s+((?:::)?[A-Z][\w:]*)\s*<\s*(?!(?:::)?Sinatra:
 const GRAPE_BODY_RE = /^\s*(?:(?:get|post|put|patch|delete|head|options|route|resources?|namespace|route_param|segment|group)\b.*\bdo\b\s*(?:\|[^|]*\|)?\s*$|mount\s+(?:::)?[A-Z])/;
 
 /** Path segments of a symbol or string scope (`:clubs` → `clubs`, `'clubs/:id'` → `clubs/:id`). */
-function joinPath(...parts: Array<string | undefined>): string {
-  const segs = parts.flatMap((p) => (p ?? "").split("/")).filter(Boolean);
-  return "/" + segs.join("/");
-}
+const joinPath = (...parts: Array<string | undefined>): string => joinRootedPath(parts);
 
 /** `'v1'`, `'v1', 'v2'`, `['v1', 'v2']` before the options. */
 function versionsOf(args: string): { versions: string[]; inPath: boolean } {
