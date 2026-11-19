@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { conventionRoots, analyzeUnusedCode, analyzeReachability, vendoredRoots, dropVendoredFacts, type ReachabilityInput } from "./dead-code.js";
+import { conventionRoots, analyzeUnusedCode, analyzeReachability, atLeastConfidence, parseConfidence, vendoredRoots, dropVendoredFacts, type ReachabilityInput } from "./dead-code.js";
 import { createEmptyAnalysis, type ExportInfo, type FileAnalysis } from "../types/analysis.js";
 import type { ReachabilityModel } from "../types/language-plugin.js";
 
@@ -407,5 +407,68 @@ describe("analyzeUnusedCode — barrels that are not codegen", () => {
     const analyses = [barrel("src/shared"), leaf("src/shared/a.ts"), leaf("src/app.ts")];
     const graph = { "src/shared/a.ts": ["src/shared/b.ts"], "src/app.ts": ["src/shared/index.ts"] };
     expect(analyzeUnusedCode(analyses, graph).generatedRoots).toEqual([]);
+  });
+});
+
+describe("unused export confidence and reasons", () => {
+  const file = (s: Partial<FileAnalysis> & { filePath: string }): FileAnalysis =>
+    ({ language: "typescript", projectId: "root", imports: [], exports: [], functions: [], classes: [], routes: [], subComponents: [], templateTree: [], ...s }) as unknown as FileAnalysis;
+  const exp = (name: string, line: number, extra: Partial<ExportInfo> = {}): ExportInfo => ({ name, kind: "function", line, ...extra });
+  const model: ReachabilityModel = {
+    manifestEntries: [],
+    entryReason: (a) => (a.filePath === "main.ts" ? "convention" : null),
+    resolve: (_from, src) => (src.startsWith("?") ? null : src.startsWith("./") ? [`${src.slice(2)}.ts`] : []),
+    resolvePath: (_from, ref) => [ref.replace(/^\//, "")],
+  };
+  const run = (analyses: FileAnalysis[], extra: Partial<ReachabilityInput> = {}, source?: string) =>
+    analyzeReachability({
+      analyses, componentGraph: {}, symbolLinks: [], models: new Map([["typescript", model]]), frameworks: new Set(),
+      projectRoots: new Map([["root", ""]]), isTest: () => false, isUnauthored: () => false, readSource: () => source, ...extra,
+    })!;
+  const row = (r: ReturnType<typeof run>, name: string) => r.exports.find((e) => e.name === name)!;
+
+  it("states why an unused export is clear-cut or not", () => {
+    const r = run(
+      [
+        file({ filePath: "main.ts", imports: [{ source: "./club", specifiers: ["keep"], isDefault: false, isNamespace: false, isType: false, line: 1 } as never] }),
+        file({ filePath: "club.ts", exports: [exp("keep", 1), exp("bench", 3), exp("helper", 5), exp("dead", 7)] }),
+        file({ filePath: "barrel.ts", imports: [], exports: [exp("bench", 1, { kind: "re-export", source: "./club" })] }),
+        file({ filePath: "main2.ts", imports: [], functions: [{ name: "go", calls: [{ name: "helper", line: 2 }] } as never] }),
+      ],
+      {},
+      "export function keep() {}\n\nexport function bench() {}\n\nexport function helper() { return localUse(); }\n\nexport function dead() {}\nhelper();\n",
+    );
+    expect(row(r, "dead")).toMatchObject({ confidence: "INFERRED", reasons: [] });
+    expect(row(r, "bench").reasons).toContain("re-exported");
+    expect(row(r, "bench").confidence).toBe("INFERRED");
+    expect(row(r, "helper")).toMatchObject({ confidence: "AMBIGUOUS", reasons: ["own-file-only", "name-referenced"] });
+  });
+
+  it("is ambiguous when the project has an import it cannot resolve", () => {
+    const r = run([
+      file({ filePath: "main.ts", imports: [
+        { source: "?alias/x", specifiers: ["x"], isDefault: false, isNamespace: false, isType: false, line: 1 } as never,
+        { source: "./club", specifiers: ["other"], isDefault: false, isNamespace: false, isType: false, line: 2 } as never,
+      ] }),
+      file({ filePath: "club.ts", exports: [exp("dead", 1), exp("other", 3)] }),
+    ]);
+    expect(row(r, "dead")).toMatchObject({ confidence: "AMBIGUOUS", reasons: ["unresolved-imports"] });
+  });
+
+  it("treats a file a deployment names as an entry point", () => {
+    const analyses = [file({ filePath: "main.ts" }), file({ filePath: "jobs/trainer.ts", exports: [exp("train", 1)] })];
+    expect(run(analyses).files.map((f) => f.filePath)).toEqual(["jobs/trainer.ts"]);
+    const r = run(analyses, { deployEntries: [{ filePath: "jobs/trainer.ts", reason: "Procfile worker process" }] });
+    expect(r.files).toEqual([]);
+    expect(r.entries).toContainEqual({ filePath: "jobs/trainer.ts", reason: "Procfile worker process" });
+  });
+
+  it("filters by minimum confidence, reading an absent confidence as inferred", () => {
+    expect(parseConfidence("Ambiguous")).toBe("AMBIGUOUS");
+    expect(parseConfidence("sure")).toBeUndefined();
+    expect(atLeastConfidence({ confidence: "AMBIGUOUS" }, "INFERRED")).toBe(false);
+    expect(atLeastConfidence({}, "INFERRED")).toBe(true);
+    expect(atLeastConfidence({ confidence: "INFERRED" }, "EXTRACTED")).toBe(false);
+    expect(atLeastConfidence({ confidence: "AMBIGUOUS" }, undefined)).toBe(true);
   });
 });

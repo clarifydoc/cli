@@ -34,6 +34,7 @@ import {
 } from "./dependency-inventory.js";
 import { detectSubProjects, assignProjectId } from "./project-detector.js";
 import { detectDeployment } from "./deployment.js";
+import { procfileEntries, repoFiles } from "./dockerfiles.js";
 import { detectGitopsReleases } from "./gitops-releases.js";
 import { resolveViewBySuffix, pickByPathAffinity, extensionFamily, escapeRegex } from "../extractors/plugins/shared/path-utils.js";
 import { attachServerRedirects } from "./server-redirects.js";
@@ -2471,7 +2472,13 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const docDrift = await computeDocDrift(projectRoot, allAnalyses, allRoutes, options.gitHistory !== false).catch(() => undefined);
   if (docDrift?.findings.length) progress.detail(`  Doc drift: ${docDrift.findings.length} reference(s) in ${new Set(docDrift.findings.map((f) => f.doc)).size} doc(s) the tree does not bear out`);
   await prefetched;
+  const deployRepo = repoFiles(projectRoot);
+  const deployEntries = [
+    ...(deployment?.services ?? []).flatMap((s) => (s.entryFile ? [{ filePath: s.entryFile, reason: `deployment service ${s.name}` }] : [])),
+    ...procfileEntries(["", ...subProjects.map((sp) => sp.root)], deployRepo),
+  ];
   const deadCode = analyzeReachability({
+    deployEntries,
     analyses: allAnalyses,
     componentGraph,
     symbolLinks,

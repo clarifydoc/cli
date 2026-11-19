@@ -192,3 +192,23 @@ export function entryFileOf(command: string | undefined, context: string, repo: 
   }
   return undefined;
 }
+
+/**
+ * The files a Procfile's processes run: `web: node src/server.js` names
+ * `src/server.js`. One Procfile per directory in `dirs` (project roots, "" for
+ * the analyzed root); a process whose command names no file here is left out.
+ */
+export function procfileEntries(dirs: Iterable<string>, repo: RepoFiles): Array<{ filePath: string; reason: string }> {
+  const out: Array<{ filePath: string; reason: string }> = [];
+  for (const dir of new Set(dirs)) {
+    const text = repo.read(posix.join(dir, "Procfile"));
+    if (!text) continue;
+    for (const line of text.split(/\r?\n/)) {
+      const m = /^([A-Za-z0-9_-]+):\s*(.+)$/.exec(line.trim());
+      if (!m) continue;
+      const filePath = entryFileOf(m[2], dir, repo);
+      if (filePath) out.push({ filePath, reason: `Procfile ${m[1]} process` });
+    }
+  }
+  return out;
+}

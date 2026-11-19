@@ -918,7 +918,8 @@ export async function detectDeployment(
       const fromDockerfile = dockerDir && dockerDir !== "." && dockerDir !== context ? projectOfContext(dockerDir, options.subProjects) : undefined;
       const rootId = options.subProjects.find((p) => p.root === "")?.id;
       s.project = (fromDockerfile && fromContext === rootId && fromDockerfile !== rootId ? fromDockerfile : fromContext) ?? matchProject(svc, projects, byFiles);
-      const entryFile = svc.entryFile ?? (svc.build ? entryFileOf(svc.entrypoint, svc.build.context, repo) : undefined);
+      // A service with no build (an image with the checkout mounted) runs a command written from the repository root.
+      const entryFile = svc.entryFile ?? entryFileOf(svc.entrypoint, svc.build ? svc.build.context : "", repo);
       if (entryFile) s.entryFile = entryFile;
       // Where the service is told other services are — URL-shaped values only.
       const urlEnv: Record<string, string> = {};

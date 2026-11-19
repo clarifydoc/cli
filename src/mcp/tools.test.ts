@@ -421,6 +421,17 @@ describe("clarifydoc MCP tools — react fixture", () => {
     if (dead.files.length > 2) expect(text).not.toContain(dead.files[2]!.filePath);
   });
 
+  it("health dead-code keeps rows at or above minConfidence, and names what it dropped", async () => {
+    const dead = loaded.summary.deadCode!;
+    const sure = await call(server, "clarifydoc_health", { category: "dead-code", minConfidence: "inferred", limit: 300 });
+    expect(sure.isError).toBe(false);
+    const ambiguousFiles = dead.files.filter((f) => f.confidence === "AMBIGUOUS").length;
+    expect(sure.text).toContain(`## Unreachable files (${dead.files.length - ambiguousFiles})`);
+    const none = await call(server, "clarifydoc_health", { category: "dead-code", minConfidence: "extracted" });
+    expect(none.text).not.toContain("## Unreachable files");
+    expect(none.text).toContain("minConfidence=extracted");
+  });
+
   it("refuses to analyze when the server is read-only", async () => {
     const { text, isError } = await call(server, "clarifydoc_analyze");
     expect(isError).toBe(true);

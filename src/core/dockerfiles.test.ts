@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { entryFileOf, parseDockerfile, type RepoFiles } from "./dockerfiles.js";
+import { entryFileOf, procfileEntries, parseDockerfile, type RepoFiles } from "./dockerfiles.js";
 
 const repo = (files: Record<string, string>): RepoFiles => ({ exists: (p) => p in files, read: (p) => files[p] });
 
@@ -38,5 +38,19 @@ CMD ["node", "dist/server.js"]
     expect(entryFileOf("gunicorn shop.wsgi:application -b 0.0.0.0:8000", "", files)).toBe("shop/wsgi.py");
     expect(entryFileOf("dotnet Cars.Api.dll", "cars", files)).toBeUndefined();
     expect(entryFileOf("python ../escape.py", "api", files)).toBeUndefined();
+  });
+
+  it("reads the files a Procfile's processes run", () => {
+    const files = repo({
+      Procfile: "web: node src/server.js\nworker: python -m app.worker\nrelease: ./bin/migrate-db\n# comment\n",
+      "src/server.js": "", "app/worker.py": "",
+      "api/Procfile": "web: node main.js",
+      "api/main.js": "",
+    });
+    expect(procfileEntries(["", "api", "missing"], files)).toEqual([
+      { filePath: "src/server.js", reason: "Procfile web process" },
+      { filePath: "app/worker.py", reason: "Procfile worker process" },
+      { filePath: "api/main.js", reason: "Procfile web process" },
+    ]);
   });
 });

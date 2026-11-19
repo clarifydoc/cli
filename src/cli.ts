@@ -54,6 +54,7 @@ program
   .option("--codequality <file>", "Also write the findings as a GitLab Code Quality report")
   .option("--progress <format>", "Report progress as `json`: one event per line on stderr (stage, files done, done) instead of the status line")
   .option("--fail-on <gate>", "Exit with code 2 when a finding matches: a level (error | warning | note), finding categories (security, contract, route-miss, performance, dead-code, import-rule, vacuous-rule, a rule id…), or both, comma-separated")
+  .option("--min-confidence <level>", "Dead-code findings in the SARIF / --fail-on gate at or above this confidence: ambiguous | inferred | extracted (default: unreachable files inferred, every unused export)")
   .option("--baseline <sarif-or-analysis>", "Findings of the base (its SARIF, or its analysis directory): reports mark each finding new or unchanged, and --fail-on counts only new ones")
   .option("--import-sarif <files...>", "Join other tools' SARIF findings (Semgrep, CodeQL, gosec…) to the map: each gets the routes that reach it")
   .option("--spec <files...>", "API specs outside the tree (an OpenAPI document the backend publishes) to check the code's calls against")
@@ -152,7 +153,10 @@ program
           const gate = options.failOn ? parseFailOn(String(options.failOn)) : undefined;
           const { SECURITY_CATEGORIES, ruleIdOf } = await import("./core/security-rules.js");
           const summary = await loadReportSummary(outputDir);
-          const sarif = buildSarif(summary.securityIssues ?? [], TOOL_VERSION, structuralFindings(summary));
+          const { parseConfidence } = await import("./core/dead-code.js");
+          const deadCodeMinConfidence = options.minConfidence === undefined ? undefined : parseConfidence(String(options.minConfidence));
+          if (options.minConfidence !== undefined && !deadCodeMinConfidence) throw new Error("--min-confidence is ambiguous, inferred or extracted");
+          const sarif = buildSarif(summary.securityIssues ?? [], TOOL_VERSION, structuralFindings(summary, { deadCodeMinConfidence }));
           const ruleIds = [...SECURITY_CATEGORIES.map(ruleIdOf), ...sarifLib.STRUCTURAL_RULE_IDS];
           const unknown = (gate?.categories ?? []).filter((c) => !isKnownCategory(c, ruleIds));
           if (unknown.length) throw new Error(`--fail-on: unknown categor${unknown.length === 1 ? "y" : "ies"} ${unknown.join(", ")}`);
@@ -163,7 +167,7 @@ program
               base = join(base, basename(outputDir));
             }
             const baseLog = (await stat(base)).isDirectory()
-              ? (() => loadReportSummary(base).then((b) => buildSarif(b.securityIssues ?? [], TOOL_VERSION, structuralFindings(b))))()
+              ? (() => loadReportSummary(base).then((b) => buildSarif(b.securityIssues ?? [], TOOL_VERSION, structuralFindings(b, { deadCodeMinConfidence }))))()
               : readFile(base, "utf8").then((t) => JSON.parse(t));
             const fresh = applyBaseline(sarif, await baseLog);
             console.log(`  Baseline: ${fresh} new finding(s), ${sarif.runs[0]!.results.length - fresh} also in the base`);

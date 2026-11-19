@@ -5069,7 +5069,26 @@ export interface UnusedExport {
   line: number;
   /** Still referenced inside its own file: drop the `export`, don't delete the declaration. */
   usedInFile: boolean;
+  /**
+   * INFERRED: nothing imports it and the analysis knows of no way it could be
+   * reached unseen. AMBIGUOUS: a reason below says a reader may reach it
+   * without an import the resolver can follow. Absent on summaries written
+   * before the field existed.
+   */
+  confidence?: Confidence;
+  /** What the analysis knows about the export beyond "nobody imports it". See {@link UnusedExportReason}. */
+  reasons?: UnusedExportReason[];
 }
+
+/**
+ * - `own-file-only`: still read inside its own file; drop the `export`, keep the declaration.
+ * - `re-exported`: a barrel forwards it, but nothing asks the barrel for it.
+ * - `name-referenced`: another file uses the bare name (a call, a type, a tag) with no import
+ *   that resolved to this file; it may be a global or an auto-import.
+ * - `unresolved-imports`: the project has local-looking imports that named nothing analyzed, so an
+ *   import this judgment cannot see may name it.
+ */
+export type UnusedExportReason = "own-file-only" | "re-exported" | "name-referenced" | "unresolved-imports";
 
 /** Project-level summary */
 /**

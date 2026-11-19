@@ -1,5 +1,6 @@
 /** Project-level tools: status, (re-)analyze, search, health, git impact. */
 
+import { atLeastConfidence, parseConfidence } from "../../core/dead-code.js";
 import { describeDrivers, describeGates } from "../../core/refactor-pressure.js";
 import { byOrdinal } from "../../core/ordinal.js";
 import { asksAboutTests, normalize, rankCandidates, type Candidate, type RankedCandidate, type SearchKind } from "../search-rank.js";
@@ -933,6 +934,7 @@ export function healthTool(ctx: ToolContext): McpTool {
         category: { type: "string", enum: [...HEALTH_CATEGORIES] },
         severity: { type: "string", enum: ["critical", "high", "medium", "low"] },
         file: { type: "string" },
+        minConfidence: { type: "string", enum: ["ambiguous", "inferred", "extracted"], description: "dead-code only: keep rows at least this sure" },
         limit: { type: "number" },
         offset: OFFSET_SCHEMA,
       },
@@ -941,6 +943,8 @@ export function healthTool(ctx: ToolContext): McpTool {
     handler: async (args) => {
       const loaded = await requireAnalysis(ctx);
       const { summary } = loaded;
+      const minConfidence = enumArg(args, "minConfidence", ["ambiguous", "inferred", "extracted"] as const);
+      const floor = parseConfidence(minConfidence);
       const category = enumArg(args, "category", HEALTH_CATEGORIES);
       const limit = numberArg(args, "limit", 25, { max: 300 });
       const offset = offsetArg(args);
@@ -952,6 +956,7 @@ export function healthTool(ctx: ToolContext): McpTool {
       const filters: Array<[string, unknown]> = [
         ["file", fileFilter],
         ["severity", severity],
+        ["minConfidence", minConfidence],
       ];
 
       if (!category) {
@@ -1245,10 +1250,10 @@ export function healthTool(ctx: ToolContext): McpTool {
         }
         case "dead-code": {
           const dead = summary.deadCode;
-          const files = (dead?.files ?? []).filter((f) => inFile(f.filePath));
-          const exports = (dead?.exports ?? []).filter((e) => inFile(e.filePath));
+          const files = (dead?.files ?? []).filter((f) => inFile(f.filePath) && atLeastConfidence(f, floor));
+          const exports = (dead?.exports ?? []).filter((e) => inFile(e.filePath) && atLeastConfidence(e, floor));
           const imports = (dead?.unusedImports ?? []).filter((i) => inFile(i.filePath));
-          if (!dead || (files.length + exports.length + imports.length === 0 && fileFilter)) return { text: noFindings(summary, category, filters) };
+          if (!dead || (files.length + exports.length + imports.length === 0 && (fileFilter || floor))) return { text: noFindings(summary, category, filters) };
           const scope = [
             dead.judgedFiles > 0
               ? `Judged ${plural(dead.judgedFiles, "file")} (${dead.languages.join(", ")}) from ${plural(dead.entryFiles, "entry point")}.`
@@ -1262,10 +1267,11 @@ export function healthTool(ctx: ToolContext): McpTool {
           const lines = [
             `# Dead code — ${plural(files.length, "unreachable file")}, ${plural(exports.length, "unused export")}${importCount ? `, ${plural(importCount, "unused import")}` : ""}`,
             ...scope,
-          ];
+            floor && `Files and exports below minConfidence=${minConfidence} are left out.`,
+          ].filter(Boolean) as string[];
           // Nothing found is an answer when files were judged; say what was covered.
           if (files.length + exports.length + imports.length === 0) {
-            if (dead.judgedFiles > 0) lines.push("", "Every judged file is reachable and every judged export is imported.");
+            if (dead.judgedFiles > 0 && !floor) lines.push("", "Every judged file is reachable and every judged export is imported.");
             return { text: joinLines(lines) };
           }
           if (files.length > 0) {
@@ -1290,7 +1296,10 @@ export function healthTool(ctx: ToolContext): McpTool {
               ...bulletList(
                 exports,
                 limit,
-                (e) => `${loc(e.filePath, e.line)} ${e.name} (${e.kind}) — ${e.usedInFile ? "used in its own file: drop `export`" : "unused: delete"}`,
+                (e) =>
+                  `${loc(e.filePath, e.line)} ${e.name} (${e.kind}) — ${e.usedInFile ? "used in its own file: drop `export`" : "unused: delete"}${
+                    e.confidence === "AMBIGUOUS" ? " [ambiguous]" : ""
+                  }${e.reasons?.length ? ` (${e.reasons.join(", ")})` : ""}`,
                 { offset },
               ),
             );

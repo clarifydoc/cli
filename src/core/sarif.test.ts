@@ -95,6 +95,27 @@ describe("CI gates, baseline and other report formats", () => {
     expect(found[0]!.message).toContain("Reached from GET /cars");
   });
 
+  it("keeps dead-code findings at or above a minimum confidence", async () => {
+    const { structuralFindings } = await import("./sarif.js");
+    const deadCode = {
+      languages: ["typescript"], judgedFiles: 3, entryFiles: 1,
+      files: [
+        { filePath: "src/old.ts", confidence: "INFERRED", deadImporters: 0 },
+        { filePath: "src/maybe.ts", confidence: "AMBIGUOUS", deadImporters: 0 },
+      ],
+      exports: [
+        { filePath: "src/util.ts", name: "pad", kind: "function", line: 8, usedInFile: false, confidence: "INFERRED", reasons: [] },
+        { filePath: "src/util.ts", name: "trim", kind: "function", line: 9, usedInFile: false, confidence: "AMBIGUOUS", reasons: ["name-referenced"] },
+      ],
+    } as never;
+    const at = (deadCodeMinConfidence?: "AMBIGUOUS" | "INFERRED" | "EXTRACTED") =>
+      structuralFindings({ deadCode }, { deadCodeMinConfidence }).map((f) => f.file + (f.ruleId.endsWith("export") ? `:${f.line}` : ""));
+    expect(at()).toEqual(["src/old.ts", "src/util.ts:8", "src/util.ts:9"]);
+    expect(at("INFERRED")).toEqual(["src/old.ts", "src/util.ts:8"]);
+    expect(at("AMBIGUOUS")).toEqual(["src/old.ts", "src/maybe.ts", "src/util.ts:8", "src/util.ts:9"]);
+    expect(at("EXTRACTED")).toEqual([]);
+  });
+
   it("gates on a level, on categories, or both", async () => {
     const { parseFailOn, failingResults, isKnownCategory, STRUCTURAL_RULE_IDS } = await import("./sarif.js");
     const log = buildSarif([issue({})], "0.7.0", await structural());

@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
-import type { ApiRouteLinkStats, ContractFinding, DeadCodeReport, LayerViolation, PatternInfo, RuleVerdict, SecurityCategory, SecurityIssue } from "../types/analysis.js";
+import type { ApiRouteLinkStats, Confidence, ContractFinding, DeadCodeReport, LayerViolation, PatternInfo, RuleVerdict, SecurityCategory, SecurityIssue } from "../types/analysis.js";
+import { atLeastConfidence } from "./dead-code.js";
 import { ruleIdOf as ruleIdFor } from "./security-rules.js";
 import { PROJECT_CONFIG_RELATIVE_PATH } from "./project-config.js";
 
@@ -124,7 +125,7 @@ export function structuralFindings(summary: {
   contractFindings?: readonly ContractFinding[];
   deadCode?: DeadCodeReport;
   patterns?: readonly PatternInfo[];
-}): StructuralFinding[] {
+}, options: { deadCodeMinConfidence?: Confidence } = {}): StructuralFinding[] {
   const out: StructuralFinding[] = [];
   // A team rule that names no analyzed file cannot fail: a gate on its imports would pass for nothing.
   for (const r of summary.ruleVerdicts ?? []) {
@@ -210,8 +211,10 @@ export function structuralFindings(summary: {
     });
   }
   // Dead code is advice, never an error: files nothing reaches (only those no reachable file names), exports nothing imports.
+  // Without a floor, files are judged at INFERRED (an AMBIGUOUS one may be loaded by convention) and every export is listed.
+  const floor = options.deadCodeMinConfidence;
   for (const f of summary.deadCode?.files ?? []) {
-    if (f.confidence !== "INFERRED") continue;
+    if (floor ? !atLeastConfidence(f, floor) : f.confidence !== "INFERRED") continue;
     out.push({
       ruleId: "clarifydoc/unreachable-file",
       title: "File no entry point reaches",
@@ -224,6 +227,7 @@ export function structuralFindings(summary: {
     });
   }
   for (const e of summary.deadCode?.exports ?? []) {
+    if (!atLeastConfidence(e, floor)) continue;
     out.push({
       ruleId: "clarifydoc/unused-export",
       title: "Export nothing imports",

@@ -2,6 +2,7 @@ import { vendoredMinoritySet } from "./security-scanner.js";
 import { isApiContractLanguage } from "../extractors/registry.js";
 import { DEAD_CODE_ENTRY_LIMIT } from "../types/analysis.js";
 import type {
+  Confidence,
   DeadCodeReport,
   ExportInfo,
   FileAnalysis,
@@ -10,6 +11,7 @@ import type {
   TemplateComponentNode,
   UnreachableFile,
   UnusedExport,
+  UnusedExportReason,
 } from "../types/analysis.js";
 import type { ReachabilityModel } from "../types/language-plugin.js";
 import { byOrdinal } from "./ordinal.js";
@@ -280,6 +282,12 @@ export interface ReachabilityInput {
   opaqueFiles?: readonly string[];
   /** The file's source, for the "still used in its own file" check on unused exports. */
   readSource(filePath: string): string | undefined;
+  /**
+   * Files a deployment names as what a service runs (a Procfile process, a
+   * compose `command:`, a Dockerfile `CMD`), with why. Each is an entry point
+   * when its language is judged.
+   */
+  deployEntries?: ReadonlyArray<{ filePath: string; reason: string }>;
 }
 
 /**
@@ -330,6 +338,10 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
       publicApi.add(e.file);
       if (!entryReason.has(e.file)) entryReason.set(e.file, e.reason);
     }
+  }
+  for (const e of input.deployEntries ?? []) {
+    const a = byPath.get(e.filePath);
+    if (a && models.has(a.language) && !entryReason.has(e.filePath)) entryReason.set(e.filePath, e.reason);
   }
   const anchors: string[] = [];
   const passive: string[] = [];
@@ -699,6 +711,39 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
   for (const [t, names] of linkedNames) for (const n of names) use(t, n);
 
   const exportRows: UnusedExport[] = [];
+  // Names a barrel forwards, by the file they come from: a forwarded name no
+  // one asks the barrel for is still an export nothing imports.
+  const forwardedNames = new Map<string, Set<string>>();
+  for (const b of judged) {
+    const model = models.get(b.language);
+    if (!model) continue;
+    for (const e of b.exports) {
+      if (!e.source) continue;
+      for (const t of model.resolve(b.filePath, e.source) ?? []) {
+        if (t === b.filePath) continue;
+        let set = forwardedNames.get(t);
+        if (!set) forwardedNames.set(t, (set = new Set()));
+        set.add(e.name === "*" ? "*" : e.sourceName ?? e.name);
+      }
+    }
+  }
+  // Bare names other files use with no import naming them: calls, type
+  // references and tags. A global or an auto-import reads like that.
+  const nameUsers = new Map<string, Set<string>>();
+  {
+    const note = (name: string, file: string): void => {
+      if (!name || /[^\w$]/.test(name)) return;
+      let set = nameUsers.get(name);
+      if (!set) nameUsers.set(name, (set = new Set()));
+      set.add(file);
+    };
+    for (const a of analyses) {
+      for (const fn of a.functions) for (const c of fn.calls) note(c.name, a.filePath);
+      for (const cls of a.classes) for (const m of cls.methods) for (const c of m.calls) note(c.name, a.filePath);
+      for (const tr of a.typeReferences ?? []) note(tr.typeName, a.filePath);
+      for (const c of a.subComponents) note(c.name, a.filePath);
+    }
+  }
   for (const a of judged) {
     const f = a.filePath;
     if (!visited.has(f) || entryReason.has(f) || publicApi.has(f) || allUsed.has(f)) continue;
@@ -709,12 +754,21 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
     const source = input.readSource(f);
     const exportLines = new Set(a.exports.map((e) => e.line));
     for (const e of unused) {
+      const usedInFile = source !== undefined && referencedOutsideDeclaration(source, e.name, exportLines);
+      const reasons: UnusedExportReason[] = [];
+      if (usedInFile) reasons.push("own-file-only");
+      const fwd = forwardedNames.get(f);
+      if (fwd && (fwd.has("*") || fwd.has(e.name))) reasons.push("re-exported");
+      if (e.name !== "default" && [...(nameUsers.get(e.name) ?? [])].some((u) => u !== f)) reasons.push("name-referenced");
+      if ((unresolvedByProject.get(projectOf(a)) ?? 0) > 0) reasons.push("unresolved-imports");
       exportRows.push({
         filePath: f,
         name: e.name,
         kind: e.kind,
         line: e.line,
-        usedInFile: source !== undefined && referencedOutsideDeclaration(source, e.name, exportLines),
+        usedInFile,
+        confidence: reasons.includes("name-referenced") || reasons.includes("unresolved-imports") ? "AMBIGUOUS" : "INFERRED",
+        reasons,
       });
     }
   }
@@ -791,4 +845,20 @@ function referencedOutsideDeclaration(source: string, name: string, exportLines:
     if (hits > (decl.test(line) ? 1 : 0)) return true;
   }
   return false;
+}
+
+const CONFIDENCE_RANK: Record<Confidence, number> = { AMBIGUOUS: 0, INFERRED: 1, EXTRACTED: 2 };
+
+/** Reads `ambiguous` / `inferred` / `extracted` in any case; undefined for anything else. */
+export function parseConfidence(value: string | undefined): Confidence | undefined {
+  const v = value?.trim().toUpperCase();
+  return v === "AMBIGUOUS" || v === "INFERRED" || v === "EXTRACTED" ? v : undefined;
+}
+
+/**
+ * Whether a dead-code row is at least as sure as `min`. A row from a summary
+ * written before exports carried a confidence counts as INFERRED.
+ */
+export function atLeastConfidence(row: { confidence?: Confidence }, min: Confidence | undefined): boolean {
+  return min === undefined || CONFIDENCE_RANK[row.confidence ?? "INFERRED"] >= CONFIDENCE_RANK[min];
 }
