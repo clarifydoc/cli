@@ -1,5 +1,6 @@
 import type { FunctionInfo } from "../../../types/analysis.js";
 import { codeOf } from "./di.js";
+import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 /**
  * Dart extension members:
@@ -111,18 +112,5 @@ function receiverOf(on: string, typeParams: string | undefined): string | null {
 
 /** `T extends Map<K, V>, K` split on its top-level commas. */
 function splitTopLevel(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i]!;
-    if (c === "<" || c === "(") depth++;
-    else if (c === ">" || c === ")") depth--;
-    else if (c === "," && depth === 0) {
-      out.push(text.slice(start, i));
-      start = i + 1;
-    }
-  }
-  out.push(text.slice(start));
-  return out;
+  return splitTopLevelWith(text, { brackets: "<>()", quotes: "", tail: "keep" });
 }
