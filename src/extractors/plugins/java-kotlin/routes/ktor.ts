@@ -6,6 +6,7 @@ import { findChildByType } from "../../../shared/node-helpers.js";
 import { extractCalls } from "../../../shared/call-graph.js";
 import { applyRouteMeta, type GuardAttr } from "../../../shared/route-metadata.js";
 import type { RouteParamInfo } from "../../../../types/analysis.js";
+import { joinRootedPath } from "../../../shared/route-paths.js";
 
 /**
  * Ktor routing DSL (Kotlin server):
@@ -164,12 +165,7 @@ function lambdaParams(lambda: Node | null, path: string): RouteParamInfo[] {
   return out;
 }
 
-function joinPath(prefixes: string[], path: string | null): string {
-  const parts = [...prefixes, path ?? ""]
-    .map((p) => p.replace(/^\/+|\/+$/g, ""))
-    .filter(Boolean);
-  return "/" + parts.join("/");
-}
+const joinPath = (prefixes: string[], path: string | null): string => joinRootedPath([...prefixes, path], { collapse: false });
 
 export function extractKtorRoutes(root: Node, routes: RouteInfo[], facts?: RouteFact[]): void {
   const visit = (node: Node): void => {
