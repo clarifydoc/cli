@@ -27,8 +27,10 @@ function memberFile(file: string, member: string, byPath: Map<string, FileAnalys
     // `export { default as ConfirmDialog } from "./ConfirmDialog.vue"`: a component file that states no export names
     // itself the default (an SFC), unless it forwards a default of its own, which the walk above followed.
     const target = byPath.get(next);
-    return target && !target.exports.some((x) => x.name === "default") ? next : null;
+    return target && /\.(?:vue|svelte)$/.test(next) && !target.exports.some((x) => x.name === "default") ? next : null;
   }
+  // `export *` never forwards a default.
+  if (member === "default") return null;
   const found = new Set<string>();
   for (const e of owner.exports) {
     if (e.kind !== "re-export" || !e.source || e.name !== "*") continue;
@@ -105,7 +107,8 @@ const VIEWS = new WeakMap<FileAnalysis[], FileAnalysis[]>();
 function importedName(a: FileAnalysis, local: string, source: string): string | null {
   for (const imp of a.imports) {
     if (imp.source !== source || imp.isNamespace || imp.dynamic || imp.isType || !imp.specifiers.includes(local)) continue;
-    return imp.aliases?.[local] ?? (imp.isDefault ? "default" : local);
+    // `import Foo, { Bar }`: the default binding is the first specifier.
+    return imp.aliases?.[local] ?? (imp.isDefault && imp.specifiers[0] === local ? "default" : local);
   }
   return null;
 }

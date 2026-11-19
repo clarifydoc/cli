@@ -50,6 +50,10 @@ const REACT: Record<string, string> = {
   "src/pages/CjsPage.jsx": reactPage("CjsPage", "saveCjs", `const Kit = require("../kit/forms");`, "<Kit.Dialog onSave={DROP} />"),
   // Two files of the barrel's `export *` define the name: refused.
   "src/pages/TwinPage.tsx": reactPage("TwinPage", "saveTwin", `import { Twin } from "../kit";`, "<Twin onSave={DROP} />"),
+  // `export *` never forwards a default: a default import of the barrel reaches nothing.
+  "src/kit/Panel.tsx": `export default function Panel({ onSave }: { onSave: () => void }) { return <b onClick={() => onSave()} />; }\n`,
+  "src/panels.ts": `export * from "./kit/Panel";\n`,
+  "src/pages/PanelPage.tsx": reactPage("PanelPage", "savePanel", `import Panel from "../panels";`, "<Panel onSave={DROP} />"),
   "src/pages/MissPage.tsx": reactPage("MissPage", "saveMiss", `import * as Kit from "../kit";`, "<Kit.Forms.Nothing onSave={DROP} />"),
 };
 
@@ -123,7 +127,7 @@ describe("a component imported through a barrel", () => {
   });
 
   it("refuses a name two files of an `export *` both define, and a nested member nothing exports", () => {
-    for (const page of ["TwinPage", "MissPage"]) {
+    for (const page of ["TwinPage", "MissPage", "PanelPage"]) {
       expect(react.symbolLinks.filter((l) => l.sourceFile === `src/pages/${page}.tsx` && l.strategy?.startsWith("dispatch:"))).toEqual([]);
     }
     expect(react.symbolLinks.filter((l) => l.strategy?.startsWith("dispatch:") && /dup[12]/.test(l.sourceFile + l.targetFile))).toEqual([]);
