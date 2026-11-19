@@ -1,3 +1,4 @@
+import { extractPythonFilePathReads } from "./file-path-reads.js";
 import { extractPythonHttpClientRegistrations } from "./http-clients.js";
 import { DjangoTemplateUrlResolver } from "./django/template-links.js";
 import { DjangoCommandResolver } from "./django/commands.js";
@@ -222,6 +223,7 @@ export const pythonMeta: LanguagePluginMeta = {
     // How function values travel through the module's own statements (see value-flow.ts).
     moduleValueFlow: (tree, sourceText) => moduleFlowOf(tree.rootNode, sourceText).facts,
     entryPoints: (tree, sourceText) => [...extractPythonEntryPoints(tree, sourceText), ...extractPythonScheduledJobs(tree, sourceText)],
+    filePathReads: extractPythonFilePathReads,
   },
   calls: pythonCallHooks,
   requestSchema: pythonRequestSchema,

@@ -57,6 +57,21 @@ class Fixture {
     fun load(name: String) = File("config/league.json").readText() + File("config/$name").readText()
 }
 `,
+  "app/tools/seed.py": `import json
+import os
+from pathlib import Path
+
+
+def seed(path, club):
+    a = open("config/league.json")
+    b = Path("config", "cup.yml")
+    c = os.path.join("config", "league.json")
+    d = open(path)
+    e = open(f"config/{club}")
+    f = club.open("config/unread.json")
+    g = open("config/missing.json", "r")
+    return json.load(a), b, c, d, e, f, g
+`,
 };
 
 async function scan(files: Record<string, string>): Promise<{ dir: string; summary: ProjectAnalysis }> {
@@ -81,7 +96,13 @@ describe("config file reads", () => {
 
   it("joins a Java File / Paths.get path to the file at the sub-project root, and a Kotlin File", () => {
     expect(row("app/config/league.json")?.consumers.map((c) => [c.file.split("/").pop(), c.line])).toEqual(expect.arrayContaining([["Fixture.kt", 6], ["Loader.java", 11]]));
-    expect(row("app/config/cup.yml")?.consumers.map((c) => [c.file.split("/").pop(), c.line])).toEqual([["Loader.java", 12]]);
+    expect(row("app/config/cup.yml")?.consumers.map((c) => [c.file.split("/").pop(), c.line])).toContainEqual(["Loader.java", 12]);
+  });
+
+  it("joins a Python open and Path built from literals", () => {
+    const consumers = (file: string) => row(file)?.consumers.map((c) => [c.file.split("/").pop(), c.line]) ?? [];
+    expect(consumers("app/config/league.json")).toEqual(expect.arrayContaining([["seed.py", 7], ["seed.py", 9]]));
+    expect(consumers("app/config/cup.yml")).toContainEqual(["seed.py", 8]);
   });
 
   it("joins nothing for a variable, a concatenation, an absolute path or a file the analysis lacks", () => {
