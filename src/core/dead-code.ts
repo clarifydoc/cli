@@ -288,6 +288,12 @@ export interface ReachabilityInput {
    * when its language is judged.
    */
   deployEntries?: ReadonlyArray<{ filePath: string; reason: string }>;
+  /**
+   * Files a tool or pipeline runs (a CI `run:` line, a Makefile recipe), with why. Passive: kept
+   * alive with what they import and never reported, but no evidence of where the program starts —
+   * a project whose only such file is one is not judged.
+   */
+  passiveEntries?: ReadonlyArray<{ filePath: string; reason: string }>;
 }
 
 /**
@@ -346,6 +352,7 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
   for (const e of input.deployEntries ?? []) {
     if (!deployReason.has(e.filePath)) deployReason.set(e.filePath, e.reason);
   }
+  const runByTool = new Set((input.passiveEntries ?? []).map((e) => e.filePath));
   const anchors: string[] = [];
   const passive: string[] = [];
   const opaque = new Set(input.opaqueFiles ?? []);
@@ -385,7 +392,7 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
       if (reason) entryReason.set(a.filePath, reason);
       // Run by a tool (a migration, a script, a config): alive, not judged,
       // and no evidence of where the program starts.
-      else if (model.passiveReason?.(a, rel, input.frameworks, () => input.readSource(a.filePath))) {
+      else if (runByTool.has(a.filePath) || model.passiveReason?.(a, rel, input.frameworks, () => input.readSource(a.filePath))) {
         passive.push(a.filePath);
         continue;
       }

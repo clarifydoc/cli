@@ -2476,10 +2476,10 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const deployEntries = [
     ...(deployment?.services ?? []).flatMap((s) => (s.entryFile ? [{ filePath: s.entryFile, reason: `deployment service ${s.name}` }] : [])),
     ...procfileEntries(["", ...subProjects.map((sp) => sp.root)], deployRepo),
-    ...(await ciRunEntries(projectRoot, deployRepo)),
   ];
   const deadCode = analyzeReachability({
     deployEntries,
+    passiveEntries: await ciRunEntries(projectRoot, deployRepo),
     analyses: allAnalyses,
     componentGraph,
     symbolLinks,

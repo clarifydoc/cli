@@ -464,6 +464,23 @@ describe("unused export confidence and reasons", () => {
     expect(r.entries).toContainEqual({ filePath: "jobs/trainer.ts", reason: "Procfile worker process" });
   });
 
+  it("keeps a file a pipeline runs alive without anchoring a project", () => {
+    const ci = { passiveEntries: [{ filePath: "nightly.ts", reason: "run by .github/workflows/n.yml" }] };
+    const nightly = file({ filePath: "nightly.ts", imports: [{ source: "./kit", specifiers: ["k"], isDefault: false, isNamespace: false, isType: false, line: 1 } as never] });
+    const kit = file({ filePath: "kit.ts", exports: [exp("k", 1)] });
+    // Anchored by `main.ts`: the script and what it imports are not reported, the stray file is.
+    const anchored = run([file({ filePath: "main.ts" }), nightly, kit, file({ filePath: "stray.ts", exports: [exp("s", 1)] })], ci);
+    expect(anchored.files.map((f) => f.filePath)).toEqual(["stray.ts"]);
+    // Its only "entry" is the script: no starting point, so the project is not judged.
+    const alone = run([nightly, kit, file({ filePath: "stray.ts", exports: [exp("s", 1)] })], ci);
+    expect(alone.files).toEqual([]);
+    expect(alone.skippedProjects?.length).toBeGreaterThan(0);
+    // A file the model already calls an entry stays one, whatever runs it.
+    const entry = run([file({ filePath: "main.ts" }), file({ filePath: "stray.ts", exports: [exp("s", 1)] })], { passiveEntries: [{ filePath: "main.ts", reason: "run by a pipeline" }] });
+    expect(entry.entries).toContainEqual({ filePath: "main.ts", reason: "convention" });
+    expect(entry.files.map((f) => f.filePath)).toEqual(["stray.ts"]);
+  });
+
   it("filters by minimum confidence, reading an absent confidence as inferred", () => {
     expect(parseConfidence("Ambiguous")).toBe("AMBIGUOUS");
     expect(parseConfidence("sure")).toBeUndefined();
