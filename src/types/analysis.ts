@@ -702,6 +702,12 @@ export interface FileAnalysis {
    */
   testSuites?: Array<{ type: string; runner: string }>;
   /**
+   * Test targets a build manifest declares with a directory of their own (SwiftPM `.testTarget(name:, path:)`):
+   * the target's name and the directory its files sit in, project-relative and posix. A target on the default
+   * directory is left out. Omitted where the file states none.
+   */
+  testTargets?: Array<{ name: string; dir: string }>;
+  /**
    * Type aliases the file declares (TypeScript `type Repo = ClubRepository`,
    * Go `type Repo = store.ClubRepo`, C# `using Repo = League.ClubRepository;`,
    * Rust `type Repo = Arc<dyn ClubStore>;`, Python `Repo = ClubRepository` /
@@ -5347,6 +5353,8 @@ export interface ProjectAnalysis {
   testFunctions?: Record<string, TestFunctionRow[]>;
   /** Test file → suite type → the runner function that runs it (`FileAnalysis.testSuites`); files stating none are left out. */
   testSuites?: Record<string, Record<string, string>>;
+  /** Test targets with a declared directory, from every manifest (`FileAnalysis.testTargets`). */
+  testTargets?: Array<{ name: string; dir: string }>;
   /** Other tools' SARIF this analysis joined (`--import-sarif`): results read, and how many landed on analyzed files. */
   importedFindings?: Array<{ source: string; tool: string; results: number; matched: number }>;
 

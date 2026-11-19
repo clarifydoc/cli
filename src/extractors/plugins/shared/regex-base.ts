@@ -309,6 +309,8 @@ export interface RegexLangSpec {
   extractDiBindings?: (lines: string[], filePath: string) => DiBinding[];
   /** Types the file uses by address (Go `&Club{}`, `*Club`, `new(Club)`) → `FileAnalysis.addressedTypes`. */
   extractAddressedTypes?: (lines: string[]) => string[];
+  /** Test targets a build manifest declares, with the directory each reads from (project-relative, posix) → `FileAnalysis.testTargets`. */
+  extractTestTargets?: (lines: string[], filePath: string) => Array<{ name: string; dir: string }>;
   /** Test suites a file runs through a runner function (Go testify `suite.Run(t, new(X))`) → `FileAnalysis.testSuites`. */
   extractTestSuites?: (lines: string[]) => Array<{ type: string; runner: string }>;
   /** Type aliases the file declares (Go `type A = B`, Rust `type A = B;`) → `FileAnalysis.typeAliases`. */

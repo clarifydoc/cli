@@ -36,6 +36,11 @@ export function collectTestSuites(analyses: readonly FileAnalysis[]): Record<str
   return out;
 }
 
+/** Every test target a manifest declares a directory for (`FileAnalysis.testTargets`), in file order. */
+export function collectTestTargets(analyses: readonly FileAnalysis[]): Array<{ name: string; dir: string }> {
+  return analyses.flatMap((a) => a.testTargets ?? []);
+}
+
 /**
  * Test file → the project files it replaces with a test double (`ProjectAnalysis.mockedModules`):
  * each `FileAnalysis.mockedModules` specifier resolved to the one project file it names, as a

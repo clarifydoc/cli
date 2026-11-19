@@ -183,7 +183,7 @@ import { buildImportDirectoryResolver } from "./import-directories.js";
 import { applyAttributeRequests } from "./attribute-requests.js";
 import { demoteProjectCallDataSources } from "./project-call-data-sources.js";
 import { denormalizeFileAnalysis, denormalizeProject } from "./element-registry.js";
-import { collectMockedModules, collectTestFunctions, collectTestSuites } from "./test-functions.js";
+import { collectMockedModules, collectTestFunctions, collectTestSuites, collectTestTargets } from "./test-functions.js";
 import {
   UNUSED_IMPORTS_LIMIT,
   type FileAnalysis,
@@ -2258,6 +2258,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // The test functions the extractors marked, by file: what impact credits as test code and names a runner's filter by.
   const testFunctions = collectTestFunctions(allAnalyses);
   const testSuites = collectTestSuites(allAnalyses);
+  const testTargets = collectTestTargets(allAnalyses);
   if (testCoverage) {
     // How much of what each route runs the tests ran (its handler and three calls deep).
     const perRoute = routeTestCoverage(allRoutes, symbolLinks, testCoverage);
@@ -2704,6 +2705,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
     ...(testCoverage ? { testCoverage } : {}),
     ...(Object.keys(testFunctions).length ? { testFunctions } : {}),
     ...(Object.keys(testSuites).length ? { testSuites } : {}),
+    ...(testTargets.length ? { testTargets } : {}),
     ...(docDrift ? { docDrift } : {}),
     ...(historySecrets ? { historySecrets } : {}),
     deployment,

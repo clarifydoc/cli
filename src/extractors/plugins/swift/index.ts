@@ -161,12 +161,15 @@ function oneLineProperties(line: string): PropertyInfo[] {
   return out;
 }
 
+import { swiftTestTargets } from "./test-targets.js";
+
 export const swiftSpec: RegexLangSpec = {
   language: "swift",
   extensions: [".swift"],
   indentBased: false,
   lineCommentPrefixes: ["//"],
   parseParam: parseSwiftParam,
+  extractTestTargets: swiftTestTargets,
   parseReturnType: parseSwiftReturnType,
   // `main.swift` is the one file whose top-level statements run (the
   // program's entry, as a script's are).
