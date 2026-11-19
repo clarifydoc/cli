@@ -4,6 +4,7 @@ import { extractParamsFromDeclaration } from "../shared/regex-base.js";
 import { parseRustParam } from "./params.js";
 import { classifyRustParamType } from "./request-schema.js";
 import { isAuthGuard } from "../../shared/route-metadata.js";
+import { joinTrimmedPath } from "../../shared/route-paths.js";
 
 /**
  * Rust server routes — the three dominant frameworks, none of which produced
@@ -443,10 +444,7 @@ function definesFn(lines: string[], name: string): boolean {
   return lines.some((l) => FN_DEF_RE.exec(l)?.[1] === name);
 }
 
-function joinPath(prefix: string, path: string): string {
-  const joined = (prefix + "/" + path).replace(/\/{2,}/g, "/").replace(/\/+$/, "");
-  return joined || "/";
-}
+const joinPath = (prefix: string, path: string): string => joinTrimmedPath(prefix, path, { collapse: true });
 
 /**
  * actix wiring on one line, in source order: `App::new()` opens the app scope,
