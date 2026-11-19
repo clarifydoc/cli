@@ -587,6 +587,36 @@ function scanBody(
     if (list) list.push(entry);
     else bindings.set(name, [entry]);
   };
+  /**
+   * `const [club, player] = load()` / `await load()`: each identifier at its position is a local of the call's result
+   * at that index (`fromIndex`), typed by the linker through the declared tuple the call returns. Any other element
+   * (a rest, a default, a nested pattern, a hole) states nothing.
+   */
+  const bindTuple = (pattern: Node, declarator: readonly Node[]): void => {
+    const eq = declarator.findIndex((c) => c.type === "=");
+    let value = eq >= 0 ? declarator[eq + 1] ?? null : null;
+    let awaited = false;
+    if (value?.type === "await_expression") {
+      awaited = true;
+      value = value.namedChild(0);
+    }
+    const from = value?.type === "call_expression" ? callChainText(value, "typescript") : null;
+    let index = 0;
+    for (const part of pattern.children) {
+      if (part.type === "[" || part.type === "]") continue;
+      if (part.type === ",") {
+        index++;
+        continue;
+      }
+      if (part.type === "comment") continue;
+      if (part.type === "identifier" && from) {
+        const entry = { local: { name: part.text, type: "", from, fromIndex: index, ...(awaited ? { awaited: true as const } : {}) }, annotated: false };
+        const list = bindings.get(part.text);
+        if (list) list.push(entry);
+        else bindings.set(part.text, [entry]);
+      } else bindPattern(part);
+    }
+  };
   const bindTyped = (name: string, element: string): void => {
     const entry = { local: { name, type: element }, annotated: true };
     const list = bindings.get(name);
@@ -713,6 +743,8 @@ function scanBody(
             if (held) held.push(entry);
             else bindings.set(entry.local.name, [entry]);
           }
+        } else if (name?.type === "array_pattern") {
+          bindTuple(name, children);
         } else {
           const fromRecord = bindRecordMembers(name ?? null, children);
           bindPattern(name ?? null, new Set([...bindDestructured(name ?? null, children), ...fromRecord, ...bindMembers(name ?? null, children)]));

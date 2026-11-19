@@ -1,4 +1,5 @@
 import { collectionElementText } from "../../shared/collection-element.js";
+import { tupleElementsText } from "./tuple-elements.js";
 import { jsMigrationFiles } from "./migration-files.js";
 import { jsProjectCommands } from "./project-commands.js";
 import { STORY_FILE, jsTestCommand } from "./test-command.js";
@@ -141,6 +142,8 @@ export const typescriptManifest: LanguagePluginManifest = {
   directoryIndexStems: ["index"],
   callPathsFromHead: true,
   collectionElementOf: collectionElementText,
+  // `const [club, player] = load()` over a declared `[Club, Player]`.
+  tupleElementsOf: tupleElementsText,
   // `await repo.all()` holds the `Club[]` a declared `Promise<Club[]>` resolves to.
   asyncResultTypes: ["Promise"],
   family: "script",
@@ -197,6 +200,8 @@ export const javascriptManifest: LanguagePluginManifest = {
   shebangInterpreterNames: ["node", "nodejs", "tsx", "ts-node", "bun", "deno"],
   callPathsFromHead: true,
   collectionElementOf: collectionElementText,
+  // `const [club, player] = load()` over a declared `[Club, Player]`.
+  tupleElementsOf: tupleElementsText,
   // `await repo.all()` holds the `Club[]` a declared `Promise<Club[]>` resolves to.
   asyncResultTypes: ["Promise"],
   family: "script",
