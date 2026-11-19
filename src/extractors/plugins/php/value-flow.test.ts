@@ -296,4 +296,28 @@ describe("PHP value flow: closures held in a value", () => {
     });
     expect(links).toEqual([]);
   });
+
+  it("binds a named argument to the formal of that name, never by position", async () => {
+    const links = await flow({
+      "src/Club.php": [
+        "<?php", "class Club {",
+        "    public function onFullTime() {}",
+        "    public function onKickoff() {}",
+        "    public function onWhistle() {}",
+        "    public function plan() {",
+        "        schedule(callback: $this->onFullTime(...));",
+        "        scheduleBy(when: 2, callback: [$this, 'onKickoff']);",
+        "        schedule(unknown: $this->onWhistle(...));",
+        "        later(callback: $this->onWhistle(...));",
+        "    }",
+        "}",
+        "function schedule($when = null, callable $callback = null) {", "    $callback();", "}",
+        "function scheduleBy($when = null, callable $callback = null) {", "    $callback();", "}",
+        "function later($callback = null) {", "    $callback();", "}", "",
+      ].join("\n"),
+    });
+    expect(links).toContain("schedule@14 callback -> src/Club.php::Club.onFullTime");
+    expect(links).toContain("scheduleBy@17 callback -> src/Club.php::Club.onKickoff");
+    expect(links.filter((l) => l.includes("::Club.onWhistle"))).toEqual(["later@20 callback -> src/Club.php::Club.onWhistle"]);
+  });
 });

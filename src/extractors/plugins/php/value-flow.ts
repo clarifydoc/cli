@@ -379,7 +379,10 @@ class Reader {
       const value = argValue(arg);
       if (!value || arg.text.startsWith("...")) return;
       const from = this.cellFor(value);
-      if (from) this.facts.push({ kind: "arg", call, line, index, from });
+      if (!from) return;
+      // `schedule(callback: $this->onFullTime(...))`: a PHP 8 named argument binds the formal of that name, never one by position.
+      const label = arg.childForFieldName("name")?.text;
+      this.facts.push(label ? { kind: "arg", call, line, index: -1, name: label, from } : { kind: "arg", call, line, index, from });
     });
   }
 
