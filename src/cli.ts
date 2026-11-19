@@ -776,6 +776,85 @@ program
     }
   });
 
+const rulesCommand = program.command("rules").description("The team's dependency rules in .clarifydoc/config.json");
+rulesCommand
+  .command("init")
+  .description("Draft the `rules` section from today's folder dependencies (no folder imports one that depends on it; no new import inside a cycle) and record today's violations as a SARIF baseline for `analyze --baseline`. Shows what would be added; writes only with --write")
+  .argument("<path>", "Path to project root")
+  .option("-o, --output <dir>", "Analysis output directory (same value as `analyze -o`); analyzed first when it holds none", ".clarifydoc")
+  .option("--analysis-dir <dir>", "Exact directory containing project-summary.json (overrides --output)")
+  .option("--depth <n>", "Folder depth that cuts the units (as `clarifydoc_architecture view=modules`)", wholeNumber(1), 2)
+  .option("--baseline-file <file>", "Where the baseline SARIF goes (default: <path>/.clarifydoc/baseline.sarif)")
+  .option("--write", "Write the rules into the config and the baseline file (without it: show the diff only)", false)
+  .action(async (path: string, options) => {
+    const projectRoot = resolve(path);
+    const projectName = projectRoot.replace(/\\/g, "/").split("/").pop()!;
+    const analysisDir = options.analysisDir ? resolve(options.analysisDir) : resolve(options.output, projectName);
+    try {
+      const [{ loadReportSummary }, { readFile, writeFile, mkdir }, ri, pc, sarifLib, { TOOL_VERSION }] = await Promise.all([
+        import("./core/report-payload.js"), import("fs/promises"), import("./core/rules-init.js"),
+        import("./core/project-config.js"), import("./core/sarif.js"), import("./core/version.js"),
+      ]);
+      if (!existsSync(join(analysisDir, "project-summary.json"))) {
+        console.log(`No analysis at ${analysisDir}: analyzing ${projectRoot} first.`);
+        await analyze({ projectRoot, outputDir: analysisDir, pretty: true, verbose: false, lsp: false, gitHistory: false });
+      }
+      const summary = await loadReportSummary(analysisDir);
+      const configPath = join(projectRoot, pc.PROJECT_CONFIG_RELATIVE_PATH);
+      let raw: Record<string, unknown> = {};
+      if (existsSync(configPath)) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(await readFile(configPath, "utf8"));
+        } catch (err) {
+          throw new Error(`${configPath} is not valid JSON (${(err as Error).message}); fix it first, nothing was changed`);
+        }
+        if (!pc.isPlainObject(parsed)) throw new Error(`${configPath} is not a JSON object; nothing was changed`);
+        raw = parsed;
+      }
+      if (raw.rules !== undefined && !Array.isArray(raw.rules)) throw new Error(`${configPath}: "rules" is not an array; nothing was changed`);
+      const existing = (raw.rules as unknown[] | undefined) ?? [];
+
+      const graph = summary.componentGraph ?? {};
+      const drafted = ri.initialRules(graph, options.depth);
+      const { added, kept } = ri.mergeRules(existing, drafted.rules);
+      console.log(`${drafted.units} folder(s) at depth ${options.depth}, ${drafted.edges} dependency edge(s), ${drafted.cycles.length} cycle group(s)${drafted.cycles.map((c) => `\n  cycle: ${c.join(", ")}`).join("")}`);
+      if (kept.length) console.log(`Kept as the config has them (same name): ${kept.length} rule(s)`);
+      const baselineFile = resolve(options.baselineFile ?? join(projectRoot, ".clarifydoc", "baseline.sarif"));
+      if (added.length === 0) {
+        console.log(drafted.rules.length === 0 ? "No rule to add: no folder depends on another." : "No rule to add: the config already holds every one.");
+      } else {
+        console.log(`\n${configPath} — rules to add (${added.length}):`);
+        for (const r of added) {
+          const { description: _d, ...shown } = r;
+          console.log(JSON.stringify(shown, null, 2).split("\n").map((l) => `+ ${l}`).join("\n"));
+        }
+      }
+      // The baseline covers every drafted rule (kept ones too), so --write again rebuilds a lost baseline.
+      const breaches = ri.violationsOf(graph, drafted.rules);
+      const known = new Set((summary.layerViolations ?? []).map((v) => `${v.rule}\u0000${v.sourceFile}\u0000${v.targetFile}`));
+      const fresh = breaches.filter((v) => !known.has(`${v.rule}\u0000${v.sourceFile}\u0000${v.targetFile}`));
+      console.log(`\nBaseline ${baselineFile}: today's findings plus ${fresh.length} import(s) the drafted rules forbid (all inside cycles).`);
+      if (!options.write) {
+        console.log("Nothing written. Run again with --write to merge the rules and write the baseline.");
+        return;
+      }
+      // Baseline first: a config with rules and no baseline would fail on every existing cycle import.
+      const findings = sarifLib.structuralFindings({ ...summary, layerViolations: [...(summary.layerViolations ?? []), ...fresh] });
+      await mkdir(dirname(baselineFile), { recursive: true });
+      await writeFile(baselineFile, JSON.stringify(sarifLib.buildSarif(summary.securityIssues ?? [], TOOL_VERSION, findings), null, 2));
+      if (added.length) {
+        raw.rules = [...existing, ...added];
+        await mkdir(dirname(configPath), { recursive: true });
+        await writeFile(configPath, JSON.stringify(raw, null, 2) + "\n");
+      }
+      console.log(`Wrote ${added.length ? `${configPath} and ` : ""}${baselineFile}.\nGate with: clarifydoc analyze ${path} --sarif out.sarif --baseline ${baselineFile} --fail-on import-rule`);
+    } catch (err) {
+      console.error("Error:", (err as Error).message);
+      process.exitCode = 1;
+    }
+  });
+
 program
   .command("facts")
   .description("List the analysis's facts with their stable IDs, or check the IDs a document cites ([R-3fa2c1]) against them")

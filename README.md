@@ -158,6 +158,7 @@ clarifydoc detect <path>               # Print detected languages + frameworks o
 clarifydoc lint <outputDir>            # Check an analysis for contradictions in its own facts (exit 1 on any)
 clarifydoc schema                      # Print every field of the per-file JSON and project-summary.json
 clarifydoc export <path>               # The analysis as ARCHITECTURE.md, DATA-MODEL.md, FLOWS.md, openapi.json, sbom.cdx.json, Mermaid, GraphML, Cypher, CSV, an Obsidian vault (--format obsidian), linked screen specs with user flows and story drafts (--format screens)
+clarifydoc rules init <path>             # Draft the config's dependency `rules` from today's folders (a folder never imports one that depends on it; no new import inside a cycle) and show the diff; --write merges it (never overwriting a rule of the same name) and writes .clarifydoc/baseline.sarif for `analyze --baseline`, so only new drift fails
 clarifydoc facts <path> --check doc.md  # Check the fact IDs a document cites ([R-3fa2c1]) against the analysis
 clarifydoc mcp [path]                  # Serve the analysis to an AI agent over MCP (stdio, or --http)
 clarifydoc ask routes path=/api/users  # Call one MCP tool from a shell or CI (--list for all)

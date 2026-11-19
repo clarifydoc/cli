@@ -417,7 +417,7 @@ function elementOf(file: string, each: string): string | null {
 }
 
 /** Tarjan's strongly connected components; each node in a component of two or more gets that component's number. */
-function stronglyConnected(graph: ReadonlyMap<string, ReadonlySet<string>>): Map<string, number> {
+export function stronglyConnected(graph: ReadonlyMap<string, ReadonlySet<string>>): Map<string, number> {
   const index = new Map<string, number>();
   const low = new Map<string, number>();
   const onStack = new Set<string>();
