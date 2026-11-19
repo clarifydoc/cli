@@ -574,3 +574,23 @@ describe("a held lambda's cap counts project functions only (real-repo FP)", () 
     expect(out).toEqual([]);
   });
 });
+
+describe("Kotlin value flow: named arguments", () => {
+  const files = {
+    "league/Clock.kt": [
+      "package league",
+      "",
+      "fun onFullTime() {}",
+      "fun onKickOff() {}",
+      "fun schedule(whenStart: () -> Unit, callback: () -> Unit) { callback() }",
+      "fun byName() { schedule(callback = ::onFullTime, whenStart = ::onKickOff) }",
+      "fun unknownName() { schedule(missing = ::onKickOff, callback = ::onFullTime) }",
+      "",
+    ].join("\n"),
+  };
+  it("binds a named argument to the formal of that name, never by position", async () => {
+    const out = links(await analyzeAll(files, "kotlin"), "value-flow");
+    expect(out).toContain("schedule: callback -> Clock.kt::onFullTime");
+    expect(out.filter((l) => l.includes("onKickOff"))).toEqual([]);
+  });
+});

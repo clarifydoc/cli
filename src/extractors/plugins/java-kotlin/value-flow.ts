@@ -984,7 +984,6 @@ class Flow {
     if (!hit) return;
     const { call, line } = hit;
     this.invokeOf(node, call, line);
-    if (args.named) return;
     // A lambda handed to the platform's own `forEach` / `map` / `run { }` is never run by a project function.
     const leaf = call.split(".").pop()!;
     const platform = LIBRARY_CALLS.has(leaf) || KOTLIN_STD.has(leaf);
@@ -992,8 +991,13 @@ class Flow {
     if (this.libraryCall(call, line)) return;
     args.nodes.forEach((a, index) => {
       if (platform && Flow.isLambda(a)) return;
+      const label = args.labels[index] ?? null;
+      // A named argument whose label could not be read, or a positional one after a named one, binds nothing.
+      if (args.named && label === null && args.nodes.slice(0, index).some((_, i) => args.labels[i] !== null)) return;
       const from = this.valueCell(a);
-      if (from) this.push({ kind: "arg", call, line, index, from });
+      if (!from) return;
+      if (label !== null) this.push({ kind: "arg", call, line, index: -1, name: label, from });
+      else this.push({ kind: "arg", call, line, index, from });
     });
   }
 
@@ -1012,22 +1016,31 @@ class Flow {
     return type !== null && isLibraryCall(this.library, this.lang, name, type);
   }
 
-  private argumentsOf(node: Node): { nodes: Node[]; named: boolean } {
+  private argumentsOf(node: Node): { nodes: Node[]; named: boolean; labels: Array<string | null> } {
     if (node.type === "method_invocation" || node.type === "object_creation_expression") {
-      return { nodes: node.childForFieldName("arguments")?.namedChildren ?? [], named: false };
+      const nodes = node.childForFieldName("arguments")?.namedChildren ?? [];
+      return { nodes, named: false, labels: nodes.map(() => null) };
     }
     const list = node.children.find((c) => c.type === "call_suffix")?.namedChildren.find((c) => c.type === "value_arguments");
     const nodes: Node[] = [];
+    const labels: Array<string | null> = [];
     let named = false;
     for (const a of list?.namedChildren ?? []) {
-      if (a.children.some((c) => c.type === "=" )) named = true;
+      const isNamed = a.children.some((c) => c.type === "=");
+      if (isNamed) named = true;
       const inner = a.namedChildren[a.namedChildren.length - 1];
-      if (inner) nodes.push(inner);
+      if (inner) {
+        nodes.push(inner);
+        // `schedule(callback = ::onFullTime)`: the label binds the formal of that name.
+        const label = isNamed && a.namedChildren.length >= 2 && a.namedChildren[0]!.type === "simple_identifier" ? a.namedChildren[0]!.text : null;
+        labels.push(label);
+      }
     }
     // A trailing lambda (`wrap { kickOff() }`) is the last argument.
     const trailing = node.children.find((c) => c.type === "call_suffix")?.namedChildren.find((c) => c.type === "annotated_lambda")?.namedChildren.find((c) => c.type === "lambda_literal");
-    if (trailing) nodes.push(trailing);
-    return { nodes, named };
+    // After named arguments a trailing lambda's position is unknown: it is left out.
+    if (trailing && !named) { nodes.push(trailing); labels.push(null); }
+    return { nodes, named, labels };
   }
 
   /** `hs.add(this::save)`, `table.put("k", ::save)`, Kotlin `hs.add(::save)`. */
