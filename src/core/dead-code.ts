@@ -339,9 +339,12 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
       if (!entryReason.has(e.file)) entryReason.set(e.file, e.reason);
     }
   }
+  // A file a deployment runs is an entry, but the reason the language's own
+  // model gives (a `__main__` guard, a serverless handler) is the more precise
+  // one, so the deployment's is only the fallback below.
+  const deployReason = new Map<string, string>();
   for (const e of input.deployEntries ?? []) {
-    const a = byPath.get(e.filePath);
-    if (a && models.has(a.language) && !entryReason.has(e.filePath)) entryReason.set(e.filePath, e.reason);
+    if (!deployReason.has(e.filePath)) deployReason.set(e.filePath, e.reason);
   }
   const anchors: string[] = [];
   const passive: string[] = [];
@@ -378,6 +381,7 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
         const ep = a.entryPoints?.find((e) => e.framework === "sam" || e.framework === "serverless");
         if (ep) reason = `serverless ${ep.kind}`;
       }
+      if (!reason) reason = deployReason.get(a.filePath);
       if (reason) entryReason.set(a.filePath, reason);
       // Run by a tool (a migration, a script, a config): alive, not judged,
       // and no evidence of where the program starts.
@@ -768,7 +772,7 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
         line: e.line,
         usedInFile,
         confidence: reasons.includes("name-referenced") || reasons.includes("unresolved-imports") ? "AMBIGUOUS" : "INFERRED",
-        reasons,
+        ...(reasons.length > 0 ? { reasons } : {}),
       });
     }
   }

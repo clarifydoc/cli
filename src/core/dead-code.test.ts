@@ -438,7 +438,8 @@ describe("unused export confidence and reasons", () => {
       {},
       "export function keep() {}\n\nexport function bench() {}\n\nexport function helper() { return localUse(); }\n\nexport function dead() {}\nhelper();\n",
     );
-    expect(row(r, "dead")).toMatchObject({ confidence: "INFERRED", reasons: [] });
+    expect(row(r, "dead")).toMatchObject({ confidence: "INFERRED" });
+    expect(row(r, "dead")).not.toHaveProperty("reasons");
     expect(row(r, "bench").reasons).toContain("re-exported");
     expect(row(r, "bench").confidence).toBe("INFERRED");
     expect(row(r, "helper")).toMatchObject({ confidence: "AMBIGUOUS", reasons: ["own-file-only", "name-referenced"] });

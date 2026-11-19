@@ -17,10 +17,12 @@ import { buildMcpServer } from "./server.js";
  * least a tool with arguments costs — the alternative, one tool dispatching on
  * a `command` name, hides from the model which question each one answers.
  * 15,520 + 1,167 with twenty-four: rename_plan, the read-only plan for a rename, at the same ~400 bytes.
+ * 15,625 + 1,167 once health took `minConfidence` (dead-code rows by how sure the accusation is): one enum
+ * argument, its meaning folded into the description's filter list.
  */
-const BUDGET_BYTES = 16_750;
+const BUDGET_BYTES = 16_850;
 /** `tools/list` alone, `_meta` aside. */
-const TOOLS_LIST_BYTES = 15_550;
+const TOOLS_LIST_BYTES = 15_650;
 /** The server instructions, in characters. */
 const INSTRUCTIONS_CHARS = 1_300;
 
@@ -38,7 +40,7 @@ async function upFront(): Promise<{ list: number; instructions: string }> {
 const ARGUMENTS: Record<string, number> = {
   clarifydoc_status: 1, clarifydoc_search: 7, clarifydoc_routes: 17, clarifydoc_contract: 5, clarifydoc_services: 3,
   clarifydoc_screens: 6, clarifydoc_file: 3, clarifydoc_trace: 8, clarifydoc_extract: 5, clarifydoc_blast_radius: 2, clarifydoc_rename_plan: 4,
-  clarifydoc_data_model: 4, clarifydoc_data_flows: 6, clarifydoc_health: 5, clarifydoc_architecture: 4,
+  clarifydoc_data_model: 4, clarifydoc_data_flows: 6, clarifydoc_health: 6, clarifydoc_architecture: 4,
   clarifydoc_context_docs: 4, clarifydoc_impact: 5, clarifydoc_control_flow: 4, clarifydoc_analyze: 3, clarifydoc_explain: 4,
   clarifydoc_sequence: 4, clarifydoc_diff: 1, clarifydoc_export: 1, clarifydoc_facts: 4,
 };

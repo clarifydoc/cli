@@ -927,14 +927,14 @@ export function healthTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_health",
     title: "Code health findings",
-    description: "Use for the health score and its findings. No `category`: the scoreboard; then drill in (layers lists each team rule's verdict). `severity`, `file` filter.",
+    description: "Use for the health score and its findings. No `category`: the scoreboard; then drill in (layers lists each team rule's verdict). `severity`, `file`, dead-code `minConfidence` filter.",
     inputSchema: {
       type: "object",
       properties: {
         category: { type: "string", enum: [...HEALTH_CATEGORIES] },
         severity: { type: "string", enum: ["critical", "high", "medium", "low"] },
         file: { type: "string" },
-        minConfidence: { type: "string", enum: ["ambiguous", "inferred", "extracted"], description: "dead-code only: keep rows at least this sure" },
+        minConfidence: { type: "string", enum: ["ambiguous", "inferred", "extracted"] },
         limit: { type: "number" },
         offset: OFFSET_SCHEMA,
       },
