@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { attachFindingEntries, attachPatternEntries } from "./finding-entries.js";
-import type { FileAnalysis, PatternInfo, SecurityIssue, SymbolLink } from "../types/analysis.js";
+import { attachFindingEntries, attachPatternEntries, rankPerformanceByReach } from "./finding-entries.js";
+import type { BlastRadiusInfo, FileAnalysis, PatternInfo, SecurityIssue, SymbolLink } from "../types/analysis.js";
 
 const fns = (filePath: string, ...defs: Array<[string, number, number]>): FileAnalysis =>
   ({ filePath, functions: defs.map(([name, line, endLine]) => ({ name, line, endLine })), classes: [] }) as unknown as FileAnalysis;
@@ -138,5 +138,32 @@ describe("filterGapFindings", () => {
   it("says nothing when the siblings are not protected either", async () => {
     const { filterGapFindings } = await import("./finding-entries.js");
     expect(filterGapFindings([route("POST", "/a", limited), route("PUT", "/b"), route("DELETE", "/c")])).toEqual([]);
+  });
+});
+
+describe("rankPerformanceByReach", () => {
+  const perf = (kind: PatternInfo["kind"], filePath: string, name: string, routes = 0): PatternInfo => ({
+    kind, name, filePath, line: 1, confidence: "high", detail: "x",
+    ...(routes ? { entries: Array.from({ length: routes }, (_, i) => ({ kind: "route" as const, entry: `GET /r${i}`, file: "r.ts", distance: 1, confidence: "EXTRACTED" as const })) } : {}),
+  });
+  const impact = (filePath: string, routeCount: number, screenCount: number): BlastRadiusInfo =>
+    ({ filePath, traceImpact: { screens: [], screenCount, routes: [], routeCount, entities: [], entityCount: 0, queues: [], queueCount: 0 } }) as unknown as BlastRadiusInfo;
+
+  for (const kind of ["query-in-loop", "blocking-in-async"] as const) {
+    it(`${kind}: a finding two routes and a screen reach sorts above an unreached one`, () => {
+      const patterns = [perf(kind, "quiet.ts", "unreached"), perf(kind, "wide.ts", "wide", 2)];
+      const n = rankPerformanceByReach(patterns, [impact("wide.ts", 2, 1)]);
+      expect(n).toBe(1);
+      expect(patterns.map((p) => p.name)).toEqual(["wide", "unreached"]);
+      expect(patterns[0]!.reach).toEqual({ routes: 2, screens: 1 });
+      expect(patterns[1]!.reach).toBeUndefined();
+    });
+  }
+
+  it("keeps the set, leaves other patterns in their slots and ties in their order", () => {
+    const god = { kind: "god-object", name: "Repo", filePath: "g.ts", line: 1, confidence: "low", detail: "" } as PatternInfo;
+    const patterns = [perf("query-in-loop", "a.ts", "a"), god, perf("blocking-in-async", "b.ts", "b"), perf("query-in-loop", "c.ts", "c", 1)];
+    rankPerformanceByReach(patterns, []);
+    expect(patterns.map((p) => p.name)).toEqual(["c", "Repo", "a", "b"]);
   });
 });

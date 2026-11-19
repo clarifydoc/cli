@@ -1,5 +1,5 @@
 import { routeSymbolName } from "./route-symbol.js";
-import type { Confidence, DataFlowPath, EntryPointInfo, FileAnalysis, PatternEntry, PatternInfo, RouteInfo, SecurityIssue, SymbolLink } from "../types/analysis.js";
+import type { BlastRadiusInfo, Confidence, DataFlowPath, EntryPointInfo, FileAnalysis, PatternEntry, PatternInfo, RouteInfo, SecurityIssue, SymbolLink } from "../types/analysis.js";
 import { buildSymbolAdjacency, edgeKey, fileOf, keyOf } from "./symbol-graph.js";
 import { innermostAt, spansOf } from "./api-route-symbol-links.js";
 
@@ -282,4 +282,38 @@ export function anonymousWriteFindings(
     });
   }
   return out;
+}
+
+/**
+ * Orders the performance patterns widest reach first, in place: the API routes whose chain reaches the function
+ * (`entries`, set by `attachPatternEntries`) plus the screens that reach its file (blast radius's `traceImpact`),
+ * then the file's routes; ties keep their order. Only the slots the performance patterns hold are permuted — every
+ * other pattern stays where it was, and the set of findings never changes. Sets `PatternInfo.reach` where something
+ * reaches; returns how many got one.
+ */
+export function rankPerformanceByReach(patterns: PatternInfo[], blastRadius: readonly BlastRadiusInfo[]): number {
+  const impact = new Map<string, NonNullable<BlastRadiusInfo["traceImpact"]>>();
+  for (const b of blastRadius) if (b.traceImpact) impact.set(b.filePath, b.traceImpact);
+  const slots: number[] = [];
+  patterns.forEach((p, i) => {
+    if (PERFORMANCE_PATTERNS.has(p.kind)) slots.push(i);
+  });
+  if (slots.length === 0) return 0;
+  let reached = 0;
+  const rows = slots.map((slot, order) => {
+    const p = patterns[slot]!;
+    const routes = (p.entries ?? []).filter((e) => e.kind === "route").length;
+    const file = impact.get(p.filePath);
+    const screens = file?.screenCount ?? 0;
+    if (routes + screens > 0) {
+      p.reach = { routes, screens };
+      reached++;
+    }
+    return { p, order, score: routes + screens, fileRoutes: file?.routeCount ?? 0 };
+  });
+  rows.sort((a, b) => b.score - a.score || b.fileRoutes - a.fileRoutes || a.order - b.order);
+  slots.forEach((slot, k) => {
+    patterns[slot] = rows[k]!.p;
+  });
+  return reached;
 }

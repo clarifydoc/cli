@@ -4644,6 +4644,12 @@ export interface PatternInfo {
    */
   role?: "request" | "background" | "command";
   /**
+   * Performance patterns only: how widely the function is run — the API routes that reach it (`entries`) and the
+   * screens whose calls reach its file (blast radius's `traceImpact`, per file). The performance patterns are
+   * listed widest first (core/finding-entries.ts `rankPerformanceByReach`). Absent when neither reaches it.
+   */
+  reach?: { routes: number; screens: number };
+  /**
    * `god-object` only: the groups the file's own call graph forms — functions
    * that never call another group — largest first, with what moving each out
    * would cost (core/seams.ts). Present when there are at least two.

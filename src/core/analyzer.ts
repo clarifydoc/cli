@@ -2418,6 +2418,8 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   if (anonymousWrites.length > 0) {
     allSecurityIssues.push(...anonymousWrites);
     progress.detail(`  Anonymous routes that write data: ${anonymousWrites.length}`);
+  // Widest reach first: what more routes and screens run is fixed before what few do (blast radius's trace impact is attached above).
+  rankPerformanceByReach(patterns, blastRadius);
   }
   // Webhook receivers that never check the sender's signature.
   const unverifiedWebhooks = webhookRoutes.findings.filter((i) => !isUnauthored(i.filePath));
@@ -4294,7 +4296,7 @@ export function enrichLinkGraphFromComponentGraph(
 }
 
 import type { FunctionInfo, ImportInfo, RouteInfo, SubProject } from "../types/analysis.js";
-import { anonymousWriteFindings, attachFindingEntries, attachPatternEntries, filterGapFindings, safeMethodWriteFindings } from "./finding-entries.js";
+import { anonymousWriteFindings, attachFindingEntries, attachPatternEntries, filterGapFindings, rankPerformanceByReach, safeMethodWriteFindings } from "./finding-entries.js";
 import { attachOsvAdvisories } from "./osv.js";
 import { readSourceRevision } from "./source-revision.js";
 import { importSarif } from "./sarif-import.js";
