@@ -1,3 +1,4 @@
+import { extractJavaKotlinFilePathReads } from "./file-path-reads.js";
 import { extractJvmScheduledJobs } from "./scheduled-jobs.js";
 import { extractRetrofitClients } from "./retrofit.js";
 import { screenClassResolver } from "../shared/screen-classes.js";
@@ -138,6 +139,7 @@ function jvmMeta(language: Language, opts: {
       ...(language === "kotlin" ? { facadeClass: kotlinFacadeClass, facadeFunctions: (tree, _text, filePath) => kotlinFacadeFunctions(tree, filePath), moduleValues: (tree) => kotlinModuleValues(tree), moduleBindings: (tree) => kotlinModuleBindings(tree) } : {}),
       // `package com.example.league;` — what an `import com.example.league.Club` names, whatever directory holds the file.
       packageName: (tree) => jvmPackageName(tree),
+      filePathReads: (tree, sourceText) => extractJavaKotlinFilePathReads(tree, sourceText),
       // Spring / Guice / Dagger-Hilt / CDI / Koin registrations (see di-bindings.ts).
       diBindings: (tree, sourceText) => extractJvmDiBindings(tree, sourceText, language === "kotlin" ? "kotlin" : "java"),
       // `RestClient.createClient(X.class, url)` and other proxy factories.

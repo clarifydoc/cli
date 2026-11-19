@@ -110,7 +110,7 @@ import { consumerEntryPoints } from "./consumer-entries.js";
 import { collectProjectCommands, collectTestSetupRuns } from "./project-commands.js";
 import { nameCommunities } from "./community-names.js";
 import { buildTestCoverage, COVERAGE_CANDIDATES, isSqliteFile, parallelCoverageFiles, parseCoverage, readCoverageDb, routeTestCoverage, type CoverageReportInput } from "./test-coverage.js";
-import { joinConfigFiles } from "./config-files.js";
+import { diskFileExists, joinConfigFiles } from "./config-files.js";
 import { isTestFile } from "./test-file-detector.js";
 import { composeScreenNavigation } from "./screen-navigation.js";
 import { checkContracts } from "./contract-check.js";
@@ -1853,7 +1853,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const configKeys = joinConfigKeys(allAnalyses, allAnalyses.some((a) => a.configKeyReads?.length || a.dataSources.some((d) => d.configRead)) ? await readConfigKeys(projectRoot, subProjects) : [], (f) => !isUnauthored(f), (f, l) => isTestFile(f, l));
 
   // Non-code files the code opens by a literal path.
-  const configFiles = joinConfigFiles(allAnalyses, subProjects, (f) => !isUnauthored(f), (f, l) => isTestFile(f, l));
+  const configFiles = await joinConfigFiles(allAnalyses, subProjects, (f) => !isUnauthored(f), (f, l) => isTestFile(f, l), diskFileExists(projectRoot));
 
   // The per-file scanner already skips minified sources; this catches issues
   // cached by older extractor versions and everything under generatedRoots.
