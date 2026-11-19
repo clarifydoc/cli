@@ -1481,6 +1481,14 @@ export interface LanguagePluginManifest {
    */
   blockingCalls?: RegExp;
   /**
+   * Calls that block only on a receiver of a given declared type (`task.Wait()` on a `Task`, not on a project class
+   * that has a `Wait`). A call `name` of the form `receiver.member` inside an async function is flagged when `members`
+   * matches the member and the receiver's declared type — a parameter, a local, a field of the caller's class, or the
+   * declared return of the call it was initialized from — matches `receiverTypes`; an unknown type flags nothing, and
+   * nor does a project class named like the type (`types`: its bare names, which the project must not declare).
+   */
+  blockingOnReceiver?: { receiverTypes: RegExp; members: RegExp; types: readonly string[] };
+  /**
    * How the language documents a function or class, so its first sentence
    * becomes `FunctionInfo.doc` / `ClassInfo.doc` (core/doc-comments.ts). On
    * the manifest because tools read it on demand, with no plugin body loaded.

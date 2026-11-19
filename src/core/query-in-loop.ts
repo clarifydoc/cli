@@ -1,7 +1,8 @@
 import { readFile } from "fs/promises";
 import { join } from "path";
-import type { EntityGraph, FileAnalysis, Language, PatternInfo, SymbolDataAccess, SymbolLink } from "../types/analysis.js";
+import type { ClassInfo, EntityGraph, FileAnalysis, FunctionInfo, Language, PatternInfo, SymbolDataAccess, SymbolLink } from "../types/analysis.js";
 import { manifestFor } from "../extractors/registry.js";
+import type { LanguagePluginMeta } from "../types/language-plugin.js";
 import { controlFlowForFile } from "./control-flow-file.js";
 
 /**
@@ -207,27 +208,90 @@ function relationsOf(graph: Pick<EntityGraph, "nodes" | "edges"> | undefined): (
  */
 export function findBlockingInAsync(analyses: readonly FileAnalysis[], skip: (file: string) => boolean): PatternInfo[] {
   const out: PatternInfo[] = [];
+  let classes: Map<string, ClassInfo[]> | undefined;
+  const classesNamed = (name: string): ClassInfo[] => {
+    if (!classes) {
+      classes = new Map();
+      for (const a of analyses) for (const c of a.classes) (classes.get(c.name) ?? classes.set(c.name, []).get(c.name)!).push(c);
+    }
+    return classes.get(name) ?? [];
+  };
   for (const a of analyses) {
-    const blocking = manifestFor(a.language as Language)?.blockingCalls;
-    if (!blocking || skip(a.filePath)) continue;
-    const fns = [...a.functions, ...a.classes.flatMap((c) => (c.methods ?? []).map((m) => ({ ...m, name: `${c.name}.${m.name}` })))];
-    for (const fn of fns) {
+    const manifest = manifestFor(a.language as Language);
+    const blocking = manifest?.blockingCalls;
+    const typed = manifest?.blockingOnReceiver;
+    if ((!blocking && !typed) || skip(a.filePath)) continue;
+    const typedApplies = typed ? !typed.types.some((t) => classesNamed(t).length > 0) : false;
+    const fns: Array<{ fn: FunctionInfo; name: string; owner?: ClassInfo }> = [
+      ...a.functions.map((fn) => ({ fn, name: fn.name })),
+      ...a.classes.flatMap((c) => (c.methods ?? []).map((fn) => ({ fn, name: `${c.name}.${fn.name}`, owner: c }))),
+    ];
+    for (const { fn, name: fnName, owner } of fns) {
       if (!fn.isAsync) continue;
       const seen = new Set<string>();
       for (const call of fn.calls ?? []) {
         const name = call.name;
-        if (!blocking.test(name) || seen.has(name)) continue;
+        if (seen.has(name)) continue;
+        const flagged = (blocking?.test(name) ?? false) || (typedApplies && typed !== undefined && blocksOnReceiver(name, typed, fn, owner, classesNamed));
+        if (!flagged) continue;
         seen.add(name);
         out.push({
           kind: "blocking-in-async",
-          name: fn.name,
+          name: fnName,
           filePath: a.filePath,
           line: call.line ?? fn.line,
           confidence: "medium",
-          detail: `${name}() blocks inside async ${fn.name} — every other request waits while it runs; use the asynchronous form`,
+          detail: `${name}() blocks inside async ${fnName} — every other request waits while it runs; use the asynchronous form`,
         });
       }
     }
   }
   return out;
+}
+
+/** `receiver.member` where `member` blocks and the receiver's declared type is one the language says it blocks on. */
+function blocksOnReceiver(
+  call: string,
+  spec: NonNullable<LanguagePluginMeta["blockingOnReceiver"]>,
+  fn: FunctionInfo,
+  owner: ClassInfo | undefined,
+  classesNamed: (name: string) => ClassInfo[],
+): boolean {
+  const m = /^(?:this\.)?([A-Za-z_]\w*)\.(\w+)$/.exec(call);
+  if (!m || !spec.members.test(m[2]!)) return false;
+  const head = m[1]!;
+  const types = new Set<string>();
+  let unknown = false;
+  const entries = (fn.localTypes ?? []).filter((l) => l.name === head);
+  for (const l of entries) {
+    if (l.type) types.add(l.type.trim());
+    else if (l.from && !l.awaited && !l.element && l.fromIndex === undefined && !l.destructured && !l.member && !l.aliasOf) {
+      const declared = declaredResult(l.from, fn, owner, classesNamed);
+      if (declared) types.add(declared);
+      else unknown = true;
+    } else unknown = true;
+  }
+  if (entries.length === 0) {
+    const param = fn.params?.find((p) => p.name === head);
+    const field = owner?.properties?.find((p) => p.name === head);
+    const written = param ? param.type : field?.type;
+    if (written) types.add(written.trim());
+    else unknown = true;
+  }
+  return !unknown && types.size === 1 && spec.receiverTypes.test([...types][0]!);
+}
+
+/** The declared return of the call a local was initialized from: `own()`, `field.method()` or `param.method()`, through a class the project declares once. */
+function declaredResult(from: string, fn: FunctionInfo, owner: ClassInfo | undefined, classesNamed: (name: string) => ClassInfo[]): string | null {
+  const m = /^(?:this\.)?(?:([A-Za-z_]\w*)\.)?([A-Za-z_]\w*)\(\)$/.exec(from);
+  if (!m) return null;
+  let cls: ClassInfo | undefined;
+  if (m[1]) {
+    const written = fn.params?.find((p) => p.name === m[1])?.type ?? owner?.properties?.find((p) => p.name === m[1])?.type;
+    if (!written || (fn.localTypes ?? []).some((l) => l.name === m[1])) return null;
+    const holders = classesNamed(written.trim());
+    cls = holders.length === 1 ? holders[0] : undefined;
+  } else cls = owner;
+  const returns = new Set((cls?.methods ?? []).filter((x) => x.name === m[2]).map((x) => x.returnType?.trim() ?? ""));
+  return returns.size === 1 && [...returns][0] ? [...returns][0]! : null;
 }
