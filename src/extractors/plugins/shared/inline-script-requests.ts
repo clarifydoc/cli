@@ -16,6 +16,8 @@ export function inlineScriptRequests(lines: readonly string[]): DataSourceInfo[]
   const out: DataSourceInfo[] = [];
   let body: string[] | null = null;
   let start = 0;
+  /** Where the first body line starts on its own line: after the `<script …>` tag. */
+  let offset = 0;
   const flush = () => {
     const text = body!.join("\n");
     for (const m of text.matchAll(CALL_RE)) {
@@ -37,7 +39,7 @@ export function inlineScriptRequests(lines: readonly string[]): DataSourceInfo[]
         method = /\bmethod\s*:\s*["'`](\w+)["'`]/.exec(next < 0 ? after.slice(0, 400) : after.slice(0, Math.min(next, 400)))?.[1] ?? "get";
       }
       const verb = method.toUpperCase();
-      out.push({ kind: "api-call", name: `${verb} ${target}`, target, calls: [], line: start + text.slice(0, m.index).split("\n").length });
+      out.push({ kind: "api-call", name: `${verb} ${target}`, target, calls: [], line: start + text.slice(0, m.index).split("\n").length, column: m.index! - (text.lastIndexOf("\n", m.index! - 1) + 1) + (text.lastIndexOf("\n", m.index! - 1) < 0 ? offset : 0) });
     }
   };
   for (let i = 0; i < lines.length; i++) {
@@ -54,6 +56,7 @@ export function inlineScriptRequests(lines: readonly string[]): DataSourceInfo[]
     const close = rest.search(/<\/script\s*>/i);
     body = [close < 0 ? rest : rest.slice(0, close)];
     start = i;
+    offset = open.index + open[0].length;
     if (close >= 0) { flush(); body = null; }
   }
   return out;

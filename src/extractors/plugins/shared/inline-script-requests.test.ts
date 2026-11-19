@@ -49,3 +49,14 @@ describe("inline script requests", () => {
     expect(inlineScriptRequests(page.split("\n")).map((d) => d.name)).toEqual(["PUT /api/v1/preferences/darkMode", "GET /clubs/standings"]);
   });
 });
+
+describe("inline script requests carry a column", () => {
+  it("points at the call, also when it shares the line with the script tag, after a non-ASCII prefix", () => {
+    const rows = inlineScriptRequests([
+      '<p>é🚗</p><script>fetch("/clubs"); const s = "é🚗"; fetch("/players");',
+      '  axios.delete("/fixtures/42");',
+      "</script>",
+    ]);
+    expect(rows.map((d) => [d.line, d.column])).toEqual([[1, 18], [1, 52], [2, 2]]);
+  });
+});
