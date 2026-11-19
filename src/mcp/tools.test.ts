@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { join } from "path";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
 import { buildMcpServer } from "./server.js";
 import { normalizePath, resolveFilePath, type LoadedAnalysis, type RouteWithFile } from "./store.js";
 import type { McpServer } from "./protocol.js";
@@ -549,6 +551,28 @@ describe("clarifydoc MCP tools — data tier", () => {
     expect(detail.text).toContain(`# ${node.name} [`);
     expect(detail.text).toContain("## Columns");
     expect(detail.text).toContain(node.columns[0].name);
+  });
+
+  it("lists ORM entities first and the schemas an API contract declares as their own group", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "clarifydoc-contract-group-"));
+    try {
+      const summary = JSON.parse(readFileSync(join("test-output", "sample-orm", "project-summary.json"), "utf8"));
+      const nodes = summary.entityGraph.nodes as { origin?: string }[];
+      nodes[0]!.origin = "contract";
+      writeFileSync(join(dir, "project-summary.json"), JSON.stringify(summary));
+      const { server, store } = serverFor("sample-orm", { analysisDir: dir });
+      const loaded = await store.load();
+      const contract = loaded.summary.entityGraph!.nodes.filter((n) => n.origin === "contract");
+      expect(contract).toHaveLength(1);
+      const { text } = await call(server, "clarifydoc_data_model", { limit: 300 });
+      expect(text).toContain("1 API contract schema,");
+      expect(text).toContain("## API contract schemas (1)");
+      const [head, tail] = text.split("## API contract schemas");
+      expect(tail!).toContain(`- ${contract[0]!.name} [`);
+      expect(head!.split("\n").filter((l) => l.startsWith("- ")).length).toBe(loaded.summary.entityGraph!.nodes.length - 1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("suggests near misses for an unknown entity name", async () => {

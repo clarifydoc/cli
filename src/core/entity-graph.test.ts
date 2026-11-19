@@ -312,6 +312,19 @@ describe("buildEntityGraph — an API contract split into several documents", ()
     expect(g.edges).toHaveLength(2);
   });
 
+  it("marks each schema's origin, and a table of the same name stays its own node", () => {
+    const g = buildEntityGraph([spec("swagger/swagger.json", ["id", "name"])]);
+    expect(g.nodes.map((n) => n.origin)).toEqual(["contract", "contract"]);
+    const queried = analysis("src/clubs.js", ["clubs", "fixtures"]);
+    synthesizeReferencedTableEntities([queried], g);
+    expect(g.nodes.map((n) => `${n.name}:${n.origin ?? n.orm}`)).toEqual(["Club:contract", "Player:contract", "clubs:inferred", "fixtures:inferred"]);
+  });
+
+  it("writes no origin on a repository without a contract", () => {
+    const code = { filePath: "Club.cs", language: "csharp", classes: [{ name: "Club", decorators: ["entity", "ef-core"], properties: [], line: 1 }] } as unknown as FileAnalysis;
+    expect(buildEntityGraph([code]).nodes.every((n) => !("origin" in n))).toBe(true);
+  });
+
   it("leaves the schemas out where the code declares the tables (real-repo FP: 388 of 507 nodes)", () => {
     const code = { filePath: "League.Database/Entities/Club.cs", language: "csharp", projectId: "league-database", classes: [{ name: "Club", decorators: ["entity", "ef-core"], properties: [], line: 1 }] } as unknown as FileAnalysis;
     const g = buildEntityGraph([spec("openapi.json", ["id", "name"]), code]);

@@ -189,6 +189,8 @@ export interface EntityGraphNode {
   /** Originating ORM / source, e.g. "prisma" | "typeorm" | "sql". */
   orm: string | null;
   kind: "entity" | "enum";
+  /** `"contract"` for a schema an API description declares (not a table or ORM entity). Omitted otherwise. */
+  origin?: "contract";
   filePath: string;
   columns: EntityGraphColumn[];
   line: number;

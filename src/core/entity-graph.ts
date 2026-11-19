@@ -334,6 +334,7 @@ export function buildEntityGraph(analyses: FileAnalysis[]): EntityGraph {
         ...(cls.tableName ? { table: cls.tableName } : {}),
         orm,
         kind: isEnum ? "enum" : "entity",
+        ...(contract ? { origin: "contract" as const } : {}),
         filePath: a.filePath,
         columns,
         line: cls.line,
@@ -653,8 +654,10 @@ export function nodeMatchKeys(node: { name: string; table?: string }): string[] 
  * entity's table (a migration's `tasksMigration2019` copy mapped to `tasks`
  * must not take `Task`'s key). Within each pass the first node wins.
  */
-export function nodeKeyIndex<T extends { name: string; table?: string }, V>(nodes: readonly T[], value: (n: T) => V): Map<string, V> {
+export function nodeKeyIndex<T extends { name: string; table?: string; origin?: string }, V>(nodes: readonly T[], value: (n: T) => V): Map<string, V> {
   const out = new Map<string, V>();
+  // A schema an API contract declares never takes the key of a table or entity of the same name.
+  if (nodes.some((n) => n.origin)) nodes = [...nodes.filter((n) => !n.origin), ...nodes.filter((n) => n.origin)];
   for (const n of nodes) for (const k of tableMatchKeys(n.name)) if (!out.has(k)) out.set(k, value(n));
   for (const n of nodes) if (n.table) for (const k of tableMatchKeys(n.table)) if (!out.has(k)) out.set(k, value(n));
   return out;
@@ -702,7 +705,8 @@ export function synthesizeReferencedTableEntities(
   // Keys already represented by a node — seeded from real entities, then grown
   // as we synthesize so a singular/plural variant never makes a second node.
   const covered = new Set<string>();
-  for (const n of graph.nodes) for (const k of nodeMatchKeys(n)) covered.add(k);
+  // A schema an API contract declares is no table: a table of the same name is still its own row.
+  for (const n of graph.nodes) if (!n.origin) for (const k of nodeMatchKeys(n)) covered.add(k);
   // A table some schema script drops or renames away (the old `match_reports`, moved into one combined
   // table and dropped) is the schema's history: if the schema still had it, a script would create it.
   const removed = new Set(

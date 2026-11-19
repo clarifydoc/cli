@@ -73,19 +73,24 @@ export function dataModelTool(ctx: ToolContext): McpTool {
           relationCount.set(edge.source, (relationCount.get(edge.source) ?? 0) + 1);
           relationCount.set(edge.target, (relationCount.get(edge.target) ?? 0) + 1);
         }
+        const byName = (a: EntityGraphNode, b: EntityGraphNode) => byOrdinal(a.name, b.name);
+        const own = nodes.filter((n) => n.origin !== "contract").sort(byName);
+        const schemas = nodes.filter((n) => n.origin === "contract").sort(byName);
+        const row = (n: EntityGraphNode) =>
+          `${n.name} [${n.kind}${n.orm ? `, ${n.orm}` : ""}] — ${plural(n.columns.length, "column")}, ` +
+          `${plural(relationCount.get(n.id) ?? 0, "relation")} (${loc(n.filePath, n.line)})`;
+        // Tables and ORM entities first; the schemas an API contract declares are their own group.
         return {
           text: joinLines([
-            `# Data model — ${nodes.length} entit${nodes.length === 1 ? "y" : "ies"}, ${graph.edges.length} relations`,
-            `orms: ${countMap(tally(graph.nodes, (n) => n.orm ?? "unknown")) || "unknown"}`,
+            schemas.length > 0
+              ? `# Data model — ${own.length} entit${own.length === 1 ? "y" : "ies"} and ${plural(schemas.length, "API contract schema")}, ${graph.edges.length} relations`
+              : `# Data model — ${nodes.length} entit${nodes.length === 1 ? "y" : "ies"}, ${graph.edges.length} relations`,
+            `orms: ${countMap(tally(graph.nodes.filter((n) => n.origin !== "contract"), (n) => n.orm ?? "unknown")) || "unknown"}`,
             "",
-            ...bulletList(
-              [...nodes].sort((a, b) => byOrdinal(a.name, b.name)),
-              limit,
-              (n) =>
-                `${n.name} [${n.kind}${n.orm ? `, ${n.orm}` : ""}] — ${plural(n.columns.length, "column")}, ` +
-                `${plural(relationCount.get(n.id) ?? 0, "relation")} (${loc(n.filePath, n.line)})`,
-              { offset },
-            ),
+            ...bulletList(own, limit, row, { offset }),
+            ...(schemas.length > 0
+              ? ["", ...section(`API contract schemas (${schemas.length}) — request and response shapes, not tables`, bulletList(schemas, limit, row, { offset: offset === undefined ? undefined : Math.max(0, offset - own.length) }))]
+              : []),
           ]),
         };
       }
@@ -130,7 +135,7 @@ function describeEntity(
   const related = edges.filter((e) => e.source === node.id || e.target === node.id);
 
   const lines: string[] = [
-    `# ${node.name} [${node.kind}${node.orm ? `, ${node.orm}` : ""}]`,
+    `# ${node.name} [${node.kind}${node.orm ? `, ${node.orm}` : ""}${node.origin === "contract" ? ", API contract schema" : ""}]`,
     facts([
       ["declared at", loc(node.filePath, node.line)],
       ["columns", node.columns.length],

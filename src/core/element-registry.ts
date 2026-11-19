@@ -197,6 +197,8 @@ export interface NormEntityGraphNode {
   table?: string;
   ref: number;
   orm: string | null;
+  /** EntityGraphNode.origin — present only on a schema an API contract declares. */
+  origin?: "contract";
   columns: EntityGraphColumn[];
   referencingModels?: NormEntityModelRef[];
 }
@@ -864,7 +866,7 @@ export function normalizeProject(p: ProjectAnalysis): NormalizedProjectAnalysis 
   if (egRaw) {
     out.entityGraph = {
       nodes: egRaw.nodes.map(({ node, idx, rms }) => {
-        const nn: NormEntityGraphNode = { ref: remap[idx], orm: node.orm, columns: node.columns, ...(node.table ? { table: node.table } : {}) };
+        const nn: NormEntityGraphNode = { ref: remap[idx], orm: node.orm, columns: node.columns, ...(node.table ? { table: node.table } : {}), ...(node.origin ? { origin: node.origin } : {}) };
         if (node.referencingModels !== undefined) {
           nn.referencingModels = rms!.map(({ rm, idx: rIdx }) => ({
             ref: remap[rIdx],
@@ -1082,6 +1084,7 @@ export function denormalizeProject(obj: unknown): ProjectAnalysis {
           line: el?.line ?? 0,
         };
         if (nn.table !== undefined) node.table = nn.table;
+        if (nn.origin !== undefined) node.origin = nn.origin;
         if (nn.referencingModels !== undefined) {
           node.referencingModels = nn.referencingModels.map((r): EntityModelRef => {
             const rel = elements[r.ref];
