@@ -500,8 +500,16 @@ const MODULE_FILES: Record<string, string> = {
     "  const repo = make();",
     "  for (const c of repo.all()) axios.get(`/api/items/${c.kind}`);",
     "}",
-    "export function shadowedByArrow(list: any[]) {",
-    "  list.forEach((repo) => { for (const c of repo.all()) axios.get(`/api/items/${c.kind}`); });",
+    "let late: ClubRepo;",
+    "describe('club sync', () => {",
+    "  beforeEach(() => { late = new ClubRepo(); });",
+    "  it('loads', () => {",
+    "    for (const c of late.all()) axios.get(`/api/items/${c.kind}`);",
+    "  });",
+    "});",
+    "export function outer() {",
+    "  const inner = () => { const repo = make(); return repo; };",
+    "  for (const c of repo.all()) axios.get(`/api/items/${c.kind}`);",
     "}",
   ].join("\n"),
   // Collections the file writes as object literals: the strings written are the values.
@@ -549,6 +557,9 @@ const MODULE_FILES: Record<string, string> = {
     "export function wrappedLiteral() {",
     "  for (const k of wrapped) axios.get(`/api/items/${k.kind}`);",
     "}",
+    "export function shadowedLoopVariable(groups: any[][]) {",
+    "  for (const kinds of groups) for (const k of kinds) axios.get(`/api/items/${k.kind}`);",
+    "}",
     "export function shadowedDestructured(load: () => { kinds: any[] }) {",
     "  const { kinds } = load();",
     "  for (const k of kinds) axios.get(`/api/items/${k.kind}`);",
@@ -591,7 +602,10 @@ describe("a URL hole over a module-level receiver and over a collection the file
   it("lets a parameter or a call-initialized local of the name hide the module's receiver", () => {
     expect(reached("web/src/module.ts", 16)).toEqual(["/api/items/city", "/api/items/sport"]);
     expect(reached("web/src/module.ts", 20)).toEqual([]);
-    expect(reached("web/src/module.ts", 23)).toEqual([]);
+    // A plain assignment in a nested callback writes the module's `late`, which keeps its declared type.
+    expect(reached("web/src/module.ts", 26)).toEqual(["/api/items/cup", "/api/items/league"]);
+    // A nested function's own `const repo` does not hide the module's from the function around it.
+    expect(reached("web/src/module.ts", 31)).toEqual(["/api/items/cup", "/api/items/league"]);
   });
 
   it("reads the strings an array of object literals writes, at module level, `as const`, local or wrapped over lines", () => {
@@ -602,6 +616,6 @@ describe("a URL hole over a module-level receiver and over a collection the file
   });
 
   it("leaves a literal collection that does not write the member everywhere, writes it open (a spread, a push, a computed value), is hidden by a parameter or destructuring, or is untyped, a wildcard", () => {
-    for (const line of [24, 27, 30, 33, 36, 39, 46]) expect(reached("web/src/literals.ts", line)).toEqual([]);
+    for (const line of [24, 27, 30, 33, 36, 39, 45, 49]) expect(reached("web/src/literals.ts", line)).toEqual([]);
   });
 });

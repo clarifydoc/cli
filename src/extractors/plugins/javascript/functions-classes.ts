@@ -493,13 +493,13 @@ function scanBody(
   // variables a `for … of` over one and the callbacks it hands its elements to bind are typed as the element.
   const collections = new Map<string, { element: string; map: boolean }>();
   for (const [name, c] of ctx.moduleCollections ?? []) collections.set(name, c);
-  // A module-level name this body binds itself (a parameter of an arrow, a destructuring, a loop variable, an
-  // assignment) is its own there: the module's collection is dropped and the name is stated untyped.
+  // A module-level name this body declares itself (a declaration, destructuring, loop variable, `catch`) is its own
+  // there: the module's collection is dropped and the name is stated untyped. An assignment writes the outer one.
   const rebound: string[] = [];
   if (ctx.moduleTyped?.size) {
-    const bodyText = body.text;
+    const own = ownBindings(body);
     for (const name of ctx.moduleTyped) {
-      if (!bodyText.includes(name) || paramNames.has(name) || !rebindsName(bodyText, name)) continue;
+      if (!own.has(name) || paramNames.has(name)) continue;
       rebound.push(name);
       collections.delete(name);
     }
@@ -866,21 +866,29 @@ function mutatesCollection(text: string, name: string): boolean {
 }
 
 /**
- * Whether `text` (a function body) binds `name` itself — a declaration (also destructured or a loop variable), a
- * parameter of a function or arrow, a `catch` variable, or an assignment — so a module-level `name` is not the one
- * it reads there.
+ * The names a function body declares in its own scope — a `const`/`let`/`var` declarator (also destructured, or a
+ * loop variable) and a `catch` variable — never one inside a nested function, and never a plain assignment, which
+ * writes the outer binding and keeps its declared type.
  */
-function rebindsName(text: string, name: string): boolean {
-  const n = name.replace(/\$/g, "\\$");
-  const forms = [
-    `\\b(?:const|let|var)\\s+(?:(?!\\b(?:of|in)\\b)[^=;])*?(?<![\\w$.])${n}(?![\\w$])`,
-    `\\([^()]*(?<![\\w$.])${n}(?![\\w$])[^()]*\\)\\s*=>`,
-    `(?<![\\w$.])${n}\\s*=>`,
-    `\\bfunction\\b[^(]*\\([^()]*(?<![\\w$.])${n}(?![\\w$])`,
-    `\\bcatch\\s*\\(\\s*${n}(?![\\w$])`,
-    `(?<![\\w$.])${n}\\s*=(?![=>])`,
-  ];
-  return new RegExp(forms.join("|")).test(text);
+function ownBindings(body: Node): Set<string> {
+  const out = new Set<string>();
+  const names = (pattern: Node | null): void => {
+    if (!pattern) return;
+    if (pattern.type === "identifier" || pattern.type === "shorthand_property_identifier_pattern") out.add(pattern.text);
+    else for (const c of pattern.namedChildren) names(c.type === "pair_pattern" ? c.childForFieldName("value") : c);
+  };
+  const visit = (node: Node): void => {
+    for (const c of node.namedChildren) {
+      if (SEPARATE_SCOPES.has(c.type) || FUNCTION_EXPRESSIONS.has(c.type)) continue;
+      if (c.type === "variable_declarator") names(c.childForFieldName("name"));
+      else if (c.type === "catch_clause") names(c.childForFieldName("parameter"));
+      // `for (const kinds of groups)`: the loop variable sits in the statement's `left`, beside a `const`/`let`/`var` token.
+      else if (c.type === "for_in_statement" && c.children.some((k) => k.type === "const" || k.type === "let" || k.type === "var")) names(c.childForFieldName("left"));
+      visit(c);
+    }
+  };
+  visit(body);
+  return out;
 }
 
 /** The value a declarator's children assign, when there is one. */
