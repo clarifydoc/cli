@@ -1174,6 +1174,13 @@ export const dartSpec: RegexLangSpec = {
       isAsync: (line) => /\basync\b/.test(line),
     },
     {
+      // A setter, in a class or at the top level: `set best(Club v) { … }`, a function `best=` of its own beside any getter `best`.
+      pattern: /^\s*(?:external\s+)?(?:static\s+)?(?:[A-Za-z_$][\w$.]*(?:<[^;=()]*>)?\??\s+)?set\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*(?:async\s*)?(?:=>|\{)/,
+      isExported: (_line, name) => !name.startsWith("_"),
+      isAsync: () => false,
+      rename: (name) => `${name}=`,
+    },
+    {
       pattern: DART_FUNCTION_WRAPPED,
       isExported: (_line, name) => !name.startsWith("_"),
       isAsync: (line, lines, i) => dartAsyncAfterParams(lines, i, line),

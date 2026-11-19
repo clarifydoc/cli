@@ -15,7 +15,7 @@ const CHAIN_DEPTH = 8;
 /** Declarations whose bodies are no function's outside a member (field initializers). */
 const TYPES: ReadonlySet<string> = new Set(["class_definition", "mixin_declaration", "extension_declaration", "extension_type_declaration", "enum_declaration"]);
 
-/** A signature node that names a function as the Dart spec reads them; setters and operators name none. */
+/** A signature node that names a function; operators name none. */
 const SIGNATURES: ReadonlySet<string> = new Set([
   "function_signature", "constructor_signature", "factory_constructor_signature", "redirecting_factory_constructor_signature",
   "constant_constructor_signature", "getter_signature", "setter_signature", "operator_signature",
@@ -50,7 +50,7 @@ interface Walk {
  * constructor (named by its class, a named or factory one by its own name, as the spec's patterns name them) or an
  * abstract signature, spanning its name's line to its body's end, and owns the calls in its body and initializer
  * list except those of a function declared inside it; a closure's calls are its owner's. A getter is a
- * function named as it; setters and operators are none, as the patterns read them. A call is named by the Dart spec's call patterns where one
+ * function named as it, a setter as `name=`; operators are none. A call is named by the Dart spec's call patterns where one
  * reads its callee's text (a field path `this.squad.coach.brief(`, a container lookup `getIt<Repo>().find(`, a
  * generic call `context.read<Repo>(`), else as the patterns name a path (`repo.find(`, a cascade's bare `..add(`),
  * and one through a type's static member by every name (`PlayerService.instance.addPlayer(`), not its last two;
@@ -104,15 +104,17 @@ function signatureOf(node: TSNode): TSNode | null {
 }
 
 /**
- * The name the spec's patterns give a function, and the node naming it; null for a setter or operator. A getter is a
- * function named as it, top-level or a member of a class, mixin or extension
+ * The name the spec's patterns give a function, and the node naming it; null for an operator. A getter is a
+ * function named as it (a setter `best=`, its own symbol beside the getter `best`), top-level or a member of a class, mixin or extension
  * (`FlagService get flags { _flags ??= FlagService(dio); … }`, `Club get club => Club(id)`): its body's calls and
  * constructions are its own.
  */
 function functionName(sig: TSNode): TSNode | null {
   if (sig.type === "function_signature") return sig.childForFieldName("name");
   if (sig.type === "getter_signature") return sig.childForFieldName("name") ?? namedChildren(sig).filter((c) => c.type === "identifier").pop() ?? null;
-  if (sig.type === "setter_signature" || sig.type === "operator_signature") return null;
+  if (sig.type === "operator_signature") return null;
+  // A setter is named as Dart spells it, `best=`, so it never meets a getter `best` of the class.
+  if (sig.type === "setter_signature") return sig.childForFieldName("name") ?? namedChildren(sig).filter((c) => c.type === "identifier").pop() ?? null;
   // `A(…)` is named `A`; `A.named(…)` and `factory A.make(…)` by their own names.
   const names = namedChildren(sig).filter((c) => c.type === "identifier");
   return names.length >= 2 ? names[1]! : names[0] ?? null;
@@ -131,9 +133,9 @@ function visit(node: TSNode, owner: PatternCallName[] | null, walk: Walk, cls: C
         calls = [];
         if (walk.getters.size > 0) walk.locals.set(calls, new Set([...(owner ? walk.locals.get(owner) ?? [] : []), ...localNames(child, body)]));
         const end = (body ?? child).endPosition.row + 1;
-        const isConstructor = sig.type !== "function_signature" && sig.type !== "getter_signature";
+        const isConstructor = sig.type !== "function_signature" && sig.type !== "getter_signature" && sig.type !== "setter_signature";
         walk.functions.push({
-          span: { name: name.text, line: name.startPosition.row + 1, endLine: end, ...(isConstructor ? { isConstructor: true as const } : {}) },
+          span: { name: sig.type === "setter_signature" ? `${name.text}=` : name.text, line: name.startPosition.row + 1, endLine: end, ...(isConstructor ? { isConstructor: true as const } : {}) },
           calls,
           shape: { sig, decl: child, body, cls, isConstructor },
         });
