@@ -992,6 +992,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
           name: retrofit[1]!,
           target: joinUrl(null, retrofit[2]!),
           line: node.startPosition.row + 1,
+          column: node.startPosition.column,
           ...(iface ? { baseRef: { kind: "client" as const, key: iface } } : {}),
         }));
       }
@@ -1010,6 +1011,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
             name: verb.toUpperCase(),
             target,
             line: node.startPosition.row + 1,
+            column: node.startPosition.column,
             // A relative base is the client's: the adapter the proxy factory is handed states it.
             ...(!/^https?:\/\//i.test(target) && this.httpExchange.iface ? { baseRef: { kind: "client" as const, key: this.httpExchange.iface } } : {}),
           }));
@@ -1026,6 +1028,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
             name: feign[1]!.toUpperCase(),
             target: joinUrl(this.feignBasePath, pm?.[1] ?? pm?.[2] ?? ""),
             line: node.startPosition.row + 1,
+            column: node.startPosition.column,
             ...(this.feignBase ? { baseRef: this.feignBase } : {}),
           }));
         }
@@ -1105,7 +1108,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       if (leaf === "SimpleHttp" || declared === "SimpleHttp" || /\bSimpleHttp\s*\.\s*create\s*\(/.test(receiver)) {
         const arg = call.firstArg;
         const url = arg ? urlExpression(arg, node, 0) ?? (concatParts(arg) ?? [arg]).map((p) => "${" + p.text.replace(/\s+/g, " ") + "}").join("") : null;
-        sources.push(this.ds({ kind: "api-call", name: method.slice(2).toUpperCase(), target: url, line }));
+        sources.push(this.ds({ kind: "api-call", name: method.slice(2).toUpperCase(), target: url, line, column: node.startPosition.column }));
         return;
       }
     }
@@ -1124,7 +1127,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       const target = stated && this.ktorDefaultBase ? ktorJoinBase(this.ktorDefaultBase, stated) : stated;
       const verb = ktorRequest ? /\bmethod\s*=\s*HttpMethod\.(\w+)/.exec(withBlock)?.[1]?.toUpperCase() ?? "GET" : method.toUpperCase();
       const client = /^[\w$]+$/.test(receiver.trim()) ? { client: receiver.trim() } : {};
-      sources.push(this.ds({ kind: "api-call", name: verb, target, line, ...client }));
+      sources.push(this.ds({ kind: "api-call", name: verb, target, line, column: node.startPosition.column, ...client }));
       return;
     }
 
@@ -1138,7 +1141,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     if (this.isAsyncHttpClientFile && ahcClient && /^prepare(?:Get|Post|Put|Patch|Delete|Head|Options)$/.test(method) && call.firstArg) {
       const url = urlExpression(call.firstArg, node, 0);
       const target = url && /^(?:https?:\/\/|\/|(?:\$\{[^{}]*\})+\/)/.test(url) ? url : null;
-      sources.push(this.ds({ kind: "api-call", name: target ? method.slice(7).toUpperCase() : method, target, line }));
+      sources.push(this.ds({ kind: "api-call", name: target ? method.slice(7).toUpperCase() : method, target, line, column: node.startPosition.column }));
       return;
     }
 
@@ -1170,7 +1173,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       const verb = /\bRequestBuilder\s*\(\s*"(\w+)"/.exec(receiver)?.[1] ?? /\.setMethod\s*\(\s*"(\w+)"/.exec(receiver)?.[1] ?? "GET";
       const url = urlExpression(call.firstArg, node, 0);
       const target = url && /^(?:https?:\/\/|\/|(?:\$\{[^{}]*\})+\/)/.test(url) ? url : null;
-      sources.push(this.ds({ kind: "api-call", name: verb.toUpperCase(), target, line }));
+      sources.push(this.ds({ kind: "api-call", name: verb.toUpperCase(), target, line, column: node.startPosition.column }));
       return;
     }
 
@@ -1179,7 +1182,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     if (this.isCxfWebClientFile && CXF_SEND_METHODS.has(method)) {
       const request = this.cxfWebClientRequest(node, call);
       if (request) {
-        sources.push(this.ds({ kind: "api-call", name: request.verb, target: request.target, line }));
+        sources.push(this.ds({ kind: "api-call", name: request.verb, target: request.target, line, column: node.startPosition.column }));
         return;
       }
     }
@@ -1427,7 +1430,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       const url = argNode ? urlExpression(argNode, node, 0) : null;
       // A URL the method is handed (`getContent(String urlString)`): its parameter, as a hole each caller fills.
       const param = !url && argNode?.type === "identifier" && enclosingParamNames(node).has(argNode.text) ? `\${${argNode.text}}` : null;
-      sources.push(this.ds({ kind: "api-call", name: "GET", target: param ?? (url && /^(?:https?:\/\/|\/|(?:\$\{[^{}]*\})+\/)/.test(url) ? url : null), line }));
+      sources.push(this.ds({ kind: "api-call", name: "GET", target: param ?? (url && /^(?:https?:\/\/|\/|(?:\$\{[^{}]*\})+\/)/.test(url) ? url : null), line, column: node.startPosition.column }));
       return;
     }
     // Spring `WebClient` / `RestClient`: `web.get().uri("/clubs/{id}", id).retrieve()` sends to the
@@ -1435,7 +1438,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     if (SPRING_FLUENT_SENDS.has(method)) {
       const request = this.springFluentRequest(node);
       if (request) {
-        sources.push(this.ds({ kind: "api-call", name: request.target ? request.verb : method, target: request.target, line }));
+        sources.push(this.ds({ kind: "api-call", name: request.target ? request.verb : method, target: request.target, line, column: node.startPosition.column }));
         return;
       }
     }
@@ -1443,13 +1446,13 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     if (method === "execute" && call.firstArg) {
       const request = apacheRequest(call.firstArg, node);
       if (request) {
-        sources.push(this.ds({ kind: "api-call", name: request.target ? request.verb : method, target: request.target, line }));
+        sources.push(this.ds({ kind: "api-call", name: request.target ? request.verb : method, target: request.target, line, column: node.startPosition.column }));
         return;
       }
     }
     const built = builtRequestUrl(node, call);
     if (built) {
-      sources.push(this.ds({ kind: "api-call", name: requestChainVerb(node, call.receiver), target: built.target, line }));
+      sources.push(this.ds({ kind: "api-call", name: requestChainVerb(node, call.receiver), target: built.target, line, column: node.startPosition.column }));
       return;
     }
     // Otherwise only a call that SENDS on a client named as one: a builder's
@@ -1468,7 +1471,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
       const url = REST_TEMPLATE_URL_FIRST.has(method) && call.firstArg ? urlExpression(call.firstArg, node, 0) : null;
       const target = url && /^(?:https?:\/\/|\/|(?:\$\{[^{}]*\})+\/)/.test(url) ? url : null;
       const verb = /^(get|post|put|delete|patch)For/.exec(method)?.[1]?.toUpperCase() ?? (method === "exchange" ? exchangeVerb(node) : null);
-      sources.push(this.ds({ kind: "api-call", name: target && verb ? verb : method, target, line }));
+      sources.push(this.ds({ kind: "api-call", name: target && verb ? verb : method, target, line, column: node.startPosition.column }));
       return;
     }
 
