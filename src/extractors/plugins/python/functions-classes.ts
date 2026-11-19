@@ -328,7 +328,7 @@ export class PythonExtractor extends FunctionClassExtractor {
     // A function handing back a module it imported, and locals bound to `importlib.import_module("x")`: the module
     // a call on them reaches (core types the local as that module, never a namesake elsewhere).
     if (body && /\breturn\b/.test(bodyText)) {
-      const module = returnedModule(body);
+      const module = returnedModule(body, new Set(params.map((p) => p.name)));
       if (module) fn.returnsModule = module;
     }
     if (body && fn.localTypes && bodyText.includes("import_module")) {

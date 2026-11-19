@@ -36,6 +36,19 @@ void before(List<Club> players) {
   }
 }
 
+void mixed(List<Club> players, bool flag) {
+  for (final c in players) {
+    c.save();
+  }
+  if (flag) {
+    final c = Boat();
+    c.save();
+  } else {
+    final c = harbour();
+    c.save();
+  }
+}
+
 void unknown(List<Club> players) {
   for (final c in players) {
     c.save();
@@ -80,6 +93,10 @@ describe.each([["tree-sitter", undefined], ["regex", "no-tree-sitter:dart"]])("D
 
   it("does the same when the declaration comes first", () => {
     expect(reaches("before")).toEqual(["13->Boat.save", "15->Club.save"]);
+  });
+
+  it("leaves the name as it was when another binding states no type", () => {
+    expect(reaches("mixed")).toEqual(["21->Club.save"]);
   });
 
   it("adds nothing for a declaration whose type the source does not state", () => {

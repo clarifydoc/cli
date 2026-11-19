@@ -126,7 +126,9 @@ function addLoopBinderCalls(fn: FunctionInfo, code: readonly string[], lists: Re
     const element = lists.get(head[2]!);
     if (!element) continue;
     const rest = code[k]!.slice(head.index + head[0].length).trim();
-    const to = rest.startsWith("{") || rest === "" ? fn.line + blockEnd(code, rest === "" && !(code[k + 1] ?? "").trim().startsWith("{") ? k + 1 : k) : fn.line + k;
+    // A braced body ends at its `}`; a braceless one at its own statement's line.
+    const braced = rest.startsWith("{") || (rest === "" && (code[k + 1] ?? "").trim().startsWith("{"));
+    const to = braced ? fn.line + blockEnd(code, rest.startsWith("{") ? k : k + 1) : fn.line + k + (rest === "" ? 1 : 0);
     loops.push({ name: head[1]!, element, from: fn.line + k, to });
   }
   if (loops.length === 0) return;
@@ -146,11 +148,16 @@ function addLoopBinderCalls(fn: FunctionInfo, code: readonly string[], lists: Re
     const decls = declared.get(name) ?? [];
     const types = new Set(decls.map((d) => d.type));
     if (decls.length === 0 || types.size !== 1 || fn.params.some((p) => p.name.replace(/^this\./, "") === name)) continue;
+    // Every other binding of the name states that type: a declaration without one (`final c = harbour();`) or a
+    // plain assignment (`c = other();`) leaves the name as it was.
+    const n = escapeRegex(name);
+    const binds = code.filter((l) => new RegExp(String.raw`^\s*(?:(?:(?:final|late|const|var)\s+)?(?:[A-Z][\w<>?,.]*\s+)?${n}\s*(?:=[^=>]|;)|(?:final|late|const|var)\s+(?:[A-Z][\w<>?,. ]*?\s+)?${n}\s*(?:=|;))`).test(l)).length;
+    if (binds !== decls.length) continue;
     const type = decls[0]!.type;
     const first = Math.min(...decls.map((d) => d.line));
     const scopeOf = (line: number): string | null => {
       const loop = inLoop(name, line);
-      if (loop.length > 0) return loop[0]!.element;
+      if (loop.length > 0) return loop.reduce((a, b) => (b.from > a.from ? b : a)).element;
       return line > first ? type : null;
     };
     for (const call of fn.calls as CallInfo[]) {

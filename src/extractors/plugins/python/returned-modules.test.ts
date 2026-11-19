@@ -15,6 +15,7 @@ describe("Python modules held in locals", () => {
     "league/car.py": "def save(n):\n    return 0\n",
     "league/use.py": [
       "import importlib",
+      "from league import club",
       "",
       "",
       "def load_club():",
@@ -33,6 +34,10 @@ describe("Python modules held in locals", () => {
       "    return Club",
       "",
       "",
+      "def pick(club):",
+      "    return club",
+      "",
+      "",
       "def run(name):",
       "    mod = load_club()",
       "    mod.save(1)",
@@ -42,6 +47,8 @@ describe("Python modules held in locals", () => {
       "    dyn.save(3)",
       "    either = load_either(True)",
       "    either.save(4)",
+      "    picked = pick(None)",
+      "    picked.save(6)",
       "    kind = load_type()",
       "    kind.save(5)",
       "",
@@ -62,7 +69,7 @@ describe("Python modules held in locals", () => {
   it("types a local as the module a function returns or a literal import_module names", async () => {
     const summary = await loadReportSummary(join(dir, "out"));
     const links = summary.symbolLinks
-      .filter((l) => /^(mod|other|dyn|either|kind)\.save$/.test(l.callName))
+      .filter((l) => /^(mod|other|dyn|either|kind|picked)\.save$/.test(l.callName))
       .map((l) => `${l.callName} -> ${l.targetFile}::${l.targetSymbol}`);
     expect(links).toEqual(["mod.save -> league/club.py::save", "other.save -> league/match.py::save"]);
   });
