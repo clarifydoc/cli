@@ -19,6 +19,7 @@ import { codeigniterRoutesResolver } from "./routes/codeigniter-resolver.js";
 import { laravelResourceResolver } from "./routes/laravel-resolver.js";
 import { laravelRoutingResolver } from "./routes/laravel-routing.js";
 import { phpViewKey, readPhpView } from "./views.js";
+import { hasPageMarkup, servedScriptPath } from "./plain-pages.js";
 import { CodeIgniterViewResolver } from "./view-resolver.js";
 import { LaravelEventResolver } from "./laravel-events.js";
 import { LaravelViewResolver } from "./laravel-view-resolver.js";
@@ -38,6 +39,9 @@ const PHP_BUILTINS: ReadonlySet<string> = new Set<string>([
   "stdClass", "Closure", "Generator", "Traversable",
   "ArrayAccess", "Countable", "Iterator", "IteratorAggregate",
 ]);
+
+/** A `.php` outside `views/` whose markup holds a form, link or inline script. */
+const isPlainPage = (relativePath: string, raw: string): boolean => servedScriptPath(relativePath, raw) !== null && hasPageMarkup(raw);
 
 export const phpMeta: LanguagePluginMeta = {
   securityRules: PHP_SECURITY_RULES,
@@ -67,7 +71,7 @@ export const phpMeta: LanguagePluginMeta = {
               analysis.imports.push(...bladeImports(raw));
             },
           }
-      : phpViewKey(relativePath) === null ? null : { sourceText: rawSource, language: "php", postExtract: (analysis, raw) => readPhpView(analysis, raw) },
+      : phpViewKey(relativePath) === null && !isPlainPage(relativePath, rawSource) ? null : { sourceText: rawSource, language: "php", postExtract: (analysis, raw) => readPhpView(analysis, raw) },
   functionsClasses: new PhpExtractor(),
   importsExports: new PhpImportExportExtractor(),
   dataSources: new PhpDataSourceExtractor(),

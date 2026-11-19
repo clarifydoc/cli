@@ -5,6 +5,7 @@ import { LARAVEL_ROUTES_FACT, codeigniterRouteExtractor } from "./codeigniter.js
 import { extractLaravelRoutes } from "./laravel.js";
 import { extractSymfonyAttributeRoutes } from "./symfony.js";
 import { SLIM_GATE, extractSlimRoutes } from "./slim.js";
+import { plainPageRoutes } from "../plain-pages.js";
 import { LARAVEL_ROUTING_FACT, laravelRoutingFact } from "./laravel-routing.js";
 
 /**
@@ -37,6 +38,7 @@ export const phpRouteExtractor: RouteExtractor = {
       extractSymfonyAttributeRoutes(tree.rootNode, routes);
     }
     if (SLIM_GATE.test(sourceText)) extractSlimRoutes(tree.rootNode, routes);
+    routes.push(...plainPageRoutes(tree.rootNode, sourceText, filePath ?? ""));
     routes.push(...codeigniterRouteExtractor.extractRoutes(tree, sourceText, filePath, facts));
     return routes;
   },

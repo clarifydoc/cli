@@ -1,6 +1,7 @@
 import type { FileAnalysis, FunctionInfo, ScreenComponentInfo, ScreenInfo, SubComponentInfo } from "../../../types/analysis.js";
 import { extractHtmlInteractiveElements } from "../html/index.js";
 import { materializeElementRequests } from "../shared/element-requests.js";
+import { SELF_ADDRESS, bindPageScreen, hasPageMarkup, resolveMarkupTargets, servedScriptPath, resolvePageTarget } from "./plain-pages.js";
 
 /**
  * Plain-PHP view templates — CodeIgniter's `application/views/**.php` (CI4
@@ -127,9 +128,11 @@ function callArgs(code: string, name: RegExp): string[] | null {
 const asHref = (uri: string): string => (/^(?:[a-z]+:|\/|\{\{)/i.test(uri) ? uri : "/" + uri);
 
 /** The markup a PHP tag stands for, given the code inside it (`=`-echo or not). */
-function rewriteTag(echo: boolean, code: string): string {
+function rewriteTag(echo: boolean, code: string, plain = false): string {
   const stmt = code.trim().replace(/;\s*$/, "").trim();
   let args: string[] | null;
+  // A plain page's `action="<?= $_SERVER['PHP_SELF'] ?>"` is an action naming no URL: the page's own.
+  if (plain && SELF_ADDRESS.test(stmt.replace(/^(?:echo|print)\s+/, ""))) return "";
   if ((args = callArgs(stmt, /form_open(?:_multipart)?/))) {
     const uri = args[0] ? uriExpr(args[0]) : null;
     const method = /['"]method['"]\s*=>\s*['"]get['"]/i.test(args[1] ?? "") ? "get" : "post";
@@ -151,10 +154,10 @@ function rewriteTag(echo: boolean, code: string): string {
 }
 
 /** The view's source with every PHP tag rewritten (see file header); newlines kept 1:1. */
-export function phpViewMarkup(source: string): string {
+export function phpViewMarkup(source: string, plain = false): string {
   PHP_TAG_RE.lastIndex = 0;
   return source.replace(PHP_TAG_RE, (whole, kind: string, code: string, offset: number) => {
-    let out = rewriteTag(kind === "=", code);
+    let out = rewriteTag(kind === "=", code, plain);
     // `<?=base_url()?>/clubs` prints one slash.
     if (out.endsWith("/") && source[offset + whole.length] === "/") out = out.slice(0, -1);
     const newlines = whole.split("\n").length - 1;
@@ -173,14 +176,16 @@ interface ScriptCall {
 }
 
 /** A script string as a route target: `{{php}}` and a `+`-appended tail are runtime segments. */
-function scriptTarget(url: string, concatenated: boolean): string | null {
+function scriptTarget(url: string, concatenated: boolean, pagePath?: string): string | null {
   let t = url.replace(/\{\{php\}\}/g, ":param");
+  // A plain page's relative `fetch('api/ping.php')` is read against the page's own directory.
+  if (pagePath !== undefined) t = resolvePageTarget(pagePath, t) ?? t;
   if (concatenated) t = t.endsWith("/") ? `${t}:param` : t;
   return t.startsWith("/") || /^https?:\/\//i.test(t) ? t : null;
 }
 
 /** The api-calls in the inline `<script>` blocks of `markup`, with each block's line span. */
-function scriptCalls(markup: string): Array<{ start: number; end: number; calls: ScriptCall[] }> {
+function scriptCalls(markup: string, pagePath?: string): Array<{ start: number; end: number; calls: ScriptCall[] }> {
   const blocks: Array<{ start: number; end: number; calls: ScriptCall[] }> = [];
   const lineAt = (i: number): number => markup.slice(0, i).split("\n").length;
   for (const b of markup.matchAll(/<script\b(?![^>]*\bsrc\s*=)[^>]*>([\s\S]*?)<\/script>/gi)) {
@@ -189,7 +194,7 @@ function scriptCalls(markup: string): Array<{ start: number; end: number; calls:
     if (!/\$|jQuery|fetch/.test(body)) continue;
     const calls: ScriptCall[] = [];
     for (const m of body.matchAll(SCRIPT_CALL_RE)) {
-      const target = m[3] !== undefined ? scriptTarget(m[3], !!m[4]) : scriptTarget(m[6]!, !!m[7]);
+      const target = m[3] !== undefined ? scriptTarget(m[3], !!m[4], pagePath) : scriptTarget(m[6]!, !!m[7], pagePath);
       if (!target) continue;
       const method = m[1] === "post" ? "POST" : "GET";
       calls.push({ method, target, line: lineAt(bodyStart + m.index!) });
@@ -197,7 +202,7 @@ function scriptCalls(markup: string): Array<{ start: number; end: number; calls:
     for (const m of body.matchAll(AJAX_RE)) {
       const opts = body.slice(m.index!, m.index! + 600);
       const url = /\burl\s*:\s*(['"])([^'"\n]+)\1(\s*\+)?/.exec(opts);
-      const target = url ? scriptTarget(url[2]!, !!url[3]) : null;
+      const target = url ? scriptTarget(url[2]!, !!url[3], pagePath) : null;
       if (!target) continue;
       const method = (/\b(?:type|method)\s*:\s*['"](\w+)['"]/.exec(opts)?.[1] ?? "GET").toUpperCase();
       calls.push({ method, target, line: lineAt(bodyStart + m.index!) });
@@ -213,9 +218,13 @@ const NOT_A_SCREEN = /(?:^|\/)(?:_[^/]*$|embeds?\/|includes?\/|inc\/|partials?\/
 const LOAD_VIEW_RE = /->\s*load\s*->\s*view\s*\(\s*(['"])([\w/.-]+)\1|\bview\s*\(\s*(['"])([\w/.-]+)\3/g;
 
 export function readPhpView(analysis: FileAnalysis, source: string): void {
-  const key = phpViewKey(analysis.filePath);
+  const viewKey = phpViewKey(analysis.filePath);
+  // A script outside `views/` is a plain page, named for its path (see plain-pages.ts).
+  const pagePath = viewKey === null ? servedScriptPath(analysis.filePath, source) : null;
+  const key = viewKey ?? pagePath?.slice(1).replace(/\.php$/i, "") ?? null;
   if (key === null || !source.includes("<")) return;
-  const markup = phpViewMarkup(source);
+  if (pagePath !== null && !hasPageMarkup(source)) return;
+  const markup = pagePath === null ? phpViewMarkup(source) : resolveMarkupTargets(phpViewMarkup(source, true), pagePath);
   const lines = markup.split("\n");
 
   const elements = extractHtmlInteractiveElements(lines, { requests: true });
@@ -224,7 +233,7 @@ export function readPhpView(analysis: FileAnalysis, source: string): void {
 
   // Inline scripts: one pseudo-function per block holding its calls.
   const named = new Set(analysis.functions.map((f) => f.name));
-  for (const block of scriptCalls(markup)) {
+  for (const block of scriptCalls(markup, pagePath ?? undefined)) {
     const name = `<script:${block.start}>`;
     if (!named.has(name)) {
       named.add(name);
@@ -267,7 +276,7 @@ export function readPhpView(analysis: FileAnalysis, source: string): void {
   const caption = /<title[^>]*>([^<]+)<\/title>|<h1\b[^>]*>([^<]+)<\/h1>|<h2\b[^>]*>([^<]+)<\/h2>/i.exec(masked);
   const screen: ScreenInfo = {
     name: key,
-    formType: "PhpView",
+    formType: pagePath === null ? "PhpView" : "PhpPage",
     caption: (caption?.[1] ?? caption?.[2] ?? caption?.[3])?.trim().replace(/\s+/g, " ") || null,
     dimensions: null,
     components: components.sort((a, b) => a.line - b.line),
@@ -276,4 +285,5 @@ export function readPhpView(analysis: FileAnalysis, source: string): void {
     navigatesTo: [...navigatesTo],
   };
   analysis.screens = [screen];
+  if (pagePath !== null) bindPageScreen(analysis, pagePath);
 }
