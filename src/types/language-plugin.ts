@@ -1601,6 +1601,17 @@ export interface LanguagePluginManifest {
    */
   asyncResultTypes?: readonly string[];
   /**
+   * Calls that take the value out of a wrapper where the language has no
+   * `await` — the method name, and the generic types (by simple name) it
+   * unwraps to their first type argument: Java `join`/`get` on a declared
+   * `CompletableFuture<Club>`, `block` on a `Mono<Club>`, `get`/`orElseThrow`
+   * on an `Optional<Club>`, Kotlin `await` on a `Deferred<Club>`. A receiver
+   * chain `repo.findAsync(id).join().promote()` (or a local initialized by it)
+   * goes on from `Club`. Only where the call before it DECLARES one of those
+   * wrappers: a project class's own `get()` keeps its declared return type.
+   */
+  unwrapCalls?: Readonly<Record<string, readonly string[]>>;
+  /**
    * The element types of a declared tuple return type as the language writes it (`tuple[Club, Car]` →
    * `["Club", "Car"]`), or null for any other type. Reads `FunctionInfo.returnType` for a local bound by
    * tuple unpacking (`localTypes[].fromIndex`).

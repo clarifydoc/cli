@@ -87,6 +87,14 @@ const JVM_BUILTIN_MEMBERS = [
   "setValue", "component1", "component2", "copy",
 ];
 
+/** Calls that take the value out of a JVM wrapper, and the wrappers each one unwraps (`unwrapCalls`). */
+const JVM_UNWRAP_CALLS: Readonly<Record<string, readonly string[]>> = {
+  join: ["CompletableFuture"],
+  get: ["CompletableFuture", "Future", "Optional"],
+  orElseThrow: ["Optional"],
+  block: ["Mono"],
+};
+
 export const javaManifest: LanguagePluginManifest = {
   docComments: C_STYLE_DOCS,
   migrationFiles: jvmMigrationFiles,
@@ -94,6 +102,8 @@ export const javaManifest: LanguagePluginManifest = {
   projectCommands: jvmProjectCommands,
   language: "java",
   callPathsFromHead: true,
+  // No `await`: the value comes out of a future, a `Mono` or an `Optional` through these calls.
+  unwrapCalls: JVM_UNWRAP_CALLS,
   collectionElementOf: collectionElementText,
   family: "jvm",
   packageManagers: [mavenPackageManager, gradlePackageManager],
@@ -127,6 +137,7 @@ export const kotlinManifest: LanguagePluginManifest = {
   blockingCalls: /^(?:runBlocking|Thread\.sleep)$/,
   language: "kotlin",
   callPathsFromHead: true,
+  unwrapCalls: { ...JVM_UNWRAP_CALLS, await: ["Deferred"] },
   collectionElementOf: collectionElementText,
   family: "jvm",
   // A package's top-level functions need no import in its other files.

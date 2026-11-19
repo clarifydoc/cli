@@ -7223,6 +7223,19 @@ function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonl
   for (let i = 0; i < rest.length; i++) {
     const seg = rest[i]!;
     if (!point?.typeFile) return null;
+    // `repo.findAsync(id).join()`: the unwrapping call takes the value out of the wrapper the call before it declares.
+    const after = rest[i + 1];
+    if (seg.call && after?.call) {
+      const calls = manifestFor((ctx.languageOf.get(point.typeFile) ?? "") as Language)?.unwrapCalls;
+      // Own keys only: `toString`, `constructor` and the rest of `Object.prototype` are no unwrapping calls.
+      const wrappers = calls && Object.hasOwn(calls, after.name) ? calls[after.name] : undefined;
+      const unwrapped = wrappers ? methodResult(ctx, point, seg.name, false, wrappers) : null;
+      if (unwrapped) {
+        point = unwrapped;
+        i++;
+        continue;
+      }
+    }
     point = seg.call
       ? methodResult(ctx, point, seg.name, awaited && i === rest.length - 1)
       : ctx.memberTypes.get(memberKey(point.typeFile, point.typeName))?.get(nameKey(ctx.languageOf.get(point.typeFile), seg.name)) ?? readerResult(ctx, point, seg.name);
@@ -7758,7 +7771,7 @@ const SELF_TYPES: ReadonlySet<string> = new Set(["self", "static", "$this", "thi
  * (`@return $this`, `-> Self`) keeps the receiver's type, so a fluent chain
  * on a subclass stays on the subclass.
  */
-function methodResult(ctx: LinkContext, point: InjectionPoint, method: string, awaited = false): InjectionPoint | null {
+function methodResult(ctx: LinkContext, point: InjectionPoint, method: string, awaited = false, unwrap?: readonly string[]): InjectionPoint | null {
   if (!point.typeFile) return null;
   let hit = point.classSide ? findMethodInClass(ctx, point.typeName, point.typeFile, method, undefined, "class", true) : null;
   hit ??= findMethodInClass(ctx, point.typeName, point.typeFile, method);
@@ -7768,8 +7781,16 @@ function methodResult(ctx: LinkContext, point: InjectionPoint, method: string, a
     const owner = ctx.analysisAt.get(point.typeFile);
     hit = owner ? extensionMethodFor(ctx, owner, point.typeFile, point.typeName, point.typeFile, method) : null;
   }
-  if (!hit) return frameworkSelfMember(ctx, point, method);
+  if (!hit) return unwrap ? null : frameworkSelfMember(ctx, point, method);
   const def = symbolIn(ctx, hit.file, hit.symbol);
+  if (unwrap) {
+    // Only a declared wrapper the unwrapping call takes the value out of (`CompletableFuture<Club>` before `.join()`).
+    const written = instanceReturn(def)?.trim() ?? "";
+    const open = written.indexOf("<");
+    const head = open > 0 ? written.slice(0, open).trim().split(/\.|::/).pop() ?? "" : "";
+    if (!unwrap.includes(head) || !written.endsWith(">")) return null;
+    return returnedPoint(ctx, awaitedType(written, unwrap), hit.file, point);
+  }
   const next = returnedPoint(ctx, instanceReturn(def), hit.file, point, awaited) ?? statedResultPoint(ctx, hit.file, def, point.consumer, awaited, point);
   // A class-level method returning `self` gives the class object, or a query of it (a scope): its
   // class-level methods answer next.
