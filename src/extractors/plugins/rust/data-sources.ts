@@ -1,6 +1,7 @@
 import type { DataSourceInfo } from "../../../types/analysis.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { fnAt, readRustCode, rustClientRequests, type RustCode } from "./request-wrappers.js";
+import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 /**
  * Rust data sources — sqlx/raw SQL, Diesel tables, reqwest HTTP calls, env
@@ -260,19 +261,7 @@ export function renderFormat(template: string, args: string[]): string | null {
 
 /** Arguments split at top-level commas. */
 export function splitTopLevel(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let cur = "";
-  let quoted = false;
-  for (const c of text) {
-    if (c === '"') quoted = !quoted;
-    if (!quoted && (c === "(" || c === "[" || c === "{")) depth++;
-    if (!quoted && (c === ")" || c === "]" || c === "}")) depth--;
-    if (!quoted && c === "," && depth === 0) { out.push(cur); cur = ""; continue; }
-    cur += c;
-  }
-  if (cur.trim()) out.push(cur);
-  return out;
+  return splitTopLevelWith(text, { quotes: "\"" });
 }
 
 export function extractRustDataSources(lines: string[]): DataSourceInfo[] {
