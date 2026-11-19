@@ -483,7 +483,8 @@ export class JsComponentRenderResolver implements DispatchResolver {
         const child = file ? byPath.get(file.split("\u0000")[0]!) : undefined;
         if (!child || child.filePath === parent.filePath || !dispatches(child)) continue;
         const stem = child.filePath.replace(/^.*\//, "").replace(/\.[^.]+$/, "");
-        const span = spansOf(child).find((sp) => tagKey(sp.symbol) === tagKey(stem)) ?? spansOf(child)[0];
+        const spans = spansOf(child);
+        const span = spans.find((sp) => tagKey(sp.symbol) === tagKey(stem)) ?? spans.find((sp) => tagKey(sp.symbol) === tagKey(sub.name)) ?? spans[0];
         if (!span) continue;
         if (sub.props.includes("...spread") !== this.open) continue;
         links.push({
