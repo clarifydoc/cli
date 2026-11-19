@@ -3,6 +3,7 @@ import type { RouteInfo, CallInfo, ParamInfo, RouteParamInfo } from "../../../..
 import { extractCalls } from "../../../shared/call-graph.js";
 import { applyRouteMeta, buildAuth, type GuardAttr } from "../../../shared/route-metadata.js";
 import { bindPhpParams, extractPhpRequestAccess, laravelGuard, requestReceivers } from "../request-access.js";
+import { joinRootedPath } from "../../../shared/route-paths.js";
 
 /**
  * Laravel `Route::` facade routing (routes/web.php, routes/api.php).
@@ -445,12 +446,7 @@ function closureParams(node: Node | undefined, path: string): RouteParamInfo[] {
   return out;
 }
 
-function joinPath(prefixes: string[], path: string): string {
-  const parts = [...prefixes, path]
-    .map((p) => p.replace(/^\/+|\/+$/g, ""))
-    .filter((p) => p.length > 0);
-  return "/" + parts.join("/");
-}
+const joinPath = (prefixes: string[], path: string): string => joinRootedPath([...prefixes, path], { collapse: false });
 
 // ─── Route emission ─────────────────────────────────────────────────────────
 
