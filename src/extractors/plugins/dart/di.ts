@@ -490,6 +490,9 @@ export function uniqueLocals(entries: NonNullable<FunctionInfo["localTypes"]>): 
   return [...byName.values()].filter((e): e is LocalType => e !== null);
 }
 
+/** Lowercase words that are not a function a bare call names. */
+const BARE_CALL_NOT_A_FUNCTION = new Set(["if", "for", "while", "switch", "return", "super", "this", "new", "const", "await", "throw", "assert"]);
+
 /**
  * `Club.fromJson(json)`, `league.Club.fromJson(json)` (an import prefix in
  * front), `await Club.load()`: a class-level call whose type the class states
@@ -504,7 +507,12 @@ function classLevelCall(rhs: string): { from: string; awaited?: boolean } | null
   if (m && closeOf(body, m[0].length - 1) === body.length) return { from: `${m[1]}.${m[2]}()`, ...(awaited ? { awaited: true } : {}) };
   // `s.first()`, `this.repo.find(id)`, `widget.repo.load()`: a method of a typed receiver, typed by its declared return type.
   const chain = /^(?:this\s*\.\s*)?([a-z_$][\w$]*(?:\s*[?!]?\.\s*[a-z_$][\w$]*)+)\s*\(/.exec(body);
-  if (!chain || closeOf(body, chain[0].length - 1) !== body.length) return null;
+  if (!chain || closeOf(body, chain[0].length - 1) !== body.length) {
+    // `pick()`, `await fetch()`, `topClub()`: a bare call — a method of the enclosing class (implicit `this`) or a top-level function — typed by its declared return type.
+    const bare = /^([a-z_$][\w$]*)\s*(?:<[^()]*>)?\s*\(/.exec(body);
+    if (bare && !BARE_CALL_NOT_A_FUNCTION.has(bare[1]!) && closeOf(body, bare[0].length - 1) === body.length) return { from: `${bare[1]}()`, ...(awaited ? { awaited: true } : {}) };
+    return null;
+  }
   return { from: `${chain[1]!.replace(/\s+/g, "").replace(/[?!]\./g, ".")}()`, ...(awaited ? { awaited: true } : {}) };
 }
 

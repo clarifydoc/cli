@@ -7435,8 +7435,10 @@ function importedFunctionLink(
   // A function an include or `require` puts in scope is called bare, as the file's own would be (`internal`):
   // it is imported when the file does not define it.
   const shared = (importsShareScope(analysis.language) || !!pluginFor(analysis.language as Language)?.directoryNamesShared) && !analysis.functions.some((f) => f.name === name);
+  // A function an import puts in scope by bare name (`ImportInfo.inScope`: Dart, Kotlin) is called as the file's own is.
+  const scoped = !shared && !analysis.functions.some((f) => f.name === name) && !!inScopeMember(ctx, analysis, name);
   const writes = (fn: FunctionInfo | null | undefined): CallInfo | undefined =>
-    fn?.calls.find((c) => c.name === name && (c.kind === "cross-file" || (shared && c.kind === "internal")));
+    fn?.calls.find((c) => c.name === name && (c.kind === "cross-file" || ((shared || scoped) && c.kind === "internal")));
   const own = findEnclosingCallable(analysis, sourceSymbol);
   let written = writes(own);
   // A function written in place (a held callback, `<watch@12>`) types a local it closes over by an initializer the

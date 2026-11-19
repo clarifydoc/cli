@@ -157,6 +157,8 @@ describe("dart locals", () => {
       { name: "k", type: "PlayerRepo", qualifier: "mem" },
       { name: "p", type: "", qualifier: "repoProvider" },
       { name: "x", type: "Db" },
+      // A bare call states its function; the linker types it by that function's declared return type, or not at all.
+      { name: "y", type: "", from: "compute()" },
     ]);
   });
 
