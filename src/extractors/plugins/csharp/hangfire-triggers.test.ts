@@ -77,4 +77,58 @@ describe("Hangfire recurring jobs triggered by id", () => {
     const links = new CSharpHangfireTriggerResolver().resolve(files).map((l) => `${l.sourceSymbol} -> ${l.targetSymbol}`).sort();
     expect(links).toEqual(["ServerController.Backup -> BackupService.Run", "ServerController.Sweep -> Scheduler.Sweep"]);
   });
+
+  it("caps interface fan-out at one implementer — a decoy implementer is not linked", async () => {
+    const schedule = `namespace League;
+public class FixtureScheduler {
+  public const string RefreshStandingsId = "refresh-standings";
+  public void Schedule() {
+    RecurringJob.AddOrUpdate<IStandingsService>(RefreshStandingsId, s => s.RefreshStandings(), Cron.Daily);
+  }
+}
+public interface IStandingsService { void RefreshStandings(); }
+public class StandingsService : IStandingsService { public void RefreshStandings() { } }
+public class DecoyStandingsService : IStandingsService { public void RefreshStandings() { } }
+`;
+    const trigger = `namespace League;
+public class FixtureController {
+  public void RefreshNow() { RecurringJob.TriggerJob(FixtureScheduler.RefreshStandingsId); }
+}
+`;
+    const unique = `namespace Garage;
+public class FleetScheduler {
+  public const string ServiceId = "service-fleet";
+  public void Schedule() {
+    RecurringJob.AddOrUpdate<IFleetService>(ServiceId, s => s.ServiceFleet(), Cron.Daily);
+  }
+}
+public interface IFleetService { void ServiceFleet(); }
+public class FleetService : IFleetService { public void ServiceFleet() { } }
+`;
+    const uniqueTrigger = `namespace Garage;
+public class FleetController {
+  public void ServiceNow() { RecurringJob.TriggerJob(FleetScheduler.ServiceId); }
+}
+`;
+    const withArgs = async (a: FileAnalysis, src: string) => {
+      const tree = await parseSource(src, "csharp" as never, a.filePath);
+      const argsByLine = new Map<number, string[]>();
+      for (const n of tree.rootNode.descendantsOfType("invocation_expression")) {
+        const args = csharpHangfireArgs(n!);
+        if (args) argsByLine.set(n!.startPosition.row + 1, args);
+      }
+      for (const fn of [...a.functions, ...a.classes.flatMap((c) => c.methods)]) for (const c of fn.calls) if (argsByLine.has(c.line) && /RecurringJob\./.test(c.name)) c.args = argsByLine.get(c.line)!;
+    };
+    const multi = [await analysisOf("FixtureScheduler.cs", schedule), await analysisOf("FixtureController.cs", trigger)];
+    await withArgs(multi[0]!, schedule);
+    await withArgs(multi[1]!, trigger);
+    expect(new CSharpHangfireTriggerResolver().resolve(multi)).toEqual([]);
+
+    const one = [await analysisOf("FleetScheduler.cs", unique), await analysisOf("FleetController.cs", uniqueTrigger)];
+    await withArgs(one[0]!, unique);
+    await withArgs(one[1]!, uniqueTrigger);
+    expect(new CSharpHangfireTriggerResolver().resolve(one).map((l) => `${l.sourceSymbol} -> ${l.targetSymbol}`)).toEqual([
+      "FleetController.ServiceNow -> FleetService.ServiceFleet",
+    ]);
+  });
 });

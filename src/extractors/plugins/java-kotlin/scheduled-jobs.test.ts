@@ -49,6 +49,22 @@ public class NightlyJob : IJob { public Task Execute(IJobExecutionContext ctx) =
     ]);
   });
 
+  it("C#: Hangfire AddOrUpdate whose id is a const or identifier, not only a string literal", () => {
+    const src = `public static class JobIds {
+  public const string WashKitsId = "wash-kits";
+  public const string PolishBootsId = "polish-boots";
+}
+RecurringJob.AddOrUpdate<IKitService>(JobIds.WashKitsId, s => s.WashKits(), Cron.Daily);
+RecurringJob.AddOrUpdate(PolishBootsId, () => PolishBoots(), Cron.Hourly);
+RecurringJob.AddOrUpdate("literal-sweep", () => SweepPitch(), Cron.Weekly);
+public class GarageService { public void WashKits() { } }`;
+    expect(extractCsharpScheduledJobs(src).map(show)).toEqual([
+      "wash-kits → IKitService.WashKits [Cron.Daily] (hangfire) @5",
+      "polish-boots → PolishBoots [Cron.Hourly] (hangfire) @6",
+      "literal-sweep → SweepPitch [Cron.Weekly] (hangfire) @7",
+    ]);
+  });
+
   it("C#: a hosted worker deriving BackgroundService, with the interval its loop waits", () => {
     const src = `public class FixtureReminderWorker : BackgroundService
 {

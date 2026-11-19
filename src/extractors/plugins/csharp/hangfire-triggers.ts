@@ -10,10 +10,11 @@ import type { DispatchResolver } from "../../dispatch/base.js";
  *
  * The trigger names no method: the work it starts is the lambda of the registration with the same id. This reads both
  * calls' arguments (`CallInfo.args`, stated by `csharpHangfireArgs`) and links the function that triggers a job to the
- * method its registration runs — on every class implementing the interface the registration names, else on the type
- * itself, else (a lambda over a bare call, `() => ScanLibraries(false)`) on the class that registers it. An id is its
- * string literal, or a `const` string the code reads by name and a class of the project declares (`ClassInfo.fieldValues`);
- * an id that cannot be read, or that two registrations give different handlers, links nothing.
+ * method its registration runs — on the one class implementing the interface the registration names (two or more
+ * implementers refuse, so a decoy is never linked), else on the type itself, else (a lambda over a bare call,
+ * `() => ScanLibraries(false)`) on the class that registers it. An id is its string literal, or a `const` string the
+ * code reads by name and a class of the project declares (`ClassInfo.fieldValues`); an id that cannot be read, or that
+ * two registrations give different handlers, links nothing.
  */
 
 const REGISTER = /(?:^|\.)(?:RecurringJob|\w*[rR]ecurringJob\w*)\.AddOrUpdate(?:<[^>]*>)?$/;
@@ -98,14 +99,16 @@ export class CSharpHangfireTriggerResolver implements DispatchResolver {
           if (c.cls) own(c.cls, c.file);
         } else {
           const named = classes.get(bare(type)) ?? [];
-          // The type itself when it declares the method (a class), else every class implementing it.
+          // The type itself when it is a class; an interface only when exactly one class implements it.
           for (const t of named) if (t.cls.kind !== "interface") own(t.cls, t.file);
-          if (named.some((t) => t.cls.kind === "interface" || t.cls.methods.some((m) => m.name === method))) {
+          if (named.some((t) => t.cls.kind === "interface")) {
+            const impls: Array<{ cls: ClassInfo; file: string }> = [];
             for (const list of classes.values()) {
               for (const impl of list) {
-                if ([impl.cls.extends, ...(impl.cls.implements ?? [])].some((b) => b && bare(b) === bare(type)) && !named.some((t) => t.cls === impl.cls)) own(impl.cls, impl.file);
+                if ([impl.cls.extends, ...(impl.cls.implements ?? [])].some((b) => b && bare(b) === bare(type)) && !named.some((t) => t.cls === impl.cls)) impls.push(impl);
               }
             }
+            if (impls.length === 1) own(impls[0]!.cls, impls[0]!.file);
           }
         }
         if (targets.length === 0) continue;
