@@ -642,6 +642,10 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
       for (const call of calls) {
         const type = elements.receiverOf(call);
         if (type) call.receiverType = type;
+        else {
+          const from = elements.receiverFromOf?.(call);
+          if (from) call.receiverFrom = from;
+        }
       }
     }
     localTypes.push(...outerFieldLocals(node, language, params, localTypes, calls));

@@ -1,5 +1,6 @@
 import type { Node } from "web-tree-sitter";
 import { callChainText } from "../../shared/call-graph.js";
+import { ELEMENT_HOP } from "../../shared/collection-element.js";
 import type { CallInfo, FunctionInfo, ParamInfo } from "../../../types/analysis.js";
 import {
   type ChainRules,
@@ -15,6 +16,8 @@ import {
 
 type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
 type JkLang = "java" | "kotlin";
+/** What a lambda parameter is handed, spelled as `localTypes[].from` (see `CallInfo.receiverFrom`). */
+interface LambdaSource { from: string; element: boolean }
 
 const set = (...names: string[]): ReadonlySet<string> => new Set(names);
 
@@ -221,6 +224,8 @@ export interface ElementFacts {
   locals: LocalType[];
   /** Types the receiver of a call stated as an element access names (`cars.get(0).wash()` → `Car`). */
   receiverOf(call: CallInfo): string | null;
+  /** What a lambda around the call hands its parameter, when the call's receiver is that parameter and the body does not type it. */
+  receiverFromOf?(call: CallInfo): NonNullable<CallInfo["receiverFrom"]> | null;
   /** The type an `is`/`instanceof` arm around the call gives its receiver name, null outside every arm. */
   narrowedOf?(call: CallInfo): string | null;
 }
@@ -269,6 +274,9 @@ export function jvmElementFacts(
     const from = element ? null : elementSource(source);
     if (from) fromElements.push({ name, type: "", from, element: true });
     else bind(name, element);
+  };
+  const bindSource = (name: string | null | undefined, src: LambdaSource): void => {
+    if (name) fromElements.push({ name, type: "", from: src.from, ...(src.element ? { element: true as const } : {}) });
   };
   const bindChain = (name: string | null | undefined, init: Node | null | undefined): void => {
     if (!name) return;
@@ -332,7 +340,7 @@ export function jvmElementFacts(
 
   // The names a lambda binds, over the lambda's own extent: a call inside it reads the lambda's binding of a name
   // (typed or not) — never the one another lambda gave `it`, and never the method-wide table's.
-  const lambdaScopes: Array<{ name: string; type: string | null; from: [number, number]; to: [number, number] }> = [];
+  const lambdaScopes: Array<{ name: string; type: string | null; source?: LambdaSource; from: [number, number]; to: [number, number] }> = [];
   const bindLambda = (lambda: Node): void => {
     const names = lambdaNames(lambda);
     const callee = lambdaCallee(lambda);
@@ -340,23 +348,31 @@ export function jvmElementFacts(
     // A callback of a collection the body does not type: the elements of what its receiver reads — past the steps
     // that keep the element (`repo.findAll().filter(…).doOnNext(c -> …)` reads `repo.findAll()`).
     const open = !found && callee && (rules.callbacks.get(callee.method)?.length ?? 0) > 0 && !(rules.mapCallbacks.has(callee.method) && callee.method !== "forEach");
+    // Kotlin `let`/`also` on a call's result: `it` is the receiver's own type, not an element.
+    const scoped = !found && !open && callee && language === "kotlin" && (callee.method === "let" || callee.method === "also");
     names.forEach((n, i) => {
       const openHere = !n.type && !!open && !!callee && rules.callbacks.get(callee.method)!.includes(i);
       const type = n.type ?? (found && found.positions.includes(i) ? found.type : null);
-      if (openHere) bindFrom(n.name, keptSource(callee!.node), null);
+      let source: LambdaSource | null = null;
+      if (!n.type && callee && i === 0 && (openHere || scoped)) {
+        source = openHere ? elementSourceOf(callee.node) : valueSourceOf(callee.node);
+        if (source) bindSource(n.name, source);
+        else bind(n.name, null);
+      } else if (openHere) bindFrom(n.name, keptSource(callee!.node), null);
       else bind(n.name, type);
       if (n.name) {
         lambdaScopes.push({
           name: n.name,
-          type: openHere ? null : type,
+          type: openHere || scoped ? null : type,
+          ...(source ? { source } : {}),
           from: [lambda.startPosition.row, lambda.startPosition.column],
           to: [lambda.endPosition.row, lambda.endPosition.column],
         });
       }
     });
   };
-  /** The type the innermost lambda around a call gives `name`; undefined when no lambda binds it there. */
-  const scopedType = (name: string, call: CallInfo): string | null | undefined => {
+  /** The innermost lambda scope around a call that binds `name`; undefined when no lambda binds it there. */
+  const scopeAt = (name: string, call: CallInfo): (typeof lambdaScopes)[number] | undefined => {
     if (lambdaScopes.length === 0 || call.column === undefined) return undefined;
     const at: [number, number] = [call.line - 1, call.column];
     const before = (a: [number, number], b: [number, number]) => a[0] < b[0] || (a[0] === b[0] && a[1] <= b[1]);
@@ -365,7 +381,86 @@ export function jvmElementFacts(
       if (sc.name !== name || !before(sc.from, at) || !before(at, sc.to)) continue;
       if (!best || (before(best.from, sc.from) && before(sc.to, best.to))) best = sc;
     }
+    return best;
+  };
+  /** The type the innermost lambda around a call gives `name`; undefined when no lambda binds it there. */
+  const scopedType = (name: string, call: CallInfo): string | null | undefined => {
+    const best = scopeAt(name, call);
     return best ? best.type : undefined;
+  };
+
+  // The operators whose lambda parameter is an element a chain declares, and the ones that hand on a value of the
+  // lambda's own body: `repo.findAll().map(c -> c.league()).forEach(l -> l.relegate())` — `l` is what
+  // `Club.league()` declares, read through the element hop `repo.findAll().@element().league()`.
+  /** A Kotlin `x!!` is `x`. */
+  const unbang = (node: Node): Node => (language === "kotlin" && node.type === "postfix_expression" && node.text.endsWith("!!") ? node.child(0) ?? node : node);
+  const callParts = (node: Node): { object: Node; method: string; lambda: Node | null } | null => {
+    if (language === "java") {
+      if (node.type !== "method_invocation") return null;
+      const object = node.childForFieldName("object");
+      const method = node.childForFieldName("name")?.text;
+      const args = node.childForFieldName("arguments")?.namedChildren ?? [];
+      const arg = args.length === 1 ? args[0]! : null;
+      return object && method ? { object, method, lambda: arg && (arg.type === "lambda_expression" || arg.type === "method_reference") ? arg : null } : null;
+    }
+    if (node.type !== "call_expression") return null;
+    const callee = node.child(0);
+    if (callee?.type !== "navigation_expression") return null;
+    const last = callee.namedChildren[callee.namedChildCount - 1];
+    const method = last?.type === "navigation_suffix" ? last.namedChildren.find((c) => c.type === "simple_identifier")?.text : undefined;
+    const object = callee.child(0) ? unbang(callee.child(0)!) : null;
+    const suffix = node.children.find((c) => c.type === "call_suffix");
+    const lambda = suffix?.namedChildren.find((c) => c.type === "annotated_lambda")?.namedChildren.find((c) => c.type === "lambda_literal") ?? null;
+    return object && method ? { object, method, lambda } : null;
+  };
+  /** What a lambda or method reference hands on: the call chain its body is on its parameter, and the class a reference names. */
+  const lambdaTail = (lambda: Node): { tail: string; named?: string } | null => {
+    if (lambda.type === "method_reference") {
+      const parts = lambda.namedChildren;
+      const target = parts[0]?.text.replace(/\s+/g, "");
+      const member = parts.length === 2 ? parts[1]!.text : null;
+      return target && member && /^[A-Z]\w*$/.test(target) && /^[A-Za-z_]\w*$/.test(member) ? { tail: `${member}()`, named: target } : null;
+    }
+    const names = lambdaNames(lambda);
+    if (names.length !== 1 || !names[0]!.name) return null;
+    let body: Node | null | undefined;
+    if (language === "java") body = lambda.childForFieldName("body");
+    else {
+      const statements = lambda.namedChildren.find((c) => c.type === "statements");
+      body = statements?.namedChildren.length === 1 ? statements.namedChildren[0] : null;
+    }
+    const text = body ? callChainText(body, language) : null;
+    const head = `${names[0]!.name}.`;
+    return text && text.startsWith(head) && text.length > head.length ? { tail: text.slice(head.length) } : null;
+  };
+  /** The parameter a lambda handed an element of `node`'s result gets: peeled of the steps that keep the element, then the chain's own source. */
+  const elementSourceOf = (node: Node | null | undefined, depth = 0): LambdaSource | null => {
+    if (!node || depth > 6) return null;
+    const n = keptSource(unbang(node));
+    const step = callParts(n);
+    if (step?.lambda && (step.method === "map" || step.method === "flatMap")) {
+      const base = elementSourceOf(step.object, depth + 1);
+      const lt = lambdaTail(step.lambda);
+      if (!base || !lt || (lt.named && !base.element)) return null;
+      const value = base.element ? `${base.from}.${ELEMENT_HOP}(${lt.named ?? ""})` : base.from;
+      return { from: `${value}.${lt.tail}`, element: step.method === "flatMap" };
+    }
+    const from = elementSource(n);
+    return from ? { from, element: true } : null;
+  };
+  /** The parameter a Kotlin `let`/`also` lambda gets: the value of the call its receiver is, through earlier `let`s. */
+  const valueSourceOf = (node: Node | null | undefined, depth = 0): LambdaSource | null => {
+    if (!node || depth > 6) return null;
+    node = unbang(node);
+    const step = callParts(node);
+    if (step?.lambda && (step.method === "let" || step.method === "also")) {
+      const base = valueSourceOf(step.object, depth + 1);
+      if (!base || step.method === "also") return base;
+      const lt = lambdaTail(step.lambda);
+      return lt && !lt.named ? { from: `${base.from}.${lt.tail}`, element: false } : null;
+    }
+    const from = callChainText(node, language);
+    return from ? { from, element: false } : null;
   };
 
   /** The call a chain's element comes from: trailing element-keeping operators (`filter`, `stream`, `doOnNext`) peeled off. */
@@ -614,13 +709,20 @@ export function jvmElementFacts(
     if (!/[([]/.test(split.receiver)) return null;
     return valueOfChain(split.receiver, rootState, rules);
   };
+  const receiverFromOf = (call: CallInfo): NonNullable<CallInfo["receiverFrom"]> | null => {
+    if (call.receiverType) return null;
+    const split = splitCallName(call.name);
+    if (!split || !/^[A-Za-z_$][\w$]*$/.test(split.receiver)) return null;
+    const source = scopeAt(split.receiver, call)?.source;
+    return source ? { from: source.from, ...(source.element ? { element: true as const } : {}) } : null;
+  };
   const narrowedOf = (call: CallInfo): string | null => {
     if (call.receiverType) return null;
     const split = splitCallName(call.name);
     if (!split || !/^[A-Za-z_$][\w$]*$/.test(split.receiver) || scopedType(split.receiver, call) !== undefined) return null;
     return narrowedAt(split.receiver, call);
   };
-  return locals.length > 0 || /[([]/.test(body.text) ? { locals, receiverOf, ...(narrowed.size > 0 ? { narrowedOf } : {}) } : null;
+  return locals.length > 0 || /[([]/.test(body.text) ? { locals, receiverOf, receiverFromOf, ...(narrowed.size > 0 ? { narrowedOf } : {}) } : null;
 }
 
 /** A Kotlin branch body that always leaves the block: its last statement is a `return`, `throw`, `break` or `continue`. */

@@ -6,6 +6,13 @@
  * Whether the element is a project class is the linker's call.
  */
 
+/**
+ * A chain segment a plugin writes in a `from` text for "the element of what the call before it declares":
+ * `repo.findAll().@element().league()` is the `league()` of the element of `Flux<Club>`. Its argument, when written,
+ * names the class the element must be (`@element(Club)` for a `Club::league` method reference).
+ */
+export const ELEMENT_HOP = "@element";
+
 const SEQUENCES = new Set([
   "Array", "ReadonlyArray", "Set", "ReadonlySet", "Iterable", "IterableIterator", "Iterator", "Collection", "Queue", "Stack",
   "list", "List", "set", "frozenset", "FrozenSet", "Sequence", "MutableSequence", "AbstractSet", "MutableSet", "Deque", "deque",

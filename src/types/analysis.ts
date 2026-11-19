@@ -1277,6 +1277,15 @@ export interface CallInfo {
    * (`isinstance(x, (A, B))`) — the one that declares the called method, when exactly one does.
    */
   receiverType?: string;
+  /**
+   * The receiver is a name a lambda around the call binds (`clubs.forEach(x -> x.promote())`), typed by what that
+   * lambda is handed: `from` is spelled as `FunctionInfo.localTypes[].from` is (a segment `@element()` stands for the
+   * element of the declared type before it), `element` says the name is the element of what `from` declares. Scoped to
+   * this call, so two lambdas of one method binding one name from different sources type each. The linker types the
+   * receiver by declared types only; when it cannot, the call links nowhere through the receiver (the lambda's name
+   * hides every other binding of it).
+   */
+  receiverFrom?: { from: string; element?: true };
   /** The DI token/key that lookup named, when it named one (`container.get(TYPES.Mailer)`). */
   receiverQualifier?: string;
   /**

@@ -27,6 +27,7 @@ import { isExternalImportSource, importResolveContext as buildImportResolveConte
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
 import { commonPrefixLength, extensionFamily, escapeRegex } from "../extractors/plugins/shared/path-utils.js";
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
+import { ELEMENT_HOP } from "../extractors/shared/collection-element.js";
 import { isTestFile } from "./test-file-detector.js";
 import { callSiteKey, hasValueFlowFacts, solveValueFlow, valueFlowInvokeSites } from "./value-flow.js";
 import { getLanguageForFile } from "../parsers/language-map.js";
@@ -7102,6 +7103,14 @@ function resolveThroughDeclaredType(
 
   const receiver = receiverChain(call.name, manifestFor(analysis.language as Language)?.indexerMethod);
   if (!receiver || receiver.length === 0 || receiver.length > MAX_RECEIVER_CHAIN + 1 || receiverCutName(analysis, call)) return null;
+  // A name a lambda around the call binds, typed by what the lambda is handed (`CallInfo.receiverFrom`): this
+  // call's own scope, so another lambda binding the same name elsewhere in the method decides nothing here.
+  if (call.receiverFrom && !receiver[0]!.call && !receiver[0]!.ctor) {
+    const bound = initializerPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, { from: call.receiverFrom.from, ...(call.receiverFrom.element ? { element: true as const } : {}) }, 0);
+    const p = bound ? walkChain(ctx, bound, receiver.slice(1), false) : null;
+    // The lambda binds the name here: a parameter, field or method-wide local of that name is another binding.
+    return p ? linkThroughPoint(ctx, analysis, sourceFile, p, leafName, mkLink) : null;
+  }
   // A parameter a nested block's own untyped declaration hides at this site (`CallInfo.boundLocally` on a dotted
   // call): its declared type is not the receiver's. A typed block element (`localTypes` with type/from) still is.
   if (call.boundLocally && !receiver[0]!.ctor && !receiver[0]!.call) {
@@ -7321,8 +7330,15 @@ function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonl
   for (let i = 0; i < rest.length; i++) {
     const seg = rest[i]!;
     if (!point?.typeFile) return null;
-    // `repo.findAsync(id).join()`: the unwrapping call takes the value out of the wrapper the call before it declares.
+    // `findAll().@element().league()`: the hop reads the type the segment before it DECLARES, which is no project class.
     const after = rest[i + 1];
+    if (after?.call && after.name === ELEMENT_HOP) {
+      point = elementHop(ctx, point, seg, after);
+      if (!point) return null;
+      i++;
+      continue;
+    }
+    // `repo.findAsync(id).join()`: the unwrapping call takes the value out of the wrapper the call before it declares.
     if (seg.call && after?.call) {
       const calls = manifestFor((ctx.languageOf.get(point.typeFile) ?? "") as Language)?.unwrapCalls;
       // Own keys only: `toString`, `constructor` and the rest of `Object.prototype` are no unwrapping calls.
@@ -7339,6 +7355,26 @@ function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonl
       : ctx.memberTypes.get(memberKey(point.typeFile, point.typeName))?.get(nameKey(ctx.languageOf.get(point.typeFile), seg.name)) ?? readerResult(ctx, point, seg.name);
   }
   return point;
+}
+
+/**
+ * The point an `@element()` segment of a `from` chain stands for: the element of the type the segment before it
+ * DECLARES (a method's return type or a field's), through the plugin's `collectionElementOf`; with an argument, only
+ * when that element is the class it names.
+ */
+function elementHop(ctx: LinkContext, before: InjectionPoint, previous: ChainSegment, hop: ChainSegment): InjectionPoint | null {
+  const declared = previous.call
+    ? methodDeclaredReturn(ctx, before, previous.name)
+    : fieldDeclaredType(ctx, before, previous.name);
+  if (!declared) return null;
+  const language = (ctx.languageOf.get(declared.file) ?? "") as Language;
+  const element = pluginFor(language)?.collectionElementOf?.(declared.type.trim());
+  if (!element) return null;
+  const hopped = returnedPoint(ctx, element, declared.file, before);
+  if (!hopped) return null;
+  const named = hop.args?.trim();
+  if (named && receiverTypeName(named, language) !== hopped.typeName) return null;
+  return hopped;
 }
 
 /** A paren-less member read that is no field: in a language where it may be a method call, what the method returns. */
