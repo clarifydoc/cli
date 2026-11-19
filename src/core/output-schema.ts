@@ -106,6 +106,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   taintFacts: "optional",
   moduleValueFlow: "optional",
   configKeyReads: "optional",
+  filePathReads: "optional",
 };
 
 export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {
@@ -197,6 +198,7 @@ export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {
   envVars: "optional",
   ciDeploys: "optional",
   configKeys: "optional",
+  configFiles: "optional",
 };
 
 /**

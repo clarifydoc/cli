@@ -760,6 +760,8 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       rewriteModuleSources(items, analysis.language);
       analysis.mockedModules = items.map((m) => m.source);
     }
+    const filePathReads = hooks?.filePathReads?.(tree, sourceText);
+    if (filePathReads && filePathReads.length > 0) analysis.filePathReads = filePathReads;
     const pathArgCalls = hooks?.pathArgCalls?.(tree, sourceText);
     if (pathArgCalls && pathArgCalls.length > 0) analysis.pathArgCalls = pathArgCalls;
     const domBindings = hooks?.domBindings?.(tree, sourceText);

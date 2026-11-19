@@ -110,6 +110,7 @@ import { consumerEntryPoints } from "./consumer-entries.js";
 import { collectProjectCommands, collectTestSetupRuns } from "./project-commands.js";
 import { nameCommunities } from "./community-names.js";
 import { buildTestCoverage, COVERAGE_CANDIDATES, isSqliteFile, parallelCoverageFiles, parseCoverage, readCoverageDb, routeTestCoverage, type CoverageReportInput } from "./test-coverage.js";
+import { joinConfigFiles } from "./config-files.js";
 import { isTestFile } from "./test-file-detector.js";
 import { composeScreenNavigation } from "./screen-navigation.js";
 import { checkContracts } from "./contract-check.js";
@@ -1851,6 +1852,9 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Configuration keys the project's config files set, with the code that reads each.
   const configKeys = joinConfigKeys(allAnalyses, allAnalyses.some((a) => a.configKeyReads?.length || a.dataSources.some((d) => d.configRead)) ? await readConfigKeys(projectRoot, subProjects) : [], (f) => !isUnauthored(f), (f, l) => isTestFile(f, l));
 
+  // Non-code files the code opens by a literal path.
+  const configFiles = joinConfigFiles(allAnalyses, subProjects, (f) => !isUnauthored(f), (f, l) => isTestFile(f, l));
+
   // The per-file scanner already skips minified sources; this catches issues
   // cached by older extractor versions and everything under generatedRoots.
   const keptSecurityIssues = allSecurityIssues.filter((i) => !isUnauthored(i.filePath));
@@ -2703,6 +2707,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
     deployment,
     ...(envVars.length > 0 ? { envVars } : {}),
     ...(configKeys.length > 0 ? { configKeys } : {}),
+    ...(configFiles.length > 0 ? { configFiles } : {}),
     ...(ciDeploys.length > 0 ? { ciDeploys } : {}),
   };
 

@@ -365,6 +365,13 @@ export interface FileAnalysis {
    */
   configKeyReads?: Array<{ key: string; line: number; kind: "variable" }>;
   /**
+   * Files the code opens by a path it spells out in literals (`new File("config", "league.yml")`,
+   * `open("settings/league.json")`, `fs.readFileSync(path.join(__dirname, "league.json"))`). Core resolves
+   * each against the analysis's files (`ProjectAnalysis.configFiles`); a path with a part that is not a
+   * literal is never stated.
+   */
+  filePathReads?: FilePathRead[];
+  /**
    * Listeners a page script binds to elements by selector
    * (`document.querySelectorAll("button[data-delete]").forEach(b => b.addEventListener("click", deleteClub))`).
    * Joined to the elements of the pages that load the script, whose
@@ -5466,6 +5473,12 @@ export interface ProjectAnalysis {
    */
   configKeys?: ConfigKeyUse[];
   /**
+   * Non-code files (a config file) the code opens by a literal path, with the files that do
+   * (`core/config-files.ts`): the path resolved beside the reader, else at its sub-project root, else at
+   * the analysis root — the first file the analysis has; never by file name alone.
+   */
+  configFiles?: ConfigFileUse[];
+  /**
    * Environment variables the code reads, where, and which deployed services
    * set them (`core/env-vars.ts`) — names only, never values.
    */
@@ -5812,6 +5825,23 @@ export interface TaintFacts {
   summaries: Array<{ name: string; line: number; sinks: Array<{ param: number; line: number; category: SecurityCategory; cwe: string; what: string; callee: string; path: TaintStep[] }> }>;
   /** Handler calls into functions the file does not declare, with the arguments carrying request input. */
   calls: Array<{ line: number; callee: string; args: Array<{ index: number; from: number; path: TaintStep[] }> }>;
+}
+
+/** One file path a call spells out in literals (`FileAnalysis.filePathReads`). */
+export interface FilePathRead {
+  /** The literal path parts, in order (`["config", "league.yml"]`; `["config/league.yml"]` when written as one string). */
+  parts: string[];
+  line: number;
+  /** The path starts at the reading file's own directory (`__dirname`): it resolves there and nowhere else. */
+  anchor?: "file";
+}
+
+/** A data or configuration file the code opens by path, and the code that does (`ProjectAnalysis.configFiles`). */
+export interface ConfigFileUse {
+  /** Project-relative posix path of the file. */
+  file: string;
+  project?: string;
+  consumers: Array<{ file: string; line: number; project?: string }>;
 }
 
 /** A configuration key a file sets and the code that reads it (`ProjectAnalysis.configKeys`). */

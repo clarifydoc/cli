@@ -807,6 +807,8 @@ export interface AstExtractorHooks {
   generatedClients?(tree: Tree, sourceText: string, filePath: string): GeneratedClientConfig[];
   /** Modules a test file replaces with a test double (`vi.mock("./api")`) → `FileAnalysis.mockedModules`. */
   mockedModules?(tree: Tree, sourceText: string): string[];
+  /** Files opened by a path spelled out in literals (`new File("config/league.yml")`) → `FileAnalysis.filePathReads`. */
+  filePathReads?(tree: Tree, sourceText: string): import("./analysis.js").FilePathRead[];
   /** Calls handing a path literal to a project function → `FileAnalysis.pathArgCalls`. */
   pathArgCalls?(tree: Tree, sourceText: string): PathArgCall[];
   /** Listeners bound to page elements by selector → `FileAnalysis.domBindings`. */
