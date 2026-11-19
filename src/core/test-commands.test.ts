@@ -184,6 +184,12 @@ describe("test commands for Dart, Swift and Elixir", () => {
     expect(elixirTestCommand([{ file: "test/club_test.exs", names: [] }])).toBe("mix test test/club_test.exs");
     expect(elixirTestCommand([{ file: "test/club_test.exs", names: ["builds"], cases: [{ path: ["builds"], line: 12 }] }])).toBe("mix test test/club_test.exs:12");
     expect(elixirTestCommand([{ file: "test/club_test.exs", names: ["<setup>"] }])).toBe("mix test test/club_test.exs");
+    // an umbrella app's test runs inside the app; the root's own and a decoy `apps` folder outside an app stay as they were
+    expect(elixirTestCommand([{ file: "apps/club/test/club_test.exs", names: ["builds"], cases: [{ path: ["builds"], line: 12 }] }])).toBe("(cd apps/club && mix test test/club_test.exs:12)");
+    expect(elixirTestCommand([{ file: "apps/club/test/club_test.exs", names: [] }, { file: "apps/garage/test/car_test.exs", names: [] }, { file: "test/league_test.exs", names: [] }])).toBe(
+      "mix test test/league_test.exs && (cd apps/club && mix test test/club_test.exs) && (cd apps/garage && mix test test/car_test.exs)",
+    );
+    expect(elixirTestCommand([{ file: "apps/club/lib/club_test.exs", names: [] }])).toBe("mix test apps/club/lib/club_test.exs");
   });
   it("reads each project's commands from its root files", () => {
     const view = (files: Record<string, string>) => ({ entries: Object.keys(files), read: (r: string) => files[r], exists: (r: string) => r in files });
