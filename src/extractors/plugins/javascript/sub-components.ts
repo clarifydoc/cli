@@ -184,7 +184,7 @@ function walkForJsx(
   components: SubComponentInfo[],
   seen: Set<string>,
   importMap: Map<string, string>,
-  namespaces: Map<string, string>,
+  namespaces: Map<string, NamespaceHead>,
 ) {
   if (
     node.type === "jsx_opening_element" ||
@@ -202,14 +202,14 @@ function walkForJsx(
       if (name && /^[A-Z]/.test(name) && !seen.has(name)) {
         seen.add(name);
         const props = extractJsxProps(node);
-        const through = /^([A-Za-z_$][\w$]*)\.([A-Z][\w$]*)$/.exec(name);
-        const source = through ? namespaces.get(through[1]!) : undefined;
+        const through = /^([A-Za-z_$][\w$]*)((?:\.[A-Za-z_$][\w$]*)*\.[A-Z][\w$]*)$/.exec(name);
+        const head = through ? namespaces.get(through[1]!) : undefined;
         components.push({
           name,
           importSource: importMap.get(name) ?? null,
           props,
           line: node.startPosition.row + 1,
-          ...(through && source ? { namespaceMember: { source, member: through[2]! } } : {}),
+          ...(through && head ? { namespaceMember: { source: head.source, member: through[2]!.slice(1), ...(head.through ? { through: head.through } : {}) } } : {}),
         });
       }
       // `<CarForm ref={formRef} />`: the parent reaches the child's handle as `formRef.current`.
@@ -257,9 +257,25 @@ function buildImportMap(imports: ImportInfo[]): Map<string, string> {
   return map;
 }
 
-/** The local names of `import * as UI from "./ui"`, with the module each one imports. */
-function namespaceMap(imports: ImportInfo[]): Map<string, string> {
-  const map = new Map<string, string>();
-  for (const imp of imports) if (imp.isNamespace && !imp.isType) for (const spec of imp.specifiers) map.set(spec, imp.source);
+interface NamespaceHead {
+  source: string;
+  /** The name a named or default import asks of the module, when the head is not a namespace import. */
+  through?: string;
+}
+
+/**
+ * The local names a dotted tag may start from, with the module each imports: `import * as UI from "./ui"` and a
+ * CommonJS `const UI = require("./ui")` are the module itself; a relative named or default import (`import { UI } from
+ * "./index"`) is a member of it, which the project pass follows only through a namespace re-export (`export * as UI`).
+ */
+function namespaceMap(imports: ImportInfo[]): Map<string, NamespaceHead> {
+  const map = new Map<string, NamespaceHead>();
+  for (const imp of imports) {
+    if (imp.isType || imp.dynamic) continue;
+    for (const spec of imp.specifiers) {
+      if (imp.isNamespace || (imp.commonJs && imp.isDefault)) map.set(spec, { source: imp.source });
+      else if (/^\.{1,2}\//.test(imp.source)) map.set(spec, { source: imp.source, through: imp.aliases?.[spec] ?? (imp.isDefault ? "default" : spec) });
+    }
+  }
   return map;
 }

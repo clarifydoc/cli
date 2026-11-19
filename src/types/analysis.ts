@@ -3452,9 +3452,11 @@ export interface SubComponentInfo {
   /**
    * A tag written through a namespace import (`<UI.ConfirmDialog />` after `import * as UI from "./ui"`): the module the
    * namespace imports, as written, and the member the tag names. `importSource` stays null — the file the member lives
-   * in (a barrel re-exports it) is the project pass's to find, never a leaf-name guess.
+   * in (a barrel re-exports it) is the project pass's to find, never a leaf-name guess. `member` is dotted for a nested
+   * namespace (`<UI.Forms.Dialog />`: `Forms.Dialog`); `through` is set when the head is a named or default import of the
+   * module rather than a namespace import — the name it asks (`import { UI } from "./index"`: `UI`).
    */
-  namespaceMember?: { source: string; member: string };
+  namespaceMember?: { source: string; member: string; through?: string };
 }
 
 /** A value provided to descendant components under `key`, or injected from an ancestor (`FileAnalysis.contextValues`). */

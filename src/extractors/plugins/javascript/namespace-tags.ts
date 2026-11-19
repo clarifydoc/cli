@@ -21,7 +21,13 @@ function memberFile(file: string, member: string, byPath: Map<string, FileAnalys
   if (named.length > 0) {
     const e = named[0]!;
     const next = resolveTarget(e.source!, owner.filePath, map)?.split("\u0000")[0];
-    return next ? memberFile(next, e.sourceName ?? member, byPath, map, hop + 1) : null;
+    if (!next) return null;
+    const hit = memberFile(next, e.sourceName ?? member, byPath, map, hop + 1);
+    if (hit || e.sourceName !== "default") return hit;
+    // `export { default as ConfirmDialog } from "./ConfirmDialog.vue"`: a component file that states no export names
+    // itself the default (an SFC), unless it forwards a default of its own, which the walk above followed.
+    const target = byPath.get(next);
+    return target && !target.exports.some((x) => x.name === "default") ? next : null;
   }
   const found = new Set<string>();
   for (const e of owner.exports) {
@@ -31,6 +37,44 @@ function memberFile(file: string, member: string, byPath: Map<string, FileAnalys
     if (hit) found.add(hit);
   }
   return found.size === 1 ? [...found][0]! : null;
+}
+
+/**
+ * The file a module's export `name` stands for as a whole namespace: `export * as Forms from "./forms"`, followed
+ * through a forwarding rename (`export { Forms } from "./kit"`) and through `export *` when exactly one file has it.
+ */
+function moduleOf(file: string, name: string, byPath: Map<string, FileAnalysis>, map: Map<string, string>, hop: number): string | null {
+  const owner = byPath.get(file);
+  if (!owner || hop > MAX_HOPS) return null;
+  const step = (source: string) => resolveTarget(source, owner.filePath, map)?.split("\u0000")[0];
+  const named = owner.exports.filter((e) => e.kind === "re-export" && e.source && e.name === name);
+  if (named.length > 0) {
+    const e = named[0]!;
+    const next = step(e.source!);
+    if (!next) return null;
+    return e.sourceName === "*" ? next : moduleOf(next, e.sourceName ?? name, byPath, map, hop + 1);
+  }
+  const found = new Set<string>();
+  for (const e of owner.exports) {
+    if (e.kind !== "re-export" || !e.source || e.name !== "*") continue;
+    const next = step(e.source);
+    const hit = next ? moduleOf(next, name, byPath, map, hop + 1) : null;
+    if (hit) found.add(hit);
+  }
+  return found.size === 1 ? [...found][0]! : null;
+}
+
+/** The file a namespaced tag's member lives in: the head's module, each namespace segment followed, then the member. */
+function namespacedFile(from: FileAnalysis, tag: NonNullable<SubComponentInfo["namespaceMember"]>, byPath: Map<string, FileAnalysis>, map: Map<string, string>): string | null {
+  let module: string | null | undefined = resolveTarget(tag.source, from.filePath, map)?.split("\u0000")[0];
+  if (module && tag.through) module = moduleOf(module, tag.through, byPath, map, 0);
+  const segments = tag.member.split(".");
+  const last = segments.pop()!;
+  for (const segment of segments) {
+    if (!module) return null;
+    module = moduleOf(module, segment, byPath, map, 0);
+  }
+  return module ? memberFile(module, last, byPath, map, 0) : null;
 }
 
 /** The specifier of `file` as written in `from` (extension of a script file dropped). */
@@ -54,16 +98,37 @@ export function withNamespaceTags(analyses: FileAnalysis[]): FileAnalysis[] {
 /** One view per analyses array: every resolver of a run asks. */
 const VIEWS = new WeakMap<FileAnalysis[], FileAnalysis[]>();
 
+/**
+ * The import that binds a tag's local name and the name it asks of the module (`default` for a default import) — only
+ * a static named or default import, never a namespace or a dynamic one.
+ */
+function importedName(a: FileAnalysis, local: string, source: string): string | null {
+  for (const imp of a.imports) {
+    if (imp.source !== source || imp.isNamespace || imp.dynamic || imp.isType || !imp.specifiers.includes(local)) continue;
+    return imp.aliases?.[local] ?? (imp.isDefault ? "default" : local);
+  }
+  return null;
+}
+
 function resolveViews(analyses: FileAnalysis[]): FileAnalysis[] {
-  if (!analyses.some((a) => a.subComponents?.some((s) => s.namespaceMember && !s.importSource))) return analyses;
+  const barrels = analyses.some((a) => a.exports.some((e) => e.kind === "re-export" && e.source));
+  const needs = (a: FileAnalysis) => a.subComponents?.some((s) => (s.namespaceMember && !s.importSource) || (barrels && s.importSource && !s.namespaceMember));
+  if (!analyses.some(needs)) return analyses;
   const map = buildFilePathMap(analyses);
   const byPath = new Map(analyses.map((a) => [a.filePath, a]));
   return analyses.map((a) => {
-    if (!a.subComponents?.some((s) => s.namespaceMember && !s.importSource)) return a;
-    const subComponents = a.subComponents.map((s): SubComponentInfo => {
+    if (!needs(a)) return a;
+    const subComponents = a.subComponents!.map((s): SubComponentInfo => {
+      // A plain import: when it names a barrel, the file its export walk reaches for the name asked.
+      if (s.importSource && !s.namespaceMember) {
+        const name = importedName(a, s.name, s.importSource);
+        const module = name ? resolveTarget(s.importSource, a.filePath, map)?.split("\u0000")[0] : null;
+        if (!name || !module || module === a.filePath) return s;
+        const file = memberFile(module, name, byPath, map, 0);
+        return file && file !== module && file !== a.filePath ? { ...s, importSource: specifierFor(a.filePath, file) } : s;
+      }
       if (!s.namespaceMember || s.importSource) return s;
-      const module = resolveTarget(s.namespaceMember.source, a.filePath, map)?.split("\u0000")[0];
-      const file = module ? memberFile(module, s.namespaceMember.member, byPath, map, 0) : null;
+      const file = namespacedFile(a, s.namespaceMember, byPath, map);
       return file && file !== a.filePath ? { ...s, importSource: specifierFor(a.filePath, file) } : s;
     });
     return { ...a, subComponents };
