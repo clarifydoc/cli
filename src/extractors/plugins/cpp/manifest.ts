@@ -5,6 +5,7 @@ import { cppFrameworkRules } from "./frameworks.js";
 import { vcpkgPackageManager, conanPackageManager } from "./package-manifests.js";
 import { parseCompileCommands } from "../shared/compile-commands.js";
 import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
+import { cmakeProjectCommands, ctestCommand } from "../shared/cmake-commands.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -56,6 +57,8 @@ export const cppManifest: LanguagePluginManifest = {
   bindsStructFields: true,
   docComments: C_STYLE_DOCS,
   language: "cpp",
+  testCommand: ctestCommand,
+  projectCommands: cmakeProjectCommands,
   collectionElementOf: cppCollectionElement,
   family: "cfam",
   packageManagers: [vcpkgPackageManager, conanPackageManager],

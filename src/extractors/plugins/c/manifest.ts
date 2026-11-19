@@ -2,6 +2,7 @@ import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { C_FAMILY_LIBRARY_BANNERS } from "../shared/c-family-libraries.js";
 import { parseCompileCommands } from "../shared/compile-commands.js";
 import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
+import { cmakeProjectCommands, ctestCommand } from "../shared/cmake-commands.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -12,6 +13,8 @@ import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 export const cManifest: LanguagePluginManifest = {
   docComments: C_STYLE_DOCS,
   language: "c",
+  testCommand: ctestCommand,
+  projectCommands: cmakeProjectCommands,
   family: "cfam",
   packageEcosystems: ["vcpkg", "conan"],
   parsing: "regex",

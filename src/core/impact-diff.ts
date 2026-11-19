@@ -982,6 +982,7 @@ function testCommandsFor(summary: ProjectAnalysis, tests: readonly TestTarget[])
   const ctx = {
     packages: new Set((summary.externalPackages ?? []).map((p) => p.name)),
     manifests: new Set((summary.externalPackages ?? []).map((p) => p.declaredIn.slice(p.declaredIn.lastIndexOf("/") + 1))),
+    projectTests: (summary.projectCommands ?? []).filter((c) => c.kind === "test").map((c) => ({ command: c.command, source: c.source })),
   };
   const byLanguage = new Map<string, TestTarget[]>();
   const testCode = testCodeIndex(summary);

@@ -1228,6 +1228,8 @@ export interface TestCommandContext {
   packages: ReadonlySet<string>;
   /** Basenames of the manifests packages are declared in (`pom.xml`, `build.gradle.kts`, `package.json`). */
   manifests: ReadonlySet<string>;
+  /** The test commands the project's root files state (`ProjectAnalysis.projectCommands`, kind `test`) with where each was read. */
+  projectTests?: ReadonlyArray<{ command: string; source: string }>;
 }
 
 /** One translation unit of a compilation database: what its compiler command line states, paths as written. */
