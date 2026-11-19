@@ -52,7 +52,7 @@ export class RDataSourceExtractor extends DataSourceExtractor {
     const urlNode = args[0]?.value ?? args.find((a) => a.name === "url")?.value ?? null;
     const url = urlOf(urlNode);
     if (url && (url.startsWith("/") || /^https?:\/\//.test(url))) {
-      const source = this.ds({ kind: "api-call", name: `${verb} ${url}`, target: url, line });
+      const source = this.ds({ kind: "api-call", name: `${verb} ${url}`, target: url, line, column: node.startPosition.column });
       // `paste0(Sys.getenv("CRM_URL"), "/users")`: the base is configuration.
       const env = urlNode?.type === "call" ? /^Sys\.getenv\(\s*["']([^"']+)["']/.exec(callArgs(urlNode)[0]?.value?.text ?? "")?.[1] : undefined;
       if (env) source.baseEnv = env;
