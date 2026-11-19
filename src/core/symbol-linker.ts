@@ -2938,10 +2938,12 @@ function classNameMember(
   line: number,
   /** Set for a path call whose type must be in scope (`pathCallTypesNeedScope`). */
   pathCall?: CallInfo,
+  /** Set to true when the owner path names a nested type that holds no such member: no other class is its guess. */
+  nestedMiss?: { value: boolean },
 ): SymbolLink | null {
   const { symbolIndex, classNameIndex } = ctx;
   const className = parts[0]!;
-  const methodName = parts.slice(1).join(".");
+  let methodName = parts.slice(1).join(".");
 
   // Files defining this class, PROJECT-SCOPED: same-project candidates win
   // (nearest first); a cross-project class is eligible only when this file
@@ -3063,6 +3065,29 @@ function classNameMember(
       candidateFiles = [decided];
     }
   }
+  // `Right.Builder.build` through the owner path of a nested type: the class `Builder` declared inside `Right`'s
+  // body (line ranges), never a namesake nested in another class. A path no candidate holds keeps the lookup below.
+  let nestedRange: Map<string, { line: number; endLine: number; bases: boolean }> | undefined;
+  if (candidateFiles?.length && parts.length >= 3 && parts.slice(0, -1).every((p) => /^[A-Z]/.test(p))) {
+    ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+    const found = new Map<string, { line: number; endLine: number; bases: boolean }>();
+    for (const f of candidateFiles) {
+      const classes = ctx.analysisByFile.get(f)?.classes;
+      if (!classes) continue;
+      let owners = classes.filter((c) => c.name === declaredClass);
+      for (const name of parts.slice(1, -1)) {
+        const outer = owners;
+        owners = classes.filter((c) => c.name === name && outer.some((o) => o !== c && o.line <= c.line && c.endLine <= o.endLine && (o.line < c.line || c.endLine < o.endLine)));
+      }
+      if (owners.length === 1) found.set(f, { line: owners[0]!.line, endLine: owners[0]!.endLine, bases: !!owners[0]!.extends || owners[0]!.implements.length > 0 || !!owners[0]!.mixins?.length });
+    }
+    if (found.size > 0) {
+      candidateFiles = [...found.keys()];
+      nestedRange = found;
+      declaredClass = parts[parts.length - 2]!;
+      methodName = parts[parts.length - 1]!;
+    }
+  }
   if (candidateFiles?.length) {
     const sameProject = candidateFiles
       .filter((f) => ctx.projectOf.get(f) === analysis.projectId)
@@ -3104,13 +3129,15 @@ function classNameMember(
         // A class nested in its body (a Ruby concern's `ClassMethods`) has members of its own.
         if (bare && cls && bare.line >= cls.line && bare.line <= cls.endLine && (memberClassOf(ctx, filePath, bare) ?? cls.name) === cls.name) classDef = bare;
       }
-      if (classDef) {
+      const within = nestedRange?.get(filePath);
+      if (classDef && (!within || (classDef.line >= within.line && classDef.line <= within.endLine))) {
         return mkLink(filePath, classDef.name, classDef.line, "INFERRED", "class-name");
       }
     }
     // A class-level member the class takes from its base (`Match.find()` on `class Match extends Model`),
     // or from a module it extends (`Club.table` for `extend Standings`).
-    if (!methodName.includes(".")) {
+    // (Not through a nested owner path: the base lookup finds a class by its bare name, which namesakes share.)
+    if (!methodName.includes(".") && !nestedRange) {
       for (const filePath of eligible) {
         if (!ctx.classAt.has(memberKey(filePath, declaredClass))) continue;
         const inherited = findMethodInClass(ctx, declaredClass, filePath, methodName, undefined, "class");
@@ -3143,6 +3170,8 @@ function classNameMember(
         return mkLink(filePath, d?.name ?? declaredClass, d?.line ?? cls.line, "INFERRED", "constructor");
       }
     }
+    // A nested type with bases may hold the member there (the base lookup is not run for it): the ordinary fallbacks stay.
+    if (nestedRange && nestedMiss && ![...nestedRange.values()].some((r) => r.bases)) nestedMiss.value = true;
   }
   return null;
 }
@@ -5698,8 +5727,11 @@ function resolveCallToDefinitionBody(
   // A name that keeps only the last names of a longer path (`CallInfo.receiverCut`: `s.Controller.Delete` read as
   // `Controller.Delete`) names no class — its first name is a field or a value, and a namesake class is a guess.
   if (!def && isQualified && !cutNameNamesNoType(analysis, call)) {
-    const link = classNameMember(ctx, analysis, sourceFile, parts, mkLink, call.line, isPathCall(analysis, call) ? call : undefined);
+    const nestedMiss = { value: false };
+    const link = classNameMember(ctx, analysis, sourceFile, parts, mkLink, call.line, isPathCall(analysis, call) ? call : undefined, nestedMiss);
     if (link) return link;
+    // The owner path names a nested type that has no such member: a namesake's member is no guess for it.
+    if (nestedMiss.value) return null;
     // `Lineup.Scout.IsHomeKit()` written through the tail of the class's namespace, which the caller's own namespace completes.
     if (parts.length >= 3 && manifestFor(analysis.language as Language)?.nestedPackageLookup && !shadowedLocally(analysis, sourceSymbol, parts[0]!)) {
       const viaNamespace = namespaceHeadMember(ctx, analysis, parts, mkLink, call.line);
