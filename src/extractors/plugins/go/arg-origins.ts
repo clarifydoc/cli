@@ -2,6 +2,7 @@ import type { CallArgOrigin, ClassInfo, DataSourceInfo, FunctionInfo } from "../
 import { boundFromTags, goTags } from "./bound-tags.js";
 import { goFunctions } from "./path-arg-calls.js";
 import { escapeRegex } from "../shared/path-utils.js";
+import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 type Origin = CallArgOrigin["origin"];
 
@@ -104,27 +105,7 @@ function closeAt(text: string, open: number): number {
 
 /** Text split at its top-level commas, quotes and brackets honoured. */
 export function splitTopLevel(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let cur = "";
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (ch === '"' || ch === "`") {
-      let j = i + 1;
-      while (j < text.length && text[j] !== ch) j += ch === '"' && text[j] === "\\" ? 2 : 1;
-      cur += text.slice(i, j + 1);
-      i = j;
-      continue;
-    }
-    if (ch === "(" || ch === "{" || ch === "[") depth++;
-    if (ch === ")" || ch === "}" || ch === "]") depth--;
-    if (ch === "," && depth === 0) {
-      out.push(cur.trim());
-      cur = "";
-    } else cur += ch;
-  }
-  if (cur.trim()) out.push(cur.trim());
-  return out;
+  return splitTopLevelWith(text, { quotes: "\"`", escapes: "\"", trim: true });
 }
 
 const stripComment = (line: string): string => line.replace(/\/\/.*$/, "");
