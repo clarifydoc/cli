@@ -3,6 +3,7 @@ import type { DataSourceInfo, FileAnalysis, Language } from "../../../types/anal
 import { DataSourceExtractor, type ProjectApiCall } from "../../data-sources/base.js";
 import { companionStem } from "./companion.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
+import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 /**
  * Delphi / Free Pascal data sources.
@@ -224,23 +225,7 @@ export function pascalStringsToDoubleQuoted(line: string): string {
 
 /** Split `text` at top-level occurrences of `sep` (outside quotes and parens). */
 function splitTopLevel(text: string, sep: string): string[] {
-  const parts: string[] = [];
-  let depth = 0;
-  let inQuote = false;
-  let start = 0;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (ch === "'") inQuote = !inQuote;
-    else if (inQuote) continue;
-    else if (ch === "(" || ch === "[") depth++;
-    else if (ch === ")" || ch === "]") depth--;
-    else if (ch === sep && depth === 0) {
-      parts.push(text.slice(start, i));
-      start = i + 1;
-    }
-  }
-  parts.push(text.slice(start));
-  return parts.map((p) => p.trim());
+  return splitTopLevelWith(text, { sep, brackets: "()[]", quotes: "'", trim: true, tail: "keep" });
 }
 
 /** The argument text of the call whose `(` is at `open`, or null when it does not close. */
