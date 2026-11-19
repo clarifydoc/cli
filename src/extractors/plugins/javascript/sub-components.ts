@@ -21,7 +21,7 @@ export function extractSubComponents(
   const seen = new Set<string>();
   const importMap = buildImportMap(imports);
 
-  walkForJsx(tree.rootNode, components, seen, importMap);
+  walkForJsx(tree.rootNode, components, seen, importMap, namespaceMap(imports));
   if (/\.component\s*\(/.test(sourceText)) components.push(...globalRegistrations(tree, importMap));
   return components;
 }
@@ -184,6 +184,7 @@ function walkForJsx(
   components: SubComponentInfo[],
   seen: Set<string>,
   importMap: Map<string, string>,
+  namespaces: Map<string, string>,
 ) {
   if (
     node.type === "jsx_opening_element" ||
@@ -201,11 +202,14 @@ function walkForJsx(
       if (name && /^[A-Z]/.test(name) && !seen.has(name)) {
         seen.add(name);
         const props = extractJsxProps(node);
+        const through = /^([A-Za-z_$][\w$]*)\.([A-Z][\w$]*)$/.exec(name);
+        const source = through ? namespaces.get(through[1]!) : undefined;
         components.push({
           name,
           importSource: importMap.get(name) ?? null,
           props,
           line: node.startPosition.row + 1,
+          ...(through && source ? { namespaceMember: { source, member: through[2]! } } : {}),
         });
       }
       // `<CarForm ref={formRef} />`: the parent reaches the child's handle as `formRef.current`.
@@ -216,7 +220,7 @@ function walkForJsx(
   }
 
   for (const child of node.children) {
-    walkForJsx(child, components, seen, importMap);
+    walkForJsx(child, components, seen, importMap, namespaces);
   }
 }
 
@@ -250,5 +254,12 @@ function buildImportMap(imports: ImportInfo[]): Map<string, string> {
       map.set(spec, imp.source);
     }
   }
+  return map;
+}
+
+/** The local names of `import * as UI from "./ui"`, with the module each one imports. */
+function namespaceMap(imports: ImportInfo[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const imp of imports) if (imp.isNamespace && !imp.isType) for (const spec of imp.specifiers) map.set(spec, imp.source);
   return map;
 }

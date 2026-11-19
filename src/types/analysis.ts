@@ -3444,6 +3444,12 @@ export interface SubComponentInfo {
    * them (`formRef.value?.save()`) is the child's method.
    */
   refs?: string[];
+  /**
+   * A tag written through a namespace import (`<UI.ConfirmDialog />` after `import * as UI from "./ui"`): the module the
+   * namespace imports, as written, and the member the tag names. `importSource` stays null — the file the member lives
+   * in (a barrel re-exports it) is the project pass's to find, never a leaf-name guess.
+   */
+  namespaceMember?: { source: string; member: string };
 }
 
 /** A value provided to descendant components under `key`, or injected from an ancestor (`FileAnalysis.contextValues`). */
