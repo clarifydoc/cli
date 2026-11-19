@@ -248,7 +248,7 @@ const HTTP_VERBS = new Set(["get", "post", "put", "patch", "delete", "head", "op
  * The URL is a literal (its `#{…}` holes kept as `{…}`), a local or module attribute bound to one,
  * or unknown — a request all the same, which a trace reaches.
  */
-function httpCalls(lines: string[]): DataSourceInfo[] {
+export function httpCalls(lines: string[]): DataSourceInfo[] {
   if (!/\b(?:Req|HTTPoison|HTTPotion|Tesla|Finch)\./.test(lines.join("\n"))) return [];
   const attrs = new Map<string, string>();
   for (const l of lines) {
@@ -291,7 +291,7 @@ function httpCalls(lines: string[]): DataSourceInfo[] {
     const kwMethod = /\bmethod:\s*:(\w+)/.exec(rest!);
     if (kwMethod && HTTP_VERBS.has(kwMethod[1]!)) verb = kwMethod[1]!.toUpperCase();
     const target = urlExpr ? urlOf(urlExpr, i) : null;
-    out.push({ kind: "api-call", name: verb && target ? `${verb} ${target}` : `${lib}.${fn}`, target, calls: [], line: i + 1 });
+    out.push({ kind: "api-call", name: verb && target ? `${verb} ${target}` : `${lib}.${fn}`, target, calls: [], line: i + 1, column: m.index });
   }
   return out;
 }
