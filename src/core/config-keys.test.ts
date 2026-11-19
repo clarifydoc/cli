@@ -79,6 +79,20 @@ public class Invoice {
     private String b;
 }
 `,
+  "app/src/main/kotlin/com/example/league/Fixture.kt": `package com.example.league
+
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.stereotype.Component
+
+@Component
+class Fixture(@Value("\\\${league.token}") private val token: String) {
+    @Value("\\\${LEAGUE_KICKOFF:19:00}")
+    lateinit var kickoff: String
+
+    @Value("""\\\${league.season-length}""")
+    var length: Int = 0
+}
+`,
   "docker-compose.yml": `services:
   app:
     build: ./app
@@ -90,6 +104,11 @@ public class Invoice {
 const TERRAFORM: Record<string, string> = {
   "infra/terraform.tfvars": `garage_size = 4
 unused_thing = "x"
+policy = <<EOT
+  car_color = 1
+EOT
+note = "a # {b"
+after_note = 2
 `,
   "infra/variables.tf": `variable "garage_size" {
   type = number
@@ -124,10 +143,18 @@ describe("Spring configuration keys", () => {
   const row = (file: string, key: string) => summary.configKeys!.find((r) => r.file === file && r.key === key);
 
   it("joins @Value to the key in application.yml, relaxed binding and defaults included", () => {
-    expect(row("app/src/main/resources/application.yml", "league.token")!.consumers).toEqual([
+    expect(row("app/src/main/resources/application.yml", "league.token")!.consumers).toEqual(expect.arrayContaining([
       expect.objectContaining({ file: "app/src/main/java/com/example/league/Scoreboard.java", line: 10, via: "value" }),
-    ]);
+    ]));
     expect(row("app/src/main/resources/application.yml", "league.season-length")!.consumers).toHaveLength(1);
+  });
+
+  it("reads a Kotlin @Value with an escaped dollar", () => {
+    const kotlin = summary.configKeys!.find((r) => r.file === "app/src/main/resources/application.yml" && r.key === "league.token")!.consumers;
+    expect(kotlin.map((c) => c.file)).toContain("app/src/main/kotlin/com/example/league/Fixture.kt");
+    const raw = summary.configKeys!.find((r) => r.file === "app/src/main/resources/application.yml" && r.key === "league.season-length")!.consumers;
+    expect(raw.map((c) => c.file)).toContain("app/src/main/kotlin/com/example/league/Fixture.kt");
+    expect(summary.envVars!.find((v) => v.name === "LEAGUE_KICKOFF")!.readBy[0]!.file).toContain("Fixture.kt");
   });
 
   it("joins a profile file's key, marked with its profile", () => {

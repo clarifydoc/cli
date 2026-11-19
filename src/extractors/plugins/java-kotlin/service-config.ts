@@ -109,4 +109,6 @@ export const jvmServiceConfig: ServiceConfigSpec = {
   proxySources: [springGatewayProxies],
   envNamesFor: (key) => [key.replace(/[.\-[\]]+/g, "_").replace(/_+$/, "").toUpperCase()],
   routeBaseOf: springRouteBase,
+  // Spring relaxed binding: `league.match-day`, `league.matchDay` and `league.match_day` are one key.
+  normalizeKey: (key) => key.toLowerCase().replace(/[-_]/g, ""),
 };

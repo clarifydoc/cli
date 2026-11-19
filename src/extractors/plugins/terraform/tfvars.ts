@@ -11,14 +11,31 @@ export function tfvarsKeys(text: string, path: string): ConfigEntry[] {
   const out: ConfigEntry[] = [];
   let depth = 0;
   let line = 0;
+  let heredoc: string | null = null;
   for (const raw of text.split("\n")) {
     line++;
-    const code = raw.replace(/\s(?:#|\/\/).*$/, "");
+    if (heredoc !== null) {
+      if (raw.trim() === heredoc) heredoc = null;
+      continue;
+    }
+    // Code outside string literals, up to a comment.
+    let code = "";
+    let quoted = false;
+    for (let i = 0; i < raw.length; i++) {
+      const ch = raw[i]!;
+      if (quoted) {
+        if (ch === "\\") i++;
+        else if (ch === '"') quoted = false;
+      } else if (ch === '"') quoted = true;
+      else if (ch === "#" || (ch === "/" && raw[i + 1] === "/")) break;
+      else code += ch;
+    }
     if (depth === 0) {
       const m = /^([A-Za-z_][\w-]*)\s*=/.exec(code);
       if (m) out.push({ key: m[1]!, value: "", line });
     }
-    for (const ch of code.replace(/"(?:[^"\\]|\\.)*"/g, "")) {
+    heredoc = /<<-?\s*([A-Za-z_]\w*)\s*$/.exec(code)?.[1] ?? null;
+    for (const ch of code) {
       if (ch === "{" || ch === "[" || ch === "(") depth++;
       else if (ch === "}" || ch === "]" || ch === ")") depth = Math.max(0, depth - 1);
     }

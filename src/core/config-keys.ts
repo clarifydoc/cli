@@ -6,16 +6,14 @@ import type { ServiceConfigSpec } from "../types/language-plugin.js";
 
 /**
  * Configuration keys joined to the code that reads them, so changing a key
- * shows its consumers. A file states a key (a plugin's `serviceConfig.sources`:
- * Spring `application*.yml`, Terraform `*.tfvars`); code states a read
- * (`DataSourceInfo.configRead` on an `env` row: `@Value("${league.token}")`,
- * `@ConfigurationProperties(prefix = "league")`, a `variable "x"` block). Core
- * joins them and names no language.
+ * shows its consumers. A config file declares a key (a plugin's
+ * `serviceConfig.sources`); code states a read (`DataSourceInfo.configRead` on
+ * an `env` row: a key, a prefix of keys, or a variable block beside the file
+ * that sets it). Core joins them and names no language or format.
  *
  * The join is scoped, never by name alone: a read meets the keys of the
  * sub-project it sits in (a namesake key of another module is another
- * setting), a `variable` read the files in its own directory (a Terraform
- * module). A key only a test profile sets is read by test code only. Names and
+ * setting), a `variable` read the files in its own directory. A key only a test profile sets is read by test code only. Names and
  * locations only — a value never reaches the summary.
  */
 export interface ConfigSet {
@@ -41,10 +39,6 @@ export async function readConfigKeys(
   return out;
 }
 
-/** Spring relaxed binding: `league.match-day`, `league.matchDay` and `league.match_day` are one key. */
-function relaxed(key: string): string {
-  return key.toLowerCase().replace(/[-_]/g, "");
-}
 
 const MAX_CONSUMERS = 50;
 
@@ -79,13 +73,15 @@ export function joinConfigKeys(
           ? all.filter(({ e }) => dirname(e.file) === dirname(a.filePath))
           : (set.byProject.get(a.projectId ?? "root") ?? []).map((e) => ({ e, project: a.projectId ?? "root" }));
         const dir = dirname(a.filePath);
-        const want = relaxed(target);
+        // The plugin says which spellings are one key; without a rule a key is compared as written.
+        const norm = set.spec.normalizeKey ?? ((k: string) => k);
+        const want = norm(target);
         for (const { e, project } of entries) {
           if (e.test && !test) continue;
           let hit: boolean;
           if (kind === "variable") hit = dirname(e.file) === dir && e.key === target;
-          else if (kind === "prefix") hit = /^[.[]/.test(relaxed(e.key).slice(want.length)) && relaxed(e.key).startsWith(want);
-          else hit = relaxed(e.key) === want || relaxed(e.key).startsWith(want + "[") || (set.spec.envNamesFor?.(e.key) ?? []).some((n) => n.toLowerCase() === target.toLowerCase());
+          else if (kind === "prefix") hit = /^[.[]/.test(norm(e.key).slice(want.length)) && norm(e.key).startsWith(want);
+          else hit = norm(e.key) === want || norm(e.key).startsWith(want + "[") || (set.spec.envNamesFor?.(e.key) ?? []).some((n) => n.toLowerCase() === target.toLowerCase());
           if (!hit) continue;
           const id = `${e.file}\0${e.line ?? 0}\0${e.key}`;
           const row = rows.get(id) ?? rows.set(id, {

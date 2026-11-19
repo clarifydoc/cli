@@ -877,7 +877,8 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
         // `@Value("${league.season:2024}")` reads configuration — each key, its default dropped. A key
         // spelled like an environment variable (`${LEAGUE_TOKEN}`) is that variable (`envVars`).
         const literal = /Value\s*\(\s*(?:value\s*=\s*)?"((?:[^"\\]|\\.)*)"/.exec(text)?.[1] ?? "";
-        const keys = [...literal.matchAll(/\\?\$\{\s*([^}:\s]+)/g)].map((m) => m[1]!);
+        // A literal the first-string reading misses (a raw string, a concatenation) is scanned whole.
+        const keys = [...(literal.includes("${") ? literal : text).matchAll(/\\?\$\{\s*([^}:\s]+)/g)].map((m) => m[1]!);
         const line = node.startPosition.row + 1;
         if (keys.length === 0) sources.push(this.ds({ kind: "env", name: text.replace(/^@/, ""), target: null, line }));
         for (const key of keys) {

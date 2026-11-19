@@ -185,6 +185,12 @@ export interface ServiceConfigSpec {
    */
   envNamesFor?(key: string): string[];
   /**
+   * The canonical form of a configuration key, so differently spelled keys that the framework binds as one
+   * (`league.match-day`, `league.matchDay`) compare equal when a read is joined to the key a file sets.
+   * Default: keys compare as written.
+   */
+  normalizeKey?(key: string): string;
+  /**
    * The base every route this language serves in a project is mounted under,
    * as the project's own configuration (read through `sources`, every entry —
    * not only addresses) states it: Spring `server.servlet.context-path`,
