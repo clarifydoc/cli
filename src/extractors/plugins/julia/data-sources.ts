@@ -32,7 +32,7 @@ export class JuliaDataSourceExtractor extends DataSourceExtractor {
     const method = m[1] === "request" ? stringValue(args[0])?.toUpperCase() : HTTP_VERBS[m[1]!];
     const url = stringValue(m[1] === "request" ? args[1] : args[0]);
     if (method && url && (url.startsWith("/") || /^https?:\/\//.test(url))) {
-      sources.push(this.ds({ kind: "api-call", name: `${method} ${url}`, target: url, line: node.startPosition.row + 1 }));
+      sources.push(this.ds({ kind: "api-call", name: `${method} ${url}`, target: url, line: node.startPosition.row + 1, column: node.startPosition.column }));
     }
   }
 }
