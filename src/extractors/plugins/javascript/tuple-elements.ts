@@ -12,6 +12,7 @@ export function tupleElementsText(type: string): string[] | null {
   let start = 1;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
+    if (ch === ">" && text[i - 1] === "=") continue;
     if (ch === "[" || ch === "(" || ch === "<" || ch === "{") depth++;
     else if (ch === "]" || ch === ")" || ch === ">" || ch === "}") {
       depth--;
@@ -23,7 +24,7 @@ export function tupleElementsText(type: string): string[] | null {
     }
   }
   out.push(text.slice(start, text.length - 1));
-  const elements = out.map((e) => e.trim().replace(/^[A-Za-z_$][\w$]*\s*:\s*/, "")).filter((e) => e.length > 0);
+  const elements = out.map((e) => e.trim().replace(/^[A-Za-z_$][\w$]*(\??)\s*:\s*/, (_m, optional: string) => (optional ? "?" : ""))).filter((e) => e.length > 0);
   if (elements.length !== out.length || elements.length === 0) return null;
-  return elements.some((e) => e.startsWith("...") || /\?$/.test(e)) ? null : elements;
+  return elements.some((e) => e.startsWith("...") || /\?$/.test(e) || e.startsWith("?")) ? null : elements;
 }

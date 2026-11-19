@@ -102,3 +102,10 @@ func Promote(repo *Repo) {
     expect(targets(summary, "Promote", "c.Save")).toEqual(["Club.Save"]);
   });
 });
+
+describe("tupleElementsText edge cases", () => {
+  it("keeps function-type members, rejects an optional labelled one", () => {
+    expect(tupleElementsText("[() => void, Club]")).toEqual(["() => void", "Club"]);
+    expect(tupleElementsText("[club?: Club, player: Player]")).toBeNull();
+  });
+});
