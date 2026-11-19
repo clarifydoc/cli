@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseGqlOperationRootFields, extractGqlOperationCalls } from "./graphql-operations.js";
+import { parseGqlOperationRootFields, extractGqlOperationCalls, extractGqlDocumentCalls } from "./graphql-operations.js";
 
 describe("parseGqlOperationRootFields", () => {
   it("reads root fields of a named query with variables", () => {
@@ -44,5 +44,16 @@ describe("extractGqlOperationCalls", () => {
   it("ignores fragment templates", () => {
     const src = "const F = gql`fragment PlayerFields on Player { id name }`;";
     expect(extractGqlOperationCalls(src)).toEqual([]);
+  });
+});
+
+describe("extractGqlDocumentCalls", () => {
+  it("states the column of each operation's keyword, after a non-ASCII description and a comment", () => {
+    const doc = `"""é🚗 clubs"""\n# a comment\nquery A { clubs { id } } query B { player { id } }\n  mutation C { relegate { id } }`;
+    expect(extractGqlDocumentCalls(doc).map((d) => [d.target, d.line, d.column])).toEqual([
+      ["/graphql/clubs", 3, 0],
+      ["/graphql/player", 3, 25],
+      ["/graphql/relegate", 4, 2],
+    ]);
   });
 });

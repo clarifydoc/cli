@@ -112,7 +112,7 @@ export function extractGqlOperationCalls(sourceText: string): DataSourceInfo[] {
 /**
  * A GraphQL document file's operations (`.graphql` beside the client code,
  * read by codegen): one api-call per root field of each `query`, `mutation`
- * or `subscription`, at the operation's line. A schema file has none.
+ * or `subscription`, at the operation's line and column. A schema file has none.
  */
 export function extractGqlDocumentCalls(text: string): DataSourceInfo[] {
   const clean = stripGqlComments(text);
@@ -134,8 +134,10 @@ export function extractGqlDocumentCalls(text: string): DataSourceInfo[] {
         else if (clean[end] === "}" && --d === 0) break;
       }
       const line = clean.slice(0, i).split("\n").length;
+      // Comments are blanked to the line's end, so the text before the keyword is the source's own.
+      const column = i - (clean.lastIndexOf("\n", i - 1) + 1);
       for (const field of parseGqlOperationRootFields(clean.slice(i, end + 1))) {
-        out.push({ kind: "api-call", name: "post", target: `/graphql/${field}`, calls: [], line });
+        out.push({ kind: "api-call", name: "post", target: `/graphql/${field}`, calls: [], line, column });
       }
       i = end;
     }
