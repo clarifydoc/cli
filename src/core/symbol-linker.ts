@@ -7262,6 +7262,7 @@ function chainPoint(
     point = ownMethodResult(ctx, sourceFile, consumer, head.name, awaited && receiver.length === 1)
       ?? instancePoint(ctx, head.name, sourceFile, analysis.projectId, consumer, true)
       ?? importedFunctionResult(ctx, analysis, sourceFile, sourceSymbol, consumer, head.name, awaited && receiver.length === 1)
+      ?? (depth > 0 ? sameFileFunctionResult(ctx, analysis, sourceFile, sourceSymbol, consumer, head.name, awaited && receiver.length === 1) : null)
       ?? passThroughResult(ctx, analysis, sourceFile, sourceSymbol, consumer, head, depth);
     rest = receiver.slice(1);
     // `useLeague().clubs.getAll()`: a member of the object literal the function returns, typed by what it holds.
@@ -7406,6 +7407,18 @@ function importedFunctionResult(
   const def = symbolIn(ctx, link.targetFile, link.targetSymbol);
   return returnedPoint(ctx, instanceReturn(def), link.targetFile, { typeName: "", typeFile: null, consumer }, awaited)
     ?? statedResultPoint(ctx, link.targetFile, def, consumer, awaited);
+}
+
+/** What a top-level function of the caller's own file returns, as a receiver — only for a local's initializer (`depth` > 0), never a call written in the chain itself (`final w = topClub();` beside `Club topClub() => …`). */
+function sameFileFunctionResult(ctx: LinkContext, analysis: FileAnalysis, sourceFile: string, sourceSymbol: string, consumer: string, name: string, awaited: boolean): InjectionPoint | null {
+  const def = symbolIn(ctx, sourceFile, name);
+  if (!def || def.name !== name) return null;
+  // The enclosing class's own member of that name is the call's target, however little its return type says; a parameter or local of the name is no function of the file.
+  if (consumer && symbolIn(ctx, sourceFile, `${consumer}.${name}`)) return null;
+  const callable = findEnclosingCallable(analysis, sourceSymbol);
+  if (callable?.params.some((p) => p.name === name) || callable?.localTypes?.some((l) => l.name === name)) return null;
+  return returnedPoint(ctx, instanceReturn(def), sourceFile, { typeName: "", typeFile: null, consumer }, awaited)
+    ?? statedResultPoint(ctx, sourceFile, def, consumer, awaited);
 }
 
 /** Functions whose returned value is being typed — a factory returning its own call would recurse. */

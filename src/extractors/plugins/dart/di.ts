@@ -614,6 +614,7 @@ function collectionsOf(body: string, at: number, element: string): LocalType[] {
  */
 export function extractDartLocalTypes(bodyLines: string[], fn: { name: string; params?: readonly { name: string; type: string | null }[] }): NonNullable<FunctionInfo["localTypes"]> {
   const out: NonNullable<FunctionInfo["localTypes"]> = [];
+  const bare: NonNullable<FunctionInfo["localTypes"]> = [];
   // Collections whose element type is stated: parameters and typed locals.
   const collections = new Map<string, string>();
   for (const p of fn.params ?? []) {
@@ -628,7 +629,9 @@ export function extractDartLocalTypes(bodyLines: string[], fn: { name: string; p
       if (t) out.push({ name: untyped[1]!, ...t });
       else {
         const call = classLevelCall(untyped[2]!);
-        if (call) out.push({ name: untyped[1]!, type: "", ...call });
+        // A bare call (`owned()`) only fills a name nothing else types: it never displaces another declaration's type.
+        if (call && /^[a-z_$][\w$]*\(\)$/.test(call.from)) bare.push({ name: untyped[1]!, type: "", ...call });
+        else if (call) out.push({ name: untyped[1]!, type: "", ...call });
         else {
           // `final c = club;`, `final c = maybeClub!;`: the name is another name (a null assertion reads as the name).
           const head = /^([a-z_$][\w$]*)\s*!?$/.exec(untyped[2]!.trim())?.[1];
@@ -652,7 +655,8 @@ export function extractDartLocalTypes(bodyLines: string[], fn: { name: string; p
     const body = bodyLines.map(codeOf).join("\n");
     out.push(...elementParams(body, collections));
   }
-  return uniqueLocals(out);
+  const named = new Set(out.map((l) => l.name));
+  return uniqueLocals([...out, ...bare.filter((l) => !named.has(l.name))]);
 }
 
 // ─── Riverpod provider types ───────────────────────────────────────────────
