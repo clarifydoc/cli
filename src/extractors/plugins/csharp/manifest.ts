@@ -42,6 +42,7 @@ export const csharpManifest: LanguagePluginManifest = {
   nestedPackageLookup: true,
   // An extension method is callable only where its namespace (or its static class) is imported.
   extensionsNeedImport: true,
+  bareMemberReceivers: true,
   grammar: { variants: { csharp: { pkg: "tree-sitter-c-sharp", wasm: "tree-sitter-c_sharp.wasm" } } },
   // `ClubTests.cs`, and anything in a .NET test project (`League.Core.Test/`, `League.Api.IntegrationTests/`).
   testFilePatterns: [/(Test|Tests)\.cs$/, /(^|[\\/])[\w.]+\.(?:Unit|Integration|Functional|Acceptance)?Tests?[\\/]/],

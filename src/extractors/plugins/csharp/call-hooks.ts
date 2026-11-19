@@ -35,7 +35,8 @@ function csharpMethodGroups(call: Node): Array<{ name: string; node: Node; ownMe
   return out;
 }
 
-const dropGlobalAlias = (name: string | null): string | null => (name?.includes("global::") ? name.replace(/\bglobal::/g, "") : name);
+// `global::` and an extern alias (`LeagueV1::Com.Example.League.Club.Sign()`) only anchor the namespace that follows.
+const dropGlobalAlias = (name: string | null): string | null => (name?.includes("::") ? name.replace(/\b[A-Za-z_]\w*::/g, "") : name);
 
 export const csharpCallHooks: CallExtractionHooks = {
   callNodeTypes: new Set(["invocation_expression", "object_creation_expression", "implicit_object_creation_expression"]),

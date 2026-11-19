@@ -347,7 +347,7 @@ describe("EF Core cross-file entity reconciliation", () => {
       row({ type: "GarageRepository", method: "Active" }, 13), // no such class
     ] } as unknown as FileAnalysis;
     new CSharpEntityExtractor().reconcileProject([csharp("Data/ClubRepository.cs", [clubs]), csharp("Data/CarRepository.cs", [cars]), api]);
-    expect(api.dataSources.map((d) => `${d.line} ${d.entity ?? "-"}`)).toEqual(["10 Club", "11 Car", "12 -", "13 -"]);
+    expect(api.dataSources.map((d) => `${d.line} ${d.entity ?? "-"}`)).toEqual(["10 Club", "11 Car"]); // an unbound write (no query method, no such class) is dropped, not left entity-less
   });
 
   it("establishes entity-ness and the table from the fluent API alone (Entity<T>(b => b.ToTable(…)))", () => {

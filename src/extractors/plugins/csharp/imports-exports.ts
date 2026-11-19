@@ -72,7 +72,8 @@ export class CSharpImportExportExtractor extends ImportExportExtractor {
     }
 
     // `global::League.X`, `League . X`: the name the compiler reads.
-    source = source.replace(/\s+/g, "").replace(/^global::/, "");
+    // `using LeagueV1::Com.Example.League;` (an `extern alias`) names the namespace after the qualifier.
+    source = source.replace(/\s+/g, "").replace(/^[A-Za-z_]\w*::/, "");
 
     const specifiers = alias ? [alias] : [];
 

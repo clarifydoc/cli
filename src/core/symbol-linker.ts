@@ -3282,6 +3282,20 @@ function callerClass(ctx: LinkContext, analysis: FileAnalysis, sourceSymbol: str
   return best?.name ?? "";
 }
 
+/** Whether the caller's own class (or a base in the file) has a property or field named `name` whose declared type is not `name` itself. */
+function ownMemberOfOtherType(ctx: LinkContext, analysis: FileAnalysis, sourceSymbol: string, line: number, name: string): boolean {
+  const owner = callerClass(ctx, analysis, sourceSymbol, line);
+  if (!owner) return false;
+  const lang = analysis.language as Language;
+  for (const cls of analysis.classes) {
+    if (cls.name !== owner || line < cls.line || line > cls.endLine) continue;
+    const member = cls.properties?.find((p) => p.name === name);
+    if (!member?.type) continue;
+    return receiverTypeName(member.type, lang) !== name;
+  }
+  return false;
+}
+
 /** One callable of a file, placed in the file's nesting of callables. */
 interface ScopeNode {
   name: string;
@@ -5267,6 +5281,9 @@ function resolveCallToDefinitionBody(
   // A receiver the call site rebinds (`function run(cache) { cache.get(k) }`) is no namesake object's member.
   let def = isQualified ? (call.receiverRebound && targetFile === sourceFile ? undefined : fileSymbols.get(call.name)) : symbolIn(ctx, targetFile, exported ?? call.name);
   if (bareIsFunction && def?.name.includes(".")) def = undefined;
+  // `Color.Darken()` in a class with a member `Shade Color`: the member is the receiver, not a class `Color`.
+  if (def && isQualified && targetFile === sourceFile && parts.length === 2 && pluginFor(analysis.language)?.bareMemberReceivers
+    && ownMemberOfOtherType(ctx, analysis, sourceSymbol, call.line, parts[0]!)) def = undefined;
   // Two same-named members in one file where one is declared inside another function (a local object's `actions.get`
   // beside a module object's): the index holds one of them. The caller sees the declarations whose enclosing
   // functions all enclose the call; of those the innermost is its member, two alike are no answer.

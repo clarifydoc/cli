@@ -1162,6 +1162,8 @@ function producedQueryEntities(analyses: readonly FileAnalysis[]): void {
       ds.entity = entity;
       ds.target = entity;
     }
+    // A write no producing method gave an entity is no fact a reader can use (no table, a namespace as its target).
+    if (a.dataSources?.some((d) => d.entityProducer && !d.entity)) a.dataSources = a.dataSources.filter((d) => !d.entityProducer || d.entity);
   }
 }
 
