@@ -7335,7 +7335,7 @@ function chainPoint(
       if (typeFile) {
         point = { typeName: imported?.typeName ?? head.name, typeFile, member: "", consumer, container: false };
         // `Club.new().train()` (`constructorCalls`): the call constructs the class named, so the chain goes on from the instance.
-        if (rest[0]!.call && constructorCallsOf(analysis.language).some((c) => nameKey(analysis.language, c) === nameKey(analysis.language, rest[0]!.name))) rest = rest.slice(1);
+        if (depth > 0 && rest[0]!.call && constructorCallsOf(analysis.language).some((c) => nameKey(analysis.language, c) === nameKey(analysis.language, rest[0]!.name))) rest = rest.slice(1);
       }
     }
     // `store.NewRepo()` — a function reached through an imported package or

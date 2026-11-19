@@ -330,6 +330,17 @@ function topLevelIndex(text: string, re: RegExp): number {
   return -1;
 }
 
+/** Whether the opening parenthesis of `text` closes at its last character (`(a ? b : c)`, not `(a).b(c)`). */
+function wrapped(text: string): boolean {
+  if (!text.startsWith("(") || !text.endsWith(")")) return false;
+  let depth = 0;
+  for (let k = 0; k < text.length; k++) {
+    if (text[k] === "(") depth++;
+    else if (text[k] === ")" && --depth === 0) return k === text.length - 1;
+  }
+  return false;
+}
+
 /** The arms of `cond ? a : b` (nested ternaries flattened); null for anything that is not one. */
 function ternaryArms(rhs: string): string[] | null {
   const q = topLevelIndex(rhs, /^\s\?\s/);
@@ -340,7 +351,7 @@ function ternaryArms(rhs: string): string[] | null {
   const arms = [rest.slice(0, c).trim(), rest.slice(c + 3).trim()];
   const out: string[] = [];
   for (const arm of arms) {
-    const bare = arm.replace(/^\(\s*([\s\S]*?)\s*\)$/, "$1");
+    const bare = wrapped(arm) ? arm.slice(1, -1).trim() : arm;
     out.push(...(ternaryArms(bare) ?? [arm]));
   }
   return out;
@@ -362,7 +373,7 @@ function ifArms(rhs: string, rest: readonly string[], at: number): { arms: strin
     const line = codeOf(rest[j]!).trim();
     if (!line) continue;
     if (want === "expr") {
-      if (/^(?:if|unless|case|while|until|begin|else|elsif|end)\b/.test(line)) return null;
+      if (/^(?:if|unless|case|while|until|begin|else|elsif|end)\b/.test(line) || /[=|]/.test(line)) return null;
       arms.push(line);
       want = "branch";
     } else if (/^elsif\s+\S/.test(line)) want = "expr";
@@ -416,7 +427,8 @@ export function extractRubyLocalTypes(bodyLines: readonly string[], fn: { params
     const conditional = LOCAL_ASSIGN_RE.exec(code);
     if (conditional) {
       const name = conditional[1]!;
-      const rhs = rhsOf(raw, code, code.indexOf(name) + name.length);
+      // The blanked code, so a string holding ` ? ` or a bracket is no part of the structure.
+      const rhs = rhsOf(code, code, code.indexOf(name) + name.length);
       const found = ifArms(rhs, bodyLines, i);
       const texts = found?.arms ?? (/^if\b/.test(rhs.trim()) ? null : ternaryArms(rhs.trim()));
       const froms = texts?.map(armFrom);

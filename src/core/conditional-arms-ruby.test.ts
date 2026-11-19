@@ -50,6 +50,15 @@ describe("Ruby conditional initializer arms", () => {
         "    api = Apis.clubs",
         "    api.load",
         "  end",
+        "  def mixed_arms(admin)",
+        "    api = admin ? ClubApi.new : Apis.players",
+        "    api.load",
+        "  end",
+        "  def string_decoy",
+        "    api = ClubApi.new",
+        "    note = \"a ? b : c\"",
+        "    api.load",
+        "  end",
         "  def one_declares(admin)",
         "    api = admin ? ClubApi.new : PlayerApi.new",
         "    api.reset",
@@ -125,6 +134,8 @@ describe("Ruby conditional initializer arms", () => {
   it("leaves a non-call arm, a missing else, a block arm and a reassigned name untyped", async () => {
     expect(await links("Svc.not_a_call", "api.load")).toEqual([]);
     expect(await links("Svc.no_else", "api.load")).toEqual([]);
+    expect(await links("Svc.mixed_arms", "api.load")).toEqual([]);
+    expect(await links("Svc.string_decoy", "api.load")).toEqual(["ClubApi.load:INFERRED"]);
     expect(await links("Svc.block_arm", "api.load")).toEqual([]);
     expect(await links("Svc.reassigned", "api.load")).toEqual([]);
   });
