@@ -69,7 +69,7 @@ describe.each([["tree-sitter", undefined], ["regex", "no-tree-sitter:dart"]])("D
 
   it("keeps a constructor formal used in the body after an initializer list", () => {
     const rows = summary.symbolLinks.filter((l) => l.callName === "roster.onChanged").map((l) => l.targetSymbol);
-    expect(rows).toContain("Roster.onChanged");
+    expect(summary.symbolLinks.filter((l) => l.sourceSymbol.endsWith("Cache") && l.callName === "roster.onChanged").map((l) => l.targetSymbol)).toEqual(["Roster.onChanged"]);
   });
 
   it("keeps the formal's type outside the closure and under a closure that names another parameter", () => {

@@ -231,8 +231,8 @@ function markShadowedClosureParams(fn: FunctionInfo, code: readonly string[]): v
   for (const l of code) { lineStart.push(at); at += l.length + 1; }
   const spans: Array<{ name: string; from: number; to: number }> = [];
   for (const m of body.matchAll(CLOSURE_HEAD)) {
-    // A bare name opens a closure only with `=>`: `name {` ends an initializer list (`: _d = delegate {`), it is no literal.
-    if (m[2] !== undefined && m[3] !== "=>") continue;
+    // Dart closures always parenthesize their parameters: a bare `name {` ends an initializer list (`: _d = delegate {`).
+    if (m[2] !== undefined) continue;
     const names = (m[1] ?? m[2]!).split(",").map((n) => n.trim().replace(/^(?:dynamic|var|final)\s+/, "")).filter((n) => typed.has(n));
     if (names.length === 0) continue;
     // A closure follows an opening bracket, a comma, `=`, `:` or `return`; `if (x) {`, `void f(x) {` and `f(x) =>` do not.
