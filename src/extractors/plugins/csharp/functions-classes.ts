@@ -11,6 +11,7 @@ import {
   extractCsharpAttributes,
 } from "../../shared/node-helpers.js";
 import { extractCalls } from "../../shared/call-graph.js";
+import { csharpPropertyReads } from "./property-reads.js";
 import { csharpArgKinds, typeCsharpVariableArgs } from "./arg-kinds.js";
 import { csharpElementFacts } from "./element-types.js";
 import { classValueContext, csharpFieldInitFacts, csharpValueFlow, fileDelegateNames } from "./value-flow.js";
@@ -370,6 +371,8 @@ export class CSharpExtractor extends FunctionClassExtractor {
       const iface = explicit.text.replace(/<.*$/s, "").replace(/\.\s*$/, "").trim().replace(/^global::/, "").replace(/.*[.:]/, "");
       if (iface) fn.explicitInterface = iface;
     }
+    const propertyReads = isAsync ? csharpPropertyReads(body) : undefined;
+    if (propertyReads) fn.propertyReads = propertyReads;
     const localTypes = this.scope?.localTypesOf(body);
     if (localTypes) fn.localTypes = localTypes;
     if (typeBounds.size > 0) for (const l of fn.localTypes ?? []) if (l.type) l.type = boundedType(l.type, typeBounds) ?? l.type;

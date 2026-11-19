@@ -1487,7 +1487,9 @@ export interface LanguagePluginManifest {
    * declared return of the call it was initialized from — matches `receiverTypes`; an unknown type flags nothing, and
    * nor does a project class named like the type (`types`: its bare names, which the project must not declare).
    */
-  blockingOnReceiver?: { receiverTypes: RegExp; members: RegExp; types: readonly string[] };
+  blockingOnReceiver?: { receiverTypes: RegExp; members: RegExp; types: readonly string[]; readMembers?: RegExp };
+  // `readMembers`: properties that block the same way when read (`task.Result`); the plugin states them as
+  // `FunctionInfo.propertyReads`, receiver chains included (`repo.FindAsync().Result`, typed by the declared return).
   /**
    * How the language documents a function or class, so its first sentence
    * becomes `FunctionInfo.doc` / `ClassInfo.doc` (core/doc-comments.ts). On

@@ -245,6 +245,22 @@ export function findBlockingInAsync(analyses: readonly FileAnalysis[], skip: (fi
           detail: `${name}() blocks inside async ${fnName} — every other request waits while it runs; use the asynchronous form`,
         });
       }
+      // A property read that blocks (`task.Result`): no call states it, the plugin states the read.
+      if (typedApplies && typed?.readMembers) {
+        const reads = { ...typed, members: typed.readMembers };
+        for (const read of fn.propertyReads ?? []) {
+          if (seen.has(read.name) || !blocksOnReceiver(read.name, reads, fn, owner, classesNamed)) continue;
+          seen.add(read.name);
+          out.push({
+            kind: "blocking-in-async",
+            name: fnName,
+            filePath: a.filePath,
+            line: read.line,
+            confidence: "medium",
+            detail: `${read.name} (a property read) blocks inside async ${fnName} — every other request waits while it runs; await the task instead`,
+          });
+        }
+      }
     }
   }
   return out;
@@ -258,6 +274,13 @@ function blocksOnReceiver(
   owner: ClassInfo | undefined,
   classesNamed: (name: string) => ClassInfo[],
 ): boolean {
+  // A call chain's result (`repo.FindAsync().Result`): the declared return of that call, through a class the project declares once.
+  const chained = /^(.+\(\))\.(\w+)$/.exec(call);
+  if (chained) {
+    if (!spec.members.test(chained[2]!)) return false;
+    const declared = declaredResult(chained[1]!, fn, owner, classesNamed);
+    return !!declared && spec.receiverTypes.test(declared);
+  }
   const m = /^(this\.)?([A-Za-z_]\w*)\.(\w+)$/.exec(call);
   if (!m || !spec.members.test(m[3]!)) return false;
   const head = m[2]!;

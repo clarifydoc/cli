@@ -22,7 +22,7 @@ export const csharpManifest: LanguagePluginManifest = {
   // Thread.Sleep and `task.GetAwaiter().GetResult()` inside an `async` method. `.Result` is a property and `.Wait()` a method any project class may have, so neither is listed.
   blockingCalls: /^(?:Thread\.Sleep|Task\.(?:WaitAll|WaitAny)|.+\.GetAwaiter\(\)\.GetResult)$/,
   // `task.Wait()` where `task` is declared a `Task`/`Task<T>` (`.Result` is a property read, no call states it).
-  blockingOnReceiver: { receiverTypes: /^(?:System\.Threading\.Tasks\.)?(?:Task|ValueTask)(?:<[\s\S]*>)?$/, members: /^Wait$/, types: ["Task", "ValueTask"] },
+  blockingOnReceiver: { receiverTypes: /^(?:System\.Threading\.Tasks\.)?(?:Task|ValueTask)(?:<[\s\S]*>)?$/, members: /^Wait$/, types: ["Task", "ValueTask"], readMembers: /^Result$/ },
   projectCommands: dotnetProjectCommands,
   language: "csharp",
   callPathsFromHead: true,

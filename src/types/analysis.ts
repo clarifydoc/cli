@@ -1627,6 +1627,13 @@ export interface FunctionInfo {
   isExported: boolean;
   decorators: string[];
   calls: CallInfo[];
+  /**
+   * Reads of a property that blocks the caller when its receiver is a certain type (C# `task.Result` on a `Task<T>`),
+   * which no call fact states: `name` is `receiver.Member` with the receiver a name, `this.field` or a call chain
+   * (`repo.FindAsync().Result`). Stated only for the members a language's `blockingOnReceiver.readMembers` names, so
+   * it stays empty for every other member read; core's blocking-in-async rule judges the receiver's type.
+   */
+  propertyReads?: Array<{ name: string; line: number }>;
   line: number;
   endLine: number;
   /** The first sentence of its doc comment or docstring, capped (core/doc-comments.ts). Absent when it has none. */
