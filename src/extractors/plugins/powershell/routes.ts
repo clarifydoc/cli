@@ -1,5 +1,6 @@
 import type { RouteInfo } from "../../../types/analysis.js";
 import { extractCallsFromBody, findEndLine, type CallPattern } from "../shared/regex-base.js";
+import { joinTrimmedPath as joinPath } from "../../shared/route-paths.js";
 
 /**
  * PowerShell web routes:
@@ -91,7 +92,3 @@ function blockStart(lines: string[], from: number, last: number, param: string):
   return null;
 }
 
-function joinPath(prefix: string, path: string): string {
-  const joined = (prefix.replace(/\/+$/, "") + "/" + path.replace(/^\/+/, "")).replace(/\/+$/, "");
-  return joined === "" ? "/" : joined;
-}
