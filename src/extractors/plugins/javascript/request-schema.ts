@@ -1,5 +1,6 @@
 import type { ParamInfo, PropertyInfo, RouteInfo, RouteParamBinding } from "../../../types/analysis.js";
 import type { RequestSchemaHooks, TypeShape } from "../../../types/language-plugin.js";
+import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 /**
  * How TypeScript types and class properties look on the wire — NestJS DTOs
@@ -47,26 +48,7 @@ export function splitGeneric(type: string): { name: string; args: string[] } {
 
 /** Split on a separator at nesting depth 0 (respecting `<>`, `()`, `[]`, `{}` and quotes). */
 export function splitTopLevel(text: string, sep: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let quote: string | null = null;
-  let start = 0;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (quote) {
-      if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === "'" || ch === '"' || ch === "`") quote = ch;
-    else if (ch === "<" || ch === "(" || ch === "[" || ch === "{") depth++;
-    else if (ch === ">" || ch === ")" || ch === "]" || ch === "}") depth--;
-    else if (ch === sep && depth === 0) {
-      out.push(text.slice(start, i).trim());
-      start = i + 1;
-    }
-  }
-  out.push(text.slice(start).trim());
-  return out.filter((s) => s.length > 0);
+  return splitTopLevelWith(text, { sep, brackets: "<>()[]{}", quotes: "'\"`", trim: true, dropBlank: true });
 }
 
 /** `(A | B)` → `A | B`, once, when the parentheses wrap the whole text. */
