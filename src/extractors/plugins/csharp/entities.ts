@@ -2,6 +2,7 @@ import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } 
 import { attributeRepositoryAccesses, splitTypeArgs, type RepositoryAccessKnobs } from "../shared/repository-access.js";
 import { extensionFamily } from "../shared/path-utils.js";
 import type { CallInfo, ClassInfo, EntityRelation, FileAnalysis, Language, PropertyInfo, SchemaOp } from "../../../types/analysis.js";
+import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 /**
  * Entity-Framework-Core (and lightly, NHibernate) entity extractor for C#.
@@ -1324,26 +1325,7 @@ function lowerFirst(s: string): string {
 
 /** Split `s` on top-level `sep`, ignoring separators inside <>/()/[] / strings. */
 function splitTopLevel(s: string, sep: string): string[] {
-  const parts: string[] = [];
-  let depth = 0;
-  let quote = "";
-  let buf = "";
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i]!;
-    if (quote) {
-      buf += ch;
-      if (ch === "\\") { buf += s[++i] ?? ""; continue; }
-      if (ch === quote) quote = "";
-      continue;
-    }
-    if (ch === '"' || ch === "'") { quote = ch; buf += ch; continue; }
-    if (ch === "<" || ch === "(" || ch === "[" || ch === "{") depth++;
-    else if (ch === ">" || ch === ")" || ch === "]" || ch === "}") depth--;
-    if (ch === sep && depth === 0) { parts.push(buf); buf = ""; continue; }
-    buf += ch;
-  }
-  if (buf.trim()) parts.push(buf);
-  return parts;
+  return splitTopLevelWith(s, { sep, brackets: "<>()[]{}", quotes: "\"'", escapes: "\"'" });
 }
 
 /** True when two relations describe the same from→to edge on the same field. */
