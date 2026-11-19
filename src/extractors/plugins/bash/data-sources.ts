@@ -111,7 +111,7 @@ function httpCall(node: Node, client: string): DataSourceInfo | null {
   target = target.replace(/\$\{?(\w+)\}?/g, "{$1}");
   if (!target.startsWith("/") && !/^https?:\/\//.test(target)) return null;
   const verb = method ?? (sendsData ? "POST" : "GET");
-  const source: DataSourceInfo = { kind: "api-call", name: `${verb} ${target}`, target, calls: [], line: node.startPosition.row + 1 };
+  const source: DataSourceInfo = { kind: "api-call", name: `${verb} ${target}`, target, calls: [], line: node.startPosition.row + 1, column: node.startPosition.column };
   if (base && /^[A-Z][A-Z0-9_]*$/.test(base[1]!)) source.baseEnv = base[1]!;
   return source;
 }
