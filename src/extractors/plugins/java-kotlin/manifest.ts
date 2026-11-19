@@ -123,6 +123,8 @@ export const javaManifest: LanguagePluginManifest = {
 export const kotlinManifest: LanguagePluginManifest = {
   docComments: C_STYLE_DOCS,
   testCommand: jvmTestCommand,
+  // `runBlocking` and `Thread.sleep` inside a `suspend` function park the coroutine's thread.
+  blockingCalls: /^(?:runBlocking|Thread\.sleep)$/,
   language: "kotlin",
   callPathsFromHead: true,
   collectionElementOf: collectionElementText,

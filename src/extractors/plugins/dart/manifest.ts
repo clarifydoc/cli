@@ -3,6 +3,8 @@ import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { dartFrameworkRules } from "./frameworks.js";
 import { dartImportedFile, pubPackageManager } from "./package-manifests.js";
 import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
+import { dartTestCommand } from "./test-command.js";
+import { dartProjectCommands } from "./project-commands.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -12,6 +14,10 @@ import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
  */
 export const dartManifest: LanguagePluginManifest = {
   docComments: C_STYLE_DOCS,
+  testCommand: dartTestCommand,
+  projectCommands: dartProjectCommands,
+  // `sleep(…)` of dart:io and the synchronous file calls on a `File(…)`/`Directory(…)` written in place (the call reads `File.readAsStringSync`), inside an `async` function. A call on a variable (`f.readAsStringSync()`) is not listed: a project method may carry the name.
+  blockingCalls: /^(?:sleep|(?:File|Directory|Link)\.(?:\w+\.)*\w+Sync|Process\.runSync)$/,
   language: "dart",
   callPathsFromHead: true,
   collectionElementOf: collectionElementText,

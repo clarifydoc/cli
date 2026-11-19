@@ -20,6 +20,8 @@ export const rustManifest: LanguagePluginManifest = {
   migrationFiles: rustMigrationFiles,
   resolveImport: resolveRustImport,
   testCommand: rustTestCommand,
+  // Spelled out as `std::fs::…` / `thread::sleep`: a bare `fs::read` may be tokio's, imported under that name.
+  blockingCalls: /^(?:(?:std::)?thread::sleep|std::fs::[\w:]+)$/,
   projectCommands: rustProjectCommands,
   // flutter_rust_bridge and wasm-pack configurations: generated Dart / JS modules bound to Rust functions.
   foreignBindings: rustForeignBindings,

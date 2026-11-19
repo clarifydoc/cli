@@ -3,6 +3,8 @@ import { swiftFrameworkRules } from "./frameworks.js";
 import { swiftpmPackageManager, cocoapodsPackageManager } from "./package-manifests.js";
 import { elementType } from "./collection-types.js";
 import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
+import { swiftTestCommand } from "./test-command.js";
+import { swiftProjectCommands } from "./project-commands.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -12,6 +14,8 @@ import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
  */
 export const swiftManifest: LanguagePluginManifest = {
   docComments: C_STYLE_DOCS,
+  testCommand: swiftTestCommand,
+  projectCommands: swiftProjectCommands,
   language: "swift",
   callPathsFromHead: true,
   family: "swift",

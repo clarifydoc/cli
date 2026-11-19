@@ -7,6 +7,12 @@ import { dotnetTestCommand } from "../extractors/plugins/csharp/test-command.js"
 import { rubyTestCommand } from "../extractors/plugins/ruby/test-command.js";
 import { phpTestCommand } from "../extractors/plugins/php/test-command.js";
 import { rustTestCommand } from "../extractors/plugins/rust/test-command.js";
+import { dartTestCommand } from "../extractors/plugins/dart/test-command.js";
+import { dartProjectCommands } from "../extractors/plugins/dart/project-commands.js";
+import { swiftTestCommand } from "../extractors/plugins/swift/test-command.js";
+import { swiftProjectCommands } from "../extractors/plugins/swift/project-commands.js";
+import { elixirTestCommand } from "../extractors/plugins/elixir/test-command.js";
+import { elixirProjectCommands } from "../extractors/plugins/elixir/project-commands.js";
 import { computeImpactDiff } from "./impact-diff.js";
 import type { ProjectAnalysis } from "../types/analysis.js";
 
@@ -156,5 +162,35 @@ describe("impact: no test credit through a hub", () => {
     const s = summary(21);
     s.symbolLinks.push({ sourceFile: "test/garage.test.ts", sourceSymbol: "logEvent › writes", sourceLine: 9, targetFile: "src/garage.ts", targetSymbol: "logEvent", targetLine: 1, callName: "logEvent", confidence: "EXTRACTED" } as never);
     expect(standing(s)).toBe("covered");
+  });
+});
+
+describe("test commands for Dart, Swift and Elixir", () => {
+  it("picks flutter or dart by the pubspec and names one test only when it is the one", () => {
+    expect(dartTestCommand([{ file: "test/club_test.dart", names: [] }], ctx(["flutter", "flutter_test"]))).toBe("flutter test test/club_test.dart");
+    expect(dartTestCommand([{ file: "test/club_test.dart", names: [] }, { file: "test/a_test.dart", names: [] }], ctx())).toBe("dart test test/a_test.dart test/club_test.dart");
+    expect(dartTestCommand([{ file: "test/club_test.dart", names: ["builds"], cases: [{ path: ["Club", "builds"], line: 4 }] }], ctx())).toBe("dart test test/club_test.dart --plain-name 'Club builds'");
+    expect(dartTestCommand([{ file: "test/club_test.dart", names: ["a", "b"], cases: [{ path: ["a"], line: 4 }, { path: ["b"], line: 8 }] }], ctx())).toBe("dart test test/club_test.dart");
+    expect(dartTestCommand([], ctx())).toBeNull();
+  });
+  it("filters swift test by target, class and method", () => {
+    expect(swiftTestCommand([{ file: "Tests/LeagueTests/ClubTests.swift", names: ["ClubTests.testBuilds", "ClubTests.helper"] }])).toBe("swift test --filter '^LeagueTests\\.ClubTests/testBuilds$'");
+    expect(swiftTestCommand([{ file: "Tests/LeagueTests/ClubTests.swift", names: ["ClubTests.helper"] }])).toBe("swift test --filter '^LeagueTests\\.ClubTests/'");
+    expect(swiftTestCommand([{ file: "Tests/LeagueTests/ClubTests.swift", names: [] }])).toBe("swift test --filter '^LeagueTests\\.'");
+    expect(swiftTestCommand([{ file: "ClubTests.swift", names: [] }])).toBe("swift test");
+    expect(elixirTestCommand([{ file: "test/a_test.exs", names: ["x"], cases: [{ path: ["x"], line: 3 }] }, { file: "test/a_test.exs", names: ["y"] }])).toBe("mix test test/a_test.exs");
+  });
+  it("runs mix test on the file, at the marked lines when every test is marked", () => {
+    expect(elixirTestCommand([{ file: "test/club_test.exs", names: [] }])).toBe("mix test test/club_test.exs");
+    expect(elixirTestCommand([{ file: "test/club_test.exs", names: ["builds"], cases: [{ path: ["builds"], line: 12 }] }])).toBe("mix test test/club_test.exs:12");
+    expect(elixirTestCommand([{ file: "test/club_test.exs", names: ["<setup>"] }])).toBe("mix test test/club_test.exs");
+  });
+  it("reads each project's commands from its root files", () => {
+    const view = (files: Record<string, string>) => ({ entries: Object.keys(files), read: (r: string) => files[r], exists: (r: string) => r in files });
+    expect(dartProjectCommands(view({ "pubspec.yaml": "dependencies:\n  flutter:\n    sdk: flutter\n" })).map((c) => c.command)).toEqual(["flutter test", "flutter run"]);
+    expect(dartProjectCommands(view({ "pubspec.yaml": "dependencies:\n  http: ^1.0.0\n" })).map((c) => c.command)).toEqual(["dart test", "dart run"]);
+    expect(swiftProjectCommands(view({ "Package.swift": ".executableTarget(name: \"League\")" })).map((c) => c.command)).toEqual(["swift build", "swift test", "swift run"]);
+    expect(elixirProjectCommands(view({ "mix.exs": "{:phoenix, \"~> 1.7\"}" })).map((c) => c.command)).toEqual(["mix test", "mix phx.server"]);
+    expect(elixirProjectCommands(view({}))).toEqual([]);
   });
 });

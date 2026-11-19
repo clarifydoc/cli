@@ -1,6 +1,8 @@
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { ELIXIR_DOCS } from "../../shared/doc-comment-specs.js";
 import { hexPackageManager } from "./package-manifests.js";
+import { elixirTestCommand } from "./test-command.js";
+import { elixirProjectCommands } from "./project-commands.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -10,6 +12,8 @@ import { hexPackageManager } from "./package-manifests.js";
  */
 export const elixirManifest: LanguagePluginManifest = {
   docComments: ELIXIR_DOCS,
+  testCommand: elixirTestCommand,
+  projectCommands: elixirProjectCommands,
   language: "elixir",
   family: "elixir",
   packageManagers: [hexPackageManager],

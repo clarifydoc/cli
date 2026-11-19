@@ -18,6 +18,8 @@ export const csharpManifest: LanguagePluginManifest = {
   docComments: C_STYLE_DOCS,
   migrationFiles: csharpMigrationFiles,
   testCommand: dotnetTestCommand,
+  // Thread.Sleep and `task.GetAwaiter().GetResult()` inside an `async` method. `.Result` is a property and `.Wait()` a method any project class may have, so neither is listed.
+  blockingCalls: /^(?:Thread\.Sleep|Task\.(?:WaitAll|WaitAny)|.+\.GetAwaiter\(\)\.GetResult)$/,
   projectCommands: dotnetProjectCommands,
   language: "csharp",
   callPathsFromHead: true,
