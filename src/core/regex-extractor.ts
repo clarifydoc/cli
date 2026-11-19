@@ -125,6 +125,8 @@ export function extractWithRegex(
   if (clientRegistrations && clientRegistrations.length > 0) analysis.httpClientRegistrations = clientRegistrations;
   const pathArgCalls = spec.extractPathArgCalls?.(lines);
   if (pathArgCalls && pathArgCalls.length > 0) analysis.pathArgCalls = pathArgCalls;
+  const configKeyReads = spec.extractConfigKeyReads?.(lines);
+  if (configKeyReads && configKeyReads.length > 0) analysis.configKeyReads = configKeyReads;
   const moduleValues = spec.extractModuleValues?.(lines);
   if (moduleValues && Object.keys(moduleValues).length > 0) analysis.moduleValues = moduleValues;
   const moduleBindings = spec.extractModuleBindings?.(lines);

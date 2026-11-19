@@ -357,6 +357,12 @@ export interface FileAnalysis {
    */
   pathArgCalls?: PathArgCall[];
   /**
+   * Configuration keys the file declares a place for, which no code reads at run time and so are no data
+   * source: a Terraform `variable "x"` block takes the `x` a `*.tfvars` file in its directory sets
+   * (`kind: "variable"`). Only the config-key join reads them (`ProjectAnalysis.configKeys`).
+   */
+  configKeyReads?: Array<{ key: string; line: number; kind: "variable" }>;
+  /**
    * Listeners a page script binds to elements by selector
    * (`document.querySelectorAll("button[data-delete]").forEach(b => b.addEventListener("click", deleteClub))`).
    * Joined to the elements of the pages that load the script, whose
@@ -2833,11 +2839,10 @@ export interface DataSourceInfo {
    * An `env` row that reads a configuration key, not an environment variable
    * (`target` is the key): Spring `@Value("${league.token}")` (`key`),
    * `@ConfigurationProperties(prefix = "league")` (`prefix`: every key below
-   * it), a Terraform `variable "x"` block (`variable`: the `x` a `*.tfvars`
-   * beside it sets). Core joins it to the key the project's config files
-   * state (`ProjectAnalysis.configKeys`).
+   * it). Core joins it to the key the project's config files state
+   * (`ProjectAnalysis.configKeys`).
    */
-  configRead?: { kind: "key" | "prefix" | "variable" };
+  configRead?: { kind: "key" | "prefix" };
   calls: CallInfo[];
   line: number;
   /**

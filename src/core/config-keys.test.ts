@@ -109,6 +109,8 @@ policy = <<EOT
 EOT
 note = "a # {b"
 after_note = 2
+/* legacy_size = 3 { */
+  "car_color" = 5
 `,
   "infra/variables.tf": `variable "garage_size" {
   type = number
@@ -205,6 +207,8 @@ describe("Terraform variables", () => {
 
   it("joins a tfvars key to the variable block beside it, and not to a namesake in another module", () => {
     expect(summary.configKeys).toEqual([
+      // The quoted key on line 9 counts; the one inside the heredoc (line 4) and the block comment do not.
+      expect.objectContaining({ key: "car_color", line: 9 }),
       expect.objectContaining({
         key: "garage_size",
         file: "infra/terraform.tfvars",

@@ -8,8 +8,8 @@ import type { ServiceConfigSpec } from "../types/language-plugin.js";
  * Configuration keys joined to the code that reads them, so changing a key
  * shows its consumers. A config file declares a key (a plugin's
  * `serviceConfig.sources`); code states a read (`DataSourceInfo.configRead` on
- * an `env` row: a key, a prefix of keys, or a variable block beside the file
- * that sets it). Core joins them and names no language or format.
+ * an `env` row: a key or a prefix of keys; `FileAnalysis.configKeyReads`: a
+ * variable block beside the file that sets it). Core joins them and names no language or format.
  *
  * The join is scoped, never by name alone: a read meets the keys of the
  * sub-project it sits in (a namesake key of another module is another
@@ -53,7 +53,10 @@ export function joinConfigKeys(
   const allEntries = new Map<ConfigSet, Array<{ e: ProjectConfigValue; project: string }>>();
   for (const a of analyses) {
     if (!isAuthored(a.filePath)) continue;
-    const reads = a.dataSources.filter((d) => d.kind === "env" && d.configRead && d.target);
+    const reads: Array<{ kind: "key" | "prefix" | "variable"; target: string; line: number }> = [
+      ...a.dataSources.flatMap((d) => (d.kind === "env" && d.configRead && d.target ? [{ kind: d.configRead.kind, target: d.target, line: d.line }] : [])),
+      ...(a.configKeyReads ?? []).map((r) => ({ kind: r.kind, target: r.key, line: r.line })),
+    ];
     if (reads.length === 0) continue;
     const test = isTest(a.filePath, a.language);
     for (const set of sets) {
@@ -66,8 +69,8 @@ export function joinConfigKeys(
       }
       if (!set.languages.has(a.language)) continue;
       for (const read of reads) {
-        const kind = read.configRead!.kind;
-        const target = read.target!;
+        const kind = read.kind;
+        const target = read.target;
         // A `variable` read meets the files beside it; the others the keys of the project.
         const entries = kind === "variable"
           ? all.filter(({ e }) => dirname(e.file) === dirname(a.filePath))

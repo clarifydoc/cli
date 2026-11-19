@@ -105,6 +105,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   generatedClients: "optional",
   taintFacts: "optional",
   moduleValueFlow: "optional",
+  configKeyReads: "optional",
 };
 
 export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {

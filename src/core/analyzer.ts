@@ -1844,7 +1844,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Environment variables: where the code reads each one, and which deployed services set it.
   const envVars = joinEnvVars(allAnalyses, deployment, (f) => !isUnauthored(f) && !isTestFile(f));
   // Configuration keys the project's config files set, with the code that reads each.
-  const configKeys = joinConfigKeys(allAnalyses, await readConfigKeys(projectRoot, subProjects), (f) => !isUnauthored(f), (f, l) => isTestFile(f, l));
+  const configKeys = joinConfigKeys(allAnalyses, allAnalyses.some((a) => a.configKeyReads?.length || a.dataSources.some((d) => d.configRead)) ? await readConfigKeys(projectRoot, subProjects) : [], (f) => !isUnauthored(f), (f, l) => isTestFile(f, l));
 
   // The per-file scanner already skips minified sources; this catches issues
   // cached by older extractor versions and everything under generatedRoots.

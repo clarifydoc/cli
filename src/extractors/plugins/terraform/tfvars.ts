@@ -12,26 +12,39 @@ export function tfvarsKeys(text: string, path: string): ConfigEntry[] {
   let depth = 0;
   let line = 0;
   let heredoc: string | null = null;
+  let block = false;
   for (const raw of text.split("\n")) {
     line++;
     if (heredoc !== null) {
       if (raw.trim() === heredoc) heredoc = null;
       continue;
     }
-    // Code outside string literals, up to a comment.
+    // Code outside string literals and comments; a quoted leading name (`"region" = 1`) stays as its text.
     let code = "";
     let quoted = false;
     for (let i = 0; i < raw.length; i++) {
       const ch = raw[i]!;
-      if (quoted) {
+      if (block) {
+        if (ch === "*" && raw[i + 1] === "/") {
+          block = false;
+          i++;
+        }
+      } else if (quoted) {
         if (ch === "\\") i++;
         else if (ch === '"') quoted = false;
-      } else if (ch === '"') quoted = true;
+      } else if (ch === "/" && raw[i + 1] === "*") block = true;
+      else if (ch === '"') {
+        const q = /^"([A-Za-z_][\w-]*)"\s*=/.exec(raw.slice(i));
+        if (q && code.trim() === "") {
+          code += q[1] + " =";
+          i += q[0].length - 1;
+        } else quoted = true;
+      }
       else if (ch === "#" || (ch === "/" && raw[i + 1] === "/")) break;
       else code += ch;
     }
     if (depth === 0) {
-      const m = /^([A-Za-z_][\w-]*)\s*=/.exec(code);
+      const m = /^([A-Za-z_][\w-]*)\s*=/.exec(code.trim());
       if (m) out.push({ key: m[1]!, value: "", line });
     }
     heredoc = /<<-?\s*([A-Za-z_]\w*)\s*$/.exec(code)?.[1] ?? null;
