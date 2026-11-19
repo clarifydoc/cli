@@ -1864,6 +1864,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     // The handlers a Node RPC server is given in place (`createServer(ClubService, { getClub() {…} })`): each a function of its own.
     for (const o of contractHandlerObjects(tree, sourceText)) {
       for (const m of o.members) {
+        // A held object's own function members may already be functions of that name.
+        if (o.holder && functions.some((f) => f.name === m.name)) continue;
         if (m.fn) {
           const fn = this.parseJsArrowOrExpr(m.name, m.fn, false);
           // It closes over the functions it is written in, as a held function does.

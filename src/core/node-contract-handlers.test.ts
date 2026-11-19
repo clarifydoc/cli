@@ -137,3 +137,138 @@ describe("Node RPC handlers written in the registering call", () => {
     ].sort());
   });
 });
+
+/** Members written `this.x.bind(this)`, with a type assertion, or in an object first held in a variable. */
+const SHAPE_FILES: Record<string, string> = {
+  "idl/league.thrift": `namespace java com.example.league
+service ClubService {
+  string getClub(1: string id),
+  string listClubs(),
+  string findClub(1: string id),
+  string ping(),
+  string sponsor(),
+  string coach()
+}
+`,
+  "idl/match.proto": `syntax = "proto3";
+package com.example.league;
+service MatchService {
+  rpc GetMatch (R) returns (R);
+  rpc ListMatches (R) returns (R);
+}
+message R { string id = 1; }
+`,
+  "lib/decoy.js": `function getClub(id) { return 1; }
+function listClubs() { return 1; }
+function findClub() { return 1; }
+function getMatch() { return 1; }
+function coach() { return 1; }
+module.exports = { getClub, listClubs, findClub, getMatch, coach };
+`,
+  "lib/store.js": `exports.load = function (id) { return id; };
+`,
+  "server.ts": `import * as thrift from "thrift";
+import { ClubService } from "./gen/ClubService";
+import { load } from "./lib/store";
+type Handler = (id: string, done: Function) => void;
+function findClubHandler(id: string, done: Function) { load(id); }
+function sponsorHandler(id: string, done: Function) { load(id); }
+class ClubController {
+  getClub(id: string, done: Function) { load(id); }
+  listClubs() { return load("x"); }
+  register() {
+    thrift.createServer(ClubService, {
+      getClub: this.getClub.bind(this),
+      listClubs: this.listClubs.bind(this),
+      findClub: (findClubHandler as Handler),
+      sponsor: <Handler>sponsorHandler,
+      ping: (pingHandler satisfies Handler),
+    });
+  }
+}
+function pingHandler(id: string, done: Function) { load(id); }
+const heldHandlers = { coach: coachFn };
+function coachFn(id: string, done: Function) { load(id); }
+thrift.createServer(ClubService, heldHandlers);
+const notRouted = { getClub: coachFn };
+`,
+  "grpc.ts": `import * as grpc from "@grpc/grpc-js";
+import { load } from "./lib/store";
+function getMatchFn(call: any, cb: any) { load(call); }
+function listMatchesFn(call: any, cb: any) { load(call); }
+const handlers = { getMatch: getMatchFn, listMatches: (call: any, cb: any) => load(call) };
+const server = new grpc.Server();
+server.addService(proto.com.example.league.MatchService.service, handlers);
+`,
+};
+
+describe("Node RPC handler objects: bound methods, assertions, held objects", () => {
+  let dir: string;
+  let out: string;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-node-handlers-shapes-"));
+    for (const [p, text] of Object.entries(SHAPE_FILES)) {
+      await mkdir(dirname(join(dir, "src", p)), { recursive: true });
+      await writeFile(join(dir, "src", p), text);
+    }
+    out = join(dir, "out");
+    await analyze({ projectRoot: join(dir, "src"), outputDir: out, lsp: false, gitHistory: false, stableOutput: true });
+  });
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("puts each contract row on a handler of its own", async () => {
+    const s = await loadReportSummary(out);
+    const rows = s.routeMap.filter((r) => r.contract && (r.filePath === "server.ts" || r.filePath === "grpc.ts")).map((r) => `${r.filePath} ${r.contract!.method}:${r.handler}`).sort();
+    expect(rows).toEqual([
+      "grpc.ts GetMatch:handlers.getMatch",
+      "grpc.ts ListMatches:handlers.listMatches",
+      "server.ts coach:heldHandlers.coach",
+      "server.ts findClub:createServer.findClub",
+      "server.ts getClub:createServer.getClub",
+      "server.ts listClubs:createServer.listClubs",
+      "server.ts ping:createServer.ping",
+      "server.ts sponsor:createServer.sponsor",
+    ]);
+  });
+
+  it("hands each member on to the function it names, never to a namesake or an unrouted object", async () => {
+    const s = await loadReportSummary(out);
+    const from = (file: string, symbol: string) => s.symbolLinks.filter((l) => l.sourceFile === file && l.sourceSymbol === symbol && l.relation === "passes").map((l) => `${l.targetFile}:${l.targetSymbol}`);
+    expect(from("server.ts", "createServer.getClub")).toEqual(["server.ts:ClubController.getClub"]);
+    expect(from("server.ts", "createServer.findClub")).toEqual(["server.ts:findClubHandler"]);
+    expect(from("server.ts", "createServer.sponsor")).toEqual(["server.ts:sponsorHandler"]);
+    expect(from("server.ts", "heldHandlers.coach")).toEqual(["server.ts:coachFn"]);
+    expect(from("grpc.ts", "handlers.getMatch")).toEqual(["grpc.ts:getMatchFn"]);
+    expect(s.symbolLinks.some((l) => l.targetFile === "lib/decoy.js")).toBe(false);
+    expect(s.symbolLinks.some((l) => l.sourceSymbol === "notRouted.getClub")).toBe(false);
+  });
+});
+
+describe("Node RPC handler objects: a parameter is not the file's object", () => {
+  let dir: string;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-node-handlers-param-"));
+    await mkdir(join(dir, "src", "idl"), { recursive: true });
+    await writeFile(join(dir, "src", "idl", "match.proto"), SHAPE_FILES["idl/match.proto"]!);
+    await writeFile(
+      join(dir, "src", "grpc.ts"),
+      `import * as grpc from "@grpc/grpc-js";
+function getMatchFn(call: any, cb: any) {}
+const handlers = { getMatch: getMatchFn };
+export function wire(server: any, handlers: any) {
+  server.addService(proto.com.example.league.MatchService.service, handlers);
+}
+`,
+    );
+    await analyze({ projectRoot: join(dir, "src"), outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
+  });
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+  it("reads no handlers from a parameter that shares a variable's name", async () => {
+    const s = await loadReportSummary(join(dir, "out"));
+    expect(s.routeMap.filter((r) => r.contract && r.filePath === "grpc.ts")).toEqual([]);
+  });
+});
