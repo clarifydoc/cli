@@ -1,7 +1,7 @@
 import { readFile } from "fs/promises";
 import { byOrdinal } from "./ordinal.js";
 import { resolve, join, dirname } from "path";
-import { glob } from "./glob.js";
+import { globUnignored as glob } from "./clarifydoc-ignore.js";
 import type {
   ExternalPackage,
   PackageEcosystem,

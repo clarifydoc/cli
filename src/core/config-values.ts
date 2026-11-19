@@ -1,6 +1,6 @@
 import { readFile } from "fs/promises";
 import { join, resolve } from "path";
-import { glob } from "./glob.js";
+import { globUnignored as glob } from "./clarifydoc-ignore.js";
 import { isSensitive } from "./file-discovery.js";
 import { urlValue } from "./url-values.js";
 import { byOrdinal } from "./ordinal.js";

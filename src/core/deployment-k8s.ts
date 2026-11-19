@@ -1,4 +1,4 @@
-import { glob } from "./glob.js";
+import { globUnignored as glob } from "./clarifydoc-ignore.js";
 import { readFile } from "fs/promises";
 import { join, resolve } from "path";
 import {

@@ -3,7 +3,7 @@ import { open, readFile } from "fs/promises";
 import { resolve as pathResolve, join, relative, sep, basename, extname } from "path";
 import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { execFileSync } from "child_process";
-import { glob } from "./glob.js";
+import { globUnignored as glob } from "./clarifydoc-ignore.js";
 import { DEFAULT_IGNORE } from "./file-discovery.js";
 import { normalizeRoutePath } from "./route-linker.js";
 import { discoverFiles, type DiscoveryOptions, type DiscoveredFile } from "./file-discovery.js";

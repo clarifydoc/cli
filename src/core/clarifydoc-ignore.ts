@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from "fs";
 import { sep, posix, resolve, dirname } from "path";
 import { trimTrailingSlashes } from "../extractors/plugins/shared/path-utils.js";
+import { glob, type GlobOptions } from "./glob.js";
 
 /**
  * Full gitignore-semantics ignore-file support for ClarifyDoc.
@@ -375,4 +376,22 @@ function globToRegex(pattern: string): string {
     }
   }
   return re;
+}
+
+/**
+ * `glob` as the scan sees the tree: a directory `.clarifydocignore` / `.clarifydoc/ignore` covers is
+ * never entered, and an ignored file a pattern still lists is dropped. Every reader that walks the
+ * tree for its own files (deployment manifests, CI pipelines, config and package files, docs) goes
+ * through it, so an ignored folder's compose file or manifest never becomes a container or a fact.
+ * The ignore files are looked up from `options.cwd` up to its project root, as discovery does.
+ */
+export async function globUnignored(patterns: string | readonly string[], options: GlobOptions): Promise<string[]> {
+  const root = resolve(options.cwd);
+  const ignorePatterns = loadIgnorePatterns(root);
+  if (ignorePatterns.length === 0) return glob(patterns, options);
+  const pruneIgnored = ignoredDirectories(root, ignorePatterns);
+  const own = options.prune;
+  const prune = pruneIgnored && own ? (dir: string) => own(dir) || pruneIgnored(dir) : (pruneIgnored ?? own);
+  const found = await glob(patterns, { ...options, ...(prune ? { prune } : {}) });
+  return found.filter((f) => !isIgnored(options.absolute ? f : resolve(root, f), root, ignorePatterns));
 }

@@ -1,4 +1,4 @@
-import { glob } from "./glob.js";
+import { globUnignored as glob } from "./clarifydoc-ignore.js";
 import { urlValue } from "./url-values.js";
 import { byOrdinal } from "./ordinal.js";
 import { readFile } from "fs/promises";

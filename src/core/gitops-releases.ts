@@ -1,6 +1,6 @@
 import { readFile } from "fs/promises";
 import { join, posix, resolve } from "path";
-import { glob } from "./glob.js";
+import { globUnignored as glob } from "./clarifydoc-ignore.js";
 import { byOrdinal } from "./ordinal.js";
 import { parseSimpleYaml, projectOfContext, type YamlMap, type YamlValue } from "./deployment.js";
 import type { CiDeploy, SubProject } from "../types/analysis.js";

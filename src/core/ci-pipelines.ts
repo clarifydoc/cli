@@ -1,7 +1,7 @@
 import { existsSync } from "fs";
 import { readFile } from "fs/promises";
 import { join, posix, resolve } from "path";
-import { glob } from "./glob.js";
+import { globUnignored as glob } from "./clarifydoc-ignore.js";
 import { byOrdinal } from "./ordinal.js";
 import { entryFileOf, type RepoFiles } from "./dockerfiles.js";
 import { parseSimpleYaml, projectOfContext, type YamlMap, type YamlValue } from "./deployment.js";
