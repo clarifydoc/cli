@@ -845,8 +845,9 @@ const CURRENT_ASSIGN_RE = /(?<![\w.@$])Current\.([a-z_]\w*)\s*(?:\|\|)?=(?![=~>]
 function ivarAssignedChains(lines: string[], cls: ClassInfo): Record<string, string> {
   const out: Record<string, string> = {};
   for (const m of cls.methods) {
-    for (let i = m.line; i < Math.min(m.endLine, lines.length); i++) {
-      const code = (lines[i] ?? "").replace(/#.*$/, "");
+    // A body written on the `def` line (`def model = @model ||= @club`) is read as well as the lines below it.
+    for (const [i, text] of bodyLines(lines, m)) {
+      const code = text.replace(/#.*$/, "");
       const a = /@([a-z_]\w*)\s*(?:\|\|)?=\s*((?:[A-Z][\w:]*|@?[a-z_]\w*)(?:\.[a-z_]\w*[?!]?(?:\([^)]*\))?)+)/.exec(code);
       // Every chain assigned, one per line: the entity pass keeps the model they agree on.
       if (a && !(out[a[1]!] ?? "").split("\n").includes(a[2]!)) out[a[1]!] = out[a[1]!] ? `${out[a[1]!]}\n${a[2]}` : a[2]!;
