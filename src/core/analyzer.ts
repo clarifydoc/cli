@@ -156,7 +156,7 @@ import { detectMigrations } from "./migration-detector.js";
 import { linkApiCallsToRoutesDetailed, dedupeRoutes, isJoinableRoute, pairContractTwins, implementedContracts } from "./route-linker.js";
 import { buildProjectDependencies, projectServesClosure } from "./project-dependencies.js";
 import { readProjectConfig, readProjectProxies, readRouteBases } from "./config-values.js";
-import { applyRouteBases } from "./route-bases.js";
+import { applyRouteBases, dropUnchangedLocalPaths, stateLocalPaths } from "./route-bases.js";
 import { buildServiceAddresses } from "./service-addresses.js";
 import { resolveCallOrigins } from "./call-origins.js";
 import { clientProxyCalls, dropProxiedDatabaseRows, markConsumedContracts, proxiedOnlyTypes } from "./client-proxies.js";
@@ -1322,6 +1322,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // the route map, data-flow reach and the Routes tab look a route up by, so
   // they must carry the composed path, not the router-local one. Project-level
   // + in-memory (mirrors reconcileProjectEntities); no per-file JSON change.
+  stateLocalPaths(allAnalyses);
   const mountedRouteCount = resolveRouterMounts(allAnalyses, importIndex);
   if (mountedRouteCount > 0 && verbose) {
     progress.detail(`  mounted routes prefixed: ${mountedRouteCount}`);
@@ -1330,6 +1331,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // context path): outermost, so after mounts compose; before the anchors.
   const basedRouteCount = applyRouteBases(allAnalyses, await readRouteBases(projectRoot, subProjects));
   if (basedRouteCount > 0) progress.detail(`  Routes under a configured base path: ${basedRouteCount}`);
+  dropUnchangedLocalPaths(allAnalyses);
   // Resolvers that match the path a caller requests, now that mounts and bases have composed it.
   reconcileProjectRoutes(allAnalyses, projectContext, undefined, "after-mounts");
 

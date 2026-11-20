@@ -2375,6 +2375,13 @@ export interface RouteInfo {
    */
   basePath?: { path: string; key: string; file: string };
   /**
+   * API routes only: the path as the declaring router or controller wrote it, before a router mount, an include
+   * prefix or the configured `basePath` composed onto it (`router.get('/clubs')` mounted at `/svc/league` →
+   * `path` `/svc/league/clubs`, `localPath` `/clubs`). Set by core where those compose, never by a plugin, and
+   * omitted when equal to `path`. A client writing paths below its own base meets the route at it.
+   */
+  localPath?: string;
+  /**
    * API routes only: further paths the same endpoint answers at, which the
    * cross-tier linker matches like `path` — the URI segments a CodeIgniter
    * method binds as arguments (`/sync/photo/{sync_id}`), an alias a route

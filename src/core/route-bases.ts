@@ -35,3 +35,25 @@ export function joinBase(base: string, path: string): string {
   const tail = path.startsWith("/") ? path : `/${path}`;
   return tail === "/" ? base : base + tail;
 }
+
+/**
+ * Remember the path each API route states before mounts and bases compose onto it (`RouteInfo.localPath`).
+ * Run just before the composers: rows they rewrite are copies, so the field rides along.
+ */
+export function stateLocalPaths(analyses: FileAnalysis[]): void {
+  for (const a of analyses) {
+    for (const r of a.routes) {
+      if (r.kind === "api" && !r.mount && !r.prefixUnresolved && !r.pathUnresolved?.length && r.path.startsWith("/") && r.path !== "/") r.localPath = r.path;
+    }
+  }
+}
+
+/** After the composers ran: a row they left alone states no separate local path. */
+export function dropUnchangedLocalPaths(analyses: FileAnalysis[]): void {
+  for (const a of analyses) {
+    for (const r of a.routes) {
+      if (r.localPath === undefined) continue;
+      if (r.localPath === r.path || r.prefixUnresolved || r.mount) delete r.localPath;
+    }
+  }
+}

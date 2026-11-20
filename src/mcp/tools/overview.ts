@@ -184,8 +184,13 @@ function kindTag(kind: SearchKind): string {
  * worth it on a hit; on a result with nothing in it, a hint carrying a real
  * count is the cheapest thing this server can offer.
  */
-/** A route path with the first conventional base it starts with (`/api/v1`, `/api`, …) taken off, or nothing. */
-function pathBelowBase(path: string): string[] {
+/**
+ * A route path below its mount: the path its own router wrote when core composed a mount onto it
+ * (`RouteInfo.localPath`), else the path with the first conventional base it starts with (`/api/v1`, `/api`, …)
+ * taken off, or nothing.
+ */
+function pathBelowBase(path: string, localPath?: string): string[] {
+  if (localPath) return [localPath];
   const base = BASES_WITH_SLASH.find((b) => path.startsWith(b));
   return base ? [path.slice(base.length - 1)] : [];
 }
@@ -212,7 +217,7 @@ function searchCandidates(loaded: LoadedAnalysis, kinds: Set<SearchKind>, query:
           ...(route.handler ? [route.handler] : []),
           // The path as its controller writes it, below the conventional base it is mounted under
           // (`/api/clubs/feed` answers "/clubs/feed"), as the route linker meets a client's call.
-          ...pathBelowBase(route.path),
+          ...pathBelowBase(route.path, route.localPath),
           ...(route.auth?.policies ?? []),
           ...(route.auth?.roles ?? []),
           ...(route.auth?.schemes ?? []),

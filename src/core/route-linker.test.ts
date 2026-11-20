@@ -1310,3 +1310,22 @@ describe("linkApiCallsToRoutes — a query-string hole", () => {
     expect(links).toHaveLength(0);
   });
 });
+
+describe("linkApiCallsToRoutes — a route states the path below its mount", () => {
+  const mounted = { ...route("league/clubs.ts", "GET", "/svc/league/clubs", "list", 3), localPath: "/clubs", projectId: "league" };
+  it("links a call below an unconventional mount through the stated path, INFERRED", () => {
+    const links = linkApiCallsToRoutes([apiCall("web/clubs.ts", "get", "/clubs")], [mounted]);
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({ routePath: "/svc/league/clubs", confidence: "INFERRED", matchedVia: "base-prefix:/svc/league" });
+  });
+  it("a route naming the call's path as written still wins over the stated path", () => {
+    const decoy = { ...route("garage/clubs.ts", "GET", "/clubs", "decoy", 3), projectId: "garage" };
+    const links = linkApiCallsToRoutes([apiCall("web/clubs.ts", "get", "/clubs")], [mounted, decoy]);
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({ handler: "decoy" });
+  });
+  it("without a stated path the same route is not found below an unlisted base", () => {
+    const bare = route("league/clubs.ts", "GET", "/svc/league/clubs", "list", 3);
+    expect(linkApiCallsToRoutes([apiCall("web/clubs.ts", "get", "/clubs")], [bare])).toHaveLength(0);
+  });
+});
