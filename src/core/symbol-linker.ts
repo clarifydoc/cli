@@ -31,7 +31,7 @@ import { commonPrefixLength, extensionFamily, escapeRegex } from "../extractors/
 import { receiverTypeCandidates, receiverTypeName } from "../extractors/shared/type-parser.js";
 import { ELEMENT_HOP } from "../extractors/shared/collection-element.js";
 import { isTestFile } from "./test-file-detector.js";
-import type { CallableQuery } from "./value-flow.js";
+import type { CallableMemberQuestion, CallableQuestions, FunctionTypeQuestion } from "./value-flow.js";
 import { callSiteKey, hasValueFlowFacts, solveValueFlow, valueFlowInvokeSites } from "./value-flow.js";
 import { getLanguageForFile } from "../parsers/language-map.js";
 import { ALL_BUILTIN_MEMBERS, BUILTIN_MEMBERS_BY_LANGUAGE, declaresSchemaTypes, importsNameDirectories, isApiContractLanguage, manifestFor, packageEcosystemsFor, packageMatchingFor, pluginFor, testFilePatternsFor } from "../extractors/registry.js";
@@ -145,7 +145,7 @@ export function buildSymbolLinks(
     importedStemsCache: new Map(),
   };
   // After the context exists: the function-type question reads its import and scope resolution.
-  if (hasValueFlowFacts(analyses)) ctx.invokeSites = valueFlowInvokeSites(analyses, callableQuestion(ctx));
+  if (hasValueFlowFacts(analyses)) ctx.invokeSites = valueFlowInvokeSites(analyses, callableQuestions(ctx));
   const interfaceImplMap = ctx.interfaceImplMap;
   const links: SymbolLink[] = [];
 
@@ -4660,26 +4660,29 @@ function valueFlowLinks(links: readonly SymbolLink[], ctx: LinkContext): SymbolL
       const slash = file.lastIndexOf("/");
       return packageFilesOf(ctx, slash < 0 ? "" : file.slice(0, slash), file);
     },
-    isCallable: callableQuestion(ctx),
+    isFunctionType: functionTypeQuestion(ctx),
+    isCallableMember: callableMemberQuestion(ctx),
     isTest: (file) => testFileAt(ctx, file),
   });
 }
 
+/** Both host questions behind a conditional `invoke`, for the invoke-site pass. */
+function callableQuestions(ctx: LinkContext): CallableQuestions {
+  return { isFunctionType: functionTypeQuestion(ctx), isCallableMember: callableMemberQuestion(ctx) };
+}
+
 /**
- * The one host question behind a conditional `invoke` (`CallableQuery`): a held value typed by a name the file cannot
- * judge asks `functionTypeQuestion`; a call through a field another file's class may declare callable (`ifFnField`)
- * is answered from the receiver as the linker types it (`receiverDeclaredType`; `this` is the class the scope is
+ * The host question behind `ifFnField`: a call through a field another file's class may declare callable is answered
+ * from the receiver as the linker types it (`receiverDeclaredType`; `this` is the class the scope is
  * written in) and the class `locateClass` finds from the caller's file — own import and sub-project first — then its
  * bases by the linker's own `parentClassOf`, three hops: a `PropertyInfo.callable` member of that class. A method
  * of the name, a data field, and a namesake class of another sub-project never answer yes.
  */
-function callableQuestion(ctx: LinkContext): (query: CallableQuery) => boolean {
-  const fnType = functionTypeQuestion(ctx);
+function callableMemberQuestion(ctx: LinkContext): CallableMemberQuestion {
   // Per link run, not per closure: the invoke sites and the solver each build a question and ask the same ones.
   let members = callableMemos.get(ctx);
   if (!members) callableMemos.set(ctx, (members = new Map()));
   return (q) => {
-    if ("fnType" in q) return fnType(q.file, q.fnType);
     const key = `${q.file}\0${q.symbol}\0${q.receiver}\0${q.member}`;
     const known = members.get(key);
     if (known !== undefined) return known;
@@ -4691,7 +4694,7 @@ function callableQuestion(ctx: LinkContext): (query: CallableQuery) => boolean {
 
 const callableMemos = new WeakMap<LinkContext, Map<string, boolean>>();
 
-function callableMember(ctx: LinkContext, q: CallableQuery & { receiver: string; member: string }): boolean {
+function callableMember(ctx: LinkContext, q: Parameters<CallableMemberQuestion>[0]): boolean {
   const analysis = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(q.file);
   if (!analysis) return false;
   const dot = q.symbol.indexOf(".");
@@ -4718,7 +4721,7 @@ function callableMember(ctx: LinkContext, q: CallableQuery & { receiver: string;
  * sub-projects it imports as packages. A scope declaring the name as an alias only is a function type; as a class
  * only, a class; both, or neither anywhere, no answer is claimed (never a function type).
  */
-function functionTypeQuestion(ctx: LinkContext): (file: string, type: string) => boolean {
+function functionTypeQuestion(ctx: LinkContext): FunctionTypeQuestion {
   return (file, type) => {
     const answers = (ctx.fnTypeAnswers ??= new Map());
     const key = `${file}\0${type}`;
