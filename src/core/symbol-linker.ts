@@ -7552,7 +7552,7 @@ function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonl
     // `a.getLazy().value`, `a.provider.get()`, `a.lazy.Value`, `repo.all().get(0)`, `club.players.get(0)`: a field or
     // method declaring a wrapper, a list or a map, then the hop out of it. Gated on the hop's name first: reading the
     // declared type of every chain segment would cost a lookup per hop.
-    // (A call then a call is the `unwrapCalls` step above, unless the second takes an element.)
+    // (A call then a call is the wrapper step above, unless the second takes an element.)
     const hopLanguage = after ? ctx.languageOf.get(point.typeFile) : undefined;
     if (after && hopTakesValue(hopLanguage, after) && (!seg.call || !after.call || valueOutOf(hopLanguage)?.takes(after)?.element)) {
       const declared = seg.call ? methodDeclaredReturn(ctx, point, seg.name) : fieldDeclaredType(ctx, point, seg.name);
@@ -7596,7 +7596,7 @@ function wrapperShadowed(ctx: LinkContext, name: string, declFile: string): bool
 
 /**
  * The wrapper a declared type is, when the hop after it takes the value out: `Provider<Club>` before `.get()`
- * (`unwrapCalls`), `Lazy<Club>` before `.value`, `IOptions<Club>` before `.Value` (`unwrapMembers`) — the wrapper's
+ * (a `valueOut` call), `Lazy<Club>` before `.value`, `IOptions<Club>` before `.Value` (a `valueOut` member) — the wrapper's
  * first type argument, as the next receiver. Never a wrapper name the project declares as its own class, and never a
  * generic the manifest does not list (`Box<Club>.value`).
  */

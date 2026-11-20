@@ -10,9 +10,13 @@ import { splitTopLevel } from "../../shared/split-top-level.js";
 
 /** What an expression is, as far as the source states it. */
 export type ElementState =
-  | { kind: "coll"; elem: string }
+  /**
+   * `elem` is the element's type as written; `elemState` states the element instead when it is no type text — a map's
+   * entries (`m.entrySet()`: each a `kind: "entry"` state carrying the key and value types).
+   */
+  | { kind: "coll"; elem: string; elemState?: ElementState }
   | { kind: "map"; elem: string; /** The key type as written, when the plugin reads it (`Map<Club, Player>` → `Club`). */ key?: string }
-  | { kind: "optional"; elem: string }
+  | { kind: "optional"; elem: string; elemState?: ElementState }
   /** A map entry (`Map.Entry<Club, Player>`): its value and, when the plugin reads it, its key. */
   | { kind: "entry"; elem: string; key?: string }
   | { kind: "value"; type: string };
@@ -149,30 +153,35 @@ export function stateOfType(text: string | null | undefined, rules: ChainRules):
   return cls ? { kind: "value", type: cls } : null;
 }
 
+/** The state of what a collection, map or optional holds: its stated `elemState`, else its element type read as a type. */
+export function elementState(state: { elem: string; elemState?: ElementState }, rules: ChainRules): ElementState | null {
+  return state.elemState ?? stateOfType(state.elem, rules);
+}
+
 /** One step of a chain from `state`, null when the rules do not say what it yields. */
 function apply(state: ElementState, step: Step, rules: ChainRules): ElementState | null {
   if (step.index) {
     if (!rules.indexer) return null;
-    return state.kind === "coll" || state.kind === "map" ? stateOfType(state.elem, rules) : null;
+    return state.kind === "coll" || state.kind === "map" ? elementState(state, rules) : null;
   }
   const { name } = step;
   switch (state.kind) {
     case "coll":
       if (!step.call) return null;
       if (rules.keeps.has(name)) return state;
-      if (rules.elementOf.has(name)) return stateOfType(state.elem, rules);
-      if (rules.toOptional.has(name)) return { kind: "optional", elem: state.elem };
+      if (rules.elementOf.has(name)) return elementState(state, rules);
+      if (rules.toOptional.has(name)) return { kind: "optional", elem: state.elem, ...(state.elemState ? { elemState: state.elemState } : {}) };
       if (rules.filterByType.has(name) && step.typeArg) return { kind: "coll", elem: step.typeArg };
       return null;
     case "map":
       if (rules.values.has(name)) return { kind: "coll", elem: state.elem };
       if (rules.keys?.has(name) && state.key) return { kind: "coll", elem: state.key };
-      if (rules.entries?.has(name) && state.key) return { kind: "coll", elem: `Map.Entry<${state.key}, ${state.elem}>` };
+      if (rules.entries?.has(name) && state.key) return { kind: "coll", elem: "", elemState: { kind: "entry", elem: state.elem, key: state.key } };
       if (!step.call) return null;
       if (rules.mapValueOf.has(name)) return stateOfType(state.elem, rules);
       return null;
     case "optional":
-      return step.call && rules.optionalValue.has(name) ? stateOfType(state.elem, rules) : null;
+      return step.call && rules.optionalValue.has(name) ? elementState(state, rules) : null;
     case "entry":
       if (rules.entryValue?.has(name)) return stateOfType(state.elem, rules);
       return rules.entryKey?.has(name) && state.key ? stateOfType(state.key, rules) : null;

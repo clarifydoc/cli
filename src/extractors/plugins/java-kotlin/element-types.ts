@@ -7,6 +7,7 @@ import {
   type ElementState,
   callbackElement,
   chainState,
+  elementState,
   genericParts,
   loopElement,
   splitCallName,
@@ -299,7 +300,7 @@ export function jvmElementFacts(
     else {
       const loop = iterable ? chainState(iterable.text, rootState, rules) : null;
       // Kotlin loops a map directly: each step is its entry.
-      state = loop?.kind === "coll" ? stateOfType(loop.elem, rules)
+      state = loop?.kind === "coll" ? elementState(loop, rules)
         : loop?.kind === "map" && language === "kotlin" && loop.key ? { kind: "entry", elem: loop.elem, key: loop.key } : null;
     }
     if (state?.kind !== "entry") return false;

@@ -88,7 +88,7 @@ const JVM_BUILTIN_MEMBERS = [
   "setValue", "component1", "component2", "copy",
 ];
 
-/** Calls that take the value out of a JVM wrapper, and the wrappers each one unwraps (`unwrapCalls`). */
+/** Calls that take the value out of a JVM wrapper, and the wrappers each one unwraps (the `valueOut` hook's `calls`). */
 const JVM_UNWRAP_CALLS: Readonly<Record<string, readonly string[]>> = {
   join: ["CompletableFuture"],
   get: ["CompletableFuture", "Future", "Optional", "Provider", "Supplier"],
