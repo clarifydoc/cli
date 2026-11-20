@@ -26,6 +26,8 @@ export interface LspEnhancerOptions {
   timeout?: number;
   /** Where definitions come from. Default: the Docker language servers (`dockerDefinitionSource`). */
   source?: DefinitionSource;
+  /** An `isDockerAvailable()` the caller started earlier, so its wait overlaps other work (the default source only). */
+  dockerProbe?: Promise<boolean>;
 }
 
 /**
@@ -60,7 +62,7 @@ export interface DefinitionSource {
 }
 
 /** The Docker language servers (`lsp/lsp-manager.ts`). */
-export function dockerDefinitionSource(opts: { projectRoot: string; verbose: boolean; timeout: number }): DefinitionSource {
+export function dockerDefinitionSource(opts: { projectRoot: string; verbose: boolean; timeout: number; dockerProbe?: Promise<boolean> }): DefinitionSource {
   const manager = new LspManager(opts);
   return {
     kind: "docker",
@@ -230,7 +232,7 @@ export async function enhanceWithLsp(options: LspEnhancerOptions): Promise<LspEn
   }
 
   // Initialize LSP servers
-  const source = options.source ?? dockerDefinitionSource({ projectRoot, verbose, timeout });
+  const source = options.source ?? dockerDefinitionSource({ projectRoot, verbose, timeout, dockerProbe: options.dockerProbe });
   let serversUsed: string[] = [];
 
   try {

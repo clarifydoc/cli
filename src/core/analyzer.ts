@@ -135,6 +135,8 @@ import { generateSuggestions } from "./suggestions-engine.js";
 import { detectCommunities, groupCommunities } from "./community-detector.js";
 import { findGodNodes, findSurprisingConnections, suggestQuestions } from "./topology-analyzer.js";
 import { dedupSymbolLinks, dedupSymbolLinksAppend, dropNameCollisionReferences } from "./symbol-dedup.js";
+import { isDockerAvailable } from "../lsp/docker-runner.js";
+import { getConfigsForLanguages } from "../lsp/lsp-configs.js";
 import { computeParamOrigins } from "./param-origins.js";
 import { computeParamColumns, fillParamColumnEntities } from "./param-columns.js";
 import { moveInheritedCallsToSubclasses, synthesizeApiRouteSymbolLinks, synthesizeQueueSymbolLinks } from "./api-route-symbol-links.js";
@@ -1340,6 +1342,8 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   progress.status("Building link graph...");
   const linkGraph = buildLinkGraph(allAnalyses);
   progress.status("Resolving cross-file symbols...");
+  // `docker info` against a stopped daemon takes seconds: ask while the linker works, read the answer at the LSP step.
+  const dockerProbe = options.lsp !== false && getConfigsForLanguages(new Set(allAnalyses.map((a) => a.language))).length > 0 ? isDockerAvailable() : undefined;
   let symbolLinks = dedupSymbolLinks(buildSymbolLinks(allAnalyses, subProjects, importDirectory));
 
   // Resolve dispatch indirection (mediator / command-bus) the generic linker
@@ -1372,6 +1376,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
         files,
         verbose: !!verbose,
         timeout: options.lspTimeout,
+        dockerProbe,
       });
       symbolLinks = dedupSymbolLinks(lspResult.enhancedLinks);
       lspStats = {

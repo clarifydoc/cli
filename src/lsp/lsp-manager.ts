@@ -54,6 +54,8 @@ export interface LspManagerOptions {
   projectRoot: string;
   verbose: boolean;
   timeout: number;
+  /** The answer of an `isDockerAvailable()` started earlier in the run (its latency hidden behind other work); unset, asked here. */
+  dockerProbe?: Promise<boolean>;
 }
 
 /**
@@ -67,11 +69,13 @@ export class LspManager {
   private verbose: boolean;
   private timeout: number;
   private cleanupRegistered = false;
+  private dockerProbe?: Promise<boolean>;
 
   constructor(options: LspManagerOptions) {
     this.projectRoot = options.projectRoot;
     this.verbose = options.verbose;
     this.timeout = options.timeout;
+    this.dockerProbe = options.dockerProbe;
   }
 
   /**
@@ -82,8 +86,11 @@ export class LspManager {
     languages: Set<Language>,
     files: DiscoveredFile[],
   ): Promise<string[]> {
+    // No configured server for any language here: nothing to ask Docker for.
+    if (getConfigsForLanguages(languages).length === 0) return [];
+
     // Check Docker availability
-    const dockerOk = await isDockerAvailable();
+    const dockerOk = await (this.dockerProbe ?? isDockerAvailable());
     if (!dockerOk) {
       console.warn("Warning: Docker is not available. LSP enhancement will be skipped.");
       console.warn("  Install Docker to enable LSP-based symbol resolution.");
