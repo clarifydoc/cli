@@ -109,6 +109,7 @@ export function buildSymbolLinks(
   const memberTypes = buildMemberTypes(typeDecls, typeAliases, packageDirectory);
   const ctx: LinkContext = {
     filePathMap,
+    memos: { projectStatic: new Map(), inScopeBinding: new Map(), moduleStem: new Map(), pathScope: new Map(), typeFile: new Map(), importedFiles: new Map(), includeClosure: new Map() },
     typeAliases,
     symbolIndex,
     memberTypes,
@@ -1554,11 +1555,9 @@ function specRouteHandlerLink(
   return null;
 }
 
-const codeHandlerCache = new WeakMap<object, Map<string, Array<{ file: string; handler: string; line: number }>>>();
-
 /** Code API routes (not a spec's) by `<verb> <handler's own name, lower-cased>`. */
 function codeHandlerRoutes(ctx: LinkContext): Map<string, Array<{ file: string; handler: string; line: number }>> {
-  let idx = codeHandlerCache.get(ctx.analyses);
+  let idx = ctx.memos.codeHandlers;
   if (idx) return idx;
   idx = new Map();
   for (const a of ctx.analyses) {
@@ -1570,15 +1569,13 @@ function codeHandlerRoutes(ctx: LinkContext): Map<string, Array<{ file: string; 
       (idx.get(key) ?? idx.set(key, []).get(key)!).push({ file: a.filePath, handler: r.handler, line: r.line });
     }
   }
-  codeHandlerCache.set(ctx.analyses, idx);
+  ctx.memos.codeHandlers = idx;
   return idx;
 }
 
-const codeContractCache = new WeakMap<object, Map<string, Array<{ file: string; symbol: string; line: number }>>>();
-
 /** Routes of code (not of a spec) declaring a contract, by `<Type>#<method lower-cased>`. */
 function codeContractRoutes(ctx: LinkContext): Map<string, Array<{ file: string; symbol: string; line: number }>> {
-  let idx = codeContractCache.get(ctx.analyses);
+  let idx = ctx.memos.codeContracts;
   if (idx) return idx;
   idx = new Map();
   for (const a of ctx.analyses) {
@@ -1589,7 +1586,7 @@ function codeContractRoutes(ctx: LinkContext): Map<string, Array<{ file: string;
       (idx.get(key) ?? idx.set(key, []).get(key)!).push({ file: a.filePath, symbol: routeSymbolName(r), line: r.line });
     }
   }
-  codeContractCache.set(ctx.analyses, idx);
+  ctx.memos.codeContracts = idx;
   return idx;
 }
 
@@ -1609,11 +1606,9 @@ function statesThrough(file: string, className: string, states: (file: string, c
   return false;
 }
 
-const methodLeafCache = new WeakMap<object, Map<string, Array<{ file: string; symbol: string; className: string }>>>();
-
 /** Class methods by their own name: `getUser` → every `X.getUser`, across the project. */
 function methodLeafIndex(ctx: LinkContext): Map<string, Array<{ file: string; symbol: string; className: string }>> {
-  let idx = methodLeafCache.get(ctx.symbolIndex);
+  let idx = ctx.memos.methodLeaves;
   if (idx) return idx;
   idx = new Map();
   for (const [file, syms] of ctx.symbolIndex) {
@@ -1626,7 +1621,7 @@ function methodLeafIndex(ctx: LinkContext): Map<string, Array<{ file: string; sy
       (idx.get(leaf) ?? idx.set(leaf, []).get(leaf)!).push({ file, symbol: name, className });
     }
   }
-  methodLeafCache.set(ctx.symbolIndex, idx);
+  ctx.memos.methodLeaves = idx;
   return idx;
 }
 
@@ -2086,9 +2081,27 @@ function fieldHandlerLinks(analyses: readonly FileAnalysis[], ctx: LinkContext):
   return out;
 }
 
+/** What one link run caches, created with its context; a field marked optional is built on first use. */
+interface LinkMemos {
+  projectStatic: Map<string, string[]>;
+  inScopeBinding: Map<string, Array<{ holder: FileAnalysis; binding: ModuleBindingInfo }>>;
+  moduleStem: Map<string, Set<string>>;
+  pathScope: Map<string, boolean>;
+  typeFile: Map<string, string | null>;
+  importedFiles: Map<string, string[]>;
+  includeClosure: Map<string, Set<string>>;
+  codeHandlers?: Map<string, Array<{ file: string; handler: string; line: number }>>;
+  codeContracts?: Map<string, Array<{ file: string; symbol: string; line: number }>>;
+  methodLeaves?: Map<string, Array<{ file: string; symbol: string; className: string }>>;
+  bindingFilesByDir?: Map<string, FileAnalysis[]>;
+  globalMembers?: Map<string, Array<{ a: FileAnalysis; g: GlobalMemberDef }>>;
+}
+
 /** Lookup tables built once per buildSymbolLinks run, shared by every call resolution. */
 interface LinkContext {
   filePathMap: Map<string, string>;
+  /** The run's caches (`LinkMemos`), empty at the start. */
+  memos: LinkMemos;
   /** Files of one declared package (sub-project + language + package), built on first use by `packageScope` languages. */
   samePackageIndex?: Map<string, string[]>;
   /** Files per directory (with trailing `/`), built on first use by `directoryScope` languages. */
@@ -6943,8 +6956,7 @@ function inScopeMember(
  */
 function projectStaticScopes(ctx: LinkContext, analysis: FileAnalysis): string[] {
   if (!manifestFor(analysis.language as Language)?.nestedPackageLookup) return [];
-  let memo = projectStaticMemo.get(ctx);
-  if (!memo) projectStaticMemo.set(ctx, (memo = new Map()));
+  const memo = ctx.memos.projectStatic;
   const forTests = packageTest(ctx, analysis.filePath);
   const key = `${analysis.projectId}\0${analysis.language}\0${forTests}`;
   const known = memo.get(key);
@@ -6968,7 +6980,6 @@ function projectStaticScopes(ctx: LinkContext, analysis: FileAnalysis): string[]
 }
 
 /** `projectStaticScopes` per sub-project, language and test-ness, per link run. */
-const projectStaticMemo = new WeakMap<LinkContext, Map<string, string[]>>();
 
 /** The files whose `inScope.shared` import names `file` (a Dart library of its `part`), built on first use. */
 function scopeLibraries(ctx: LinkContext, file: string): string[] {
@@ -8153,11 +8164,10 @@ function moduleVariableType(ctx: LinkContext, analysis: FileAnalysis, name: stri
 }
 
 /** The files declaring module bindings, by language and directory, per link run: asked once per unresolved head. */
-const bindingFilesByDir = new WeakMap<LinkContext, Map<string, FileAnalysis[]>>();
 
 /** The files of `language` in `dir` (with its trailing slash) that declare module bindings, in analysis order. */
 function bindingFilesIn(ctx: LinkContext, language: string, dir: string): readonly FileAnalysis[] {
-  let index = bindingFilesByDir.get(ctx);
+  let index = ctx.memos.bindingFilesByDir;
   if (!index) {
     index = new Map();
     for (const a of ctx.analyses) {
@@ -8167,7 +8177,7 @@ function bindingFilesIn(ctx: LinkContext, language: string, dir: string): readon
       if (files) files.push(a);
       else index.set(at, [a]);
     }
-    bindingFilesByDir.set(ctx, index);
+    ctx.memos.bindingFilesByDir = index;
   }
   return index.get(`${language}\0${dir}`) ?? [];
 }
@@ -8503,11 +8513,11 @@ function ownMember(ctx: LinkContext, sourceFile: string, consumer: string, name:
  * it is imported from, or the installing file itself. Two installations of one name decide nothing.
  */
 function globalMember(ctx: LinkContext, sourceFile: string, name: string): InjectionPoint | null {
-  let index = globalMemberIndex.get(ctx);
+  let index = ctx.memos.globalMembers;
   if (!index) {
     index = new Map();
     for (const a of ctx.analyses) for (const g of a.globalMembers ?? []) (index.get(g.name) ?? index.set(g.name, []).get(g.name)!).push({ a, g });
-    globalMemberIndex.set(ctx, index);
+    ctx.memos.globalMembers = index;
   }
   const installs = index.get(name) ?? [];
   ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
@@ -8522,7 +8532,6 @@ function globalMember(ctx: LinkContext, sourceFile: string, name: string): Injec
 }
 
 /** Installed members by name, per link run. */
-const globalMemberIndex = new WeakMap<LinkContext, Map<string, Array<{ a: FileAnalysis; g: GlobalMemberDef }>>>();
 
 /** A bare name as the enclosing callable sees it: local, then parameter, then field. */
 function scopedName(
@@ -8773,8 +8782,7 @@ function requiredModuleBindings(ctx: LinkContext, analysis: FileAnalysis, name: 
  */
 function inScopeModuleBindings(ctx: LinkContext, analysis: FileAnalysis, name: string): Array<{ holder: FileAnalysis; binding: ModuleBindingInfo }> {
   const key = nameKey(analysis.language, name);
-  let memo = inScopeBindingMemo.get(ctx);
-  if (!memo) inScopeBindingMemo.set(ctx, (memo = new Map()));
+  const memo = ctx.memos.inScopeBinding;
   const memoKey = `${analysis.filePath}\0${key}`;
   const cached = memo.get(memoKey);
   if (cached) return [...cached];
@@ -8784,7 +8792,6 @@ function inScopeModuleBindings(ctx: LinkContext, analysis: FileAnalysis, name: s
 }
 
 /** `inScopeModuleBindings` per file and name, per link run. */
-const inScopeBindingMemo = new WeakMap<LinkContext, Map<string, Array<{ holder: FileAnalysis; binding: ModuleBindingInfo }>>>();
 
 function collectInScopeModuleBindings(
   ctx: LinkContext,
@@ -9298,11 +9305,9 @@ function capitalizedModuleCall(ctx: LinkContext, analysis: FileAnalysis, call: C
   return { ...rest, name: `${segs.join(rule.separator)}${rule.separator}${member}`, kind: "cross-file", target: segs.join(rule.separator), member, moduleMember: true, confidence: "EXTRACTED" };
 }
 
-const moduleStemMemo = new WeakMap<LinkContext, Map<string, Set<string>>>();
 /** Whether a file of the caller's sub-project (and language) is the module `name` (`Util.rs`, or `Util/mod.rs`'s directory). */
 function namesModuleFile(ctx: LinkContext, caller: FileAnalysis, name: string): boolean {
-  let memo = moduleStemMemo.get(ctx);
-  if (!memo) moduleStemMemo.set(ctx, (memo = new Map()));
+  const memo = ctx.memos.moduleStem;
   const key = `${caller.projectId}\0${caller.language}`;
   let stems = memo.get(key);
   if (!stems) {
@@ -9335,10 +9340,8 @@ function isPathCall(analysis: FileAnalysis, call: CallInfo): boolean {
  * Whether the type of a path call is in scope in `sourceFile`: declared there, imported (a `use` naming it, a glob, a
  * module re-exporting it), or reached by the module path the call writes (`crate::garage::Garage::park()`).
  */
-const pathScopeMemo = new WeakMap<LinkContext, Map<string, boolean>>();
 function pathCallInScope(ctx: LinkContext, analysis: FileAnalysis, sourceFile: string, call: CallInfo, typeName: string, typeFile: string): boolean {
-  let memo = pathScopeMemo.get(ctx);
-  if (!memo) pathScopeMemo.set(ctx, (memo = new Map()));
+  const memo = ctx.memos.pathScope;
   const key = `${sourceFile}\0${call.receiverType}\0${typeName}\0${typeFile}`;
   let known = memo.get(key);
   if (known === undefined) {
@@ -9430,12 +9433,10 @@ function isNameableFrom(ctx: LinkContext, file: string, typeName: string, source
  * else a definition unique across the whole language family. Null when the
  * type is not a project class or is ambiguous.
  */
-const typeFileMemo = new WeakMap<LinkContext, Map<string, string | null>>();
 
 function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, projectId: string): string | null {
   // One answer per (type, file, project) in a link run: the same few thousand questions are asked ~13 times each.
-  let memo = typeFileMemo.get(ctx);
-  if (!memo) typeFileMemo.set(ctx, (memo = new Map()));
+  const memo = ctx.memos.typeFile;
   const key = `${typeName}\0${sourceFile}\0${projectId}`;
   const hit = memo.get(key);
   if (hit !== undefined) return hit;
@@ -9598,10 +9599,8 @@ function typeFileForInner(ctx: LinkContext, typeName: string, sourceFile: string
 }
 
 /** The project files a file's imports resolve to, itself left out — once per file and link pass. */
-const importedFilesMemo = new WeakMap<LinkContext, Map<string, string[]>>();
 function importedFiles(ctx: LinkContext, source: FileAnalysis): string[] {
-  let memo = importedFilesMemo.get(ctx);
-  if (!memo) importedFilesMemo.set(ctx, (memo = new Map()));
+  const memo = ctx.memos.importedFiles;
   let files = memo.get(source.filePath);
   if (!files) {
     const found = new Set<string>();
@@ -9621,10 +9620,8 @@ const MAX_INCLUDE_FILES = 4000;
  * The project files `file` sees through its imports, transitively, itself included — for languages whose
  * imports put declarations in scope (a C++ `#include` of a header including others). Once per file and link pass.
  */
-const includeClosureMemo = new WeakMap<LinkContext, Map<string, Set<string>>>();
 function includeClosure(ctx: LinkContext, file: string): Set<string> {
-  let memo = includeClosureMemo.get(ctx);
-  if (!memo) includeClosureMemo.set(ctx, (memo = new Map()));
+  const memo = ctx.memos.includeClosure;
   const known = memo.get(file);
   if (known) return known;
   ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
