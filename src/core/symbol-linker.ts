@@ -170,7 +170,7 @@ export function buildSymbolLinks(
       for (const a of analyses) {
         if (isApiContractLanguage(a.language) || isSpecJoinExcluded(a.filePath)) continue;
         for (const r of a.routes) if (r.kind === "api" && isJoinableRoute(r)) {
-          code.push({ httpMethod: r.httpMethod, path: r.path, aliases: r.aliases, pathUnresolved: r.pathUnresolved, mount: r.mount, prefixUnresolved: r.prefixUnresolved, versions: r.versions, filePath: a.filePath });
+          code.push({ ...r, filePath: a.filePath });
         }
       }
       codeTwins = codeTwinsIndex(code);
