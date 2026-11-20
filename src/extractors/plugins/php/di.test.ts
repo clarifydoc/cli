@@ -154,7 +154,9 @@ class Svc {
   }
 }`);
     expect(cls!.methods[0]!.localTypes).toEqual([
-      { name: "journal", type: "Journal" },
+      // Typed by a construction and assigned from a call: the linker keeps the type only where that call types the same.
+      { name: "journal", type: "Journal", inferred: true },
+      { name: "journal", type: "", from: "group.journals.first()" },
       { name: "writer", type: "", from: "IOFactory.createWriter()" },
       // One per branch: the linker types `$text` only if both return the same class.
       { name: "text", type: "", from: "v.createText()" },

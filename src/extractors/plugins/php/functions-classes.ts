@@ -810,6 +810,8 @@ function extractLocalTypes(
   // the linker types the local only when their return types agree.
   // The value is the `choice` the call is an arm of (a conditional initializer), undefined for a plain one.
   const fromCalls = new Map<string, Map<string, number | undefined>>();
+  // Names whose type was read off an assignment (`$c = new Club()`), not stated by a docblock: another assignment from a call overrides it.
+  const inferredNames = new Set<string>();
   const noteFrom = (name: string, from: string, choice?: number): void => {
     const calls = fromCalls.get(name) ?? new Map<string, number | undefined>();
     // The same call under another initializer (or none) is no single choice.
@@ -838,11 +840,12 @@ function extractLocalTypes(
     writes.set(p.name, [{ type: t && !PHP_SCALAR_TYPES.has(t.toLowerCase()) ? t : null, block: body.id, pos: -1 }]);
   }
   const add = (name: string | undefined, type: string, qualifier?: string, from?: string): void => {
-    if (!name || seen.has(name)) return;
+    if (!name) return;
     if (!type && !qualifier) {
       if (from) noteFrom(name, from);
       return;
     }
+    if (seen.has(name)) return;
     seen.add(name);
     const local: LocalType = { name, type };
     if (qualifier) local.qualifier = qualifier;
@@ -914,7 +917,11 @@ function extractLocalTypes(
           otherAssigned.add(name);
           write(n, name, looked && looked.type && !looked.qualifier ? looked.type : null);
         }
-        if (looked) add(name, looked.type, looked.qualifier);
+        if (looked) {
+          const before = out.length;
+          add(name, looked.type, looked.qualifier);
+          if (out.length > before) inferredNames.add(name);
+        }
         // `$w = PHPExcel_IOFactory::createWriter(…)` — typed by what the call returns.
         else if (callChainText(right, "php")) add(name, "", undefined, callChainText(right, "php")!);
         else {
@@ -962,6 +969,13 @@ function extractLocalTypes(
     const typed = list.filter((e) => e.type);
     if (typed.length === 0) out.push(...list);
     else if (typed.length === list.length && new Set(typed.map((e) => e.type)).size === 1) out.push(typed[0]!);
+  }
+  // A name typed by one assignment and assigned from a call elsewhere: the linker settles whether that call agrees.
+  for (const name of inferredNames) {
+    const froms = fromCalls.get(name);
+    if (!froms) continue;
+    for (const l of out) if (l.name === name && l.type) l.inferred = true;
+    for (const from of froms.keys()) out.push({ name, type: "", from });
   }
   for (const [name, froms] of fromCalls) if (!seen.has(name)) for (const [from, choice] of froms) out.push({ name, type: "", from, ...(choice !== undefined ? { choice } : {}) });
   for (const [name, heads] of aliasFroms) {

@@ -1690,10 +1690,12 @@ export interface FunctionInfo {
    * `choice`: the entries sharing one value are the arms of ONE initializer that picks between them at run time
    * (`slug ? publicApi() : userApi()`; the value is where the declaration starts). Entries without it come from
    * separate declarations or assignments, which say nothing about which one a call reads.
+   * `inferred`: the type is read off one assignment (a construction, a container lookup), not written; a separate
+   * assignment of the name from a call that carries a `from` entry then overrides it unless that call types the same.
    * `soft`: the type comes from a parameter list of a function nested in this one (Go function literal): it types
    * the calls on the name, but where a chain off it cannot be followed it does not rule out a unique-name match.
    */
-  localTypes?: Array<{ name: string; type: string; choice?: number; qualifier?: string; from?: string; awaited?: boolean; fromIndex?: number; element?: true; iterator?: "iterated" | "dereferenced"; destructured?: true; member?: true; field?: true; soft?: true; aliasOf?: string; key?: string; indexOrigin?: CallArgOrigin["origin"]; module?: string }>;
+  localTypes?: Array<{ name: string; type: string; choice?: number; inferred?: true; qualifier?: string; from?: string; awaited?: boolean; fromIndex?: number; element?: true; iterator?: "iterated" | "dereferenced"; destructured?: true; member?: true; field?: true; soft?: true; aliasOf?: string; key?: string; indexOrigin?: CallArgOrigin["origin"]; module?: string }>;
   /**
    * Locals the plugin saw bound to a value whose type the source never states (a Ruby block parameter,
    * `clubs.each { |club| … }`). A call on one is on an unknown type: the linker's last-resort

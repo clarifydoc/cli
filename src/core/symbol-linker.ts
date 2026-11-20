@@ -8339,6 +8339,16 @@ function scopedName(
     const aliased = scopedName(ctx, analysis, sourceFile, sourceSymbol, consumer, local.aliasOf, depth + 1, branches);
     return aliased ? { ...aliased, member: name } : null;
   }
+  // A type read off one assignment (`inferred`) holds only while every other assignment of the name from a call
+  // gives the same type; one the linker cannot type, or another class, leaves the local untyped (no fan-out).
+  const inferredLocal = callable?.localTypes?.find((l) => l.inferred && l.type && nameKey(analysis.language, l.name) === key);
+  if (inferredLocal) {
+    const own = receiverTypeName(inferredLocal.type, analysis.language);
+    for (const init of callable!.localTypes!.filter((l) => l.from && !l.type && nameKey(analysis.language, l.name) === key)) {
+      const p = initializerPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, init, depth);
+      if (!p || !own || nameKey(analysis.language, p.typeName) !== nameKey(analysis.language, own)) return null;
+    }
+  }
   if (local?.from && !local.type && !local.qualifier) {
     // Every call the local is initialized from (one per branch) must agree.
     const inits = callable!.localTypes!.filter((l) => nameKey(analysis.language, l.name) === key && l.from);
