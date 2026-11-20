@@ -1,6 +1,7 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 import { attributeRepositoryAccesses, type RepositoryAccessKnobs } from "../shared/repository-access.js";
 import { splitTypeArgs } from "../shared/element-chain.js";
+import { underscore } from "../shared/inflection.js";
 import { alembicSchemaOf } from "./alembic-schema.js";
 import { fkRelation, replaySchema } from "../shared/schema-replay.js";
 import type { ClassInfo, EntityRelation, FileAnalysis, FunctionInfo, Language, PropertyInfo } from "../../../types/analysis.js";
@@ -1012,7 +1013,7 @@ function replayAlembicChains(analyses: FileAnalysis[]): void {
  */
 function flaskImplicitTable(name: string, declLine: string, members: string[]): string | null {
   if (!/\(\s*(?:db|sa)\.Model\s*[),]/.test(declLine) || members.some((m) => /^\s*__abstract__\s*=\s*True/.test(m))) return null;
-  return name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2").toLowerCase();
+  return underscore(name);
 }
 
 /** A class named as written, module path and type arguments dropped (`models.Club`, `Generic[A, B]`). */

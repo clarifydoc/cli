@@ -29,7 +29,8 @@ export function macroBodyCalls(name: string, params: readonly string[], body: re
   for (let m = re.exec(text); m; m = re.exec(text)) {
     const id = m[1]!;
     if (NOT_CALLS.has(id) || formal.has(id) || id === name || out.includes(id)) continue;
-    const before = text.slice(0, m.index).trimEnd();
+    // The tail before the name is all the tests below read: slicing the whole prefix would be quadratic in a long body.
+    const before = text.slice(Math.max(0, m.index - 80), m.index).trimEnd();
     const last = before.at(-1);
     // A member, a scoped name, or a name that follows a type or another name (a declaration).
     if (last === "." || last === ">" && before.at(-2) === "-" || before.endsWith("::") || last === "~" || (last !== undefined && /[\w*&]/.test(last) && /[A-Za-z_]\w*$/.test(before) && !/\b(return|else|case|do|goto|throw|co_await|co_return|co_yield)$/.test(before))) continue;

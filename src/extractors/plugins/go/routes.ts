@@ -63,6 +63,10 @@ const HTTP_VERBS_TITLE: Record<string, string> = {
   Delete: "DELETE", Options: "OPTIONS", Head: "HEAD",
 };
 
+/** The HTTP verbs a methods argument names, as strings (`"GET"`) or `net/http` constants (`http.MethodPost`). */
+const verbsNamed = (text: string): string[] =>
+  [...text.matchAll(/["'`](\w+)["'`]|\bhttp\.Method([A-Z][a-z]+)\b/g)].map((m) => (m[1] ?? m[2]!).toUpperCase()).filter((v) => HTTP_VERBS.has(v));
+
 /** `mux.HandleFunc(` / `mux.Handle(` — Go 1.22 pattern strings or gorilla/legacy path-first. */
 const HANDLE_RE = /(\w+|\))\.\s*Handle(?:Func)?\s*\(/;
 /** `r.GET(` — gin/echo (ALL-CAPS verbs). */
@@ -825,7 +829,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
       if (path !== null && path.startsWith("/") && handlerCall) {
         const recv = chain[1]!;
         const methodsArg = /\.\s*Methods\s*\(([^)]*)\)/.exec(text)?.[1] ?? "";
-        const verbs = [...methodsArg.matchAll(/["'`](\w+)["'`]|\bhttp\.Method([A-Z][a-z]+)\b/g)].map((m) => (m[1] ?? m[2]!).toUpperCase()).filter((v) => HTTP_VERBS.has(v));
+        const verbs = verbsNamed(methodsArg);
         const { handler, guards } = splitHandler(parseArgs(text, handlerCall.index + handlerCall[0].length - 1).args);
         const full = joinPrefix(prefixOf(recv), path);
         if (verbs.length > 0) for (const v of verbs) push(full, v, handler, lineNo, inheritedOf(recv), guards, recv);
@@ -874,7 +878,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
       const path = literal(args[any ? 0 : 1]);
       if (path !== null && path.startsWith("/") && args.length >= (any ? 2 : 3)) {
         const { handler, guards } = splitHandler(args.slice(any ? 1 : 2), isEchoRouter(recv));
-        const verbs = any ? [] : [...(args[0] ?? "").matchAll(/["'`](\w+)["'`]|\bhttp\.Method([A-Z][a-z]+)\b/g)].map((m) => (m[1] ?? m[2]!).toUpperCase()).filter((v) => HTTP_VERBS.has(v));
+        const verbs = any ? [] : verbsNamed(args[0] ?? "");
         if (verbs.length > 0) for (const v of verbs) push(joinPrefix(prefixOf(recv), path), v, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
         else push(joinPrefix(prefixOf(recv), path), null, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
       }

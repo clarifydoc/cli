@@ -34,6 +34,14 @@ export function isReferenceLink(l: SymbolLink): boolean {
 }
 
 /**
+ * A link whose `sourceLine` spells its `callName`: neither a reverse reference nor a call a macro's body makes
+ * (`viaMacro` — its line is the macro's use). The rows a resolved-call-site set is built from.
+ */
+export function isSpelledCallSite(l: Pick<SymbolLink, "relation" | "sourceSymbol" | "viaMacro">): boolean {
+  return l.relation !== "reference" && l.sourceSymbol !== "(reference)" && !l.viaMacro;
+}
+
+/**
  * Drop reverse-reference links (see {@link isReferenceLink}) that are
  * artifacts of polymorphism / name collisions rather than real dependencies.
  * Both fool reference resolution into producing *wrong-direction* edges that

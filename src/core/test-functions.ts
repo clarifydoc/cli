@@ -343,7 +343,9 @@ export function testVerdictContext(summary: VerdictSummary): TestVerdictContext 
           for (const r of rows) {
             if (r.kind !== "suite" || !r.subject) continue;
             const key = r.subject.replace(/^::/, "");
-            (described.get(key) ?? described.set(key, []).get(key)!).push({ test, line: r.line });
+            let list = described.get(key);
+            if (!list) described.set(key, (list = []));
+            list.push({ test, line: r.line });
           }
         }
       }

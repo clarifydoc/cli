@@ -17,6 +17,7 @@ import type { FileAnalysis, ProjectAnalysis, RouteInfo } from "../../types/analy
 import type { LoadedAnalysis } from "../store.js";
 import { loc, plural } from "../format.js";
 import { byOrdinal } from "../../core/ordinal.js";
+import { isSpelledCallSite } from "../../core/symbol-dedup.js";
 import { declarationsAbove, inheritanceIndex } from "../../core/overrides.js";
 import { isTestPath, type ToolContext } from "./context.js";
 
@@ -69,7 +70,7 @@ async function buildNameIndex(ctx: ToolContext, loaded: LoadedAnalysis): Promise
   const { summary } = loaded;
   const resolved = new Set<string>();
   for (const l of summary.symbolLinks ?? []) {
-    if (l.relation === "reference" || l.sourceSymbol === "(reference)" || l.viaMacro) continue;
+    if (!isSpelledCallSite(l)) continue;
     resolved.add(`${l.sourceFile}\u0000${l.sourceLine}\u0000${l.callName}`);
   }
   const files = [...new Set([...Object.keys(summary.fileProjects ?? {}), ...loaded.index.byFile.keys()])].sort(byOrdinal).slice(0, MAX_FILES);

@@ -160,11 +160,11 @@ export function buildSymbolLinks(
   // `<METHOD> <normalized path>` of the production code API routes, counted, built on the first spec route that
   // asks: a twin is one row (`pairContractTwins` pairs nothing for two).
   let codeRouteKeys: Map<string, number> | null = null;
-  const routeKey = (r: Pick<RouteInfo, "httpMethod" | "path" | "aliases" | "pathUnresolved" | "mount" | "prefixUnresolved">): string | null => {
+  const routeKey = (r: KeyedRoute): string | null => {
     const url = isJoinableRoute(r) ? routeUrlNames(r)[0] : undefined;
     return url && r.httpMethod ? `${r.httpMethod.toUpperCase()} ${normalizeRoutePath(url)}` : null;
   };
-  const codeServes = (route: Parameters<typeof routeKey>[0]): boolean => {
+  const codeServes = (route: KeyedRoute): boolean => {
     if (!codeRouteKeys) {
       codeRouteKeys = new Map();
       for (const a of analyses) {
@@ -194,17 +194,18 @@ export function buildSymbolLinks(
     // carry no handler code — their routes join the implementing method BY NAME
     // (operationId / field / operation).
     const isSpecFile = isApiContractLanguage(analysis.language);
+    // A call's link, then the links of the calls a macro it lands on makes.
+    const linkCall = (sourceSymbol: string, call: CallInfo): void => {
+      const link = resolveCallToDefinition(sourceFile, sourceSymbol, call, analysis, ctx);
+      if (!link) return;
+      links.push(link);
+      macroBodyLinks(ctx, analysis, sourceFile, sourceSymbol, call, link, links);
+    };
 
     // Functions
     for (const fn of analysis.functions) {
       for (const call of fn.calls) {
-        const link = resolveCallToDefinition(
-          sourceFile, fn.name, call, analysis, ctx,
-        );
-        if (link) {
-          links.push(link);
-          macroBodyLinks(ctx, analysis, sourceFile, fn.name, call, link, links);
-        }
+        linkCall(fn.name, call);
       }
     }
 
@@ -212,15 +213,7 @@ export function buildSymbolLinks(
     for (const cls of analysis.classes) {
       for (const method of cls.methods) {
         const sourceSymbol = `${cls.name}.${method.name}`;
-        for (const call of method.calls) {
-          const link = resolveCallToDefinition(
-            sourceFile, sourceSymbol, call, analysis, ctx,
-          );
-          if (link) {
-            links.push(link);
-            macroBodyLinks(ctx, analysis, sourceFile, sourceSymbol, call, link, links);
-          }
-        }
+        for (const call of method.calls) linkCall(sourceSymbol, call);
       }
     }
 
@@ -2081,6 +2074,9 @@ function fieldHandlerLinks(analyses: readonly FileAnalysis[], ctx: LinkContext):
   }
   return out;
 }
+
+/** What a route's `<METHOD> <normalized path>` key is read from. */
+type KeyedRoute = Pick<RouteInfo, "httpMethod" | "path" | "aliases" | "pathUnresolved" | "mount" | "prefixUnresolved">;
 
 /** Lookup tables built once per buildSymbolLinks run, shared by every call resolution. */
 interface LinkContext {
@@ -7426,9 +7422,7 @@ function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonl
     }
     // `repo.findAsync(id).join()`: the unwrapping call takes the value out of the wrapper the call before it declares.
     if (seg.call && after?.call) {
-      const calls = manifestFor((ctx.languageOf.get(point.typeFile) ?? "") as Language)?.unwrapCalls;
-      // Own keys only: `toString`, `constructor` and the rest of `Object.prototype` are no unwrapping calls.
-      const wrappers = calls && Object.hasOwn(calls, after.name) ? calls[after.name] : undefined;
+      const wrappers = unwrapListFor(ctx.languageOf.get(point.typeFile), after);
       const unwrapped = wrappers ? methodResult(ctx, point, seg.name, false, wrappers) : null;
       if (unwrapped) {
         point = unwrapped;
@@ -7437,7 +7431,8 @@ function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonl
       }
     }
     // `a.getLazy().value`, `a.provider.get()`, `a.lazy.Value`: a field or method declaring a wrapper, then the hop out of it.
-    if (after && (!seg.call || !after.call)) {
+    // Gated on the hop's name first: reading the declared type of every chain segment would cost a lookup per hop.
+    if (after && (!seg.call || !after.call) && unwrapListFor(ctx.languageOf.get(point.typeFile), after)) {
       const declared = seg.call ? methodDeclaredReturn(ctx, point, seg.name) : fieldDeclaredType(ctx, point, seg.name);
       const unwrapped = declared ? unwrappedDeclared(ctx, declared, after, point.consumer) : null;
       if (unwrapped) {
@@ -7452,6 +7447,16 @@ function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonl
         promotedMemberPoint(ctx, point.typeName, point.typeFile, seg.name, new Set()) ?? readerResult(ctx, point, seg.name);
   }
   return point;
+}
+
+/**
+ * The wrappers the hop takes the value out of in `language`: its `unwrapCalls` entry for a call, its `unwrapMembers`
+ * entry for a member read. Own keys only: `toString`, `constructor` and the rest of `Object.prototype` are no hops.
+ */
+function unwrapListFor(language: string | undefined, hop: ChainSegment): readonly string[] | undefined {
+  const manifest = manifestFor((language ?? "") as Language);
+  const table = hop.call ? manifest?.unwrapCalls : manifest?.unwrapMembers;
+  return table && Object.hasOwn(table, hop.name) ? table[hop.name] : undefined;
 }
 
 /**
@@ -7474,9 +7479,7 @@ function wrapperShadowed(ctx: LinkContext, name: string, declFile: string): bool
  * generic the manifest does not list (`Box<Club>.value`).
  */
 function unwrappedDeclared(ctx: LinkContext, declared: { type: string; file: string }, hop: ChainSegment, consumer: string): InjectionPoint | null {
-  const manifest = manifestFor((ctx.languageOf.get(declared.file) ?? "") as Language);
-  const table = hop.call ? manifest?.unwrapCalls : manifest?.unwrapMembers;
-  const wrappers = table && Object.hasOwn(table, hop.name) ? table[hop.name] : undefined;
+  const wrappers = unwrapListFor(ctx.languageOf.get(declared.file), hop);
   if (!wrappers) return null;
   const written = declared.type.trim();
   const open = written.indexOf("<");
@@ -7499,9 +7502,7 @@ function wrappedHead(
   hop: ChainSegment | undefined,
   viaSelf: boolean,
 ): InjectionPoint | null {
-  if (!hop || hop.ctor) return null;
-  const manifest = manifestFor(analysis.language as Language);
-  if (!(hop.call ? manifest?.unwrapCalls : manifest?.unwrapMembers) || !Object.hasOwn((hop.call ? manifest?.unwrapCalls : manifest?.unwrapMembers)!, hop.name)) return null;
+  if (!hop || hop.ctor || !unwrapListFor(analysis.language, hop)) return null;
   const key = nameKey(analysis.language, name);
   let type: string | undefined;
   if (!viaSelf) {
@@ -10536,7 +10537,7 @@ function macroBodyLinks(
   ctx: LinkContext, analysis: FileAnalysis, sourceFile: string, sourceSymbol: string,
   call: CallInfo, link: SymbolLink, out: SymbolLink[], seen: readonly string[] = [], depth = 0,
 ): void {
-  if (depth >= MACRO_DEPTH || call.kind !== "internal" || link.callName !== call.name || link.viaMacro) return;
+  if (depth >= MACRO_DEPTH || call.kind !== "internal" || link.callName !== call.name) return;
   const hit = macroDefinition(ctx, analysis, sourceFile, call.name);
   if (!hit?.macro.calls || link.targetFile !== hit.file || link.targetSymbol !== call.name || link.targetLine !== hit.macro.line) return;
   const path = [...seen, call.name];
@@ -10548,7 +10549,7 @@ function macroBodyLinks(
     inner.confidence = "INFERRED";
     inner.viaMacro = call.name;
     out.push(inner);
-    macroBodyLinks(ctx, analysis, sourceFile, sourceSymbol, body, { ...inner, viaMacro: undefined }, out, path, depth + 1);
+    macroBodyLinks(ctx, analysis, sourceFile, sourceSymbol, body, inner, out, path, depth + 1);
   }
 }
 

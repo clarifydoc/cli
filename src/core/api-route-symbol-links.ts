@@ -187,7 +187,8 @@ export function synthesizeApiRouteSymbolLinks(
     const routeRow = () => {
       const atLine = (fileOf.get(link.target)?.routes ?? []).filter((r) => r.kind === "api" && r.line === link.targetLine);
       // The link states the path with `{param}` holes where the row has `:param` (or a framework's own): the same route.
-      const onPath = atLine.filter((r) => r.path === link.routePath || normalizeRoutePath(r.path) === normalizeRoutePath(link.routePath));
+      let want: string | undefined;
+      const onPath = atLine.filter((r) => r.path === link.routePath || normalizeRoutePath(r.path) === (want ??= normalizeRoutePath(link.routePath)));
       const byPath = onPath.find((r) => link.method && r.httpMethod === link.method) ?? onPath.find((r) => r.httpMethod === null) ?? onPath[0];
       if (byPath) return byPath;
       const byMethod = atLine.filter((r) => !link.method || r.httpMethod === link.method);

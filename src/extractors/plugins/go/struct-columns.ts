@@ -1,4 +1,5 @@
 import type { ClassInfo, DataSourceInfo, FileAnalysis, FunctionInfo, PropertyInfo } from "../../../types/analysis.js";
+import { underscore } from "../shared/inflection.js";
 
 /**
  * The column a Go struct member names, for the project pass that settles an ORM filter written
@@ -32,10 +33,7 @@ const TAG_WORDS = new Set([
  * one word (`OtherClubID` → `other_club_id`, `ID` → `id`, `HTTPServer` → `http_server`).
  */
 export function snakeColumn(member: string): string {
-  return member
-    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
-    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
-    .toLowerCase();
+  return underscore(member);
 }
 
 /**

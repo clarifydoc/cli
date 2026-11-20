@@ -787,6 +787,13 @@ function conditionalArms(node: Node | null | undefined): Node[] | null {
   return out;
 }
 
+/** Whether an `if` condition tests `$name` for null (`!$x`, `!isset($x)`, `null === $x`, `is_null($x)`, `empty($x)`). */
+function testsNull(cond: string, name: string): boolean {
+  if (!cond.includes("$" + name)) return false;
+  const v = "\\$" + name + "\\b";
+  return new RegExp(`^\\(?\\s*(?:!\\s*(?:isset\\s*\\(\\s*${v}\\s*\\)|${v})|(?:null\\s*===?\\s*${v}|${v}\\s*===?\\s*null)|(?:is_null|empty)\\s*\\(\\s*${v}\\s*\\))\\s*\\)?$`, "i").test(cond.trim());
+}
+
 /**
  * Locals whose type the body states, so the symbol linker can resolve
  * `$x->method()` to `Type::method`:
@@ -817,10 +824,6 @@ function extractLocalTypes(
   // Names whose construction is a top-level statement of the body (the last straight-line assignment wins), and those assigned from a call after it.
   const straightBuilt = new Set<string>();
   const callAfterBuilt = new Set<string>();
-  const testsNull = (cond: string, name: string): boolean => {
-    const v = "\\$" + name + "\\b";
-    return new RegExp(`^\\(?\\s*(?:!\\s*(?:isset\\s*\\(\\s*${v}\\s*\\)|${v})|(?:null\\s*===?\\s*${v}|${v}\\s*===?\\s*null)|(?:is_null|empty)\\s*\\(\\s*${v}\\s*\\))\\s*\\)?$`, "i").test(cond.trim());
-  };
   const noteFrom = (name: string, from: string, choice?: number): void => {
     if (straightBuilt.has(name)) callAfterBuilt.add(name);
     const calls = fromCalls.get(name) ?? new Map<string, number | undefined>();

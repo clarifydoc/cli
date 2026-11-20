@@ -1,5 +1,6 @@
 import type { DataSourceInfo, FileAnalysis, Language, FunctionInfo, PathArgCall } from "../types/analysis.js";
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
+import { HTTP_VERBS } from "../extractors/shared/http-verbs.js";
 import type { ClassIndex, ClassRef, ImportIndex, ProjectContext } from "../types/project.js";
 import { buildModuleValueLookup } from "./module-values.js";
 import { buildImportDirectoryResolver } from "./import-directories.js";
@@ -158,11 +159,10 @@ interface FactoryRow {
 
 // `${url}`, or PHP's `{$url}`.
 const HOLE = /\$\{([A-Za-z_$][\w$]*)\}|\{\$([A-Za-z_]\w*)\}/g;
-const VERBS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 /** The verb a row's name states (`dio.get`, `$client->post`, `GET`), or null. */
 const rowVerb = (row: ApiCall): string | null => {
   const leaf = (row.name ?? "").split(/\.|->/).pop()!.replace(/\(.*$/, "").toUpperCase();
-  return VERBS.has(leaf) ? leaf : null;
+  return HTTP_VERBS.has(leaf) ? leaf : null;
 };
 
 /**
@@ -444,7 +444,7 @@ function fieldClass(classes: ClassIndex, ref: ClassRef, field: string, namesakes
 function expandSite(calls: Array<{ row: ApiCall; onward: boolean }>, filePath: string, site: PathArgCall, rows: FactoryRow[], known: ReadonlySet<string>): number {
   let chosen = rows;
   let method: string | null = null;
-  if (site.method && VERBS.has(site.method)) {
+  if (site.method && HTTP_VERBS.has(site.method)) {
     // The wrapper's branch for that verb; else the rows whose verb is a parameter.
     const branch = rows.filter((f) => rowVerb(f.row) === site.method);
     const open = rows.filter((f) => rowVerb(f.row) === null);
