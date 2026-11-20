@@ -8,6 +8,8 @@
  * is the caller for a later presence test (`render … status: 401 if @kit_app.blank?`). When in doubt: not a guard.
  */
 
+import { wrapsWhole } from "../shared/text-scan.js";
+
 const USER = String.raw`@?current_(?:user|account|member|player|admin|staff|api_user|principal)`;
 /** Words of a state predicate on an identified caller: the caller is known, so it checks nobody. */
 const STATE_WORD =
@@ -21,17 +23,8 @@ type Verdict = "ok" | "absent" | null;
 
 function stripParens(s: string): string {
   let t = s.trim();
-  while (t.startsWith("(") && t.endsWith(")") && balancedOuter(t)) t = t.slice(1, -1).trim();
+  while (t.startsWith("(") && t.endsWith(")") && wrapsWhole(t)) t = t.slice(1, -1).trim();
   return t;
-}
-
-function balancedOuter(t: string): boolean {
-  let depth = 0;
-  for (let i = 0; i < t.length; i++) {
-    if (t[i] === "(") depth++;
-    else if (t[i] === ")" && --depth === 0 && i < t.length - 1) return false;
-  }
-  return true;
 }
 
 /** Splits at top-level `||`, `&&`, `and`, `or`. */

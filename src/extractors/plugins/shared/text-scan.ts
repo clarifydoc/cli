@@ -65,3 +65,35 @@ export function lineOfOffset(starts: number[], offset: number): number {
   }
   return lo + 1;
 }
+
+/** Top-level arguments of the call whose `(` is at `open` in `text` (strings blanked by the caller where they matter). */
+export function callArgsAt(text: string, open: number): Array<{ text: string; at: number }> {
+  const out: Array<{ text: string; at: number }> = [];
+  let depth = 0;
+  let start = open + 1;
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === "(" || ch === "[" || ch === "{") depth++;
+    else if (ch === ")" || ch === "]" || ch === "}") {
+      depth--;
+      if (depth === 0) {
+        out.push({ text: text.slice(start, i), at: start });
+        return out;
+      }
+    } else if (ch === "," && depth === 1) {
+      out.push({ text: text.slice(start, i), at: start });
+      start = i + 1;
+    }
+  }
+  return [];
+}
+
+/** The parentheses at both ends of `t` are one pair. */
+export function wrapsWhole(t: string): boolean {
+  let depth = 0;
+  for (let i = 0; i < t.length; i++) {
+    if (t[i] === "(") depth++;
+    else if (t[i] === ")" && --depth === 0 && i < t.length - 1) return false;
+  }
+  return true;
+}

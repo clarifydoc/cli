@@ -1,4 +1,5 @@
 import type { CallInfo, FunctionInfo } from "../../../types/analysis.js";
+import { callArgsAt } from "../shared/text-scan.js";
 
 /**
  * The regex reading's counterpart of the ANTLR front end's Qt slot passes (antlr.ts `connectReferences`): a function
@@ -38,7 +39,7 @@ export function markQtSlotPasses(code: readonly string[], fns: readonly Function
     }
     for (const m of body.matchAll(/(?<![\w.>])(?:[A-Za-z_]\w*::)*connect\s*\(/g)) {
       const open = m.index! + m[0].length - 1;
-      for (const arg of argumentsAt(body, open).slice(2)) {
+      for (const arg of callArgsAt(body, open).slice(2)) {
         const text = arg.text.trim();
         const slot = /^&((?:[A-Za-z_]\w*::)*)([A-Za-z_]\w*)$/.exec(text);
         if (!slot) continue;
@@ -54,24 +55,3 @@ export function markQtSlotPasses(code: readonly string[], fns: readonly Function
   }
 }
 
-/** Top-level arguments of the call whose `(` is at `open` in `text`. */
-function argumentsAt(text: string, open: number): Array<{ text: string; at: number }> {
-  const out: Array<{ text: string; at: number }> = [];
-  let depth = 0;
-  let start = open + 1;
-  for (let i = open; i < text.length; i++) {
-    const ch = text[i]!;
-    if (ch === "(" || ch === "[" || ch === "{") depth++;
-    else if (ch === ")" || ch === "]" || ch === "}") {
-      depth--;
-      if (depth === 0) {
-        out.push({ text: text.slice(start, i), at: start });
-        return out;
-      }
-    } else if (ch === "," && depth === 1) {
-      out.push({ text: text.slice(start, i), at: start });
-      start = i + 1;
-    }
-  }
-  return [];
-}

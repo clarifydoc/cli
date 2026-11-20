@@ -31,3 +31,8 @@ export function camelCase(name: string): string {
   const cut = isLower ? run - 1 : run;
   return name.slice(0, cut).toLowerCase() + name.slice(cut);
 }
+
+/** `ClubMember` → `club_member`, `HTTPServer` → `http_server` (a model name as its table or key column spells it). */
+export function underscore(name: string): string {
+  return name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2").toLowerCase();
+}

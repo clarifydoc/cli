@@ -9,6 +9,7 @@ import { localName } from "../shared/xml-scan.js";
 import { androidNavGraphFacts } from "../shared/android-nav-graph.js";
 import { ANDROID_MANIFEST_FUNCTION, androidManifestFacts, isAndroidManifest } from "../shared/android-manifest.js";
 import { CXF_SERVER_ADDRESS_FACT, CXF_SERVICE_BEANS_FACT, cxfAddressPath, type ServerAddressFact } from "../shared/cxf-service-beans.js";
+import { attrOf } from "../shared/xml-scan.js";
 
 /**
  * Spring XML definitions — the declarative wiring tier of classic Java web
@@ -43,11 +44,6 @@ import { CXF_SERVER_ADDRESS_FACT, CXF_SERVICE_BEANS_FACT, cxfAddressPath, type S
 
 // ─── Tolerant XML tag scan (tags span lines; quoted '>' must not close) ─────
 const XML_TAG_RE = /<(\/?)([a-zA-Z][\w.:-]*)((?:[^<>"']|"[^"]*"|'[^']*')*?)(\/?)>/g;
-
-function attrOf(attrs: string, name: string): string | null {
-  const m = attrs.match(new RegExp(`(?:^|\\s)${name}\\s*=\\s*"([^"]*)"|(?:^|\\s)${name}\\s*=\\s*'([^']*)'`));
-  return m ? (m[1] ?? m[2] ?? null) : null;
-}
 
 interface XmlTag {
   close: boolean;

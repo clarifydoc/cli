@@ -1,4 +1,4 @@
-import { pluralize, singularize } from "../shared/inflection.js";
+import { pluralize, singularize, underscore } from "../shared/inflection.js";
 import type { CallInfo, ClassInfo, DataSourceInfo, EntityRelation, FileAnalysis, FunctionInfo, Language, PropertyInfo } from "../../../types/analysis.js";
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 import { isInstanceWrite, modelAccess } from "./data-sources.js";
@@ -115,9 +115,6 @@ export class CrystalEntityExtractor extends EntityExtractor {
   }
 }
 
-function underscore(name: string): string {
-  return name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2").toLowerCase();
-}
 function camelize(word: string): string {
   return word.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join("");
 }

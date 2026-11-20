@@ -1,4 +1,5 @@
 import type { CallInfo, FunctionInfo } from "../../../types/analysis.js";
+import { callArgsAt } from "../shared/text-scan.js";
 
 /**
  * The regex reading's counterpart of the ANTLR front end's method values (antlr.ts `withPassedValues`): a selector
@@ -14,28 +15,6 @@ const VALUE_BUILTINS = new Set([
 ]);
 const VALUE_PACKAGES = new Set(["fmt", "log", "slog", "errors", "strconv"]);
 const SELECTOR_RE = /^([A-Za-z_]\w*)\.([A-Za-z_]\w*)(?:\.([A-Za-z_]\w*))?(?:\.([A-Za-z_]\w*))?$/;
-
-/** Top-level arguments of the call whose `(` is at `open` in `text` (strings are blanked by the caller). */
-function argsAt(text: string, open: number): Array<{ text: string; at: number }> {
-  const out: Array<{ text: string; at: number }> = [];
-  let depth = 0;
-  let start = open + 1;
-  for (let i = open; i < text.length; i++) {
-    const ch = text[i]!;
-    if (ch === "(" || ch === "[" || ch === "{") depth++;
-    else if (ch === ")" || ch === "]" || ch === "}") {
-      depth--;
-      if (depth === 0) {
-        out.push({ text: text.slice(start, i), at: start });
-        return out;
-      }
-    } else if (ch === "," && depth === 1) {
-      out.push({ text: text.slice(start, i), at: start });
-      start = i + 1;
-    }
-  }
-  return [];
-}
 
 /** The names a function binds: receiver, parameters, `x := …`, `var x`. */
 function boundNames(fn: FunctionInfo, signature: string, body: string): Set<string> {
@@ -69,7 +48,7 @@ export function addRegexMethodValues(codeLines: readonly string[], fns: readonly
       const callee = m[1]!;
       const head = callee.split(".")[0]!;
       if (!callee.includes(".") ? VALUE_BUILTINS.has(callee) : VALUE_PACKAGES.has(head)) continue;
-      for (const arg of argsAt(body, m.index! + m[0].length - 1)) {
+      for (const arg of callArgsAt(body, m.index! + m[0].length - 1)) {
         const sel = SELECTOR_RE.exec(arg.text.trim());
         if (!sel || !bound.has(sel[1]!)) continue;
         const ids = sel.slice(1).filter((s): s is string => !!s);

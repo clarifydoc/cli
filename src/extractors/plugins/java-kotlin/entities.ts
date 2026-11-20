@@ -1,6 +1,7 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 import type { ClassInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
 import { daoReceiverEntity, EVENT_TYPE_RE, GENERIC_EVENT_TYPE_RE } from "./data-sources.js";
+import { underscore } from "../shared/inflection.js";
 
 /**
  * Extracts JPA entities + their relations from Java and Kotlin source.
@@ -685,7 +686,7 @@ export class JavaKotlinEntityExtractor extends EntityExtractor {
     if (!fk && this.hasAnnotation(ann, "PrimaryKeyJoinColumn")) {
       const named = this.annotationArg(ann, /@(?:[\w.]*\.)?PrimaryKeyJoinColumn\b/, "name");
       const conventionBase = relation.inverseField ?? field.name;
-      fk = named ?? `${toSnake(conventionBase)}_id`;
+      fk = named ?? `${underscore(conventionBase)}_id`;
       fkExtracted = named != null;
     }
     if (fk) relation.foreignKey = fk;
@@ -873,14 +874,6 @@ const SCALAR_TYPES = new Set<string>([
 function isScalarType(bare: string | null): boolean {
   if (!bare) return false;
   return SCALAR_TYPES.has(bare);
-}
-
-/** Convert a camelCase / PascalCase identifier to snake_case (for FK defaults). */
-function toSnake(name: string): string {
-  return name
-    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
-    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
-    .toLowerCase();
 }
 
 /** `@Table(name = "app_users")`, `@Table("app_users")` (Spring Data JDBC), `@Table(schema = "s", name = "t")`. */

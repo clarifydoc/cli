@@ -1,7 +1,7 @@
 import type { ClassInfo, RouteInfo } from "../../../types/analysis.js";
 import { extractCallsFromBody, findEndLine } from "../shared/regex-base.js";
 import { CRYSTAL_CALL_PATTERNS, extractCrystalLocalTypes } from "./calls.js";
-import { singularize } from "../shared/inflection.js";
+import { singularize, underscore } from "../shared/inflection.js";
 import { joinTrimmedPath as joinPath } from "../../shared/route-paths.js";
 
 const VERBS = "get|post|put|patch|delete|options|head";
@@ -41,10 +41,6 @@ function crystalPath(path: string): string {
   return path.replace(/<(\w+)(?::\w+)?>/g, "{$1}").replace(/:(\w+)/g, "{$1}");
 }
 
-
-function underscore(name: string): string {
-  return name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2").toLowerCase();
-}
 
 /** 1-based spans of every top-level block that runs after load (see `RegexLangSpec.deferredBlocks`). */
 export function crystalRouteBlocks(lines: string[]): Array<[number, number]> {

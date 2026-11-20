@@ -1,0 +1,7 @@
+{
+  "82ac84021f2c": "each language's taint hook is the same one-line call over that plugin's own spec constant",
+  "39703030d338": "tidySetup of three script plugins: same call over each plugin's own dropKeywordCalls",
+  "63bfdf4ee054": "dropNested of two regex plugins: same filter over each plugin's own functionSpans",
+  "fe92126e7079": "middlewareGuard of two route readers: each states its own AUTH_MIDDLEWARE_RE / SCHEME_RE",
+  "606bcc54c87d": "protobuf and thrift keep one prepared-lines cache each (module-level WeakMap per plugin)"
+}

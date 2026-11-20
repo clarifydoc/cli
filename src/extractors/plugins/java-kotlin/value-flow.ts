@@ -23,6 +23,7 @@ import type { Node } from "web-tree-sitter";
 import type { CallInfo, ParamInfo, ValueCell, ValueFlowFact } from "../../../types/analysis.js";
 import { javaMethodRefName, kotlinReferenceName } from "./call-hooks.js";
 import { javaManifest } from "./manifest.js";
+import { wrapsWhole } from "../shared/text-scan.js";
 
 type Lang = "java" | "kotlin";
 
@@ -76,16 +77,6 @@ export function isFunctionType(text: string | null | undefined): boolean {
   if (hasTopLevelArrow(t)) return true;
   const simple = t.replace(/<[\s\S]*$/, "").split(".").pop()!;
   return FN_INTERFACES.has(simple);
-}
-
-/** The parentheses at both ends of `t` are one pair. */
-function wrapsWhole(t: string): boolean {
-  let depth = 0;
-  for (let i = 0; i < t.length; i++) {
-    if (t[i] === "(") depth++;
-    else if (t[i] === ")" && --depth === 0 && i < t.length - 1) return false;
-  }
-  return true;
 }
 
 function hasTopLevelArrow(t: string): boolean {
