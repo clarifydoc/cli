@@ -2,7 +2,9 @@
 // Fails when the same helper body is declared in two plugin folders (a shared helper belongs in
 // src/extractors/shared or src/extractors/plugins/shared, where each plugin imports it).
 // A declaration is a top-level `function` of at least MIN_BODY normalized characters; bodies are compared
-// with comments and whitespace removed and the declared name ignored. A body left on purpose goes in
+// with comments and whitespace removed and the declared name ignored. The reading is approximate on purpose
+// (a function ends at the next `}` in column 0; a `//` inside a literal reads as a comment): it catches copies,
+// it does not prove two helpers different. A body left on purpose goes in
 // scripts/plugin-helpers-allow.json as { "bodyHash": "reason" } (the failing run prints the hash).
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
@@ -27,9 +29,9 @@ function declarations(text) {
   const out = [];
   const re = /^(?:export\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)/gm;
   for (let m; (m = re.exec(text)); ) {
-    const end = text.indexOf("\n}\n", m.index);
-    if (end < 0) continue;
-    const full = text.slice(m.index, end + 2);
+    const close = /\n}[ \t]*(?:\n|$)/.exec(text.slice(m.index));
+    if (!close) continue;
+    const full = text.slice(m.index, m.index + close.index + 2);
     out.push({ name: m[1], body: full.slice(full.indexOf(m[1]) + m[1].length) });
   }
   return out;
@@ -57,7 +59,11 @@ function findDuplicates(files) {
 
 const allow = existsSync(allowPath) ? JSON.parse(readFileSync(allowPath, "utf8")) : {};
 const files = [...walk(pluginsDir)].map((path) => ({ path, text: readFileSync(path, "utf8") }));
-const found = findDuplicates(files).filter(([hash]) => !(hash in allow));
+const duplicates = findDuplicates(files);
+const found = duplicates.filter(([hash]) => !(hash in allow));
+for (const hash of Object.keys(allow)) {
+  if (!duplicates.some(([h]) => h === hash)) console.warn(`plugin helpers: allow-list entry ${hash} matches no duplicate any more (${allow[hash]}); remove or update it`);
+}
 if (found.length) {
   console.error("Identical helper bodies declared in more than one plugin folder:");
   for (const [hash, where] of found) {
