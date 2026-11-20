@@ -812,6 +812,12 @@ function extractLocalTypes(
   const fromCalls = new Map<string, Map<string, number | undefined>>();
   // Names whose type was read off an assignment (`$c = new Club()`), not stated by a docblock: another assignment from a call overrides it.
   const inferredNames = new Set<string>();
+  // Names whose construction is the default of a null check on that very name (`$x = find(); if (!$x) { $x = new X(); }`): the find-or-create idiom keeps the type.
+  const guardDefaults = new Set<string>();
+  const testsNull = (cond: string, name: string): boolean => {
+    const v = "\\$" + name + "\\b";
+    return new RegExp(`^\\(?\\s*(?:!\\s*${v}|(?:null\\s*===?\\s*${v}|${v}\\s*===?\\s*null)|(?:is_null|empty)\\s*\\(\\s*${v}\\s*\\))\\s*\\)?$`, "i").test(cond.trim());
+  };
   const noteFrom = (name: string, from: string, choice?: number): void => {
     const calls = fromCalls.get(name) ?? new Map<string, number | undefined>();
     // The same call under another initializer (or none) is no single choice.
@@ -920,7 +926,12 @@ function extractLocalTypes(
         if (looked) {
           const before = out.length;
           add(name, looked.type, looked.qualifier);
-          if (out.length > before) inferredNames.add(name);
+          if (out.length > before) {
+            inferredNames.add(name);
+            for (let p: Node | null = n.parent; p && p.id !== body.id; p = p.parent) {
+              if (p.type === "if_statement" && testsNull(p.childForFieldName("condition")?.text ?? "", name)) { guardDefaults.add(name); break; }
+            }
+          }
         }
         // `$w = PHPExcel_IOFactory::createWriter(…)` — typed by what the call returns.
         else if (callChainText(right, "php")) add(name, "", undefined, callChainText(right, "php")!);
@@ -973,7 +984,7 @@ function extractLocalTypes(
   // A name typed by one assignment and assigned from a call elsewhere: the linker settles whether that call agrees.
   for (const name of inferredNames) {
     const froms = fromCalls.get(name);
-    if (!froms) continue;
+    if (!froms || guardDefaults.has(name)) continue;
     for (const l of out) if (l.name === name && l.type) l.inferred = true;
     for (const from of froms.keys()) out.push({ name, type: "", from });
   }
