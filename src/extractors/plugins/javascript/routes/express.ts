@@ -311,6 +311,33 @@ function honoChain(call: Node): { receiver: string | null; prefix: string } | nu
   return { receiver: obj.type === "identifier" ? obj.text.toLowerCase() : null, prefix };
 }
 
+/**
+ * A chained registration on a router built in one expression: `Router().use(clubs).use("/x", players)` (and
+ * `express.Router()`). Returns the variable the whole chain is declared into, `null` when it is not (an exported or
+ * returned chain), or `undefined` when the call is not on such a chain.
+ */
+function routerChainReceiver(call: Node): string | null | undefined {
+  let obj: Node | null = call.childForFieldName("function")?.childForFieldName("object") ?? null;
+  let rooted = false;
+  while (obj?.type === "call_expression") {
+    const f = obj.childForFieldName("function");
+    if (f?.type === "identifier" && f.text === "Router") { rooted = true; break; }
+    if (f?.type !== "member_expression") return undefined;
+    if (f.childForFieldName("property")?.text === "Router" && f.childForFieldName("object")?.type === "identifier") { rooted = true; break; }
+    obj = f.childForFieldName("object");
+  }
+  if (!rooted) return undefined;
+  let top = call;
+  for (;;) {
+    const member = top.parent;
+    const outer = member?.parent;
+    if (member?.type === "member_expression" && member.childForFieldName("object")?.id === top.id && outer?.type === "call_expression" && outer.childForFieldName("function")?.id === member.id) top = outer;
+    else break;
+  }
+  const declared = top.parent?.type === "variable_declarator" && top.parent.childForFieldName("value")?.id === top.id ? top.parent.childForFieldName("name") : null;
+  return declared?.type === "identifier" ? declared.text.toLowerCase() : null;
+}
+
 function walkForRoutes(node: Node, routes: RouteInfo[]) {
   visitExpressRoute(node, routes);
   for (const child of node.children) {
@@ -334,6 +361,9 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
       // Hono chains its registrations on one expression: `new Hono().basePath('/api').get('/x', h).route('/clubs', clubs)`.
       const chain = /^(?:call|new)_expression$/.test(fn.childForFieldName("object")?.type ?? "") && isHonoFile(node) ? honoChain(node) : null;
       if (chain) receiver = chain.receiver;
+      // `const api = Router().use(clubs).use(players)`: the registrations stand on the declared variable.
+      const routerChain = method === "use" && !chain ? routerChainReceiver(node) : undefined;
+      if (routerChain) receiver = routerChain;
       // Hono mounts a sub-app with `app.route("/clubs", clubs)`, which Express spells `app.use`.
       if (method === "route" && isHonoFile(node)) method = "use";
 
@@ -353,7 +383,10 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
             ? { fn: helper.name, index: paramIndex, routerIsParam: receiverNode?.type === "identifier" && helper.params.includes(receiverNode.text) }
             : null;
           const constant = pathParam ? `\${${firstArg!.text}}` : method !== "use" ? constantRoutePath(firstArg) : null;
-          const paths = constant !== null ? [constant] :
+          // `Router().use(clubs)`: a router handed to a chain with no path, mounted where the chain is (the project pass
+          // resolves the name to its file, and drops it when it names no router). A guard is no router.
+          const chainedRouter = routerChain !== undefined && args.namedChildren.length === 1 && firstArg?.type === "identifier" && !guardFromMiddleware(firstArg);
+          const paths = chainedRouter ? [""] : constant !== null ? [constant] :
             firstArg &&
             (firstArg.type === "string" || firstArg.type === "template_string") &&
             isRoutePath(stripQuotes(firstArg.text)) &&
@@ -368,7 +401,7 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
             if (chain?.prefix) path = joinPrefix(chain.prefix, path);
             // Everything after the path, with `[a, b]` middleware arrays flattened.
             const rest: Node[] = [];
-            for (const arg of args.namedChildren.slice(1)) {
+            for (const arg of args.namedChildren.slice(chainedRouter ? 0 : 1)) {
               if (arg.type === "array") rest.push(...arg.namedChildren);
               else rest.push(arg);
             }
@@ -855,7 +888,7 @@ function composeLocalMounts(routes: RouteInfo[]): void {
       continue;
     }
     const meta = routeMeta.get(r);
-    if (!meta?.receiver || !byTarget.has(meta.receiver) || r.mount) {
+    if (!meta?.receiver || !byTarget.has(meta.receiver)) {
       next.push(r);
       continue;
     }
