@@ -22,6 +22,22 @@ paths:
     delete:
       operationId: seasonDelete
       responses: {"200": {description: ok}}
+  /api/v1/stadiums:
+    get:
+      operationId: listStadiums
+      responses: {"200": {description: ok}}
+  /transfers/{id}/approve:
+    post:
+      operationId: approveTransfer
+      responses: {"200": {description: ok}}
+  /api/v1/imports/csv/run:
+    post:
+      operationId: runCsvImport
+      responses: {"200": {description: ok}}
+  /api/v1/referees:
+    get:
+      operationId: loadReferee
+      responses: {"200": {description: ok}}
   /api/v1/matches/{id}:
     get:
       operationId: loadMatch
@@ -37,10 +53,20 @@ function dropSeason(req, res) { res.send("ok"); }
 function dropSeasonV2(req, res) { res.send("ok"); }
 app.delete("/api/v1/seasons/:id", dropSeason);
 app.delete("/api/v2/seasons/:id", dropSeasonV2);
+function stadiumIndex(req, res) { res.send("ok"); }
+app.get("/api/v1/stadiums", stadiumIndex);
+function approveIt(req, res) { res.send("ok"); }
+app.post("/api/v1/transfers/:id/approve", approveIt);
+function runImport(req, res) { res.send("ok"); }
+app.post("/api/v1/imports/:kind/run", runImport);
 module.exports = app;
 `,
   "web/clubs.js": `export function deleteClubs(ids) { return ids.length; }
 export function deleteSeasons(ids) { return ids.length; }
+export function listStadiums() { return []; }
+export function postApprove() { return 1; }
+export function postRun() { return 1; }
+export function loadReferee() { return 1; }
 export function getPlayers() { return []; }
 `,
 };
@@ -65,6 +91,22 @@ describe("spec join beside a code route of the same method and path", () => {
 
   it("counts twins as the row pairing does: the one serving the path's own API version (v1 beside v2)", () => {
     expect(links.filter((l) => l.strategy === "spec-join" && l.sourceSymbol === "route:DELETE /api/v1/seasons/{id}")).toEqual([]);
+  });
+
+  it("does not join an operation id to a client function when a code route serves the row", () => {
+    expect(links.filter((l) => l.strategy === "spec-join" && l.sourceSymbol === "route:GET /api/v1/stadiums")).toEqual([]);
+  });
+
+  it("finds the twin of a row written without the base the code serves under", () => {
+    expect(links.filter((l) => l.strategy === "spec-join" && l.sourceSymbol === "route:POST /transfers/{id}/approve")).toEqual([]);
+  });
+
+  it("finds the twin behind a parameter segment of the code row", () => {
+    expect(links.filter((l) => l.strategy === "spec-join" && l.sourceSymbol === "route:POST /api/v1/imports/csv/run")).toEqual([]);
+  });
+
+  it("keeps the operation-id join of a row no code serves", () => {
+    expect(links.some((l) => l.strategy === "spec-join" && l.sourceSymbol === "route:GET /api/v1/referees" && l.targetSymbol === "loadReferee")).toBe(true);
   });
 
   it("still joins the operation's own id beside the code route", () => {

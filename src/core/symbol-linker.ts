@@ -159,18 +159,22 @@ export function buildSymbolLinks(
 
   // The production code API routes a contract row can be paired with, built on the first spec route that asks:
   // a twin is one row, by the very rule `pairContractTwins` pairs with (`codeTwinsIndex`: method, normalized path,
-  // the path's API version).
-  let codeTwins: ((contract: KeyedRoute) => KeyedRoute[]) | null = null;
-  const codeServes = (route: KeyedRoute): boolean => {
+  // the path's API version), and where that finds none, the same row under a conventional base or behind a
+  // parameter (`loose`) — the file declaring it, or null when there is not exactly one.
+  let codeTwins: ((contract: KeyedRoute, loose?: boolean) => Array<RouteInfo>) | null = null;
+  const routeFile = new Map<RouteInfo, string>();
+  const codeTwinFile = (route: KeyedRoute): string | null => {
     if (!codeTwins) {
       const code: RouteInfo[] = [];
       for (const a of analyses) {
         if (isApiContractLanguage(a.language) || isSpecJoinExcluded(a.filePath)) continue;
-        for (const r of a.routes) if (r.kind === "api" && isJoinableRoute(r)) code.push(r);
+        for (const r of a.routes) if (r.kind === "api" && isJoinableRoute(r)) { code.push(r); routeFile.set(r, a.filePath); }
       }
       codeTwins = codeTwinsIndex(code);
     }
-    return isJoinableRoute(route) && codeTwins(route).length === 1;
+    if (!isJoinableRoute(route)) return null;
+    const twins = codeTwins(route, true);
+    return twins.length === 1 ? routeFile.get(twins[0]!) ?? null : null;
   };
 
   for (const analysis of analyses) {
@@ -442,7 +446,7 @@ export function buildSymbolLinks(
       // (`pairContractTwins`) says so — so a name derived from the path (a client's `deleteClubs`) is not tried;
       // the operation's own id still is.
       if (route.kind === "api" && isSpecFile) {
-        const specLink = specRouteHandlerLink(route, sourceFile, sourceSymbol, ctx, isSpecJoinExcluded, codeServes(route));
+        const specLink = specRouteHandlerLink(route, sourceFile, sourceSymbol, ctx, isSpecJoinExcluded, codeTwinFile(route));
         if (specLink) links.push(specLink);
       }
 
@@ -1444,8 +1448,11 @@ function specRouteHandlerLink(
   sourceSymbol: string,
   ctx: LinkContext,
   isExcluded: (filePath: string) => boolean,
-  /** A code route serves the row's method and path: only the operation's own id may name the function. */
-  codeTwin = false,
+  /**
+   * The file of the code route serving the row's method and path: only the operation's own id may name the
+   * function, and a function found by that id alone must be in that file (a client's `register` is not it).
+   */
+  codeTwin: string | null = null,
 ): SymbolLink | null {
   const segment = route.path.split("/").filter((s) => s && !/[{:}]/.test(s)).pop();
   const words = segment ? segment.split(/[-_]/).filter(Boolean) : [];
@@ -1534,6 +1541,7 @@ function specRouteHandlerLink(
     // symbolIndex order — same uniqueness semantics as a full scan, O(hits).
     const files = (ctx.classNameIndex.get(cand) ?? []).filter((f) => !isExcluded(f));
     if (files.length !== 1) continue;
+    if (codeTwin && files[0] !== codeTwin) continue;
     const def = ctx.symbolIndex.get(files[0]!)?.get(cand);
     if (!def) continue;
     return link(cand, files[0]!, def);
