@@ -4635,6 +4635,12 @@ function valueFlowLinks(links: readonly SymbolLink[], ctx: LinkContext): SymbolL
       if (files.length !== 1) return null;
       return { file: files[0]!, name: imp.aliases?.[name] ?? name, namespace: imp.isNamespace === true };
     },
+    sharedModuleFiles(file) {
+      const language = ctx.languageOf.get(file);
+      if (!language || !pluginFor(language as Language)?.directoryNamesShared) return [];
+      const slash = file.lastIndexOf("/");
+      return packageFilesOf(ctx, slash < 0 ? "" : file.slice(0, slash), file);
+    },
     isTest: (file) => testFileAt(ctx, file),
   });
 }

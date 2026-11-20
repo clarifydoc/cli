@@ -89,9 +89,12 @@ export function goValueFlow(
     return cur && cur.children.length === 1 && cur.children[0] instanceof PrimaryExprContext ? cur.children[0] : null;
   };
 
-  type Step = { k: "dot"; name: string } | { k: "index"; expr: ExpressionContext } | { k: "call"; at: number } | { k: "other" };
+  type Step = { k: "dot"; name: string } | { k: "index"; expr: ExpressionContext | null } | { k: "call"; at: number } | { k: "other" };
   const stepsOf = (p: PrimaryExprContext): Step[] => {
     const steps: Step[] = [];
+    // `factories[name]` is read as a type instantiation (`name` could be a type): a single argument is an index with an unknown key.
+    const typeArgs = p.children[0] instanceof OperandContext ? p.children[0].typeArgs() : null;
+    if (typeArgs) steps.push(typeArgs.typeList().type_().length + typeArgs.typeList().NIL_LIT().length === 1 ? { k: "index", expr: null } : { k: "other" });
     for (let i = 1; i < p.children.length; i++) {
       const c = p.children[i]!;
       if (c instanceof TerminalNode) {
@@ -106,12 +109,12 @@ export function goValueFlow(
   };
   const headIdent = (p: PrimaryExprContext): { name: string; line: number; column: number } | null => {
     const operand = p.children[0];
-    if (!(operand instanceof OperandContext) || operand.children.length !== 1) return null;
+    if (!(operand instanceof OperandContext) || operand.children.length !== (operand.typeArgs() ? 2 : 1)) return null;
     const id = operand.operandName()?.IDENTIFIER().symbol;
     return id ? { name: id.text ?? "", line: id.line, column: id.column } : null;
   };
-  const literalKey = (e: ExpressionContext): string | null => {
-    const t = e.getText();
+  const literalKey = (e: ExpressionContext | null): string | null => {
+    const t = e?.getText() ?? "";
     return /^"[^"\\]*"$/.test(t) ? t.slice(1, -1) : null;
   };
 
@@ -123,15 +126,20 @@ export function goValueFlow(
   };
 
   /** The cells a primary expression names as a place: `x`, `c.f`, `m[k]`, `c.hooks[k]`. */
-  const cellsOf = (p: PrimaryExprContext): ValueCell[] => {
+  const cellsOf = (p: PrimaryExprContext, shared = false): ValueCell[] => {
     const id = headIdent(p);
     if (!id) return [];
     const steps = stepsOf(p);
-    const base = head(id.name, id);
-    if (steps.length === 0) return base && base !== "this" ? [{ name: base }] : [];
+    // A name this file does not bind or declare may be a package variable of another file of the package: the
+    // cell is flagged `package`, and core finds the sibling that declares it (never for a dotted path, which is a package's).
+    const sibling = shared && !moduleLevel && !head(id.name, id) && !NOT_FUNCTIONS.has(id.name) && !BUILTINS.has(id.name)
+      && (steps.length === 0 || (steps.length === 1 && steps[0]!.k === "index"));
+    const base = sibling ? id.name : head(id.name, id);
+    const flag = sibling ? { package: true as const } : {};
+    if (steps.length === 0) return base && base !== "this" ? [{ name: base, ...flag }] : [];
     if (!base) return [];
     if (steps.length === 1 && steps[0]!.k === "dot") return [{ name: base, member: steps[0]!.name }];
-    if (steps.length === 1 && steps[0]!.k === "index") return base === "this" ? [] : elementMembers(undefined, literalKey(steps[0]!.expr)).map((member) => ({ name: base, member }));
+    if (steps.length === 1 && steps[0]!.k === "index") return base === "this" ? [] : elementMembers(undefined, literalKey(steps[0]!.expr)).map((member) => ({ name: base, member, ...flag }));
     if (steps.length === 2 && steps[0]!.k === "dot" && steps[1]!.k === "index") {
       return elementMembers(steps[0]!.name, literalKey(steps[1]!.expr)).map((member) => ({ name: base, member }));
     }
@@ -212,7 +220,7 @@ export function goValueFlow(
       }
       return { srcs: [{ kind: "seed", fn: `${id.name}.${member}` }], stores: [] };
     }
-    return { srcs: cellsOf(p).map((cell) => ({ kind: "cell" as const, cell })), stores: [] };
+    return { srcs: cellsOf(p, true).map((cell) => ({ kind: "cell" as const, cell })), stores: [] };
   };
 
   const hasStores = (v: Val): boolean => v.stores.length > 0;
@@ -224,8 +232,9 @@ export function goValueFlow(
   };
   const storeCell = (to: ValueCell, member: string): ValueCell => {
     // Elements and fields of a bare name are its members; of a member (`c.hooks`), the member spelled further.
-    if (to.member === undefined) return { name: to.name, member: member.startsWith(".") ? member.slice(1) : member };
-    return { name: to.name, member: `${to.member}${member}` };
+    const module = to.package ? { package: true as const } : to.module ? { module: true as const } : {};
+    if (to.member === undefined) return { name: to.name, member: member.startsWith(".") ? member.slice(1) : member, ...module };
+    return { name: to.name, member: `${to.member}${member}`, ...module };
   };
   const bindVal = (to: ValueCell, v: Val, line: number): void => {
     for (const s of v.srcs) bindSrc(to, s, line);
@@ -248,21 +257,14 @@ export function goValueFlow(
     if (!p) return;
     const id = headIdent(p);
     if (!id || id.name === "_") return;
-    const cells = cellsOf(p);
+    const cells = cellsOf(p, true);
     if (cells.length === 0) return;
     const moduleVar = !moduleLevel && !isBound(id.name, id) && id.name !== receiver && env.packageVars.has(id.name);
     if (moduleVar) {
-      // Module scope states only what needs no local: a function named, or another package variable.
-      const modular = (s: Src): boolean => (s.kind === "cell" && !isBound(s.cell.name, id) && env.packageVars.has(s.cell.name)) || (s.kind === "seed" && !s.fn.includes("."));
-      const state = (to: ValueCell, s: Src): void => {
-        if (s.kind === "cell") moduleFacts.push({ kind: "copy", from: s.cell, to, line });
-        else if (s.kind === "seed") moduleFacts.push({ kind: "seed", to, fn: s.fn, line });
-      };
-      for (const cell of cells) {
-        for (const s of v.srcs) if (modular(s)) state(cell, s);
-        // `hooks = append(hooks, save)`, `registry = []Handler{save}`: the elements it states.
-        for (const st of v.stores) for (const s of st.srcs) if (modular(s)) state(storeCell(cell, st.member), s);
-      }
+      // A package variable written from a function: the cells are the module's even though the facts sit in the
+      // function's list, so a parameter or a local may flow into it (`ValueCell.module`).
+      const moduleCell = (c: ValueCell): ValueCell => ({ ...c, module: true });
+      for (const cell of cells) bindVal(moduleCell(cell), v, line);
       // The variable may be declared without a value: say it is the module's.
       moduleFacts.push({ kind: "copy", from: { name: id.name }, to: { name: id.name }, line });
       return;
@@ -292,6 +294,9 @@ export function goValueFlow(
         pairs(names, exprs(ctx.expressionList()), (i, v) => {
           if (names[i] !== "_") bindVal({ name: names[i]! }, v, line);
         });
+      } else if (ctx instanceof VarSpecContext && moduleLevel && !ctx.expressionList() && funcish(ctx.type_(), env.funcTypes)) {
+        // `var hooks []func()` with no value: the package binds the name, so a function of another file may fill it.
+        for (const id of ctx.identifierList().IDENTIFIER()) if (id.getText() !== "_") out.push({ kind: "copy", from: { name: id.getText() }, to: { name: id.getText() }, line });
       } else if (ctx instanceof VarSpecContext && ctx.expressionList()) {
         const names = ctx.identifierList().IDENTIFIER().map((t) => t.getText());
         pairs(names, exprs(ctx.expressionList()), (i, v) => {
@@ -337,11 +342,12 @@ export function goValueFlow(
       bindVal(tmp, v, line);
       return [{ kind: "cell", cell: { name: tmp.name, member: "[]" } }];
     }
-    const cells = cellsOf(p);
+    const cells = cellsOf(p, true);
     if (cells.length !== 1) return null;
     const c = cells[0]!;
-    if (c.member === undefined) return [{ kind: "cell", cell: { name: c.name, member: "[]" } }];
-    return [{ kind: "cell", cell: { name: c.name, member: `${c.member}[]` } }];
+    const flag = c.package ? { package: true as const } : c.module ? { module: true as const } : {};
+    if (c.member === undefined) return [{ kind: "cell", cell: { name: c.name, member: "[]", ...flag } }];
+    return [{ kind: "cell", cell: { name: c.name, member: `${c.member}[]`, ...flag } }];
   };
 
   /** Arguments handed to a call, and the call of a held value. */
@@ -370,12 +376,12 @@ export function goValueFlow(
         const member = (callee[0] as { name: string }).name;
         out.push({ kind: "invoke", cell: { name: base, member }, call: named?.name ?? `${id.name}.${member}`, line: named?.line ?? id.line });
       } else if (callee.length === 1 && callee[0]!.k === "index" && base !== "this") {
-        for (const member of elementMembers(undefined, literalKey((callee[0] as { expr: ExpressionContext }).expr)).slice(0, 1)) {
+        for (const member of elementMembers(undefined, literalKey((callee[0] as { expr: ExpressionContext | null }).expr)).slice(0, 1)) {
           out.push({ kind: "invoke", cell: { name: base, member }, call: `${id.name}[]`, line: id.line });
         }
       } else if (callee.length === 2 && callee[0]!.k === "dot" && callee[1]!.k === "index" && env.funcFields.has((callee[0] as { name: string }).name)) {
         const field = (callee[0] as { name: string }).name;
-        const key = literalKey((callee[1] as { expr: ExpressionContext }).expr);
+        const key = literalKey((callee[1] as { expr: ExpressionContext | null }).expr);
         out.push({ kind: "invoke", cell: { name: base, member: elementMembers(field, key)[0]! }, call: `${id.name}.${field}[]`, line: id.line });
       }
     }

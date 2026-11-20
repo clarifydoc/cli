@@ -52,6 +52,8 @@ export interface ValueFlowHost {
   classAt(file: string, name: string): ClassInfo | undefined;
   /** The file (and the name it exports) an imported local name leads to; `namespace` for `import * as x`. */
   importedBinding(file: string, name: string): { file: string; name: string; namespace: boolean } | null;
+  /** The other files whose module-level names `file` sees by their bare names (a Go package: the files of its directory); omitted when the language has none. */
+  sharedModuleFiles?(file: string): readonly string[];
   /** A test file, or a test double's. */
   isTest(file: string): boolean;
   /** One line of progress, shown in verbose runs. */
@@ -281,7 +283,7 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
       for (const p of s.fn?.params ?? []) set.add(p.name);
       for (const l of s.fn?.localTypes ?? []) set.add(l.name);
       for (const f of s.facts) {
-        if ((f.kind === "seed" || f.kind === "copy" || f.kind === "result") && f.to.member === undefined && !f.to.module) set.add(f.to.name);
+        if ((f.kind === "seed" || f.kind === "copy" || f.kind === "result") && f.to.member === undefined && !f.to.module && !f.to.package) set.add(f.to.name);
       }
     }
     boundCache.set(s, set);
@@ -453,10 +455,15 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
 
   const cellOf = (s: Scope, cell: ValueCell): number | null => {
     const { name, member } = cell;
+    if (cell.package) {
+      // A package variable of another file: the one sibling of this file's package that declares it (two settle nothing).
+      const owners = (host.sharedModuleFiles?.(s.file) ?? []).filter((f) => moduleBound.get(f)?.has(name));
+      return owners.length === 1 ? cellOfKey(`M\0${owners[0]}\0${name}${member === undefined ? "" : `.${member}`}`) : null;
+    }
     if (cell.module) {
       // The file's own module binding (never an imported one), whatever the function binds.
-      if (moduleBound.get(s.file)?.has(name)) return cellOfKey(`M\0${s.file}\0${name}${member === undefined ? "" : `.${member}`}`);
-      return null;
+      const suffix = member === undefined ? "" : `.${member}`;
+      return moduleBound.get(s.file)?.has(name) ? cellOfKey(`M\0${s.file}\0${name}${suffix}`) : null;
     }
     if (member === undefined) {
       const base = baseOf(s, name);

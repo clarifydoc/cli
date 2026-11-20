@@ -261,3 +261,74 @@ describe("Go function values: registries, literal factories and name collisions"
     expect(links.map((l) => `${l.targetFile}::${l.targetSymbol}`)).toEqual(["league/table.go::newFixture"]);
   });
 });
+
+describe("Go function values: package variables written from a function and shared across a package", () => {
+  const registry = [
+    "package league",
+    "",
+    "var builders map[string]func() string",
+    "var hooks []func()",
+    "",
+    "func Register(name string, build func() string) {",
+    "\tbuilders[name] = build",
+    "}",
+    "",
+    "func Build(kind string) string {",
+    "\tbuild := builders[kind]",
+    "\treturn build()",
+    "}",
+    "",
+  ].join("\n");
+
+  it("a parameter stored in a package map under a variable key is run by the read of that map", async () => {
+    const analyses = await analyzeAll({
+      "league/registry.go": registry,
+      "league/decoy.go": ["package league", "", "func build() string { return \"x\" }", "func newCar() string { return \"c\" }", ""].join("\n"),
+      "league/main.go": ["package league", "", "func newClub() string { return \"club\" }", "", "func Wire() { Register(\"club\", newClub) }", ""].join("\n"),
+    });
+    expect(valueFlowLinks(analyses).filter((l) => l.startsWith("Build:"))).toEqual(["Build: build -> league/main.go::newClub"]);
+  });
+
+  it("a map declared in another file of the package is read and written by variable keys, and its range yields the elements", async () => {
+    const analyses = await analyzeAll({
+      "league/vars.go": ["package league", "", "var builders map[string]func() string", "var hooks []func()", ""].join("\n"),
+      "league/fill.go": [
+        "package league",
+        "",
+        "func newClub() string { return \"club\" }",
+        "func warmUp()         {}",
+        "",
+        "func Fill(kind string) {",
+        "\tbuilders[kind] = newClub",
+        "\thooks = append(hooks, warmUp)",
+        "}",
+        "",
+      ].join("\n"),
+      "league/run.go": [
+        "package league",
+        "",
+        "func Run(kind string) string {",
+        "\tbuild := builders[kind]",
+        "\treturn build()",
+        "}",
+        "",
+        "func FireAll() {",
+        "\tfor _, h := range hooks {",
+        "\t\th()",
+        "\t}",
+        "}",
+        "",
+      ].join("\n"),
+    });
+    expect(valueFlowLinks(analyses)).toEqual(["FireAll: h -> league/fill.go::warmUp", "Run: build -> league/fill.go::newClub"]);
+  });
+
+  it("a namesake variable of another package, or one no sibling declares, joins nothing", async () => {
+    const analyses = await analyzeAll({
+      "league/fill.go": ["package league", "", "func newClub() string { return \"club\" }", "func Fill(kind string) { builders[kind] = newClub }", ""].join("\n"),
+      "garage/vars.go": ["package garage", "", "var builders map[string]func() string", ""].join("\n"),
+      "garage/run.go": ["package garage", "", "func Run(kind string) string {", "\tbuild := builders[kind]", "\treturn build()", "}", ""].join("\n"),
+    });
+    expect(valueFlowLinks(analyses)).toEqual([]);
+  });
+});

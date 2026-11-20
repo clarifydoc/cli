@@ -1160,6 +1160,12 @@ export interface ValueCell {
    * fact sits in a function's list, and the function's other facts keep their own locals.
    */
   module?: boolean;
+  /**
+   * `name` is a package-level variable this file neither declares nor binds, so another file of the same package
+   * (a Go directory) must: core joins it to the ONE sibling whose module facts bind `name`, and to nothing when
+   * none or several do. Unlike `module` it never makes this file bind the name.
+   */
+  package?: true;
   /** `name` is a property of the enclosing class read by its bare name (a Dart State's `widget`): its declared type owns `member`. */
   field?: true;
 }
