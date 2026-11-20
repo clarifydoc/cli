@@ -57,6 +57,10 @@ interface Store { member: string; srcs: Src[] }
 interface Val { srcs: Src[]; stores: Store[] }
 const EMPTY: Val = { srcs: [], stores: [] };
 
+/** The binding flag a cell carries over to its members and elements: a sibling file's package variable, or the file's own. */
+const scopeFlag = (c: ValueCell): { package?: true; module?: true } =>
+  c.package ? { package: true } : c.module ? { module: true } : {};
+
 /** Identifiers that are values of no function. */
 const NOT_FUNCTIONS = new Set(["true", "false", "nil", "iota", "_", "err", "ctx"]);
 
@@ -232,9 +236,9 @@ export function goValueFlow(
   };
   const storeCell = (to: ValueCell, member: string): ValueCell => {
     // Elements and fields of a bare name are its members; of a member (`c.hooks`), the member spelled further.
-    const module = to.package ? { package: true as const } : to.module ? { module: true as const } : {};
-    if (to.member === undefined) return { name: to.name, member: member.startsWith(".") ? member.slice(1) : member, ...module };
-    return { name: to.name, member: `${to.member}${member}`, ...module };
+    const flag = scopeFlag(to);
+    if (to.member === undefined) return { name: to.name, member: member.startsWith(".") ? member.slice(1) : member, ...flag };
+    return { name: to.name, member: `${to.member}${member}`, ...flag };
   };
   const bindVal = (to: ValueCell, v: Val, line: number): void => {
     for (const s of v.srcs) bindSrc(to, s, line);
@@ -345,7 +349,7 @@ export function goValueFlow(
     const cells = cellsOf(p, true);
     if (cells.length !== 1) return null;
     const c = cells[0]!;
-    const flag = c.package ? { package: true as const } : c.module ? { module: true as const } : {};
+    const flag = scopeFlag(c);
     if (c.member === undefined) return [{ kind: "cell", cell: { name: c.name, member: "[]", ...flag } }];
     return [{ kind: "cell", cell: { name: c.name, member: `${c.member}[]`, ...flag } }];
   };

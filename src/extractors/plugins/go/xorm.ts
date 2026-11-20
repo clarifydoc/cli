@@ -1,6 +1,6 @@
 import type { DataSourceInfo } from "../../../types/analysis.js";
 import { escapeRegex } from "../shared/path-utils.js";
-import { lineAt as offsetLine } from "../shared/text-scan.js";
+import { lineIndex } from "../shared/text-scan.js";
 
 /**
  * xorm — the ORM many Go services use. Its sessions carry no entity
@@ -92,7 +92,7 @@ const BUILDER_VERB = /\bbuilder\.(Select|Insert|Update|Delete)\s*\(/g;
 function extractBuilderStatements(lines: string[]): DataSourceInfo[] {
   const text = lines.join("\n");
   if (!BUILDER_IMPORT.test(text)) return [];
-  const lineAt = (index: number): number => offsetLine(text, index);
+  const lineAt = lineIndex(text);
   const out: DataSourceInfo[] = [];
   for (const m of text.matchAll(BUILDER_VERB)) {
     let i = closeParen(text, m.index! + m[0].length - 1);

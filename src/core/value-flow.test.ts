@@ -333,12 +333,12 @@ describe("value-flow: a type's members, field paths and module writes", () => {
     expect(flowLinks([handlers, user])).toEqual(["src/use.c::by_club@2 sign -> src/ops.c::club_sign"]);
   });
 
-  it("a function writes a module binding it does not declare through the `<module>` cell", () => {
+  it("a function writes a module binding it does not declare through a `module` cell", () => {
     const unit = file("src/hook.c", {
       language: "c",
       functions: [
         fn("on_kick", 1),
-        fn("set_hook", 5, { params: [param("cb")], valueFlow: [{ kind: "copy", from: { name: "cb" }, to: { name: "<module>", member: "g_hook" }, line: 6 }] }),
+        fn("set_hook", 5, { params: [param("cb")], valueFlow: [{ kind: "copy", from: { name: "cb" }, to: { name: "g_hook", module: true }, line: 6 }] }),
         fn("wire", 10, { calls: [call("set_hook", 11)], valueFlow: [{ kind: "seed", to: { name: "$a" }, fn: "on_kick", line: 11 }, { kind: "arg", call: "set_hook", line: 11, index: 0, from: { name: "$a" } }] }),
         fn("fire", 15, { valueFlow: [{ kind: "invoke", cell: { name: "g_hook" }, call: "g_hook", line: 16 }], calls: [call("g_hook", 16)] }),
       ],

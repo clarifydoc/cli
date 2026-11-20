@@ -1,5 +1,5 @@
 import type { CallInfo, FunctionInfo } from "../../../types/analysis.js";
-import { callArgsAt } from "../shared/text-scan.js";
+import { callArgsAt, lineOfOffset, lineStarts } from "../shared/text-scan.js";
 
 /**
  * The regex reading's counterpart of the ANTLR front end's method values (antlr.ts `withPassedValues`): a selector
@@ -37,12 +37,7 @@ export function addRegexMethodValues(codeLines: readonly string[], fns: readonly
     const bound = boundNames(fn, slice[0] ?? "", body);
     if (bound.size === 0) continue;
     const invoked = new Set(fn.calls.map((c) => c.name));
-    const lineStarts: number[] = [];
-    let offset = 0;
-    for (const l of slice) {
-      lineStarts.push(offset);
-      offset += l.length + 1;
-    }
+    const starts = lineStarts(body);
     const added: CallInfo[] = [];
     for (const m of body.matchAll(/(?<![\w.])((?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*)\s*\(/g)) {
       const callee = m[1]!;
@@ -56,9 +51,8 @@ export function addRegexMethodValues(codeLines: readonly string[], fns: readonly
         if (invoked.has(name)) continue;
         invoked.add(name);
         const at = arg.at + (arg.text.length - arg.text.trimStart().length);
-        let row = 0;
-        while (row + 1 < lineStarts.length && lineStarts[row + 1]! <= at) row++;
-        added.push({ name, kind: "internal", target: null, line: fn.line + row, column: at - lineStarts[row]!, passed: "argument" });
+        const row = lineOfOffset(starts, at) - 1;
+        added.push({ name, kind: "internal", target: null, line: fn.line + row, column: at - starts[row]!, passed: "argument" });
       }
     }
     if (added.length > 0) fn.calls = [...fn.calls, ...added];

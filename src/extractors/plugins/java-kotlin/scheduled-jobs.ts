@@ -1,5 +1,5 @@
 import type { EntryPointInfo } from "../../../types/analysis.js";
-import { lineAt as offsetLine } from "../shared/text-scan.js";
+import { lineIndex } from "../shared/text-scan.js";
 
 /**
  * JVM scheduled jobs — methods a clock runs:
@@ -10,7 +10,7 @@ import { lineAt as offsetLine } from "../shared/text-scan.js";
 export function extractJvmScheduledJobs(sourceText: string, language: "java" | "kotlin"): EntryPointInfo[] {
   if (!/@Scheduled\b|\bQuartzJobBean\b|\bJob\b/.test(sourceText)) return [];
   const out: EntryPointInfo[] = [];
-  const lineAt = (i: number): number => offsetLine(sourceText, i);
+  const lineAt = lineIndex(sourceText);
   // The class around an index: the last class header before it (nested classes are rare in job code).
   const classes = [...sourceText.matchAll(/\bclass\s+(\w+)/g)].map((m) => ({ at: m.index!, name: m[1]! }));
   const classAt = (i: number) => classes.filter((c) => c.at < i).pop()?.name;

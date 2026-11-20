@@ -1,5 +1,5 @@
 import type { HttpClientRegistration } from "../../../types/analysis.js";
-import { lineAt as offsetLine } from "../shared/text-scan.js";
+import { lineIndex } from "../shared/text-scan.js";
 
 /**
  * Retrofit clients: the base URL each API interface is created with, so the
@@ -22,7 +22,7 @@ export function extractRetrofitClients(sourceText: string): HttpClientRegistrati
     const lit = /^\s*"([^"]+)"\s*$/.exec(arg)?.[1];
     return lit ?? consts.get(arg.trim().split(".").pop()!);
   };
-  const lineAt = (i: number): number => offsetLine(sourceText, i);
+  const lineAt = lineIndex(sourceText);
   const push = (iface: string, base: string | undefined, at: number) => {
     if (out.some((r) => r.client === iface)) return;
     out.push({ client: iface, scope: "project", ...(base ? { base: { kind: "literal" as const, key: base } } : {}), line: lineAt(at) });

@@ -1,5 +1,6 @@
 import type { FileAnalysis, RouteAuthInfo, RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";
+import { blankCComments, lineIndex } from "../../shared/text-scan.js";
 
 /**
  * Spring Security's URL rules, as the routes' guards.
@@ -37,12 +38,12 @@ const MATCHER_RE = /\.(requestMatchers|antMatchers|mvcMatchers|regexMatchers|pat
 const RULE_RE = /^\s*\.(permitAll|authenticated|fullyAuthenticated|denyAll|anonymous|rememberMe|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access|hasIpAddress)\s*\(([^()]*)\)/;
 const KOTLIN_RE = /\bauthorize\s*\(\s*(?:(HttpMethod\.\w+)\s*,\s*)?("(?:[^"\\]|\\.)*"|anyRequest)\s*,\s*([A-Za-z]+(?:\([^()]*\))?)\s*\)/g;
 
-const lineOf = (text: string, offset: number): number => text.slice(0, offset).split("\n").length;
 
 /** The `authorizeHttpRequests` rules a configuration file declares, in order. */
 export function extractSecurityRules(sourceText: string): SecurityRule[] {
   if (!GATE.test(sourceText)) return [];
-  const text = sourceText.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (m) => m.replace(/[^\n]/g, " "));
+  const text = blankCComments(sourceText);
+  const lineOf = lineIndex(text);
   const rules: SecurityRule[] = [];
   for (const m of text.matchAll(MATCHER_RE)) {
     const after = RULE_RE.exec(text.slice(m.index! + m[0].length));
@@ -51,7 +52,7 @@ export function extractSecurityRules(sourceText: string): SecurityRule[] {
     const method = /HttpMethod\.(\w+)/.exec(args)?.[1]?.toUpperCase() ?? null;
     const patterns = [...args.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((p) => p[1]!);
     if (m[1] && patterns.length === 0) continue; // a matcher object we cannot read (`PathRequest.toStaticResources()`)
-    rules.push({ patterns: m[3] ? [] : patterns, method, rule: ruleText(after[1]!, after[2]!), line: lineOf(text, m.index!) });
+    rules.push({ patterns: m[3] ? [] : patterns, method, rule: ruleText(after[1]!, after[2]!), line: lineOf(m.index!) });
   }
   for (const m of text.matchAll(KOTLIN_RE)) {
     const target = m[2]!;
@@ -59,7 +60,7 @@ export function extractSecurityRules(sourceText: string): SecurityRule[] {
       patterns: target === "anyRequest" ? [] : [target.slice(1, -1)],
       method: m[1] ? m[1].slice("HttpMethod.".length).toUpperCase() : null,
       rule: m[3]!.replace(/\s+/g, ""),
-      line: lineOf(text, m.index!),
+      line: lineOf(m.index!),
     });
   }
   return rules.sort((a, b) => a.line - b.line);

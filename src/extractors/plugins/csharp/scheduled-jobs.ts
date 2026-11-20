@@ -1,5 +1,5 @@
 import type { EntryPointInfo } from "../../../types/analysis.js";
-import { lineAt as offsetLine } from "../shared/text-scan.js";
+import { lineIndex } from "../shared/text-scan.js";
 
 /**
  * .NET scheduled jobs — methods a clock runs:
@@ -15,7 +15,7 @@ import { lineAt as offsetLine } from "../shared/text-scan.js";
 export function extractCsharpScheduledJobs(sourceText: string): EntryPointInfo[] {
   if (!/\bAddOrUpdate\b|\bIJob\b|\bBackgroundService\b/.test(sourceText)) return [];
   const out: EntryPointInfo[] = [];
-  const lineAt = (i: number): number => offsetLine(sourceText, i);
+  const lineAt = lineIndex(sourceText);
   /** A `const string Leaf = "value"` the file declares exactly once → that value; else the leaf name. */
   const constId = (expr: string): string => {
     const leaf = expr.split(".").pop()!;

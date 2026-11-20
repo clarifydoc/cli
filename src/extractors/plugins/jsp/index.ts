@@ -7,7 +7,7 @@ import type {
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { handlerOf, literalPath } from "../shared/element-requests.js";
 import { attr, extractHtmlInteractiveElements, maskMarkup } from "../html/index.js";
-import { lineAt as offsetLine } from "../shared/text-scan.js";
+import { lineIndex } from "../shared/text-scan.js";
 
 /**
  * JSP views (`.jsp` / `.tag` fragments) — the screen tier of classic Java web
@@ -172,7 +172,7 @@ function jspRequests(lines: string[]): Array<{ line: number; column: number; met
   const text = lines.join("\n");
   if (!/<(?:\w+:)?form\b|<a\b/i.test(text)) return [];
   const out: Array<{ line: number; column: number; method: string; target: string; handler: string; form: boolean }> = [];
-  const lineAt = (i: number): number => offsetLine(text, i);
+  const lineAt = lineIndex(text);
   for (const t of text.matchAll(/<((?:html|form|s|sf):form|form|a)\b((?:[^>"']|"[^"]*"|'[^']*')*)>/gi)) {
     const tag = t[1]!.toLowerCase();
     const form = tag !== "a";

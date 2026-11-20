@@ -1,5 +1,5 @@
 import { routeSymbolName } from "./route-symbol.js";
-import { codeTwinsIndex, isJoinableRoute } from "./route-linker.js";
+import { codeTwinsIndex, isJoinableRoute, type TwinRoute } from "./route-linker.js";
 import {
   relationForStrategy,
   type ClassInfo,
@@ -161,9 +161,9 @@ export function buildSymbolLinks(
   // a twin is one row, by the very rule `pairContractTwins` pairs with (`codeTwinsIndex`: method, normalized path,
   // the path's API version), and where that finds none, the same row under a conventional base or behind a
   // parameter (`loose`) — the file declaring it, or null when there is not exactly one.
-  let codeTwins: ((contract: KeyedRoute, loose?: boolean) => Array<RouteInfo>) | null = null;
+  let codeTwins: ((contract: TwinRoute, loose?: boolean) => Array<RouteInfo>) | null = null;
   const routeFile = new Map<RouteInfo, string>();
-  const codeTwinFile = (route: KeyedRoute): string | null => {
+  const codeTwinFile = (route: TwinRoute): string | null => {
     if (!codeTwins) {
       const code: RouteInfo[] = [];
       for (const a of analyses) {
@@ -2080,9 +2080,6 @@ function fieldHandlerLinks(analyses: readonly FileAnalysis[], ctx: LinkContext):
   }
   return out;
 }
-
-/** What a route's `<METHOD> <normalized path>` key is read from. */
-type KeyedRoute = Pick<RouteInfo, "httpMethod" | "path" | "aliases" | "pathUnresolved" | "mount" | "prefixUnresolved" | "versions">;
 
 /** Lookup tables built once per buildSymbolLinks run, shared by every call resolution. */
 interface LinkContext {
@@ -7523,7 +7520,6 @@ function wrappedHead(
     if (locals.length > 0) {
       // One declaration with a written type: a name several blocks declare, or one a call initializes, decides nothing.
       if (locals.length > 1 || locals[0]!.qualifier) return null;
-      // (`wrapperFromInitializer` refuses a local that also states a type.)
       if (locals[0]!.from) {
         // `var c = repo.find(1); c.get().save()`: the call the local is initialized from DECLARES the wrapper.
         const declared = wrapperFromInitializer(ctx, analysis, sourceFile, sourceSymbol, consumer, locals[0]!);
@@ -7558,14 +7554,23 @@ function wrapperFromInitializer(
   consumer: string,
   local: NonNullable<FunctionInfo["localTypes"]>[number],
 ): { type: string; file: string } | null {
-  if (!local.from || local.type || local.awaited || local.destructured || local.member || local.element || local.iterator || local.fromIndex !== undefined || local.choice !== undefined) return null;
-  // Other marks say the entry is no plain declared-return initializer.
-  if (local.inferred || local.soft || local.field || local.aliasOf !== undefined || local.key !== undefined || local.module !== undefined) return null;
+  if (!isPlainCallInitializer(local)) return null;
   const chain = receiverChain(`${local.from}.x`, manifestFor(analysis.language as Language)?.indexerMethod);
   if (!chain || chain.length === 0 || chain.length > MAX_RECEIVER_CHAIN + 1 || !chain[chain.length - 1]!.call) return null;
   // A head naming the local itself would type it by itself again.
   if (nameKey(analysis.language, chain[0]!.name) === nameKey(analysis.language, local.name)) return null;
   return chainDeclaredType(ctx, analysis, sourceFile, sourceSymbol, consumer, chain, 0);
+}
+
+/**
+ * A `localTypes` entry that is one plain call initializer and nothing else: no written type, and none of the marks
+ * that say it states another thing (an awaited, destructured, member, element, iterator, tuple, conditional-arm,
+ * inferred, soft, field, alias, keyed or module entry). A new mark that changes what `from` means belongs here.
+ */
+function isPlainCallInitializer(local: NonNullable<FunctionInfo["localTypes"]>[number]): local is typeof local & { from: string } {
+  return !!local.from && !local.type && !local.awaited && !local.destructured && !local.member && !local.element && !local.iterator
+    && local.fromIndex === undefined && local.choice === undefined && !local.inferred && !local.soft && !local.field
+    && local.aliasOf === undefined && local.key === undefined && local.module === undefined;
 }
 
 /**

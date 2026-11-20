@@ -11,6 +11,7 @@
 import type { TSNode } from "../../../parsers/parser-manager.js";
 import type { ValueCell, ValueFlowFact } from "../../../types/analysis.js";
 import { namedChildren, descendants } from "../shared/ts-nodes.js";
+import { namedType } from "../shared/value-flow-live.js";
 
 /** The call a node's argument list belongs to, as the call list names it. */
 export type CallRefs = Map<number, { name: string; line: number }>;
@@ -29,9 +30,6 @@ export interface ClassScope {
 
 /** What a name may hold: a function value (`fn`), a collection, something that is no callable (`other`), unknown (`may`), or a call's result (`call`). */
 type Kind = "fn" | "coll" | "other" | "may" | "call" | "named" | `named:${string}`;
-
-/** A declared type nothing in the file says is a function; `named:T` keeps T for the project to judge (a function-type alias of another file). */
-const namedType = (k: Kind | undefined): string | undefined => (k?.startsWith("named:") ? k.slice(6) : undefined);
 
 const PRIMITIVES = /^(?:int|double|num|String|bool|BigInt|DateTime|Duration|Uri|Object|void|BuildContext|Widget|Key|Color|Text|Icon|Future|Stream|Iterable|List|Map|Set|Type|RegExp|Offset|Size|Rect|Locale|TextStyle|EdgeInsets|Navigator|Exception|Error)\b/;
 const FUNCTION_TYPE = /\bFunction\b|(?:Callback|Handler|Listener|Builder|Action|Fn|Func|Predicate|Comparator|Setter|Getter|Validator)(?:<.*)?\??$|^Value(?:Changed|Setter|Getter)\b/;

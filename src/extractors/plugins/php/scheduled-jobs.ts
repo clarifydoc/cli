@@ -1,5 +1,5 @@
 import type { EntryPointInfo } from "../../../types/analysis.js";
-import { lineAt as offsetLine } from "../shared/text-scan.js";
+import { lineIndex } from "../shared/text-scan.js";
 
 /**
  * PHP scheduled jobs — code a clock runs:
@@ -11,7 +11,7 @@ import { lineAt as offsetLine } from "../shared/text-scan.js";
 export function extractPhpScheduledJobs(sourceText: string): EntryPointInfo[] {
   if (!/(?:\$schedule->|Schedule::)\s*(?:job|command|call)\b|#\[As(?:Cron|Periodic)Task/.test(sourceText)) return [];
   const out: EntryPointInfo[] = [];
-  const lineAt = (i: number): number => offsetLine(sourceText, i);
+  const lineAt = lineIndex(sourceText);
   const laravel = /(?:\$schedule->|Schedule::)\s*(job|command|call)\s*\(\s*(?:new\s+\\?([\w\\]+)|['"]([^'"]+)['"]|([\w\\]+)::class)?[^;]*?\)((?:\s*->\s*\w+\s*\([^)]*\))*)\s*;/g;
   for (const m of sourceText.matchAll(laravel)) {
     const [, what, newClass, command, classRef, chain] = m;

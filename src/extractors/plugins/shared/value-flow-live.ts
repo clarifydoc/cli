@@ -1,5 +1,12 @@
 import type { ValueCell, ValueFlowFact } from "../../../types/analysis.js";
 
+/**
+ * The type name a `named:T` kind keeps: a declared type nothing in the file says is a function, left for the project
+ * to judge (a function-type alias another file declares — Dart `typedef`, Swift `typealias`). Its `invoke` carries it
+ * as `ifFnType`.
+ */
+export const namedType = (kind: string | undefined): string | undefined => (kind?.startsWith("named:") ? kind.slice(6) : undefined);
+
 const keyOf = (c: ValueCell): string => `${c.name}\0${c.member ?? ""}`;
 const RECEIVERS = new Set(["this", "self"]);
 

@@ -7,14 +7,12 @@
 import type { TSNode } from "../../../parsers/parser-manager.js";
 import type { ValueCell, ValueFlowFact } from "../../../types/analysis.js";
 import { namedChildren, descendants } from "../shared/ts-nodes.js";
+import { namedType } from "../shared/value-flow-live.js";
 
 export type CallRefs = Map<number, { name: string; line: number }>;
 
 /** What a name may hold: a function value (`fn`), a collection, something that is no callable (`other`), or unknown (`may`). */
 type Kind = "fn" | "coll" | "other" | "may" | "call" | "named" | `named:${string}`;
-
-/** A declared type nothing in the file says is a function; `named:T` keeps T for the project to judge (a typealias of another file). */
-const namedType = (k: Kind | undefined): string | undefined => (k?.startsWith("named:") ? k.slice(6) : undefined);
 
 /** What a type declares that a bare name in its methods can be. */
 export interface TypeScope {

@@ -1,5 +1,6 @@
 import type { ClassInfo, PathArgCall } from "../../../types/analysis.js";
 import { closeOf, codeOf } from "./di.js";
+import { lineIndex } from "../shared/text-scan.js";
 
 /**
  * A project's own request wrapper, and the facts the core's request-factory
@@ -226,18 +227,7 @@ export function extractDartPathArgCalls(lines: string[]): PathArgCall[] {
   const raw = lines.join("\n");
   if (!/['"][^'"\n]*\/|\.(?:GET|POST|PUT|PATCH|DELETE)\b/i.test(raw)) return [];
   const code = lines.map(codeOf).join("\n");
-  const lineStarts: number[] = [0];
-  for (let i = 0; i < raw.length; i++) if (raw[i] === "\n") lineStarts.push(i + 1);
-  const lineOf = (index: number): number => {
-    let lo = 0;
-    let hi = lineStarts.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (lineStarts[mid]! <= index) lo = mid;
-      else hi = mid - 1;
-    }
-    return lo + 1;
-  };
+  const lineOf = lineIndex(raw);
   const out: PathArgCall[] = [];
   for (const m of code.matchAll(CALL_HEAD_RE)) {
     const receiver = m[1]?.replace(/\s+/g, "").replace(/^this\./, "") ?? null;

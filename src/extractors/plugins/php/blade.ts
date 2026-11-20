@@ -1,7 +1,7 @@
 import type { ImportInfo, InteractiveElementInfo, ScreenInfo } from "../../../types/analysis.js";
 import { extractHtmlInteractiveElements } from "../html/index.js";
 import { keepSourceColumns, handlerOf } from "../shared/element-requests.js";
-import { lineAt as offsetLine } from "../shared/text-scan.js";
+import { lineIndex } from "../shared/text-scan.js";
 
 /**
  * Laravel Blade templates (`resources/views/**.blade.php`) as UI screens —
@@ -135,7 +135,7 @@ const NOT_A_VIEW_COMPONENT = new Set(["slot", "dynamic-component"]);
 export function bladeImports(sourceText: string): ImportInfo[] {
   const out: ImportInfo[] = [];
   const seen = new Set<string>();
-  const lineAt = (index: number): number => offsetLine(sourceText, index);
+  const lineAt = lineIndex(sourceText);
   const add = (source: string, index: number) => {
     if (seen.has(source)) return;
     seen.add(source);

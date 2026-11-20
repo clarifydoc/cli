@@ -98,10 +98,11 @@ export function wrapsWhole(t: string): boolean {
   return true;
 }
 
-/** `offset → 1-based line` for one text, by binary search over its line starts (many lookups in one text). */
+/** `offset → 1-based line` for one text, by binary search over its line starts (many lookups in one text; the starts are read on the first). */
 export function lineIndex(text: string): (offset: number) => number {
-  const starts = lineStarts(text);
-  return (offset) => lineOfOffset(starts, offset);
+  // Built on the first lookup: an extractor that finds nothing in a file never scans it for line starts.
+  let starts: number[] | undefined;
+  return (offset) => lineOfOffset((starts ??= lineStarts(text)), offset);
 }
 
 /**

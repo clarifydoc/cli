@@ -9,8 +9,6 @@
 import type { CallInfo, ClassInfo, FileAnalysis, FunctionInfo, ValueCell, ValueFlowFact } from "../../../types/analysis.js";
 import { stripTypeArguments } from "./path-utils.js";
 
-/** The cell name core reads as the file's own module binding named by the fact's `member` (`MODULE_CELL` in core/value-flow.ts; the link tests here fail if the two drift). */
-const MODULE_CELL = "<module>";
 
 const NOT_A_CALL = new Set([
   "if", "while", "for", "switch", "return", "sizeof", "alignof", "decltype", "catch", "typeof", "defined", "new", "delete", "static_assert",
@@ -437,6 +435,11 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
   for (const f of callable) for (const c of f.calls) { const v = moduleVars.get(c.name); if (v) v.callable = true; }
   const moduleFacts: ValueFlowFact[] = [];
   const assignedMembers = new Set<string>();
+  /** A member or module binding an assignment wrote (the name a later bare or member call may run). */
+  const noteAssigned = (to: ValueCell): void => {
+    const written = to.module ? to.name : to.member;
+    if (written !== undefined) assignedMembers.add(written);
+  };
 
   // ── Expressions ────────────────────────────────────────────────────────
   interface Scope {
@@ -506,7 +509,7 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
   /** Where an assignment to `segs` goes: the same cell, or a module binding a function does not declare. */
   const targetOf = (s: Scope, segs: string[]): ValueCell | null => {
     // A function writing a global it does not declare: the file's module binding.
-    if (segs.length === 1 && s.fn && kindOf(s, segs[0]!) === "module") return { name: MODULE_CELL, member: segs[0]! };
+    if (segs.length === 1 && s.fn && kindOf(s, segs[0]!) === "module") return { name: segs[0]!, module: true };
     return cellOfSegs(s, segs);
   };
 
@@ -881,7 +884,7 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
           const argAt = a + t.indexOf("(", insert[1]!.length) + 1;
           const before = scope.out.length;
           flowInto(scope, to, insert[2]!.slice(last[0], last[1]), argAt + last[0]);
-          if (scope.out.length > before && to.member !== undefined) assignedMembers.add(to.member);
+          if (scope.out.length > before) noteAssigned(to);
         }
         continue;
       }
@@ -905,8 +908,7 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
           if (kind === "field" || kind === "module") allowResult = callableField(segs[0]!);
         } else allowResult = callableField(segs[segs.length - 1]!);
         flowInto(scope, to, assign[2]!, rhsAt, 0, allowResult);
-        if (scope.out.length > before && to.member !== undefined && to.name !== MODULE_CELL) assignedMembers.add(to.member);
-        if (scope.out.length > before && to.name === MODULE_CELL) assignedMembers.add(to.member!);
+        if (scope.out.length > before) noteAssigned(to);
       }
     }
     // A constructor's initializer list: `: cb_(cb)` sets the field.

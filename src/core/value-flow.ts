@@ -29,12 +29,6 @@ const BASE_BUDGET = 2_000_000;
 const BUDGET_PER_FACT = 200;
 
 const RECEIVER_NAMES = new Set(["this", "self"]);
-/**
- * A spelling of the file's own module binding named by `member` (`{ name: "<module>", member: "g_hook" }`): how a
- * function writes a global it does not declare. It is folded on read into `{ name: "g_hook", module: true }`
- * (`ValueCell.module`), so the solver knows one way to name such a binding.
- */
-export const MODULE_CELL = "<module>";
 const CONSTRUCTOR_NAMES = ["constructor", "__init__", "__construct", "init", "new"];
 
 /** What the solver asks of the linker (callbacks, so this module imports nothing of it). */
@@ -98,7 +92,13 @@ function functionTypeAliasesOf(analyses: readonly FileAnalysis[]): FnTypeAliases
     const set = names.get(a.language) ?? names.set(a.language, new Set()).get(a.language)!;
     for (const n of a.functionTypeAliases) set.add(n);
   }
-  if (names.size > 0) for (const a of analyses) if (names.has(a.language)) for (const c of a.classes) classes.add(`${a.language}\0${a.projectId ?? ""}\0${c.name}`);
+  // Only classes named like an alias of their language matter: a key per such class, never one per class.
+  if (names.size > 0) {
+    for (const a of analyses) {
+      const aliasNames = names.get(a.language);
+      if (aliasNames) for (const c of a.classes) if (aliasNames.has(c.name)) classes.add(`${a.language}\0${a.projectId ?? ""}\0${c.name}`);
+    }
+  }
   const out = { names, classes };
   aliasesCache.set(analyses, out);
   return out;
@@ -112,39 +112,17 @@ function gated(facts: readonly ValueFlowFact[], analysis: FileAnalysis, aliases:
     || (aliases.names.get(lang)?.has(f.ifFnType) === true && !aliases.classes.has(`${lang}\0${analysis.projectId ?? ""}\0${f.ifFnType}`)));
 }
 
-const foldedFacts = new WeakMap<readonly ValueFlowFact[], readonly ValueFlowFact[]>();
-
-/** `{ name: "<module>", member: X }` read as `{ name: X, module: true }`; a list that names no such cell is returned as it is. */
-function foldModuleCells(facts: readonly ValueFlowFact[]): readonly ValueFlowFact[] {
-  const cached = foldedFacts.get(facts);
-  if (cached) return cached;
-  const isOld = (c: ValueCell): boolean => c.name === MODULE_CELL && c.member !== undefined;
-  const fold = (c: ValueCell): ValueCell => (isOld(c) ? { name: c.member!, module: true } : c);
-  const out = facts.some((f) => ("to" in f && isOld(f.to)) || ("from" in f && isOld(f.from)) || ("cell" in f && isOld(f.cell)))
-    ? facts.map((f): ValueFlowFact => {
-        switch (f.kind) {
-          case "seed": case "result": return { ...f, to: fold(f.to) };
-          case "copy": return { ...f, from: fold(f.from), to: fold(f.to) };
-          case "arg": case "return": return { ...f, from: fold(f.from) };
-          case "invoke": return { ...f, cell: fold(f.cell) };
-        }
-      })
-    : facts;
-  foldedFacts.set(facts, out);
-  return out;
-}
-
 function* scopesOf(analysis: FileAnalysis, aliases: FnTypeAliases): Generator<Scope> {
   const setup = analysis.functions.find((f) => f.name === "<setup>") ?? null;
   const moduleFacts = analysis.moduleValueFlow ?? [];
   for (const fn of analysis.functions) {
-    const facts = fn === setup ? [...foldModuleCells(fn.valueFlow ?? []), ...foldModuleCells(moduleFacts)] : foldModuleCells(fn.valueFlow ?? []);
+    const facts = fn === setup ? [...(fn.valueFlow ?? []), ...moduleFacts] : fn.valueFlow ?? [];
     yield { file: analysis.filePath, symbol: fn.name, analysis, fn, cls: closureClassOf(analysis, fn), facts: gated(facts, analysis, aliases) };
   }
   for (const cls of analysis.classes) {
-    for (const m of cls.methods) yield { file: analysis.filePath, symbol: `${cls.name}.${m.name}`, analysis, fn: m, cls, facts: gated(foldModuleCells(m.valueFlow ?? []), analysis, aliases) };
+    for (const m of cls.methods) yield { file: analysis.filePath, symbol: `${cls.name}.${m.name}`, analysis, fn: m, cls, facts: gated(m.valueFlow ?? [], analysis, aliases) };
   }
-  if (!setup && moduleFacts.length > 0) yield { file: analysis.filePath, symbol: "<setup>", analysis, fn: null, cls: null, facts: gated(foldModuleCells(moduleFacts), analysis, aliases) };
+  if (!setup && moduleFacts.length > 0) yield { file: analysis.filePath, symbol: "<setup>", analysis, fn: null, cls: null, facts: gated(moduleFacts, analysis, aliases) };
 }
 
 /**
@@ -453,12 +431,25 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
   /** The members each untyped local object (`L…` base key) is given: an object literal handed to a typed formal passes them on. */
   const membersOfBase = new Map<string, Array<{ member: string; cell: number }>>();
 
+  /** The one sibling file of a file's package that binds a name, per file and name (two settle nothing). */
+  const packageOwners = new Map<string, string | null>();
+  const packageOwner = (file: string, name: string): string | null => {
+    const key = `${file}\0${name}`;
+    let owner = packageOwners.get(key);
+    if (owner === undefined) {
+      const owners = (host.sharedModuleFiles?.(file) ?? []).filter((f) => moduleBound.get(f)?.has(name));
+      owner = owners.length === 1 ? owners[0]! : null;
+      packageOwners.set(key, owner);
+    }
+    return owner;
+  };
+
   const cellOf = (s: Scope, cell: ValueCell): number | null => {
     const { name, member } = cell;
     if (cell.package) {
-      // A package variable of another file: the one sibling of this file's package that declares it (two settle nothing).
-      const owners = (host.sharedModuleFiles?.(s.file) ?? []).filter((f) => moduleBound.get(f)?.has(name));
-      return owners.length === 1 ? cellOfKey(`M\0${owners[0]}\0${name}${member === undefined ? "" : `.${member}`}`) : null;
+      // A package variable of another file: the one sibling of this file's package that declares it.
+      const owner = packageOwner(s.file, name);
+      return owner !== null ? cellOfKey(`M\0${owner}\0${name}${member === undefined ? "" : `.${member}`}`) : null;
     }
     if (cell.module) {
       // The file's own module binding (never an imported one), whatever the function binds.

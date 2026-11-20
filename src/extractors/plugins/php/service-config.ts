@@ -1,6 +1,6 @@
 import type { CallBaseRef } from "../../../types/analysis.js";
 import type { ConfigEntry, ConfigSourceSpec, ServiceConfigSpec } from "../../../types/language-plugin.js";
-import { lineAt as offsetLine } from "../shared/text-scan.js";
+import { lineIndex } from "../shared/text-scan.js";
 
 /**
  * How a PHP program is told where other services are: `config/*.php` files
@@ -51,7 +51,7 @@ function withoutComments(text: string): string {
 function arrayEntries(text: string, prefix: string): ConfigEntry[] {
   const src = withoutComments(text);
   const out: ConfigEntry[] = [];
-  const lineAt = (i: number): number => offsetLine(src, i);
+  const lineAt = lineIndex(src);
   const array = (at: number, path: string[]): number => {
     let i = at;
     for (;;) {

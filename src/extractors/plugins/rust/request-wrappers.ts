@@ -3,6 +3,7 @@ import { blankCode } from "../shared/brace-code.js";
 import { RUST_LEXICON } from "./lexicon.js";
 import { parseRustParam } from "./params.js";
 import { HTTP_VERBS } from "../../shared/http-verbs.js";
+import { lineOfOffset, lineStarts } from "../shared/text-scan.js";
 
 /**
  * A project's own request wrapper, and the facts the core's request-factory
@@ -106,8 +107,7 @@ export function rustTypeName(written: string): string | null {
 export function readRustCode(lines: readonly string[]): RustCode {
   const text = lines.join("\n");
   const code = blankCode(text, RUST_LEXICON);
-  const lineStarts = [0];
-  for (let i = 0; i < text.length; i++) if (text[i] === "\n") lineStarts.push(i + 1);
+  const starts = lineStarts(text);
   const fns: RustFn[] = [];
   for (const m of code.matchAll(FN_RE)) {
     const open = m.index + m[0].length - 1;
@@ -136,18 +136,11 @@ export function readRustCode(lines: readonly string[]): RustCode {
     const end = closeOf(code, open);
     if (type && end > 0) impls.push({ from: open, to: end, type });
   }
-  return { text, code, lineStarts, fns, impls };
+  return { text, code, lineStarts: starts, fns, impls };
 }
 
 export function lineAt(rc: RustCode, offset: number): number {
-  let lo = 0;
-  let hi = rc.lineStarts.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    if (rc.lineStarts[mid]! <= offset) lo = mid;
-    else hi = mid - 1;
-  }
-  return lo + 1;
+  return lineOfOffset(rc.lineStarts, offset);
 }
 
 /** The innermost function whose body holds `offset`. */
