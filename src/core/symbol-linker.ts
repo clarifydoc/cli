@@ -4661,8 +4661,20 @@ function valueFlowLinks(links: readonly SymbolLink[], ctx: LinkContext): SymbolL
  */
 function callableQuestion(ctx: LinkContext): (query: CallableQuery) => boolean {
   const fnType = functionTypeQuestion(ctx);
+  const members = new Map<string, boolean>();
   return (q) => {
     if ("fnType" in q) return fnType(q.file, q.fnType);
+    const key = `${q.file}\0${q.symbol}\0${q.receiver}\0${q.member}`;
+    const known = members.get(key);
+    if (known !== undefined) return known;
+    const answer = callableMember(ctx, q);
+    members.set(key, answer);
+    return answer;
+  };
+}
+
+function callableMember(ctx: LinkContext, q: CallableQuery & { receiver: string; member: string }): boolean {
+  {
     const analysis = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(q.file);
     if (!analysis) return false;
     const dot = q.symbol.indexOf(".");
@@ -4679,7 +4691,7 @@ function callableQuestion(ctx: LinkContext): (query: CallableQuery) => boolean {
       cls = parent?.parentClass ?? null;
     }
     return false;
-  };
+  }
 }
 
 /**

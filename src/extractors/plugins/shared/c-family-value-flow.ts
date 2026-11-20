@@ -1015,7 +1015,7 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
     // A library type (`QString`, a container) has neither, and a field call on it is no stored callback; core's
     // gate answers the rest. A class a header declares under another name is missed, a recall cost, never a wrong link.
     const typeName = key.replace(/<[\s\S]*$/, "").split("::").pop()!;
-    if (!classes.some((c) => c.name === typeName) && !headerStems.has(stemKey(typeName))) return null;
+    if (!classes.some((c) => c.name.split("::").pop() === typeName) && !headerStems.has(stemKey(typeName))) return null;
     return { name: head, member: leaf };
   };
 
