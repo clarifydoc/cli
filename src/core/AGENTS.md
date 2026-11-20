@@ -120,6 +120,7 @@ All take `FileAnalysis[]` and/or `componentGraph` and return typed results.
 
 - **Pure functions** — no file IO except `output-writer.ts` and `html-report.ts`. Input is `FileAnalysis[]`, output is typed results.
 - **Optional fields** — new fields on `ProjectAnalysis` should be optional so old `project-summary.json` files still load.
+- **One import contract** — `import-index.ts` turns every import specifier into a file through one helper (`resolveSpecifier`), by the name the module exports (`ImportInfo.aliases[local]`, never the local alias), for both a language's own `resolveImport` and the generic path, and in `localFor` and `fileForSource` alike; an alias named like a sibling module never reaches it.
 - **Progress reporting** — use the `ProgressReporter` class in `analyzer.ts`, not `console.log` directly.
 - **BFS with index pointer** — never use `Array.shift()` for BFS queues (it's O(n)); use `let qi = 0; while (qi < queue.length) { ... queue[qi++]; ... }`.
 

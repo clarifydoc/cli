@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveDataSourceStringConstants, enrichFileDataSources, resolveImportSource } from "./import-index.js";
+import { resolveDataSourceStringConstants, enrichFileDataSources, resolveImportSource, buildImportIndex } from "./import-index.js";
 import { createEmptyAnalysis, type FileAnalysis, type DataSourceInfo } from "../types/analysis.js";
 
 function file(
@@ -201,5 +201,16 @@ describe("resolveImportSource — a bundler query is no part of the file name", 
     expect(resolveImportSource("src/d.ts", "./pitch.js?raw", known)).toBe("src/pitch.ts");
     expect(resolveImportSource("src/d.ts", "./pitch?url#a", known)).toBe("src/pitch.ts");
     expect(resolveImportSource("src/d.ts", "./lib/m", known)).toBe("src/lib/m.ts");
+  });
+});
+
+describe("an aliased import resolves by the name the module exports", () => {
+  it("never reaches the module named like the alias (Python `from pkg import items as legacy`)", () => {
+    const user = createEmptyAnalysis("app/main.py", "python");
+    user.imports = [{ source: "pkg", specifiers: ["legacy"], aliases: { legacy: "items" }, line: 1 } as never];
+    const files = ["pkg/__init__.py", "pkg/items.py", "pkg/legacy.py"].map((p) => createEmptyAnalysis(p, "python"));
+    const index = buildImportIndex([user, ...files]);
+    expect(index.localFor("app/main.py", "legacy")).toBe("pkg/items.py");
+    expect(index.fileForSource?.("app/main.py", "pkg")).toBe("pkg/items.py");
   });
 });

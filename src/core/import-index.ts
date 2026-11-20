@@ -1,4 +1,4 @@
-import type { FileAnalysis, SubProject } from "../types/analysis.js";
+import type { FileAnalysis, ImportInfo, SubProject } from "../types/analysis.js";
 import { packageRootLookup, packageRootsOf } from "./import-directories.js";
 import type { ImportIndex } from "../types/project.js";
 import { extensionFamily, relativeModulePath } from "../extractors/plugins/shared/path-utils.js";
@@ -397,6 +397,13 @@ export function buildImportIndex(analyses: FileAnalysis[], subProjects?: readonl
   // A language whose imports name modules by a path of its own resolves them itself.
   const byPath = new Map(analyses.map((a) => [a.filePath, a]));
   const resolveCtx = importResolveContext(analyses, knownFiles, subProjects);
+  // The one place an import's specifier becomes a file: by the name the module exports, through the language's own
+  // resolver when it has one, else the generic one.
+  const resolveSpecifier = (file: string, imp: ImportInfo, spec: string | undefined): string | null => {
+    const name = spec === undefined ? undefined : exportedName(imp, spec);
+    const ownResolver = manifestFor(byPath.get(file)!.language)?.resolveImport;
+    return ownResolver ? ownResolver(file, imp.source, name as string, resolveCtx) : resolveImportSource(file, imp.source, knownFiles, name);
+  };
 
   for (const a of analyses) {
     const lm = new Map<string, string>();
@@ -416,11 +423,10 @@ export function buildImportIndex(analyses: FileAnalysis[], subProjects?: readonl
       // Resolved per specifier, not once per import: `from app.api.routes
       // import authentication, comments` names two different FILES in one
       // statement, so a single resolution would map both to whichever one won.
-      const ownResolver = manifestFor(a.language)?.resolveImport;
       for (const spec of imp.specifiers) {
         if (lm.has(spec)) continue;
         // An aliased name (`from app.api import items as legacy`) names the module it was exported as.
-        const resolved = ownResolver ? ownResolver(a.filePath, imp.source, exportedName(imp, spec), resolveCtx) : resolveImportSource(a.filePath, imp.source, knownFiles, spec);
+        const resolved = resolveSpecifier(a.filePath, imp, spec);
         if (resolved) lm.set(spec, resolved);
       }
     }
@@ -441,8 +447,7 @@ export function buildImportIndex(analyses: FileAnalysis[], subProjects?: readonl
       const imp = a?.imports.find((i) => i.source === src);
       let resolved: string | null = null;
       if (a && imp) {
-        const ownResolver = manifestFor(a.language)?.resolveImport;
-        resolved = (ownResolver ? ownResolver(file, src, imp.specifiers[0], resolveCtx) : resolveImportSource(file, src, knownFiles, imp.specifiers[0])) ?? null;
+        resolved = resolveSpecifier(file, imp, imp.specifiers[0]) ?? null;
       }
       bySource.set(key, resolved);
       return resolved;
