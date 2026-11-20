@@ -170,3 +170,17 @@ void drive(T t) {
     expect(read(`int total(int a) { return SCALE(a) * 2; }\n`)).toEqual({ errors: 0, functions: [["total", ["SCALE"]]] });
   });
 });
+
+describe("C++ settled declarations: scopes and definitions read from tokens", () => {
+  it("reads a dependent member template after a scope as a type, a scope's chain and a declaration's specifiers", () => {
+    const source = `template <class T, int I>
+using Elem = Garage<T>::template Slot<I>;
+
+std::vector<Car> park(const std::vector<Car>& cars, int n) { return list(cars, n); }
+size_t first, last;
+std::string Garage::name() const noexcept { return label(); }
+Car make(Car c, std::map<int, Car> m);
+`;
+    expect(read(source)).toEqual({ errors: 0, functions: [["park", ["list"]], ["Garage::name", ["label"]]] });
+  });
+});
