@@ -2081,7 +2081,7 @@ function fieldHandlerLinks(analyses: readonly FileAnalysis[], ctx: LinkContext):
   return out;
 }
 
-/** What one link run caches, created with its context; a field marked optional is built on first use. */
+/** What one link run caches, created with its context and never shared between two (do not spread a context); a field marked optional is built on first use. */
 interface LinkMemos {
   projectStatic: Map<string, string[]>;
   inScopeBinding: Map<string, Array<{ holder: FileAnalysis; binding: ModuleBindingInfo }>>;
@@ -6979,8 +6979,6 @@ function projectStaticScopes(ctx: LinkContext, analysis: FileAnalysis): string[]
   return list;
 }
 
-/** `projectStaticScopes` per sub-project, language and test-ness, per link run. */
-
 /** The files whose `inScope.shared` import names `file` (a Dart library of its `part`), built on first use. */
 function scopeLibraries(ctx: LinkContext, file: string): string[] {
   if (!ctx.scopeLibraries) {
@@ -8163,8 +8161,6 @@ function moduleVariableType(ctx: LinkContext, analysis: FileAnalysis, name: stri
   return found.size === 1 ? [...found.values()][0]! : null;
 }
 
-/** The files declaring module bindings, by language and directory, per link run: asked once per unresolved head. */
-
 /** The files of `language` in `dir` (with its trailing slash) that declare module bindings, in analysis order. */
 function bindingFilesIn(ctx: LinkContext, language: string, dir: string): readonly FileAnalysis[] {
   let index = ctx.memos.bindingFilesByDir;
@@ -8531,8 +8527,6 @@ function globalMember(ctx: LinkContext, sourceFile: string, name: string): Injec
   return scopedName(ctx, holder, holder.filePath, "<setup>", "", local);
 }
 
-/** Installed members by name, per link run. */
-
 /** A bare name as the enclosing callable sees it: local, then parameter, then field. */
 function scopedName(
   ctx: LinkContext,
@@ -8790,8 +8784,6 @@ function inScopeModuleBindings(ctx: LinkContext, analysis: FileAnalysis, name: s
   memo.set(memoKey, found);
   return [...found];
 }
-
-/** `inScopeModuleBindings` per file and name, per link run. */
 
 function collectInScopeModuleBindings(
   ctx: LinkContext,
