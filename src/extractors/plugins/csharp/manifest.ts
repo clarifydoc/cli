@@ -34,6 +34,8 @@ export const csharpManifest: LanguagePluginManifest = {
   family: "dotnet",
   // `var u = await repo.FindAsync(id)` holds the `User` a declared `Task<User>` resolves to.
   asyncResultTypes: ["Task", "ValueTask"],
+  // `_repo.Value` of a declared `Lazy<ClubRepo>`, `_options.Value` of an `IOptions<ClubSettings>`.
+  unwrapMembers: { Value: ["Lazy", "IOptions", "IOptionsSnapshot"], CurrentValue: ["IOptionsMonitor"] },
   packageManagers: [nugetPackageManager],
   packageEcosystems: ["nuget"],
   // appsettings*.json + launchSettings, `IConfiguration[...]`, `__` env overrides.

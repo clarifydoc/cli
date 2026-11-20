@@ -7293,6 +7293,12 @@ function chainPoint(
         ?? (consumer && ctx.classAt.has(memberKey(sourceFile, consumer)) ? readerResult(ctx, { typeName: consumer, typeFile: sourceFile, member: "", consumer }, own.name) : null)
         ?? globalMember(ctx, sourceFile, own.name);
     rest = receiver.slice(2);
+    // `this.provider.get().save()`: the field declares a wrapper and the next hop takes the value out of it.
+    const wrapped = point?.typeFile ? null : wrappedHead(ctx, analysis, sourceFile, sourceSymbol, consumer, own.name, receiver[2], true);
+    if (wrapped) {
+      point = wrapped;
+      rest = receiver.slice(3);
+    }
   } else if (head.call) {
     // `root().getPriority()` — what the enclosing class's own method returns;
     // `Report(…).render()` where no such method exists and `Report` is a
@@ -7311,8 +7317,10 @@ function chainPoint(
       if (point) rest = rest.slice(1);
     }
   } else {
-    point = scopedName(ctx, analysis, sourceFile, sourceSymbol, consumer, head.name, depth, branches);
-    rest = receiver.slice(1);
+    // `provider.get().save()`, `_lazy.Value.Save()`: a head declared as a wrapper, then the hop out of it.
+    const wrapped = wrappedHead(ctx, analysis, sourceFile, sourceSymbol, consumer, head.name, receiver[1], false);
+    point = wrapped ?? scopedName(ctx, analysis, sourceFile, sourceSymbol, consumer, head.name, depth, branches);
+    rest = receiver.slice(wrapped ? 2 : 1);
     // `League::SERVICE.process` — a variable a namespace declares, written by its qualified name
     // (`ModuleBindingInfo.name` of a binding inside a namespace).
     ctx.hasQualifiedBindings ??= ctx.analyses.some((a) => a.moduleBindings?.some((b) => b.name.includes("::") || b.lexical?.name.includes("::")));
@@ -7394,12 +7402,80 @@ function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonl
         continue;
       }
     }
+    // `a.getLazy().value`, `a.provider.get()`, `a.lazy.Value`: a field or method declaring a wrapper, then the hop out of it.
+    if (after && (!seg.call || !after.call)) {
+      const declared = seg.call ? methodDeclaredReturn(ctx, point, seg.name) : fieldDeclaredType(ctx, point, seg.name);
+      const unwrapped = declared ? unwrappedDeclared(ctx, declared, after, point.consumer) : null;
+      if (unwrapped) {
+        point = unwrapped;
+        i++;
+        continue;
+      }
+    }
     point = seg.call
       ? methodResult(ctx, point, seg.name, awaited && i === rest.length - 1)
       : ctx.memberTypes.get(memberKey(point.typeFile, point.typeName))?.get(nameKey(ctx.languageOf.get(point.typeFile), seg.name)) ??
         promotedMemberPoint(ctx, point.typeName, point.typeFile, seg.name, new Set()) ?? readerResult(ctx, point, seg.name);
   }
   return point;
+}
+
+/**
+ * The wrapper a declared type is, when the hop after it takes the value out: `Provider<Club>` before `.get()`
+ * (`unwrapCalls`), `Lazy<Club>` before `.value`, `IOptions<Club>` before `.Value` (`unwrapMembers`) — the wrapper's
+ * first type argument, as the next receiver. Never a wrapper name the project declares as its own class, and never a
+ * generic the manifest does not list (`Box<Club>.value`).
+ */
+function unwrappedDeclared(ctx: LinkContext, declared: { type: string; file: string }, hop: ChainSegment, consumer: string): InjectionPoint | null {
+  const manifest = manifestFor((ctx.languageOf.get(declared.file) ?? "") as Language);
+  const table = hop.call ? manifest?.unwrapCalls : manifest?.unwrapMembers;
+  const wrappers = table && Object.hasOwn(table, hop.name) ? table[hop.name] : undefined;
+  if (!wrappers) return null;
+  const written = declared.type.trim();
+  const open = written.indexOf("<");
+  const head = open > 0 ? written.slice(0, open).trim().split(/\.|::/).pop() ?? "" : "";
+  if (!wrappers.includes(head) || !written.endsWith(">") || ctx.classFiles.has(head)) return null;
+  return returnedPoint(ctx, awaitedType(written, wrappers), declared.file, { typeName: "", typeFile: null, consumer });
+}
+
+/**
+ * A chain's head (a local, parameter or field of the caller's class, `self` written or not) declared as a wrapper the
+ * hop after it takes the value out of: the point of what it holds, or null.
+ */
+function wrappedHead(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceFile: string,
+  sourceSymbol: string,
+  consumer: string,
+  name: string,
+  hop: ChainSegment | undefined,
+  viaSelf: boolean,
+): InjectionPoint | null {
+  if (!hop || hop.ctor) return null;
+  const manifest = manifestFor(analysis.language as Language);
+  if (!(hop.call ? manifest?.unwrapCalls : manifest?.unwrapMembers) || !Object.hasOwn((hop.call ? manifest?.unwrapCalls : manifest?.unwrapMembers)!, hop.name)) return null;
+  const key = nameKey(analysis.language, name);
+  let type: string | undefined;
+  if (!viaSelf) {
+    const callable = findEnclosingCallable(analysis, sourceSymbol);
+    const locals = callable?.localTypes?.filter((l) => nameKey(analysis.language, l.name) === key) ?? [];
+    if (locals.length > 0) {
+      // One declaration with a written type: a name several blocks declare, or one a call initializes, decides nothing.
+      if (locals.length > 1 || !locals[0]!.type || locals[0]!.from || locals[0]!.qualifier) return null;
+      type = locals[0]!.type;
+    } else {
+      const param = callable?.params.find((p) => nameKey(analysis.language, p.name) === key);
+      if (param) {
+        if (!param.type || param.qualifier) return null;
+        type = param.type;
+      }
+    }
+  }
+  if (type !== undefined) return unwrappedDeclared(ctx, { type, file: sourceFile }, hop, consumer);
+  if (!consumer || !ctx.classAt.has(memberKey(sourceFile, consumer))) return null;
+  const field = fieldDeclaredType(ctx, { typeName: consumer, typeFile: sourceFile }, name);
+  return field ? unwrappedDeclared(ctx, field, hop, consumer) : null;
 }
 
 /**
@@ -8060,7 +8136,7 @@ function methodResult(ctx: LinkContext, point: InjectionPoint, method: string, a
     const written = instanceReturn(def)?.trim() ?? "";
     const open = written.indexOf("<");
     const head = open > 0 ? written.slice(0, open).trim().split(/\.|::/).pop() ?? "" : "";
-    if (!unwrap.includes(head) || !written.endsWith(">")) return null;
+    if (!unwrap.includes(head) || !written.endsWith(">") || ctx.classFiles.has(head)) return null;
     return returnedPoint(ctx, awaitedType(written, unwrap), hit.file, point);
   }
   const next = returnedPoint(ctx, instanceReturn(def), hit.file, point, awaited) ?? statedResultPoint(ctx, hit.file, def, point.consumer, awaited, point);

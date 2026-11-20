@@ -90,7 +90,7 @@ const JVM_BUILTIN_MEMBERS = [
 /** Calls that take the value out of a JVM wrapper, and the wrappers each one unwraps (`unwrapCalls`). */
 const JVM_UNWRAP_CALLS: Readonly<Record<string, readonly string[]>> = {
   join: ["CompletableFuture"],
-  get: ["CompletableFuture", "Future", "Optional"],
+  get: ["CompletableFuture", "Future", "Optional", "Provider", "Supplier"],
   orElseThrow: ["Optional"],
   block: ["Mono"],
 };
@@ -138,6 +138,8 @@ export const kotlinManifest: LanguagePluginManifest = {
   language: "kotlin",
   callPathsFromHead: true,
   unwrapCalls: { ...JVM_UNWRAP_CALLS, await: ["Deferred"] },
+  // `lazy.value` of a declared `Lazy<ClubRepo>`.
+  unwrapMembers: { value: ["Lazy"] },
   collectionElementOf: jvmElementText("kotlin"),
   // `val (club, player) = load()` over a declared `Pair<Club, Player>` / `Triple`; over a data class, its constructor's
   // properties in order (`componentN`).

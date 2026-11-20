@@ -1648,6 +1648,13 @@ export interface LanguagePluginManifest {
    */
   unwrapCalls?: Readonly<Record<string, readonly string[]>>;
   /**
+   * The property form of `unwrapCalls`: members that hold the value inside a wrapper, and the wrappers (by simple name)
+   * each one unwraps to their first type argument — Kotlin `.value` on a `Lazy<Club>`, C# `.Value` on a `Lazy<Club>` or
+   * `IOptions<ClubSettings>`. Read where a field, parameter, local or method result DECLARES the wrapper, never for a
+   * wrapper name the project declares itself or a generic the manifest does not list (`Box<Club>.value`).
+   */
+  unwrapMembers?: Readonly<Record<string, readonly string[]>>;
+  /**
    * The element types of a declared tuple return type as the language writes it (`tuple[Club, Car]` →
    * `["Club", "Car"]`), or null for any other type. Reads `FunctionInfo.returnType` for a local bound by
    * tuple unpacking (`localTypes[].fromIndex`).
