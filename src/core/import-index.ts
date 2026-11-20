@@ -413,7 +413,8 @@ export function buildImportIndex(analyses: FileAnalysis[], subProjects?: readonl
       const ownResolver = manifestFor(a.language)?.resolveImport;
       for (const spec of imp.specifiers) {
         if (lm.has(spec)) continue;
-        const resolved = ownResolver ? ownResolver(a.filePath, imp.source, spec, resolveCtx) : resolveImportSource(a.filePath, imp.source, knownFiles, spec);
+        // An aliased name (`from app.api import items as legacy`) names the module it was exported as.
+        const resolved = ownResolver ? ownResolver(a.filePath, imp.source, imp.aliases?.[spec] ?? spec, resolveCtx) : resolveImportSource(a.filePath, imp.source, knownFiles, spec);
         if (resolved) lm.set(spec, resolved);
       }
     }

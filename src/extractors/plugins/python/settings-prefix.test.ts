@@ -171,4 +171,42 @@ app.include_router(api_router, prefix=settings.api_prefix)
     });
     expect(rows(files)).toEqual(["GET /clubs"]);
   });
+
+  it("reaches a router module imported under another name through the include chain", async () => {
+    const files = await analyze({
+      "league/clubs/api.py": `
+from fastapi import APIRouter
+from league.clubs import squad
+
+router = APIRouter()
+router.include_router(squad.router, prefix="/clubs")
+`,
+      "league/clubs/squad.py": `
+from fastapi import APIRouter
+router = APIRouter()
+
+@router.get("/players")
+def players():
+    return []
+`,
+      "league/clubs/__init__.py": "",
+      "league/routes.py": `
+from fastapi import APIRouter
+from league.clubs import api as club_routes
+
+router = APIRouter()
+router.include_router(club_routes.router)
+`,
+      "league/settings.py": SETTINGS + "\nsettings = LeagueSettings()\n",
+      "league/main.py": `
+from fastapi import FastAPI
+from league.routes import router as api_router
+from league.settings import settings
+
+app = FastAPI()
+app.include_router(api_router, prefix=settings.api_prefix)
+`,
+    });
+    expect(rows(files)).toEqual(["GET /api/clubs/players"]);
+  });
 });
