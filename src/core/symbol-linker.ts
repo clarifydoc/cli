@@ -140,8 +140,9 @@ export function buildSymbolLinks(
     importedProjectsCache: new Map(),
     projectStemsCache: new Map(),
     importedStemsCache: new Map(),
-    invokeSites: hasValueFlowFacts(analyses) ? valueFlowInvokeSites(analyses) : undefined,
   };
+  // After the context exists: the function-type question reads its import and scope resolution.
+  if (hasValueFlowFacts(analyses)) ctx.invokeSites = valueFlowInvokeSites(analyses, functionTypeQuestion(ctx));
   const interfaceImplMap = ctx.interfaceImplMap;
   const links: SymbolLink[] = [];
 
@@ -2169,6 +2170,10 @@ interface LinkContext {
    * never resolve them, so a namesake of the callee's name cannot take the call. Absent when no file states facts.
    */
   invokeSites?: Map<string, "suppress" | "same-file">;
+  /** Lazy: per language and name, the files declaring it a function-type alias or a class (`functionTypeQuestion`). */
+  fnTypeDecls?: Map<string, { aliases: string[]; classes: string[] }>;
+  /** Lazy: the answers `functionTypeQuestion` gave, `file\0type` → function type or not. */
+  fnTypeAnswers?: Map<string, boolean>;
   /**
    * Lazy: the map calls `dispatchMapCall` is resolving (`file\0scope\0name`). Two values assigned from each
    * other (`a.value = b.value` in one function, `b.value = a.value` in another) would otherwise send
@@ -4638,8 +4643,68 @@ function valueFlowLinks(links: readonly SymbolLink[], ctx: LinkContext): SymbolL
       const slash = file.lastIndexOf("/");
       return packageFilesOf(ctx, slash < 0 ? "" : file.slice(0, slash), file);
     },
+    isFunctionType: functionTypeQuestion(ctx),
     isTest: (file) => testFileAt(ctx, file),
   });
+}
+
+/**
+ * The one question for a type name a plugin cannot judge in its file (`invoke.ifFnType`: a Dart `typedef` or a Swift
+ * `typealias` of a function type another file declares): is it a function type there? The name means what the
+ * nearest scope that declares it says, never a pool across files or sub-projects — the file's own declarations, then
+ * the files it imports (through barrels), then its own sub-project (a module whose files see each other), then the
+ * sub-projects it imports as packages. A scope declaring the name as an alias only is a function type; as a class
+ * only, a class; both, or neither anywhere, no answer is claimed (never a function type).
+ */
+function functionTypeQuestion(ctx: LinkContext): (file: string, type: string) => boolean {
+  return (file, type) => {
+    const answers = (ctx.fnTypeAnswers ??= new Map());
+    const key = `${file}\0${type}`;
+    const known = answers.get(key);
+    if (known !== undefined) return known;
+    const answer = judgeFunctionType(ctx, file, type);
+    answers.set(key, answer);
+    return answer;
+  };
+}
+
+function judgeFunctionType(ctx: LinkContext, file: string, type: string): boolean {
+  const name = type.trim().replace(/\?$/, "");
+  if (!/^[\w$]+$/.test(name)) return false;
+  const language = ctx.languageOf.get(file);
+  if (!language) return false;
+  if (!ctx.fnTypeDecls) {
+    // Only names some file declares as a function-type alias matter: a class is indexed by such a name, never every class.
+    ctx.fnTypeDecls = new Map();
+    const aliasNames = new Set<string>();
+    for (const a of ctx.analyses) for (const n of a.functionTypeAliases ?? []) aliasNames.add(`${a.language}\0${n}`);
+    if (aliasNames.size > 0) {
+      for (const a of ctx.analyses) {
+        for (const n of a.functionTypeAliases ?? []) {
+          const key = `${a.language}\0${n}`;
+          (ctx.fnTypeDecls.get(key) ?? ctx.fnTypeDecls.set(key, { aliases: [], classes: [] }).get(key)!).aliases.push(a.filePath);
+        }
+      }
+      for (const a of ctx.analyses) for (const c of a.classes) ctx.fnTypeDecls.get(`${a.language}\0${c.name}`)?.classes.push(a.filePath);
+    }
+  }
+  const decl = ctx.fnTypeDecls.get(`${language}\0${name}`);
+  if (!decl || decl.aliases.length === 0) return false;
+  const analysis = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(file);
+  if (!analysis) return false;
+  const decide = (inScope: (f: string) => boolean): boolean | undefined => {
+    const alias = decl.aliases.some(inScope);
+    const cls = decl.classes.some(inScope);
+    return alias || cls ? alias && !cls : undefined;
+  };
+  const imported = importedFilesOf(analysis, ctx);
+  const project = ctx.projectOf.get(file);
+  const importedProjects = importedProjectsOf(analysis, ctx);
+  return decide((f) => f === file)
+    ?? decide((f) => imported.has(f))
+    ?? decide((f) => ctx.projectOf.get(f) === project)
+    ?? decide((f) => importedProjects.has(ctx.projectOf.get(f) ?? ""))
+    ?? false;
 }
 
 /**

@@ -11,7 +11,7 @@ import { analyzeFile } from "../../../core/file-analyzer.js";
 import { buildSymbolLinks } from "../../../core/symbol-linker.js";
 import type { FileAnalysis } from "../../../types/analysis.js";
 
-async function analyzeAll(files: Record<string, string>): Promise<FileAnalysis[]> {
+async function analyzeAll(files: Record<string, string>, projectOf: (rel: string) => string = () => "root"): Promise<FileAnalysis[]> {
   const root = await mkdtemp(join(tmpdir(), "swift-vf-"));
   const out = await mkdtemp(join(tmpdir(), "swift-vf-out-"));
   const analyses: FileAnalysis[] = [];
@@ -23,7 +23,7 @@ async function analyzeAll(files: Record<string, string>): Promise<FileAnalysis[]
     const result = await analyzeFile({
       file: { absolutePath: join(root, rel), relativePath: rel, language: "swift" },
       frameworkIds: [],
-      projectId: "root",
+      projectId: projectOf(rel),
       outputOpts: { outputDir: out, pretty: false },
       verbose: false,
       projectRoot: root,
@@ -227,5 +227,59 @@ func assemble() {
     expect(found).toContain("Editor.fire: onLoad -> Sources/Editor.swift::localOne");
     expect(found).toContain("Editor.fire: onRetire -> Sources/Actions.swift::retireClub");
     expect(found.filter((l) => l.startsWith("Lookalike.fire:"))).toEqual([]);
+  });
+});
+
+describe("Swift value flow: a name two sub-projects declare differently", () => {
+  it("reads the name in the file's own sub-project, never a pool across sub-projects", async () => {
+    const found = flow(await analyzeAll({
+      "league/Sources/Kick.swift": `typealias Kick = (Player) -> Void
+final class Player {}
+`,
+      "cup/Sources/Kick.swift": `final class Kick {
+    func callAsFunction(_ p: Player) {}
+}
+final class Player {}
+`,
+      "cup/Sources/Actions.swift": `func scoreGoal(_ p: Player) {}
+`,
+      "cup/Sources/Own.swift": `final class OwnTaker {
+    var onKick: Kick
+    init(onKick: Kick) { self.onKick = onKick }
+    func fire(_ p: Player) {
+        onKick(p)
+    }
+}
+func ownWire() {
+    OwnTaker(onKick: Kick()).fire(Player())
+}
+`,
+      "arena/Sources/Stray.swift": `func scoreGoal(_ p: Player) {}
+final class StrayTaker {
+    var onKick: Kick
+    init(onKick: @escaping Kick) { self.onKick = onKick }
+    func fire(_ p: Player) {
+        onKick(p)
+    }
+}
+func strayWire() {
+    StrayTaker(onKick: scoreGoal).fire(Player())
+}
+`,
+      "league/Sources/Own.swift": `func scoreGoal(_ p: Player) {}
+final class LeagueTaker {
+    var onKick: Kick
+    init(onKick: @escaping Kick) { self.onKick = onKick }
+    func fire(_ p: Player) {
+        onKick(p)
+    }
+}
+func leagueWire() {
+    LeagueTaker(onKick: scoreGoal).fire(Player())
+}
+`,
+    }, (rel) => rel.split("/")[0]!));
+    expect(found.filter((l) => l.startsWith("OwnTaker.fire:") || l.startsWith("StrayTaker.fire:"))).toEqual([]);
+    expect(found).toContain("LeagueTaker.fire: onKick -> league/Sources/Own.swift::scoreGoal");
   });
 });

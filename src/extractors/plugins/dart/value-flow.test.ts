@@ -11,7 +11,7 @@ import { analyzeFile } from "../../../core/file-analyzer.js";
 import { buildSymbolLinks } from "../../../core/symbol-linker.js";
 import type { FileAnalysis } from "../../../types/analysis.js";
 
-async function analyzeAll(files: Record<string, string>): Promise<FileAnalysis[]> {
+async function analyzeAll(files: Record<string, string>, projectOf: (rel: string) => string = () => "root"): Promise<FileAnalysis[]> {
   const root = await mkdtemp(join(tmpdir(), "dart-vf-"));
   const out = await mkdtemp(join(tmpdir(), "dart-vf-out-"));
   const analyses: FileAnalysis[] = [];
@@ -23,7 +23,7 @@ async function analyzeAll(files: Record<string, string>): Promise<FileAnalysis[]
     const result = await analyzeFile({
       file: { absolutePath: join(root, rel), relativePath: rel, language: "dart" },
       frameworkIds: [],
-      projectId: "root",
+      projectId: projectOf(rel),
       outputOpts: { outputDir: out, pretty: false },
       verbose: false,
       projectRoot: root,
@@ -313,5 +313,62 @@ void assemble() {
     expect(found).toContain("Editor.fire: onLoad -> lib/editor.dart::localOne");
     expect(found).toContain("Editor.fire: onRetire.call -> lib/actions.dart::retireClub");
     expect(found.filter((l) => l.startsWith("Lookalike.fire:") || l.startsWith("Table.fire:"))).toEqual([]);
+  });
+});
+
+describe("Dart value flow: a name two sub-projects declare differently", () => {
+  it("reads the name through the file's own imports, never a pool across sub-projects", async () => {
+    const found = flow(await analyzeAll({
+      "league/lib/kick.dart": `typedef Kick = void Function(Player p);
+class Player {}
+`,
+      "cup/lib/kick.dart": `class Kick {
+  void call(Player p) {}
+}
+class Player {}
+`,
+      "cup/lib/actions.dart": `void scoreGoal(Player p) {}
+`,
+      "cup/lib/own.dart": `import 'kick.dart';
+import 'actions.dart';
+class OwnTaker {
+  OwnTaker(this.onKick);
+  final Kick onKick;
+  void fire(Player p) {
+    onKick(p);
+  }
+}
+void ownWire() {
+  OwnTaker(scoreGoal).fire(Player());
+}
+`,
+      "cup/lib/foreign.dart": `import '../../league/lib/kick.dart';
+import 'actions.dart';
+class ForeignTaker {
+  ForeignTaker(this.onKick);
+  final Kick onKick;
+  void fire(Player p) {
+    onKick(p);
+  }
+}
+void foreignWire() {
+  ForeignTaker(scoreGoal).fire(Player());
+}
+`,
+      "arena/lib/stray.dart": `import '../../cup/lib/actions.dart';
+class StrayTaker {
+  StrayTaker(this.onKick);
+  final Kick onKick;
+  void fire(Player p) {
+    onKick(p);
+  }
+}
+void strayWire() {
+  StrayTaker(scoreGoal).fire(Player());
+}
+`,
+    }, (rel) => rel.split("/")[0]!));
+    expect(found.filter((l) => l.startsWith("OwnTaker.fire:") || l.startsWith("StrayTaker.fire:"))).toEqual([]);
+    expect(found).toContain("ForeignTaker.fire: onKick -> cup/lib/actions.dart::scoreGoal");
   });
 });
