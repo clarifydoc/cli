@@ -15,8 +15,8 @@ import type { FileAnalysis, ProjectAnalysis } from "../types/analysis.js";
 let dir = "";
 const files: Record<string, string> = {
   "Gemfile": "source 'https://rubygems.org'\ngem 'rails'\ngem 'rspec-rails'\n",
-  "app/services/onboarding/club_creation_service.rb": [
-    "class Onboarding::ClubCreationService",
+  "app/services/transfers/club_creation_service.rb": [
+    "class Transfers::ClubCreationService",
     "  def perform",
     "    tagline",
     "  end",
@@ -29,8 +29,8 @@ const files: Record<string, string> = {
     "end",
     "",
   ].join("\n"),
-  "enterprise/app/services/enterprise/onboarding/club_creation_service.rb": [
-    "module Enterprise::Onboarding::ClubCreationService",
+  "premium/app/services/premium/transfers/club_creation_service.rb": [
+    "module Premium::Transfers::ClubCreationService",
     "  private",
     "",
     "  def tagline",
@@ -39,14 +39,14 @@ const files: Record<string, string> = {
     "end",
     "",
   ].join("\n"),
-  "spec/enterprise/services/enterprise/onboarding/club_creation_service_spec.rb": [
+  "spec/premium/services/premium/transfers/club_creation_service_spec.rb": [
     "require 'rails_helper'",
     "",
-    "host = Class.new(Onboarding::ClubCreationService) do",
-    "  prepend Enterprise::Onboarding::ClubCreationService",
+    "host = Class.new(Transfers::ClubCreationService) do",
+    "  prepend Premium::Transfers::ClubCreationService",
     "end",
     "",
-    "RSpec.describe Enterprise::Onboarding::ClubCreationService do",
+    "RSpec.describe Premium::Transfers::ClubCreationService do",
     "  it 'adds the suffix' do",
     "    expect(host.new.perform).to include('premium')",
     "  end",
@@ -54,26 +54,26 @@ const files: Record<string, string> = {
     "",
   ].join("\n"),
   // The decoy: a module nothing describes, beside a namesake of a described one in another namespace.
-  "enterprise/app/services/enterprise/onboarding/player_service.rb": [
-    "module Enterprise::Onboarding::PlayerService",
+  "premium/app/services/premium/transfers/player_service.rb": [
+    "module Premium::Transfers::PlayerService",
     "  def sign",
     "    1",
     "  end",
     "end",
     "",
   ].join("\n"),
-  "app/services/onboarding/player_service.rb": [
-    "class Onboarding::PlayerService",
+  "app/services/transfers/player_service.rb": [
+    "class Transfers::PlayerService",
     "  def sign",
     "    2",
     "  end",
     "end",
     "",
   ].join("\n"),
-  "spec/services/onboarding/player_service_spec.rb": [
+  "spec/services/transfers/player_service_spec.rb": [
     "require 'rails_helper'",
     "",
-    "RSpec.describe Onboarding::PlayerService do",
+    "RSpec.describe Transfers::PlayerService do",
     "  it 'signs' do",
     "    expect(described_class.new.sign).to eq(2)",
     "  end",
@@ -81,18 +81,18 @@ const files: Record<string, string> = {
     "",
   ].join("\n"),
   // A described type whose spec holds no case: a placeholder runs nothing.
-  "app/services/onboarding/staff_service.rb": [
-    "class Onboarding::StaffService",
+  "app/services/transfers/staff_service.rb": [
+    "class Transfers::StaffService",
     "  def hire",
     "    1",
     "  end",
     "end",
     "",
   ].join("\n"),
-  "spec/services/onboarding/staff_service_spec.rb": [
+  "spec/services/transfers/staff_service_spec.rb": [
     "require 'rails_helper'",
     "",
-    "RSpec.describe Onboarding::StaffService do",
+    "RSpec.describe Transfers::StaffService do",
     "end",
     "",
   ].join("\n"),
@@ -119,17 +119,17 @@ async function verdictOf(path: string): Promise<{ state: string; basis: string[]
 
 describe("test verdict: a spec describing the type", () => {
   it("counts the mixin the spec describes although it is prepended onto an anonymous class", async () => {
-    expect(await verdictOf("enterprise/app/services/enterprise/onboarding/club_creation_service.rb")).toEqual({
+    expect(await verdictOf("premium/app/services/premium/transfers/club_creation_service.rb")).toEqual({
       state: "tested",
       basis: ["described"],
-      subject: "Enterprise::Onboarding::ClubCreationService",
+      subject: "Premium::Transfers::ClubCreationService",
     });
   });
 
   it("does not count a namesake in another namespace, nor a spec without cases", async () => {
-    expect((await verdictOf("enterprise/app/services/enterprise/onboarding/player_service.rb")).state).toBe("untested");
-    expect((await verdictOf("app/services/onboarding/staff_service.rb")).state).toBe("untested");
+    expect((await verdictOf("premium/app/services/premium/transfers/player_service.rb")).state).toBe("untested");
+    expect((await verdictOf("app/services/transfers/staff_service.rb")).state).toBe("untested");
     // The class its spec describes and calls rests on the call as well.
-    expect((await verdictOf("app/services/onboarding/player_service.rb")).basis).toEqual(["importer", "reached-function", "described"]);
+    expect((await verdictOf("app/services/transfers/player_service.rb")).basis).toEqual(["importer", "reached-function", "described"]);
   });
 });

@@ -136,20 +136,20 @@ describe("synthesizeApiRouteSymbolLinks", () => {
   });
 
   it("finds the route of a mixin action shared by two includers when the link spells the path with {holes}", () => {
-    // `LabelConcern#create` is the line of both includers' rows; the link's path is the normalized `{id}` spelling.
+    // `BadgeConcern#create` is the line of both includers' rows; the link's path is the normalized `{id}` spelling.
     const row = (path: string, handler: string) => ({ path, httpMethod: "POST", kind: "api", handler, calls: [{ name: "x" }], middleware: [], line: 2 });
-    const backend = fa("app/controllers/concerns/label_concern.rb", {
-      classes: [{ name: "LabelConcern", methods: [fn("create", 2, 5)] }] as any,
-      routes: [row("/clubs/:club_id/labels", "ClubLabelsController#create"), row("/players/:player_id/labels", "PlayerLabelsController#create")],
+    const backend = fa("app/controllers/concerns/badge_concern.rb", {
+      classes: [{ name: "BadgeConcern", methods: [fn("create", 2, 5)] }] as any,
+      routes: [row("/clubs/:club_id/badges", "ClubBadgesController#create"), row("/players/:player_id/badges", "PlayerBadgesController#create")],
     } as any);
     const out = synthesizeApiRouteSymbolLinks(
       [
-        link({ target: backend.filePath, targetLine: 2, handler: "ClubLabelsController#create", routePath: "/clubs/{club_id}/labels", method: "POST" }),
-        link({ target: backend.filePath, targetLine: 2, handler: "PlayerLabelsController#create", routePath: "/players/{player_id}/labels", method: "POST" }),
+        link({ target: backend.filePath, targetLine: 2, handler: "ClubBadgesController#create", routePath: "/clubs/{club_id}/badges", method: "POST" }),
+        link({ target: backend.filePath, targetLine: 2, handler: "PlayerBadgesController#create", routePath: "/players/{player_id}/badges", method: "POST" }),
       ],
       [frontend, backend],
     );
-    expect(out.map((l) => l.targetSymbol)).toEqual(["route:POST /clubs/:club_id/labels", "route:POST /players/:player_id/labels"]);
+    expect(out.map((l) => l.targetSymbol)).toEqual(["route:POST /clubs/:club_id/badges", "route:POST /players/:player_id/badges"]);
   });
 
   it("targets the route serving the call's method among routes sharing the line and the path", () => {
