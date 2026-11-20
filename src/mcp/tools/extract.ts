@@ -12,6 +12,7 @@ import { declarationHeadLine } from "../../core/doc-comments.js";
 import { manifestFor } from "../../extractors/registry.js";
 import { analyzeWorkingFiles } from "../../core/changed-symbols.js";
 import { untrackedAmong } from "../../core/source-revision.js";
+import { routeSymbolName } from "../../core/route-symbol.js";
 
 /** Rough tokens per character of source — the usual 4-characters-per-token rule. */
 const CHARS_PER_TOKEN = 4;
@@ -104,6 +105,8 @@ export function extractTool(ctx: ToolContext): McpTool {
           if (named(l.sourceSymbol)) files.add(l.sourceFile);
         }
         // A definition nothing links to: a function by its complexity row, a class by its node.
+        // An inline route handler is defined where the route is.
+        if (want.startsWith("route:")) for (const r of loaded.summary.routeMap ?? []) if (!r.handler && r.handlerEndLine && r.filePath) files.add(r.filePath);
         for (const c of loaded.summary.complexity ?? []) if (c.functions.some((f) => named(f.functionName))) files.add(c.filePath);
         for (const n of loaded.summary.classGraph?.nodes ?? []) if (!n.isFile && !n.isExternal && named(n.name)) files.add(n.filePath);
       }
@@ -306,6 +309,12 @@ function definitions(a: FileAnalysis | null): Definition[] {
   for (const fn of a.functions ?? []) out.push({ symbol: fn.name, line: fn.line, endLine: fn.endLine, head: headOf(a, fn) });
   for (const cls of a.classes ?? []) {
     for (const m of cls.methods ?? []) out.push({ symbol: `${cls.name}.${m.name}`, line: m.line, endLine: m.endLine, head: headOf(a, m) });
+  }
+  // A route whose handler is written inline is no function: its span is the route's own, `line`..`handlerEndLine`.
+  for (const r of a.routes ?? []) {
+    if (!r.handler && r.handlerEndLine && r.handlerEndLine >= r.line) {
+      out.push({ symbol: routeSymbolName({ ...r, httpMethod: (r.httpMethod ?? "USE").toUpperCase() }), line: r.line, endLine: r.handlerEndLine, head: { language: a.language } });
+    }
   }
   return out;
 }
