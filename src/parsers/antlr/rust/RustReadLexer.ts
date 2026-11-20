@@ -95,8 +95,12 @@ export class RustReadLexer extends RustLexer {
         top.pattern = false;
         return;
       case RustLexer.SEMI:
+        // A condition never reaches a `;` at its own level; one that did was read from a keyword that was no
+        // condition (`dyn for<'a> Fn(&'a u8)`).
         top.header = null;
         top.arrow = false;
+        top.pending = false;
+        top.pattern = false;
         return;
       case RustLexer.KW_ENUM:
         top.header ??= "enum";
