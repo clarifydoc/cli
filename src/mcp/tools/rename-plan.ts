@@ -2,6 +2,7 @@ import { readFile } from "fs/promises";
 import { join } from "path";
 import type { McpTool } from "../protocol.js";
 import { byOrdinal } from "../../core/ordinal.js";
+import { inlineRouteDefinitions, routeSymbolPath } from "../../core/route-symbol.js";
 import type { ProjectAnalysis, SymbolLink } from "../../types/analysis.js";
 import { symbolKey, type LoadedAnalysis } from "../store.js";
 import { bulletList, joinLines, loc, numberArg, plural, requiredStringArg, stringArg } from "../format.js";
@@ -175,6 +176,18 @@ export function renamePlanTool(ctx: ToolContext): McpTool {
 
       const defs = definitionsOf(summary, symbol, file);
       if (defs.length === 0) {
+        // A route written with an inline handler is a definition, but no name a rename edits.
+        const want = symbol.toLowerCase();
+        const route = inlineRouteDefinitions(summary).find((d) => d.symbol.toLowerCase() === want && (!file || d.file === file));
+        if (route) {
+          return {
+            text: joinLines([
+              `# \`${route.symbol}\` is a route with an inline handler (${loc(route.file, route.line)}-${route.endLine}) — nothing to rename`,
+              "A route is named by its method and path, and its handler is written in place: no identifier to rename. To change the path, edit the route line; for the callers of that path:",
+              `Next: clarifydoc_routes path="${routeSymbolPath(route.symbol.replace(/^route:\S+ /, ""))}"`,
+            ]),
+          };
+        }
         const near = nearSymbols(summary, symbol);
         return {
           text: noResults({

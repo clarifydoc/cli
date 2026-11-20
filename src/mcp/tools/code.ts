@@ -1,6 +1,6 @@
 /** Code-navigation tools: routes, screens, per-file facts, call traces, blast radius. */
 
-import { routeSymbolName } from "../../core/route-symbol.js";
+import { routeSymbolName, inlineRouteDefinitions } from "../../core/route-symbol.js";
 import { describeDrivers, describeGates } from "../../core/refactor-pressure.js";
 import { aggregateOnlyNote, perTestSources, testsOfCoverageFunction, type TestCoverageReport } from "../../core/test-coverage.js";
 import { routeOperation } from "../../core/openapi-export.js";
@@ -925,6 +925,9 @@ function callsOfSymbol(analysis: FileAnalysis, symbol: string): CallInfo[] | und
   return analysis.functions?.find((f) => f.name === symbol)?.calls;
 }
 
+/** A function as `name()`, a route symbol as it is. */
+const defLabel = (symbol: string): string => (symbol.startsWith("route:") ? symbol : `${symbol}()`);
+
 /** The first definition a name (and file) names, from the complexity rows: where a symbol no link touches lives. */
 function definitionOf(summary: ProjectAnalysis, symbol: string | undefined, file: string | undefined): { file: string; symbol: string; line: number } | undefined {
   if (!symbol) return undefined;
@@ -937,6 +940,8 @@ function definitionOf(summary: ProjectAnalysis, symbol: string | undefined, file
       if (n === want || n.endsWith(`.${want}`)) rows.push({ file: c.filePath, symbol: f.functionName, line: f.line });
     }
   }
+  // A route written with an inline handler is a definition at its own line.
+  for (const d of inlineRouteDefinitions(summary)) if (d.symbol.toLowerCase() === want && (!file || d.file === file)) rows.push({ file: d.file, symbol: d.symbol, line: d.line });
   return rows.sort((a, b) => byOrdinal(a.file, b.file) || a.line - b.line)[0];
 }
 
@@ -1024,7 +1029,7 @@ export function traceTool(ctx: ToolContext): McpTool {
             holds: [
               `The analysis holds ${plural(all.length, "resolved call")}. Either nothing resolved to this one, ` +
               `or the name differs.`,
-              ...(bound ? [def ? `\`${def.symbol}()\` is defined at ${loc(def.file, def.line)}.` : "", ...boundLines(def ? `\`${def.symbol}()\`` : `\`${file}\``, bound)] : []),
+              ...(bound ? [def ? `\`${defLabel(def.symbol)}\` is defined at ${loc(def.file, def.line)}.` : "", ...boundLines(def ? `\`${defLabel(def.symbol)}\`` : `\`${file}\``, bound)] : []),
               near?.line,
             ],
             next: [

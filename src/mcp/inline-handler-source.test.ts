@@ -31,6 +31,9 @@ beforeAll(async () => {
       "  const club = await db.query('INSERT INTO clubs (name) VALUES ($1)', [req.body.name]);",
       "  res.status(201).json(club);",
       "});",
+      "router.get('/health', (req, res) => {",
+      "  res.send('ok');",
+      "});",
       "module.exports = router;",
       "",
     ].join("\n"),
@@ -62,5 +65,33 @@ describe("a route with an inline handler", () => {
     expect(text).toContain("Handler source");
     expect(text).toContain("SELECT * FROM clubs");
     expect(text).not.toContain("INSERT INTO clubs");
+  });
+});
+
+describe("an inline route is a definition every symbol tool sees", () => {
+  it("clarifydoc_search finds it as a symbol, the named-handler route is not one", async () => {
+    const text = await call("clarifydoc_search", { query: "route:POST /clubs", kinds: ["symbol"] });
+    expect(text).toContain("[symbol] route:POST /clubs (clubs.js:8)");
+    expect(text).not.toContain("route:GET /clubs");
+  });
+
+  it("clarifydoc_extract finds one with no calls", async () => {
+    const text = await call("clarifydoc_extract", { symbol: "route:GET /health", depth: 0 });
+    expect(text).toContain("res.send('ok')");
+  });
+
+  it("clarifydoc_trace walks what it reaches, and names a route that reaches nothing", async () => {
+    const text = await call("clarifydoc_trace", { symbol: "route:POST /clubs", direction: "callees" });
+    expect(text).toContain("seed: route:POST /clubs");
+    const quiet = await call("clarifydoc_trace", { symbol: "route:GET /health", direction: "callees" });
+    expect(quiet).toContain("`route:GET /health` is defined at clubs.js:");
+  });
+
+  it("clarifydoc_rename_plan refuses a route symbol cleanly, naming it", async () => {
+    const text = await call("clarifydoc_rename_plan", { symbol: "route:POST /clubs", to: "makeClub" });
+    expect(text).toContain("is a route with an inline handler");
+    expect(text).not.toContain("No function, method or class");
+    const decoy = await call("clarifydoc_rename_plan", { symbol: "route:GET /nothing", to: "makeClub" });
+    expect(decoy).toContain("No function, method or class");
   });
 });

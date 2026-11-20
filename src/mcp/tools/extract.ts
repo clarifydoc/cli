@@ -12,7 +12,7 @@ import { declarationHeadLine } from "../../core/doc-comments.js";
 import { manifestFor } from "../../extractors/registry.js";
 import { analyzeWorkingFiles } from "../../core/changed-symbols.js";
 import { untrackedAmong } from "../../core/source-revision.js";
-import { routeSymbolOf, hasInlineHandler } from "../../core/route-symbol.js";
+import { inlineRouteDefinitions } from "../../core/route-symbol.js";
 
 /** Rough tokens per character of source — the usual 4-characters-per-token rule. */
 const CHARS_PER_TOKEN = 4;
@@ -105,8 +105,7 @@ export function extractTool(ctx: ToolContext): McpTool {
           if (named(l.sourceSymbol)) files.add(l.sourceFile);
         }
         // A definition nothing links to: a function by its complexity row, a class by its node.
-        // An inline route handler is defined where the route is.
-        if (want.startsWith("route:")) for (const r of loaded.summary.routeMap ?? []) if (hasInlineHandler(r) && r.filePath && routeSymbolOf(r).toLowerCase() === want) files.add(r.filePath);
+        for (const d of inlineRouteDefinitions(loaded.summary)) if (named(d.symbol)) files.add(d.file);
         for (const c of loaded.summary.complexity ?? []) if (c.functions.some((f) => named(f.functionName))) files.add(c.filePath);
         for (const n of loaded.summary.classGraph?.nodes ?? []) if (!n.isFile && !n.isExternal && named(n.name)) files.add(n.filePath);
       }
@@ -120,6 +119,8 @@ export function extractTool(ctx: ToolContext): McpTool {
       for (const f of [...files].sort()) {
         const a = await analysisOf(f);
         for (const def of [...definitions(a), ...classDefinitions(a)]) if (named(def.symbol)) matched.push({ file: f, ...def, depth: 0 });
+        // A route written with an inline handler is a definition at its own span.
+        for (const d of inlineRouteDefinitions(loaded.summary)) if (d.file === f && named(d.symbol)) matched.push({ file: f, symbol: d.symbol, line: d.line, endLine: d.endLine, head: { language: a?.language }, depth: 0 });
       }
       // The definition the name names: the exact spelling first, production code before tests.
       const seeds = bestNamed(symbol, matched, (s) => s.symbol, (s) => isTestPath(loaded.summary, s.file));
@@ -309,13 +310,6 @@ function definitions(a: FileAnalysis | null): Definition[] {
   for (const fn of a.functions ?? []) out.push({ symbol: fn.name, line: fn.line, endLine: fn.endLine, head: headOf(a, fn) });
   for (const cls of a.classes ?? []) {
     for (const m of cls.methods ?? []) out.push({ symbol: `${cls.name}.${m.name}`, line: m.line, endLine: m.endLine, head: headOf(a, m) });
-  }
-  // A route whose handler is written inline is no function: its span is the route's own, `line`..`handlerEndLine`.
-  for (const r of a.routes ?? []) {
-    const end = r.handlerEndLine;
-    if (hasInlineHandler(r) && end !== undefined && end >= r.line) {
-      out.push({ symbol: routeSymbolOf(r), line: r.line, endLine: end, head: { language: a.language } });
-    }
   }
   return out;
 }

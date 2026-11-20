@@ -3,6 +3,7 @@
 import { atLeastConfidence, parseConfidence } from "../../core/dead-code.js";
 import { describeDrivers, describeGates } from "../../core/refactor-pressure.js";
 import { byOrdinal } from "../../core/ordinal.js";
+import { inlineRouteDefinitions } from "../../core/route-symbol.js";
 import { DEFAULT_BASE_PREFIXES } from "../../core/route-linker.js";
 import { asksAboutTests, normalize, rankCandidates, type Candidate, type RankedCandidate, type SearchKind } from "../search-rank.js";
 import { BodyIndex, thrownTypes, type BodyHit } from "../body-search.js";
@@ -264,6 +265,20 @@ function searchCandidates(loaded: LoadedAnalysis, kinds: Set<SearchKind>, query:
           line: fn.line ?? null,
           weight: weightOf(file.filePath),
           text: `${fn.functionName}() (${loc(file.filePath, fn.line)}) · complexity ${fn.complexity}`,
+        });
+      }
+    }
+    // A route written with an inline handler is a definition too; a search that includes routes has its row already.
+    if (!kinds.has("route")) {
+      for (const d of inlineRouteDefinitions(summary)) {
+        candidates.push({
+          kind: "symbol",
+          name: d.symbol,
+          ...(isTest(d.file) ? { test: true } : {}),
+          path: d.file,
+          line: d.line,
+          weight: weightOf(d.file),
+          text: `${d.symbol} (${loc(d.file, d.line)}) · inline handler, ${d.endLine - d.line + 1} lines`,
         });
       }
     }
