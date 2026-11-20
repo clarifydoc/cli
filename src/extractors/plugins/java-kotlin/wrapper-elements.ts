@@ -34,3 +34,18 @@ export function kotlinTupleElements(returnType: string): string[] | null {
   if (parts.name === "Triple" && parts.args.length === 3) return parts.args;
   return null;
 }
+
+const LISTS: ReadonlySet<string> = new Set(["List", "ArrayList", "LinkedList", "Vector", "CopyOnWriteArrayList", "MutableList", "Deque", "ArrayDeque"]);
+const MAP_TYPES: ReadonlySet<string> = new Set(["Map", "HashMap", "TreeMap", "LinkedHashMap", "SortedMap", "NavigableMap", "ConcurrentMap", "ConcurrentHashMap", "MutableMap"]);
+
+/**
+ * What `x.get(i)` / `x[i]` yields on a declared list or map: the list's element, the map's value (never its key); null
+ * for any other type — an `Optional`, a `Set` (no index) or a project class named like none of them — and for an
+ * element that is not one plain type name.
+ */
+export function jvmIndexedElement(type: string): string | null {
+  const parts = genericParts(type);
+  if (!parts) return null;
+  const arg = LISTS.has(parts.name) && parts.args.length === 1 ? parts.args[0] : MAP_TYPES.has(parts.name) && parts.args.length === 2 ? parts.args[1] : undefined;
+  return arg && /^[A-Za-z_][\w.]*$/.test(arg) ? arg : null;
+}

@@ -962,14 +962,14 @@ function extractLocalTypes(body: Node | null, language: JkLang): LocalType[] {
   // types the local only when their return types agree.
   // The value is the `choice` the call is an arm of (a conditional initializer), undefined for a plain initializer.
   // A destructuring position (`fromIndex`) is part of the key: `val (a, b) = load()` binds two names to two elements.
-  type FromCall = { from: string; index?: number; choice: number | undefined };
+  type FromCall = { from: string; index?: number; choice: number | undefined; member?: true };
   const fromCalls = new Map<string, Map<string, FromCall>>();
-  const noteFrom = (name: string, from: string, choice?: number, index?: number): void => {
+  const noteFrom = (name: string, from: string, choice?: number, index?: number, member?: true): void => {
     const calls = fromCalls.get(name) ?? new Map<string, FromCall>();
     // The same call under another initializer (or none) is no single choice.
     const key = index === undefined ? from : `${index}:${from}`;
     const held = calls.get(key);
-    calls.set(key, { from, ...(index !== undefined ? { index } : {}), choice: held && held.choice !== choice ? undefined : choice });
+    calls.set(key, { from, ...(index !== undefined ? { index } : {}), choice: held && held.choice !== choice ? undefined : choice, ...(member ? { member } : {}) });
     fromCalls.set(name, calls);
   };
   const push = (name: string | null | undefined, rawType: string | null | undefined, init?: Node | null) =>
@@ -981,8 +981,14 @@ function extractLocalTypes(body: Node | null, language: JkLang): LocalType[] {
     if (!declared && !fact?.qualifier) {
       // `var dao = DaoFactory.getDAO()` / `val case = repo.find(id)` — typed
       // by what the call is declared to return; the linker reads that.
-      const from = callChainText(init, language);
+      // Kotlin `val c = repo.all()[1]`: the index is the `get` of the call before it (`indexerMethod`).
+      const indexed = init && language === "kotlin" && init.type === "indexing_expression" ? callChainText(init.child(0), language) : null;
+      const from = indexed ? `${indexed}.get()` : callChainText(init, language);
+      // `val s = lazy.value` / `var m = club.manager`: a plain member read, typed by the linker through the member's
+      // declared type (or out of the wrapper the manifest's `unwrapMembers` names).
+      const read = from || !init ? null : plainMemberRead(init, language);
       if (from) noteFrom(name, from);
+      else if (read) noteFrom(name, read, undefined, undefined, true);
       else {
         // `var api = x ? clubs() : players()` / `val api = if (x) clubs() else players()`: each arm's call, one choice.
         const arms = conditionalArms(init, language);
@@ -1055,8 +1061,41 @@ function extractLocalTypes(body: Node | null, language: JkLang): LocalType[] {
     for (const child of n.children) visit(child);
   };
   visit(body);
-  for (const [name, froms] of fromCalls) if (!seen.has(name)) for (const { from, index, choice } of froms.values()) out.push({ name, type: "", from, ...(index !== undefined ? { fromIndex: index } : {}), ...(choice !== undefined ? { choice } : {}) });
+  for (const [name, froms] of fromCalls) if (!seen.has(name)) for (const { from, index, choice, member } of froms.values()) out.push({ name, type: "", from, ...(index !== undefined ? { fromIndex: index } : {}), ...(choice !== undefined ? { choice } : {}), ...(member ? { member } : {}) });
   return out;
+}
+
+/**
+ * An initializer that reads a member off plain names (`lazy.value`, `this.club.manager`), as `localTypes[].from`
+ * spells it; null for a call or an indexer in the path and for a safe-call (`?.`) read.
+ */
+function plainMemberRead(init: Node, language: JkLang): string | null {
+  const parts: string[] = [];
+  let cur: Node | null = init;
+  if (language === "java") {
+    if (cur.type !== "field_access") return null;
+    while (cur?.type === "field_access") {
+      const field = cur.childForFieldName("field");
+      if (field?.type !== "identifier") return null;
+      parts.unshift(field.text);
+      cur = cur.childForFieldName("object");
+    }
+    if (cur?.type === "identifier" || cur?.type === "this") parts.unshift(cur.text);
+    else return null;
+  } else {
+    if (cur.type !== "navigation_expression") return null;
+    while (cur?.type === "navigation_expression") {
+      const suffix: Node | undefined = cur.namedChildren[cur.namedChildCount - 1];
+      const name = suffix?.type === "navigation_suffix" ? suffix.namedChildren.find((c) => c.type === "simple_identifier") : undefined;
+      if (!suffix || !name || suffix.children.some((c) => c.type === "?.")) return null;
+      parts.unshift(name.text);
+      cur = cur.child(0);
+    }
+    if (cur?.type === "simple_identifier") parts.unshift(cur.text);
+    else if (cur?.type === "this_expression") parts.unshift("this");
+    else return null;
+  }
+  return parts.length >= 2 ? parts.join(".") : null;
 }
 
 /**

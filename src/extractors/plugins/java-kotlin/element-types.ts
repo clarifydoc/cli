@@ -58,6 +58,7 @@ function parseType(language: JkLang): ChainRules["parseType"] {
     if (g.name === "[]") return { kind: "coll", elem: g.args[0]! };
     if (collections.has(g.name) && g.args.length === 1) return { kind: "coll", elem: g.args[0]! };
     if (MAPS.has(g.name) && g.args.length === 2) return { kind: "map", elem: g.args[1]!, key: g.args[0]! };
+    if (g.name === "Entry" && g.args.length === 2) return { kind: "entry", elem: g.args[1]!, key: g.args[0]! };
     if ((language === "java" ? JAVA_OPTIONALS : KOTLIN_OPTIONALS).has(g.name) && g.args.length === 1) return { kind: "optional", elem: g.args[0]! };
     return null;
   };
@@ -73,6 +74,9 @@ const JAVA_RULES: ChainRules = {
   optionalValue: set("get", "orElseThrow", "orElse", "orElseGet", "block"),
   values: set("values"),
   keys: set("keySet", "navigableKeySet"),
+  entries: set("entrySet"),
+  entryValue: set("getValue"),
+  entryKey: set("getKey"),
   filterByType: set(),
   indexer: true,
   callbacks: new Map<string, readonly number[]>([
@@ -109,6 +113,9 @@ const KOTLIN_RULES: ChainRules = {
   optionalValue: set("get", "orElseThrow", "orElse", "orElseGet", "block"),
   values: set("values"),
   keys: set("keys"),
+  entries: set("entries"),
+  entryValue: set("value", "getValue"),
+  entryKey: set("key", "getKey"),
   filterByType: set("filterIsInstance"),
   indexer: true,
   callbacks: new Map<string, readonly number[]>([
@@ -251,6 +258,8 @@ export function jvmElementFacts(
   for (const [name, type] of memberTypes(method, language)) setState(name, type);
   for (const p of params) if (!p.isReceiver) setState(p.name, p.type);
   const rootState = (name: string): ElementState | undefined => table.get(name);
+  /** Names a loop binds to a map entry, with each distinct state: a name another binding also takes keeps none. */
+  const entryBinds = new Map<string, Set<string>>();
 
   const binders = new Map<string, Set<string | null>>();
   const bind = (name: string | null | undefined, type: string | null): void => {
@@ -277,6 +286,25 @@ export function jvmElementFacts(
   };
   const bindSource = (name: string | null | undefined, src: LambdaSource): void => {
     if (name) fromElements.push({ name, type: "", from: src.from, ...(src.element ? { element: true as const } : {}) });
+  };
+  /** Binds `name` to a map entry the loop's collection states (`for (var en : m.entrySet())`), when it does. */
+  const bindEntry = (name: string | null | undefined, iterable: Node | null | undefined, written?: string | null): boolean => {
+    if (!name) return false;
+    let state: ElementState | null = null;
+    if (written) state = stateOfType(written, rules);
+    else {
+      const loop = iterable ? chainState(iterable.text, rootState, rules) : null;
+      // Kotlin loops a map directly: each step is its entry.
+      state = loop?.kind === "coll" ? stateOfType(loop.elem, rules)
+        : loop?.kind === "map" && language === "kotlin" && loop.key ? { kind: "entry", elem: loop.elem, key: loop.key } : null;
+    }
+    if (state?.kind !== "entry") return false;
+    const seen = entryBinds.get(name) ?? new Set<string>();
+    seen.add(`${state.key ?? ""}\0${state.elem}`);
+    entryBinds.set(name, seen);
+    table.set(name, state);
+    bind(name, null);
+    return true;
   };
   const bindChain = (name: string | null | undefined, init: Node | null | undefined): void => {
     if (!name) return;
@@ -513,7 +541,9 @@ export function jvmElementFacts(
         const type = n.childForFieldName("type")?.text;
         const name = n.childForFieldName("name")?.text;
         const iterable = n.childForFieldName("value");
-        if (type === "var") bindFrom(name, iterable, iterable ? loopElement(iterable.text, rootState, rules) : null);
+        if (type === "var") {
+          if (!bindEntry(name, iterable)) bindFrom(name, iterable, iterable ? loopElement(iterable.text, rootState, rules) : null);
+        } else if (type) bindEntry(name, null, type);
         break;
       }
       case "lambda_expression":
@@ -561,7 +591,9 @@ export function jvmElementFacts(
         const nameOf = (v: Node): string | undefined => v.children.find((x) => x.type === "simple_identifier")?.text;
         if (decl.type === "variable_declaration") {
           const t = decl.children.find((x) => x.type === "user_type" || x.type === "nullable_type")?.text;
-          bindFrom(nameOf(decl), iterable, t ? classOf(t) : iterable ? loopElement(iterable.text, rootState, rules) : null);
+          if (!(t ? bindEntry(nameOf(decl), null, t) : bindEntry(nameOf(decl), iterable))) {
+            bindFrom(nameOf(decl), iterable, t ? classOf(t) : iterable ? loopElement(iterable.text, rootState, rules) : null);
+          }
         } else {
           // `for ((club, player) in roster)`, `roster.entries`, `clubs.withIndex()`: a pair per step — a map's key and
           // value, an index and its element.
@@ -653,6 +685,8 @@ export function jvmElementFacts(
     for (const c of n.children) visit(c);
   };
   visit(body);
+  // A name bound to different entry types, or to anything else too, is no entry at a call that cannot say which.
+  for (const [name, states] of entryBinds) if (states.size > 1 || (binders.get(name)?.size ?? 0) > 1) table.delete(name);
 
   // A name narrowed by `is`: typed when no receiver use of it lies outside the narrowing regions.
   for (const [name, regions] of narrowed) {
@@ -707,7 +741,8 @@ export function jvmElementFacts(
     const split = splitCallName(call.name);
     if (!split) return null;
     if (/^[A-Za-z_$][\w$]*$/.test(split.receiver)) return scopedType(split.receiver, call) ?? narrowedAt(split.receiver, call);
-    if (!/[([]/.test(split.receiver)) return null;
+    // `en.value.reload()`: a property read off a map entry has no brackets; only a root the body states a type for goes on.
+    if (!/[([]/.test(split.receiver) && !/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(split.receiver)) return null;
     return valueOfChain(split.receiver, rootState, rules);
   };
   const receiverFromOf = (call: CallInfo): NonNullable<CallInfo["receiverFrom"]> | null => {

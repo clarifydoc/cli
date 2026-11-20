@@ -13,11 +13,13 @@ export type ElementState =
   | { kind: "coll"; elem: string }
   | { kind: "map"; elem: string; /** The key type as written, when the plugin reads it (`Map<Club, Player>` → `Club`). */ key?: string }
   | { kind: "optional"; elem: string }
+  /** A map entry (`Map.Entry<Club, Player>`): its value and, when the plugin reads it, its key. */
+  | { kind: "entry"; elem: string; key?: string }
   | { kind: "value"; type: string };
 
 export interface ChainRules {
   /** A declared type as written → collection / map / optional (element text as written), else null. */
-  parseType(text: string): { kind: "coll" | "map" | "optional"; elem: string; key?: string } | null;
+  parseType(text: string): { kind: "coll" | "map" | "optional" | "entry"; elem: string; key?: string } | null;
   /** A type text that names a class a member call can land on (`Car`, `a.b.Car<T>` → written back), else null. */
   classOf(text: string): string | null;
   /** Collection → one element (`get`, `first`, `FirstOrDefault`). */
@@ -34,6 +36,12 @@ export interface ChainRules {
   values: ReadonlySet<string>;
   /** Map → its keys as a collection (`keys`, `keySet`); needs the plugin to state the key type. */
   keys?: ReadonlySet<string>;
+  /** Map → its entries as a collection (`entrySet`, Kotlin `entries`); needs the plugin to state the key type. */
+  entries?: ReadonlySet<string>;
+  /** Entry → its value (`getValue`, Kotlin `value`). */
+  entryValue?: ReadonlySet<string>;
+  /** Entry → its key (`getKey`, Kotlin `key`). */
+  entryKey?: ReadonlySet<string>;
   /** Collection → collection of the type argument (`filterIsInstance<Car>()`, `OfType<Car>()`). */
   filterByType: ReadonlySet<string>;
   /** `x[i]` is the element (Kotlin, C#, a Java array's `[]` is the same). */
@@ -159,11 +167,15 @@ function apply(state: ElementState, step: Step, rules: ChainRules): ElementState
     case "map":
       if (rules.values.has(name)) return { kind: "coll", elem: state.elem };
       if (rules.keys?.has(name) && state.key) return { kind: "coll", elem: state.key };
+      if (rules.entries?.has(name) && state.key) return { kind: "coll", elem: `Entry<${state.key}, ${state.elem}>` };
       if (!step.call) return null;
       if (rules.mapValueOf.has(name)) return stateOfType(state.elem, rules);
       return null;
     case "optional":
       return step.call && rules.optionalValue.has(name) ? stateOfType(state.elem, rules) : null;
+    case "entry":
+      if (rules.entryValue?.has(name)) return stateOfType(state.elem, rules);
+      return rules.entryKey?.has(name) && state.key ? stateOfType(state.key, rules) : null;
     default:
       return null;
   }
@@ -205,7 +217,7 @@ export function callbackElement(
   } else if (state.kind === "optional") {
     if (rules.optionalCallbacks.has(method)) positions = [0];
     elem = state.elem;
-  } else if (rules.valueCallbacks.has(method)) {
+  } else if (state.kind === "value" && rules.valueCallbacks.has(method)) {
     return { type: state.type, positions: [0] };
   }
   const type = elem ? rules.classOf(elem) : null;

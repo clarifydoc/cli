@@ -1655,6 +1655,18 @@ export interface LanguagePluginManifest {
    */
   unwrapMembers?: Readonly<Record<string, readonly string[]>>;
   /**
+   * Calls that take ONE element out of a declared collection or map — Java/Kotlin `get` (`List.get(i)`, `Map.get(k)`,
+   * Kotlin `x[i]` read as `x.get(i)`). With `indexedElementOf` they type `repo.all().get(0).promote()`, a field's
+   * `club.players.get(0)` and a local initialized by `repo.all()`: only where the declaration BEFORE the call states
+   * a collection or map, so a project class's own `get(int)` keeps its declared return type.
+   */
+  elementCalls?: readonly string[];
+  /**
+   * The element an `elementCalls` call yields on a declared type as written: a list's element, a map's VALUE type;
+   * null for any other type (a project generic, an `Optional`, a type that is not one plain name).
+   */
+  indexedElementOf?: (type: string) => string | null;
+  /**
    * The element types of a declared tuple return type as the language writes it (`tuple[Club, Car]` →
    * `["Club", "Car"]`), or null for any other type. Reads `FunctionInfo.returnType` for a local bound by
    * tuple unpacking (`localTypes[].fromIndex`).

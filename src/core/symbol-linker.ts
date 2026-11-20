@@ -7507,9 +7507,10 @@ function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonl
         continue;
       }
     }
-    // `a.getLazy().value`, `a.provider.get()`, `a.lazy.Value`: a field or method declaring a wrapper, then the hop out of it.
-    // Gated on the hop's name first: reading the declared type of every chain segment would cost a lookup per hop.
-    if (after && (!seg.call || !after.call) && unwrapListFor(ctx.languageOf.get(point.typeFile), after)) {
+    // `a.getLazy().value`, `a.provider.get()`, `a.lazy.Value`, `repo.all().get(0)`, `club.players.get(0)`: a field or
+    // method declaring a wrapper, a list or a map, then the hop out of it. Gated on the hop's name first: reading the
+    // declared type of every chain segment would cost a lookup per hop.
+    if (after && (!seg.call || !after.call || isElementCall(ctx.languageOf.get(point.typeFile), after)) && hopTakesValue(ctx.languageOf.get(point.typeFile), after)) {
       const declared = seg.call ? methodDeclaredReturn(ctx, point, seg.name) : fieldDeclaredType(ctx, point, seg.name);
       const unwrapped = declared ? unwrappedDeclared(ctx, declared, after, point.consumer) : null;
       if (unwrapped) {
@@ -7536,6 +7537,16 @@ function unwrapListFor(language: string | undefined, hop: ChainSegment): readonl
   return table && Object.hasOwn(table, hop.name) ? table[hop.name] : undefined;
 }
 
+/** Whether `hop` is a call the language's manifest says takes one element out of a declared list or map (`elementCalls`). */
+function isElementCall(language: string | undefined, hop: ChainSegment): boolean {
+  return hop.call && !!manifestFor((language ?? "") as Language)?.elementCalls?.includes(hop.name);
+}
+
+/** Whether `hop` takes a value out of what the segment before it declares: a wrapper (`unwrapCalls`/`unwrapMembers`) or a list or map. */
+function hopTakesValue(language: string | undefined, hop: ChainSegment): boolean {
+  return !!unwrapListFor(language, hop) || isElementCall(language, hop);
+}
+
 /**
  * Whether the project declares a class named like a wrapper where the declaring file could mean it: same language
  * family (the manifest's `family`) and same sub-project. A namesake in another family or service shadows nothing.
@@ -7556,13 +7567,19 @@ function wrapperShadowed(ctx: LinkContext, name: string, declFile: string): bool
  * generic the manifest does not list (`Box<Club>.value`).
  */
 function unwrappedDeclared(ctx: LinkContext, declared: { type: string; file: string }, hop: ChainSegment, consumer: string): InjectionPoint | null {
-  const wrappers = unwrapListFor(ctx.languageOf.get(declared.file), hop);
-  if (!wrappers) return null;
+  const language = ctx.languageOf.get(declared.file);
+  const wrappers = unwrapListFor(language, hop);
+  const element = isElementCall(language, hop);
+  if (!wrappers && !element) return null;
   const written = declared.type.trim();
   const open = written.indexOf("<");
   const head = open > 0 ? written.slice(0, open).trim().split(/\.|::/).pop() ?? "" : "";
-  if (!wrappers.includes(head) || !written.endsWith(">") || wrapperShadowed(ctx, head, declared.file)) return null;
-  return returnedPoint(ctx, awaitedType(written, wrappers), declared.file, { typeName: "", typeFile: null, consumer });
+  if (!written.endsWith(">") || wrapperShadowed(ctx, head, declared.file)) return null;
+  // A wrapper's first type argument, else (`get` on a declared list or map) the element or the map's value.
+  const inner = wrappers?.includes(head)
+    ? awaitedType(written, wrappers)
+    : element ? manifestFor((language ?? "") as Language)?.indexedElementOf?.(written) : null;
+  return inner ? returnedPoint(ctx, inner, declared.file, { typeName: "", typeFile: null, consumer }) : null;
 }
 
 /**
@@ -7579,7 +7596,7 @@ function wrappedHead(
   hop: ChainSegment | undefined,
   viaSelf: boolean,
 ): InjectionPoint | null {
-  if (!hop || hop.ctor || !unwrapListFor(analysis.language, hop)) return null;
+  if (!hop || hop.ctor || !hopTakesValue(analysis.language, hop)) return null;
   const key = nameKey(analysis.language, name);
   let type: string | undefined;
   if (!viaSelf) {
@@ -8250,8 +8267,17 @@ function receiverChain(callName: string, indexer?: string): ChainSegment[] | nul
     // argument list (`get(0)[1]`) indexes the result.
     const name = seg.slice(0, paren);
     const close = closingParen(seg, paren);
-    if (!name || /[[<]/.test(name) || close !== seg.length - 1) return null;
+    if (!name || /[[<]/.test(name) || close < 0) return null;
+    // Where the language indexes by a member (`indexer`), `getAll()[0]` is `getAll().get(0)`: an index step after the call.
+    const indexes: string[] = [];
+    let tail = seg.slice(close + 1);
+    for (let m = indexer ? /^\[([^[\]]*)\]/.exec(tail) : null; m; m = /^\[([^[\]]*)\]/.exec(tail)) {
+      indexes.push(m[1]!);
+      tail = tail.slice(m[0].length);
+    }
+    if (tail !== "") return null;
     out.push({ name, call: true, args: seg.slice(paren + 1, close) });
+    for (const args of indexes) out.push({ name: indexer!, call: true, args });
   }
   return out;
 }

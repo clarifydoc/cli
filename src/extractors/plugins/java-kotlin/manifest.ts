@@ -1,4 +1,4 @@
-import { jvmElementText, kotlinTupleElements } from "./wrapper-elements.js";
+import { jvmElementText, jvmIndexedElement, kotlinTupleElements } from "./wrapper-elements.js";
 import { jvmMigrationFiles } from "./migration-files.js";
 import { jvmProjectCommands } from "./project-commands.js";
 import { jvmTestCommand } from "./test-command.js";
@@ -104,6 +104,8 @@ export const javaManifest: LanguagePluginManifest = {
   callPathsFromHead: true,
   // No `await`: the value comes out of a future, a `Mono` or an `Optional` through these calls.
   unwrapCalls: JVM_UNWRAP_CALLS,
+  elementCalls: ["get"],
+  indexedElementOf: jvmIndexedElement,
   collectionElementOf: jvmElementText("java"),
   family: "jvm",
   packageManagers: [mavenPackageManager, gradlePackageManager],
@@ -140,6 +142,8 @@ export const kotlinManifest: LanguagePluginManifest = {
   unwrapCalls: { ...JVM_UNWRAP_CALLS, await: ["Deferred"] },
   // `lazy.value` of a declared `Lazy<ClubRepo>`.
   unwrapMembers: { value: ["Lazy"] },
+  elementCalls: ["get"],
+  indexedElementOf: jvmIndexedElement,
   collectionElementOf: jvmElementText("kotlin"),
   // `val (club, player) = load()` over a declared `Pair<Club, Player>` / `Triple`; over a data class, its constructor's
   // properties in order (`componentN`).
