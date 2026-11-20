@@ -98,6 +98,7 @@ write. That is what lets an external agent be configured as nothing but a comman
   route — the files whose source holds its path literal with no call linked from them (a scan of the analysed files,
   screen links like `to="/x"` skipped). A failed `trace to=` names the node its forward walk got nearest to the target
   (in the target's file when it reached one, else the deepest) and how many of its calls did not resolve.
+- **`clarifydoc_impact` and `clarifydoc_blast_radius` charge by member.** With the diff's lines (git, `proposed`) impact's dependents are the files naming what changed, the importer count printed beside it (core/AGENTS.md); `clarifydoc_blast_radius` takes `members` (`Class.method`, a function or a type) and `adding` for the same cut, and without them ranks direct dependents by how much of the file they use, so the default limit of 20 keeps users before bare importers.
 - **`clarifydoc_impact` can read another checkout.** `worktree=<path>` (or the server's `CLARIFYDOC_WORKTREE`; the
   working directory is never guessed) points at a linked worktree of the analyzed repository: the diff, its hunks, the
   working-file re-analysis and a `proposed` edit's old text come from there, while paths stay the analysis's own

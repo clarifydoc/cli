@@ -32,6 +32,7 @@ export {
   renderImpactMarkdown,
   type ImpactDiffResult,
 } from "./core/impact-diff.js";
+export { impactOfContents } from "./core/impact-proposed.js";
 // What changed in the API surface between two analyses, and whether it breaks
 // a caller (what `diff` prints).
 export {

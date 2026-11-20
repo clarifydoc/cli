@@ -43,6 +43,7 @@ import {
 import { fileChangedNote, mustResolveFile, nearSymbols, requireAnalysis, rowFreshness, stalenessHint, type ToolContext } from "./context.js";
 import { filterToDrop, missHeadline, noResults, type DroppableFilter } from "../empty.js";
 import { decisionsAbout } from "./decisions.js";
+import { filesNaming, rankByUse, targetsFromNames } from "../../core/member-dependents.js";
 import { boundLines, fileBound, refOf, routeBoundLine, routeLiterals, symbolBound, type CallerBound } from "./caller-bounds.js";
 
 /** ` (through the macro M)` for a link a macro's body makes, else nothing. */
@@ -1694,12 +1695,14 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_blast_radius",
     title: "Blast radius of a change",
-    description: "Use for what breaks if a file changes: verdict and reasons, dependents, exports in use, screens, routes, entities and queues reached, reading cost. No `path`: the riskiest files.",
+    description: "Use for what breaks if a file changes: verdict and reasons, dependents (ranked by use), exports in use, screens, routes, entities and queues reached, reading cost. `members` (`Class.method`, `function`, `Type`) narrows dependents to the files naming them. No `path`: the riskiest files.",
     inputSchema: {
       type: "object",
       properties: {
         path: { type: "string" },
         limit: { type: "number" },
+        members: { type: "array", items: { type: "string" }, description: "What you change in the file: `Class.method`, a function or a type." },
+        adding: { type: "boolean", description: "The members are new (an interface member, say): charge what implements, extends or builds the type." },
       },
       additionalProperties: false,
     },
@@ -1761,8 +1764,22 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
         };
       }
 
+      // Members given: the files naming them. Without: importers ranked by how much of the file they use.
+      const members = Array.isArray(args.members) ? (args.members as unknown[]).filter((m): m is string => typeof m === "string" && m.length > 0).slice(0, 50) : [];
+      let direct: string[] = rankByUse(b, b.affectedFiles);
+      let imports: string[] = [];
+      let namingReasons: Map<string, string[]> | undefined;
+      if (members.length) {
+        const named = filesNaming(loaded.summary, targetsFromNames(loaded.summary, path, members, args.adding === true));
+        if (!named.undecided) {
+          namingReasons = named.files;
+          const nameSet = new Set(named.files.keys());
+          direct = direct.filter((f) => nameSet.has(f));
+          imports = b.affectedFiles.filter((f) => !nameSet.has(f));
+        }
+      }
       const moved = await fileChangedNote(ctx.store, path);
-      const movedRow = await rowFreshness(ctx.store, [...b.affectedFiles.slice(0, limit), ...b.transitiveFiles.slice(0, limit), ...b.dependsOn.slice(0, limit)]);
+      const movedRow = await rowFreshness(ctx.store, [...direct.slice(0, limit), ...b.transitiveFiles.slice(0, limit), ...b.dependsOn.slice(0, limit)]);
       const blocks: string[][] = [
         [
           `# Blast radius — ${path}`,
@@ -1773,8 +1790,8 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
             ["risk", `${b.changeRisk} (${b.level})`],
             ["impact score", b.impactScore],
             ["centrality", b.centrality],
-            ["direct dependents", b.directDependents],
-            ["transitive dependents", b.transitiveDependents],
+            ["direct dependents", namingReasons ? `${direct.length} name ${members.join(", ")} (${b.directDependents} import the file)` : b.directDependents],
+            ["transitive dependents", namingReasons ? `${b.transitiveDependents} (not listed: they reach the file through the importers, not by naming ${members.length === 1 ? "it" : "them"})` : b.transitiveDependents],
             ["max depth", b.maxDepth],
             [
               "context burden",
@@ -1806,8 +1823,10 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
         }
       }
 
-      blocks.push(section(`Direct dependents (${b.affectedFiles.length})`, bulletList(b.affectedFiles, limit, (f) => `${f}${movedRow(f)}`)));
-      if (b.transitiveFiles.length) {
+      blocks.push(section(`Direct dependents (${direct.length})`, bulletList(direct, limit, (f) => `${f}${movedRow(f)}${namingReasons?.get(f)?.length ? ` — ${namingReasons.get(f)!.slice(0, 2).join("; ")}` : ""}`)));
+      if (namingReasons) {
+        blocks.push([`${imports.length} other file(s) import ${path} and name none of ${members.join(", ")}: nothing there breaks by name.`, ""]);
+      } else if (b.transitiveFiles.length) {
         blocks.push(
           section(`Transitive dependents (${b.transitiveFiles.length})`, bulletList(b.transitiveFiles, limit, (f) => `${f}${movedRow(f)}`)),
         );

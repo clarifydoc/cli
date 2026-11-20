@@ -1,0 +1,103 @@
+import type { BlastRadiusInfo, ProjectAnalysis, SymbolLink, TypeUsageKind } from "../types/analysis.js";
+import { byOrdinal } from "./ordinal.js";
+
+/**
+ * Which files NAME what a change touched — the members, not the module. A file importing a changed
+ * file is only charged when it calls a changed function, or names a changed type in a way the change
+ * can break; the importers that do neither are context ("imports it"), not work.
+ *
+ * Facts only, all from the analysis: call and import-by-name links (`symbolLinks`) and each class's
+ * usage by kind (`blastRadius[].typeUsages`).
+ */
+
+/** A thing a change touched, in a file. */
+export type MemberTarget =
+  | { file: string; symbol: string }
+  | {
+      file: string;
+      /** A type, judged by how files use it. */
+      type: string;
+      /**
+       * `added`: only members were added; an interface (or abstract type) then breaks what implements, extends or
+       * builds it, never what only passes it on. `changed`: a member was removed or re-typed, or the type's
+       * heritage changed — everything naming the type may read it.
+       */
+      mode: "added" | "changed";
+      /** An interface, or a type declared for its subclasses to complete. */
+      interfaceLike: boolean;
+    };
+
+/** Usage kinds that make a value of the type, extend it or implement it: what a new required member breaks. */
+const PRODUCER_KINDS: ReadonlySet<TypeUsageKind> = new Set<TypeUsageKind>(["implements", "extends", "instantiation", "variable", "return", "field", "cast"]);
+
+export interface NamingFiles {
+  /** File → why it is charged, strongest reason first. Never the target's own file. */
+  files: Map<string, string[]>;
+  /** The analysis cannot say who names a target (a type with no usage record): charge every importer. */
+  undecided: boolean;
+}
+
+/** The links into a file, by target symbol — built once per question. */
+function linksInto(links: readonly SymbolLink[], files: ReadonlySet<string>): Map<string, SymbolLink[]> {
+  const out = new Map<string, SymbolLink[]>();
+  for (const l of links) {
+    if (!files.has(l.targetFile) || l.sourceFile === l.targetFile || l.navigational) continue;
+    const key = `${l.targetFile}::${l.targetSymbol}`;
+    (out.get(key) ?? out.set(key, []).get(key)!).push(l);
+  }
+  return out;
+}
+
+/** The files that name any of `targets`, with the reason for each. */
+export function filesNaming(summary: Pick<ProjectAnalysis, "symbolLinks" | "blastRadius">, targets: readonly MemberTarget[]): NamingFiles {
+  const files = new Map<string, string[]>();
+  const add = (file: string, reason: string) => {
+    const rows = files.get(file) ?? files.set(file, []).get(file)!;
+    if (!rows.includes(reason)) rows.push(reason);
+  };
+  let undecided = false;
+  const blast = new Map((summary.blastRadius ?? []).map((b) => [b.filePath, b]));
+  const into = linksInto(summary.symbolLinks ?? [], new Set(targets.map((t) => t.file)));
+  for (const t of targets) {
+    if ("symbol" in t) {
+      for (const l of into.get(`${t.file}::${t.symbol}`) ?? []) add(l.sourceFile, l.sourceSymbol === "(reference)" ? `imports ${t.symbol}` : `calls ${t.symbol}`);
+      continue;
+    }
+    const usage = blast.get(t.file)?.typeUsages?.find((u) => u.typeName === t.type);
+    if (!usage) {
+      undecided = true;
+      continue;
+    }
+    for (const u of usage.usagesByFile) {
+      if (u.filePath === t.file) continue;
+      const kinds = Object.keys(u.byKind) as TypeUsageKind[];
+      const used = t.mode === "changed" ? kinds : t.interfaceLike ? kinds.filter((k) => PRODUCER_KINDS.has(k)) : [];
+      if (used.length) add(u.filePath, `${used.join("/")} ${t.type}`);
+    }
+    if (t.mode === "changed") for (const l of into.get(`${t.file}::${t.type}`) ?? []) add(l.sourceFile, l.sourceSymbol === "(reference)" ? `imports ${t.type}` : `constructs ${t.type}`);
+    else if (t.interfaceLike) for (const l of into.get(`${t.file}::${t.type}`) ?? []) if (l.sourceSymbol !== "(reference)") add(l.sourceFile, `constructs ${t.type}`);
+  }
+  return { files, undecided };
+}
+
+/**
+ * Targets from names a caller states for one file (`Class.method`, `function`, `Type`): a name the file's
+ * type usages know is a type, anything else a symbol. `adding` says the names are new members.
+ */
+export function targetsFromNames(summary: Pick<ProjectAnalysis, "blastRadius">, file: string, names: readonly string[], adding = false): MemberTarget[] {
+  const blast: BlastRadiusInfo | undefined = (summary.blastRadius ?? []).find((b) => b.filePath === file);
+  return names.map((n): MemberTarget => {
+    const type = blast?.typeUsages?.find((u) => u.typeName === n);
+    return type ? { file, type: n, mode: adding ? "added" : "changed", interfaceLike: type.definedAt.isInterface } : { file, symbol: n };
+  });
+}
+
+/**
+ * Importers of a file ranked by how much of it they use — files calling or referencing its exports
+ * first, the most used first; files that only import it last.
+ */
+export function rankByUse(blast: Pick<BlastRadiusInfo, "exportedSymbols">, files: readonly string[]): string[] {
+  const uses = new Map<string, number>();
+  for (const s of blast.exportedSymbols) for (const c of s.callers) uses.set(c.file, (uses.get(c.file) ?? 0) + 1);
+  return [...files].sort((a, b) => (uses.get(b) ?? 0) - (uses.get(a) ?? 0) || byOrdinal(a, b));
+}

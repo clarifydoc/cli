@@ -1389,12 +1389,9 @@ async function proposedImpact(ctx: ToolContext, summary: Parameters<typeof impor
   const [{ computeImpactDiff, renderImpactMarkdown }, cs] = await Promise.all([import("../../core/impact-diff.js"), import("../../core/changed-symbols.js")]);
   const files = [...contents.keys()];
   const hunks = await cs.proposedHunks(root, contents);
-  const before = await cs.loadFileAnalyses(ctx.store.analysisDir, files);
-  const found = cs.symbolsInHunks(before, hunks);
-  const after = await cs.analyzeWorkingFiles(root, files, contents);
   const impact = computeImpactDiff(summary, files, {
     baseLabel: "proposed edit",
-    symbols: { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: await cs.judgeSignatures(ctx.store.analysisDir, before, after, summary), hunks },
+    symbols: await cs.symbolsOfChange(root, ctx.store.analysisDir, summary, files, hunks, contents),
   });
   // What the edit itself gets wrong: syntax it introduces, calls with an argument count nothing accepts.
   const { checkPatch, renderPatchCheck } = await import("../../core/patch-check.js");
@@ -1415,7 +1412,7 @@ export function impactTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_impact",
     title: "Impact of changed files",
-    description: "Use for what a change breaks: screens, routes, entities, queues, dependents, tests to run, broken signatures and overrides, risk. Default: working tree vs `base` (HEAD), `staged`; `files` skips git; `proposed`: an edit not made yet.",
+    description: "Use for what a change breaks: screens, routes, entities, queues, dependents (the files naming what changed), tests to run, broken signatures and overrides, risk. Default: working tree vs `base` (HEAD), `staged`; `files` skips git; `proposed`: an edit not made yet.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1493,18 +1490,15 @@ export function impactTool(ctx: ToolContext): McpTool {
       }
       const { computeImpactDiff, renderImpactMarkdown } = await import("../../core/impact-diff.js");
       // From git, the diff's lines too: the change judged function by function.
-      let symbols: { changed: import("../../core/changed-symbols.js").ChangedSymbol[]; moduleLevel: string[]; signatureChanges?: import("../../core/changed-symbols.js").SignatureChange[]; hunks?: import("../../core/changed-symbols.js").ChangedHunks } | undefined;
+      let symbols: Awaited<ReturnType<typeof import("../../core/changed-symbols.js").symbolsOfChange>> | undefined;
       if (!explicit.length) {
         try {
-          const [{ gitChangedHunks }, { symbolsInHunks, loadFileAnalyses, analyzeWorkingFiles, judgeSignatures }] = await Promise.all([
+          const [{ gitChangedHunks }, { symbolsOfChange }] = await Promise.all([
             import("../../core/git-changed-files.js"),
             import("../../core/changed-symbols.js"),
           ]);
           const hunks = await gitChangedHunks(root, { base: stringArg(args, "base"), staged: booleanArg(args, "staged") });
-          const before = await loadFileAnalyses(ctx.store.analysisDir, [...new Set([...hunks.keys(), ...changed])]);
-          const found = symbolsInHunks(before, hunks);
-          const after = await analyzeWorkingFiles(root, [...before.keys()]);
-          symbols = { changed: found.symbols, moduleLevel: found.moduleLevel, signatureChanges: await judgeSignatures(ctx.store.analysisDir, before, after, loaded.summary), hunks };
+          symbols = await symbolsOfChange(root, ctx.store.analysisDir, loaded.summary, [...new Set([...hunks.keys(), ...changed])], hunks);
         } catch {
           // Without line ranges the file-level projection stands alone.
         }

@@ -78,6 +78,29 @@ export interface ChangedSymbol {
 }
 
 /**
+ * A class or interface a diff changed outside any of its methods (a field, a required member, its
+ * heritage line): the type is what the change touches, not a function.
+ */
+export interface ChangedClass {
+  file: string;
+  name: string;
+  kind: "class" | "interface" | "enum";
+  /** Declared for its subclasses to complete (`ClassInfo.abstract`, or an interface). */
+  interfaceLike: boolean;
+  line: number;
+  endLine: number;
+}
+
+/**
+ * What a change did to the members of a type `symbolsInHunks` reported at class level: names it added
+ * and names it removed, re-typed or re-parameterized (`*`: the type itself is gone).
+ */
+export interface ClassChange extends ChangedClass {
+  added: string[];
+  changed: string[];
+}
+
+/**
  * The functions and methods whose spans the changed lines touch — the
  * innermost one for each hunk. Lines outside every span (imports, module
  * code, a whole new file) change the file, not a symbol: they are returned
@@ -87,11 +110,15 @@ export interface ChangedSymbol {
  * not judged at a shifted new-side line that lands in the neighbour above.
  */
 export function symbolsInHunks(
-  analyses: ReadonlyMap<string, Pick<FileAnalysis, "functions" | "classes">>,
+  analyses: ReadonlyMap<string, Pick<FileAnalysis, "functions" | "classes"> & { imports?: ReadonlyArray<{ line: number }> }>,
   hunks: ChangedHunks,
-): { symbols: ChangedSymbol[]; moduleLevel: string[] } {
+): { symbols: ChangedSymbol[]; moduleLevel: string[]; classLevel: ChangedClass[]; moduleOnly: string[]; importOnly: string[] } {
+  const importOnly = new Set<string>();
   const symbols = new Map<string, ChangedSymbol>();
   const moduleLevel = new Set<string>();
+  // Hunks in a type's body but in none of its methods; and files with a hunk in neither a method nor a type.
+  const classLevel = new Map<string, ChangedClass>();
+  const moduleOnly = new Set<string>();
   // A file whose diff only deletes lines has no entry in `hunks`: its deletions still count.
   const files = new Set([...hunks.keys(), ...(hunks.deleted?.keys() ?? []), ...(hunks.old?.keys() ?? [])]);
   for (const file of files) {
@@ -102,8 +129,12 @@ export function symbolsInHunks(
     const a = analyses.get(file);
     if (!a) {
       moduleLevel.add(file);
+      moduleOnly.add(file);
       continue;
     }
+    const typeSpans: ChangedClass[] = a.classes
+      .filter((c) => c.endLine >= c.line)
+      .map((c) => ({ file, name: c.name, kind: c.kind ?? "class", interfaceLike: c.kind === "interface" || !!(c as { abstract?: boolean }).abstract, line: c.line, endLine: c.endLine }));
     const spans: ChangedSymbol[] = [
       ...a.functions.filter((f) => f.name !== "<setup>" && f.endLine >= f.line).map((f) => ({ file, symbol: f.name, line: f.line, endLine: f.endLine })),
       ...a.classes.flatMap((c) => c.methods.filter((m) => m.endLine >= m.line).map((m) => ({ file, symbol: `${c.name}.${m.name}`, line: m.line, endLine: m.endLine }))),
@@ -113,12 +144,27 @@ export function symbolsInHunks(
         .filter((sp) => sp.line <= e && sp.endLine >= s)
         .sort((x, y) => (x.endLine - x.line) - (y.endLine - y.line))[0];
       if (hit) symbols.set(`${file}::${hit.symbol}`, hit);
-      else moduleLevel.add(file);
+      else {
+        moduleLevel.add(file);
+        // Edits inside the file's import block change what IT imports, not what it offers its importers —
+        // unless the file declares nothing and is only a barrel of imports.
+        const lines = (a.imports ?? []).map((i) => i.line);
+        if ((a.functions.length || a.classes.length) && lines.length && s >= Math.min(...lines) && e <= Math.max(...lines)) {
+          importOnly.add(file);
+          continue;
+        }
+        const type = typeSpans.filter((sp) => sp.line <= e && sp.endLine >= s).sort((x, y) => (x.endLine - x.line) - (y.endLine - y.line))[0];
+        if (type) classLevel.set(`${file}::${type.name}`, type);
+        else moduleOnly.add(file);
+      }
     }
   }
   return {
     symbols: [...symbols.values()].sort((x, y) => byOrdinal(x.file, y.file) || x.line - y.line),
     moduleLevel: [...moduleLevel].sort(byOrdinal),
+    classLevel: [...classLevel.values()].sort((x, y) => byOrdinal(x.file, y.file) || x.line - y.line),
+    moduleOnly: [...moduleOnly].sort(byOrdinal),
+    importOnly: [...importOnly].sort(byOrdinal),
   };
 }
 
@@ -193,13 +239,13 @@ export function reverseSymbolReach(
 }
 
 /** Read the per-file analyses of some files from an analysis directory (`<dir>/<file>.json`); missing ones are skipped. */
-export async function loadFileAnalyses(analysisDir: string, files: readonly string[]): Promise<Map<string, Pick<FileAnalysis, "functions" | "classes">>> {
+export async function loadFileAnalyses(analysisDir: string, files: readonly string[]): Promise<Map<string, Pick<FileAnalysis, "functions" | "classes"> & { imports?: ReadonlyArray<{ line: number }> }>> {
   // (Functions keep their params: signatureChanges compares them.)
-  const out = new Map<string, Pick<FileAnalysis, "functions" | "classes">>();
+  const out = new Map<string, Pick<FileAnalysis, "functions" | "classes"> & { imports?: ReadonlyArray<{ line: number }> }>();
   await Promise.all(files.map(async (f) => {
     try {
       const a = JSON.parse(await readFile(join(analysisDir, `${f}.json`), "utf8")) as FileAnalysis;
-      out.set(f, { functions: a.functions ?? [], classes: a.classes ?? [] });
+      out.set(f, { functions: a.functions ?? [], classes: a.classes ?? [], imports: (a.imports ?? []).map((i) => ({ line: i.line })) });
     } catch {
       // Not analyzed (new since the analysis, or not a source file).
     }
@@ -472,6 +518,58 @@ export async function judgeSignatures(
   };
   const overrides = await overridesOfMethods(summary.classGraph, links, before, classesOf);
   return signatureChanges(before, after, links, { overrides });
+}
+
+/**
+ * What the change did to each type it touched at class level, by comparing the type before and after:
+ * the member names it added, and those it removed or re-typed. A type the edit could not be read
+ * again for reads as wholly changed (`*`), so nothing narrows on a guess.
+ */
+export function classChanges(before: ReadonlyMap<string, Spans>, after: ReadonlyMap<string, Spans>, touched: readonly ChangedClass[]): ClassChange[] {
+  const members = (c: Spans["classes"][number]): Map<string, string> => {
+    const m = new Map<string, string>();
+    for (const p of c.properties ?? []) m.set(p.name, `p:${p.type ?? ""}:${p.visibility ?? ""}`);
+    for (const f of c.methods ?? []) m.set(f.name, `m:${f.params?.length ?? 0}:${f.returnType ?? ""}`);
+    return m;
+  };
+  return touched.map((t) => {
+    const was = before.get(t.file)?.classes.find((c) => c.name === t.name);
+    const now = after.get(t.file)?.classes.find((c) => c.name === t.name);
+    if (!was || !now) return { ...t, added: [], changed: ["*"] };
+    const a = members(was);
+    const b = members(now);
+    const added = [...b.keys()].filter((k) => !a.has(k));
+    const changed = [...a].filter(([k, v]) => b.get(k) !== v).map(([k]) => k);
+    if ((was.extends ?? "") !== (now.extends ?? "") || [...(was.implements ?? [])].sort().join() !== [...(now.implements ?? [])].sort().join()) changed.push("<heritage>");
+    return { ...t, added, changed };
+  });
+}
+
+/**
+ * The change at the level of functions and types, for `computeImpactDiff`'s `symbols`: what the diff's lines
+ * touched in `files` (as the analysis in `analysisDir` has them), the signatures that changed and the
+ * members a type gained or lost. `contents` is an edit not made yet; without it the working tree is read.
+ */
+export async function symbolsOfChange(
+  root: string,
+  analysisDir: string,
+  summary: Pick<ProjectAnalysis, "symbolLinks" | "classGraph">,
+  files: readonly string[],
+  hunks: ChangedHunks,
+  contents?: ReadonlyMap<string, string | null>,
+) {
+  const before = await loadFileAnalyses(analysisDir, files);
+  const found = symbolsInHunks(before, hunks);
+  const after = await analyzeWorkingFiles(root, contents ? files : [...before.keys()], contents);
+  return {
+    changed: found.symbols,
+    moduleLevel: found.moduleLevel,
+    moduleOnly: found.moduleOnly,
+    importOnly: found.importOnly,
+    signatureChanges: await judgeSignatures(analysisDir, before, after, summary),
+    classChanges: classChanges(before, after, found.classLevel),
+    hunks,
+  };
 }
 
 /**

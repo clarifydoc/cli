@@ -1,7 +1,8 @@
 import { EXTENSION_TO_LANGUAGE, manifestFor } from "../extractors/registry.js";
 import type { TestTarget } from "../types/language-plugin.js";
 import { ownersOf } from "./code-owners.js";
-import { describeSignatureChange, signatureChangeTail, reverseSymbolReach, type ChangedSymbol, type SignatureChange, type SymbolCaller } from "./changed-symbols.js";
+import { describeSignatureChange, signatureChangeTail, reverseSymbolReach, type ChangedClass, type ChangedSymbol, type ClassChange, type SignatureChange, type SymbolCaller } from "./changed-symbols.js";
+import { filesNaming, type MemberTarget } from "./member-dependents.js";
 import type {
   Language,
   ProjectAnalysis,
@@ -65,9 +66,19 @@ export interface ImpactDiffResult {
   queueCount: number;
   /** True when any contributing capped list overflowed — counts are lower bounds. */
   truncated: boolean;
-  /** Files that (transitively) import a changed file, excluding the changed set. */
+  /**
+   * Files that (transitively) import a changed file, excluding the changed set — or, when the diff's lines
+   * say which members changed (`narrowed`), the files that NAME them: call a changed function, or use a
+   * changed type in a way the change can break. The rest are `narrowed.importers` of context.
+   */
   dependents: string[];
   dependentCount: number;
+  /**
+   * Set when `dependents` was narrowed to the files naming what changed: how many files import the changed
+   * files altogether, the changed files it was judged for, and why each dependent is charged (the first
+   * reasons, `DEP_LIST_CAP` files).
+   */
+  narrowed?: { importers: number; files: string[]; members: Array<{ file: string; name: string; adding?: boolean }>; why: Array<{ file: string; reasons: string[] }> };
   /** Test files among changed ∪ dependents — the "tests to run" set. */
   tests: string[];
   testCount: number;
@@ -187,7 +198,18 @@ export function computeImpactDiff(
     baseLabel?: string;
     author?: string;
     /** The changed functions (from `symbolsInHunks`), when the diff's lines are known. */
-    symbols?: { changed: ChangedSymbol[]; moduleLevel: string[]; signatureChanges?: SignatureChange[]; hunks?: ReadonlyMap<string, ReadonlyArray<readonly [number, number]>> };
+    symbols?: {
+      changed: ChangedSymbol[];
+      moduleLevel: string[];
+      signatureChanges?: SignatureChange[];
+      hunks?: ReadonlyMap<string, ReadonlyArray<readonly [number, number]>>;
+      /** Types changed outside their methods, judged before and after (`classChanges`). */
+      classChanges?: ClassChange[];
+      /** Files with a changed line in neither a method nor a type: only the file-level answer holds for them. */
+      moduleOnly?: string[];
+      /** Files with a changed line inside their import block (what they import, not what they offer). */
+      importOnly?: string[];
+    };
   },
 ): ImpactDiffResult {
   // Canonical path index — exact first, case-insensitive fallback (Delphi
@@ -228,6 +250,8 @@ export function computeImpactDiff(
   const queues = new Set<string>();
   const dependents = new Set<string>();
   let truncated = false;
+  // Importers per changed file, for the files whose dependents get narrowed to the members that changed.
+  const importersOf = new Map<string, Set<string>>();
   let dangerous: string | null = null;
   let moderate: string | null = null;
   // The most severe verdict among the changed files. "you touched a foundation
@@ -236,9 +260,25 @@ export function computeImpactDiff(
   let topVerdict: { file: string; verdict: RiskVerdict } | null = null;
   const VERDICT_RANK: Record<string, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 
+  // Which changed files the diff's lines let us judge by member, and who names what changed in them.
+  const narrowing = narrowDependents(summary, changedFiles, options?.symbols);
   for (const file of changedFiles) {
     const b = blastByFile.get(file);
     if (!b) continue;
+    const named = narrowing?.byFile.get(file);
+    if (named) {
+      importersOf.set(file, new Set([...b.affectedFiles, ...b.transitiveFiles]));
+      for (const f of named) dependents.add(f);
+      // The file-level verdicts (dangerous, moderate, foundation file) describe the module, not this change.
+      const t = b.traceImpact;
+      if (!t) continue;
+      const reach = reverseReach(summary.componentGraph, [file, ...named], 8);
+      for (const s of t.screens) if (reach.has(s.file)) screens.set(s.file, s);
+      for (const r of t.routes) if (reach.has(r.file)) routes.set(`${r.method ?? ""} ${r.path} ${r.file}`, r);
+      for (const e of t.entities) entities.add(e);
+      for (const q of t.queues) queues.add(q);
+      continue;
+    }
     if (b.changeRisk === "dangerous" && !dangerous) dangerous = file;
     if (b.changeRisk === "moderate" && !moderate) moderate = file;
     if (b.verdict && b.verdict.category !== "unknown") {
@@ -265,6 +305,10 @@ export function computeImpactDiff(
       t.queueCount > t.queues.length;
   }
   for (const f of changedSet) dependents.delete(f);
+  // Everything that imports a changed file: the context a narrowed list is read against.
+  const importers = new Set(dependents);
+  for (const set of importersOf.values()) for (const f of set) importers.add(f);
+  for (const f of changedSet) importers.delete(f);
 
   // ── Tests to run: test files among changed ∪ dependents ──
   const tests = [...new Set([...changedSet, ...dependents])]
@@ -354,7 +398,7 @@ export function computeImpactDiff(
     const callerFiles = new Set(callers.map((c) => c.file));
     const symbolFiles = new Set(options.symbols.changed.map((s) => s.file));
     const reviewOnly = [...new Set(Object.entries(summary.componentGraph ?? {})
-      .filter(([from, deps]) => !symbolFiles.has(from) && !callerFiles.has(from) && deps.some((d) => symbolFiles.has(d)))
+      .filter(([from, deps]) => !symbolFiles.has(from) && !callerFiles.has(from) && !dependents.has(from) && deps.some((d) => symbolFiles.has(d)))
       .map(([from]) => from))].sort(byOrdinal);
     const nonRoute = callers.filter((c) => !c.symbol.startsWith("route:"));
     standCallers(summary, options.symbols.changed, nonRoute.filter((c) => c.depth === 1).slice(0, 50).concat(nonRoute.filter((c) => c.depth > 1).slice(0, 50)));
@@ -512,6 +556,16 @@ export function computeImpactDiff(
     truncated,
     dependents: sortedDependents.slice(0, DEP_LIST_CAP),
     dependentCount: dependents.size,
+    ...(narrowing?.byFile.size
+      ? {
+          narrowed: {
+            importers: importers.size,
+            files: [...narrowing.byFile.keys()].sort(byOrdinal),
+            members: narrowing.members,
+            why: sortedDependents.slice(0, DEP_LIST_CAP).map((file) => ({ file, reasons: (narrowing.why.get(file) ?? []).slice(0, 3) })).filter((w) => w.reasons.length),
+          },
+        }
+      : {}),
     tests,
     testCount: tests.length,
     chains,
@@ -532,7 +586,69 @@ export function computeImpactDiff(
   return result;
 }
 
+/** Files that reach `starts` by importing, up to `depth` hops. */
+function reverseReach(graph: Record<string, string[]> | undefined, starts: readonly string[], depth: number): Set<string> {
+  const reverse = new Map<string, string[]>();
+  for (const [source, targets] of Object.entries(graph ?? {})) for (const t of targets) (reverse.get(t) ?? reverse.set(t, []).get(t)!).push(source);
+  const seen = new Set(starts);
+  let frontier = [...starts];
+  for (let d = 0; d < depth && frontier.length; d++) {
+    const next: string[] = [];
+    for (const f of frontier) for (const from of reverse.get(f) ?? []) if (!seen.has(from)) (seen.add(from), next.push(from));
+    frontier = next;
+  }
+  return seen;
+}
+
+/**
+ * The files that name what each changed file's diff touched, for the changed files the diff's lines let
+ * us judge by member: every changed line falls in a function, or in a type whose members were compared
+ * before and after. A file with a line outside both (imports, module code), without line ranges, or whose
+ * type the analysis cannot say who uses is left out — its importers stay charged, as before.
+ */
+function narrowDependents(
+  summary: ProjectAnalysis,
+  changedFiles: readonly string[],
+  symbols: NonNullable<Parameters<typeof computeImpactDiff>[2]>["symbols"],
+): { byFile: Map<string, Set<string>>; why: Map<string, string[]>; members: Array<{ file: string; name: string; adding?: boolean }> } | undefined {
+  if (!symbols?.hunks?.size) return undefined;
+  const moduleOnly = new Set(symbols.moduleOnly ?? symbols.moduleLevel);
+  const classChanges = symbols.classChanges ?? [];
+  const byFile = new Map<string, Set<string>>();
+  const why = new Map<string, string[]>();
+  const members: Array<{ file: string; name: string; adding?: boolean }> = [];
+  for (const file of changedFiles) {
+    const hunked = symbols.hunks.has(file) || (symbols.hunks as { old?: Map<string, unknown>; deleted?: Map<string, unknown> }).old?.has(file) || (symbols.hunks as { deleted?: Map<string, unknown> }).deleted?.has(file);
+    if (!hunked || moduleOnly.has(file)) continue;
+    const targets: MemberTarget[] = symbols.changed.filter((s) => s.file === file).map((s) => ({ file, symbol: s.symbol }));
+    const types = classChanges.filter((c) => c.file === file);
+    // A class-level hunk with no comparison behind it cannot be judged by member.
+    if ((symbols.moduleLevel.includes(file) && !types.length && !symbols.importOnly?.includes(file)) || (!targets.length && !types.length && !symbols.importOnly?.includes(file))) continue;
+    // A type whose members compare equal changed in a way the comparison does not see (a default, a comment): not judged.
+    if (types.some((c) => !c.added.length && !c.changed.length)) continue;
+    for (const c of types) {
+      targets.push({ file, type: c.name, mode: c.changed.length ? "changed" : "added", interfaceLike: c.interfaceLike });
+    }
+    const named = filesNaming(summary, targets);
+    if (named.undecided) continue;
+    byFile.set(file, new Set([...named.files.keys()].filter((f) => !changedFiles.includes(f))));
+    for (const [f, reasons] of named.files) {
+      const rows = why.get(f) ?? why.set(f, []).get(f)!;
+      for (const r of reasons) if (!rows.includes(r)) rows.push(r);
+    }
+    members.push(...targets.map((t) => ("symbol" in t ? { file, name: t.symbol } : { file, name: t.type, ...(t.mode === "added" ? { adding: true } : {}) })));
+  }
+  return byFile.size ? { byFile, why, members } : undefined;
+}
+
 // ─── Renderers (CLI output) ─────────────────────────────────────────────────
+
+/** "naming what changed (of 25 importing files)": the dependents list was cut to the files that name the members. */
+function narrowedNote(r: ImpactDiffResult): string {
+  if (!r.narrowed) return "";
+  const rest = r.narrowed.importers - r.dependentCount;
+  return ` naming what changed (${r.narrowed.importers} files import ${r.narrowed.files.length === 1 ? "it" : "them"}${rest > 0 ? `; the other ${rest} name nothing that changed` : ""})`;
+}
 
 const geq = (r: ImpactDiffResult): string => (r.truncated ? "≥" : "");
 
@@ -623,7 +739,7 @@ export function renderImpactText(r: ImpactDiffResult): string {
   }
   if (r.owners?.length) lines.push("", `Owners (CODEOWNERS): ${r.owners.map((o) => `${o.owner} (${o.files})`).join(", ")}`);
   if (r.reviewers?.length) lines.push(`Suggested reviewers: ${r.reviewers.map((x) => `${x.name} (${x.commits} commits to ${x.files} of these files)`).join(", ")}`);
-  lines.push("", `Dependent files: ${r.dependentCount}`);
+  lines.push("", `Dependent files: ${r.dependentCount}${narrowedNote(r)}`);
   if (r.chains.length > 0) {
     lines.push("", "Chains:");
     for (const c of r.chains) lines.push(`  ${chainLine(c)}`);
@@ -689,7 +805,7 @@ export function renderImpactMarkdown(r: ImpactDiffResult): string {
   }
   if (r.owners?.length) row("Owners", r.owners.map((o) => `${o.owner} (${o.files})`).join(", "));
   if (r.reviewers?.length) row("Suggested reviewers", r.reviewers.map((x) => `${x.name} (${x.commits} commits)`).join(", "));
-  row("Dependents", String(r.dependentCount));
+  row("Dependents", `${r.dependentCount}${narrowedNote(r)}`);
   if (r.chains.length > 0) {
     md.push("");
     md.push("<details><summary>Dependency chains (UI → changed file)</summary>");
