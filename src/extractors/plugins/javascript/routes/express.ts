@@ -281,6 +281,22 @@ function isHonoFile(node: Node): boolean {
 }
 
 /**
+ * The outermost call of a chain `call` sits in (`a.x().y().z()` → the `z()` call), and the name the chain is declared
+ * into (`const api = …`), if any.
+ */
+function chainTop(call: Node): { top: Node; declared: Node | null } {
+  let top = call;
+  for (;;) {
+    const member = top.parent;
+    const outer = member?.parent;
+    if (member?.type === "member_expression" && member.childForFieldName("object")?.id === top.id && outer?.type === "call_expression" && outer.childForFieldName("function")?.id === member.id) top = outer;
+    else break;
+  }
+  const declared = top.parent?.type === "variable_declarator" && top.parent.childForFieldName("value")?.id === top.id ? top.parent.childForFieldName("name") : null;
+  return { top, declared };
+}
+
+/**
  * The receiver a chained Hono registration stands on: the variable the whole chain is declared into
  * (`const clubs = new Hono().get(…).post(…)`), else the identifier it starts from (`app.basePath('/v1').get(…)`), else none —
  * and the `basePath` steps below this call that no declared instance carries (those reach `applyHonoBasePaths`).
@@ -298,14 +314,7 @@ function honoChain(call: Node): { receiver: string | null; prefix: string } | nu
     obj = f.childForFieldName("object");
   }
   if (!obj) return null;
-  let top = call;
-  for (;;) {
-    const member = top.parent;
-    const outer = member?.parent;
-    if (member?.type === "member_expression" && member.childForFieldName("object")?.id === top.id && outer?.type === "call_expression" && outer.childForFieldName("function")?.id === member.id) top = outer;
-    else break;
-  }
-  const declared = top.parent?.type === "variable_declarator" && top.parent.childForFieldName("value")?.id === top.id ? top.parent.childForFieldName("name") : null;
+  const { top, declared } = chainTop(call);
   if (declared?.type === "identifier") return { receiver: declared.text.toLowerCase(), prefix: "" };
   const prefix = steps.reduce((acc, step) => joinPrefix(acc, step), "");
   return { receiver: obj.type === "identifier" ? obj.text.toLowerCase() : null, prefix };
@@ -327,14 +336,7 @@ function routerChainReceiver(call: Node): string | null | undefined {
     obj = f.childForFieldName("object");
   }
   if (!rooted) return undefined;
-  let top = call;
-  for (;;) {
-    const member = top.parent;
-    const outer = member?.parent;
-    if (member?.type === "member_expression" && member.childForFieldName("object")?.id === top.id && outer?.type === "call_expression" && outer.childForFieldName("function")?.id === member.id) top = outer;
-    else break;
-  }
-  const declared = top.parent?.type === "variable_declarator" && top.parent.childForFieldName("value")?.id === top.id ? top.parent.childForFieldName("name") : null;
+  const { top, declared } = chainTop(call);
   if (declared?.type === "identifier") return declared.text.toLowerCase();
   // The module's own router: `export default Router().use(clubs)` / `module.exports = Router().use(clubs)`. Anywhere else
   // (an argument, a return) the chain is somebody else's router, and says nothing about this file's.

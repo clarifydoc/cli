@@ -612,11 +612,17 @@ function snakeCase(segment: string): string {
 function uniqueSuffixMatch(suffix: string, filePathMap: Map<string, string>): string | null | undefined {
   const lower = suffix.toLowerCase();
   const base = lower.slice(lower.lastIndexOf("/") + 1);
-  const hits = new Set<string>();
-  for (const file of [...(getBasenameCandidates(filePathMap).get(base) ?? []), ...(getBasenameCandidates(filePathMap).get("mod") ?? [])]) {
+  const candidates = [...(getBasenameCandidates(filePathMap).get(base) ?? []), ...(getBasenameCandidates(filePathMap).get("mod") ?? [])];
+  return uniqueOf(candidates, (file) => {
     const stripped = file.replace(requireRegistered(stripSourceExtensionReSlot), "").toLowerCase();
-    if (stripped.endsWith(`/${lower}`) || stripped === lower || stripped.endsWith(`/${lower}/mod`)) hits.add(file);
-  }
+    return stripped.endsWith(`/${lower}`) || stripped === lower || stripped.endsWith(`/${lower}/mod`);
+  });
+}
+
+/** The one candidate `test` accepts: `null` when several do, `undefined` when none does. */
+function uniqueOf(candidates: Iterable<string>, test: (file: string) => boolean): string | null | undefined {
+  const hits = new Set<string>();
+  for (const file of candidates) if (test(file)) hits.add(file);
   if (hits.size === 1) return [...hits][0]!;
   return hits.size > 1 ? null : undefined;
 }
@@ -628,13 +634,10 @@ function uniqueSuffixMatch(suffix: string, filePathMap: Map<string, string>): st
 function uniquePathEnding(name: string, filePathMap: Map<string, string>): string | null | undefined {
   const lower = name.toLowerCase();
   const base = lower.slice(lower.lastIndexOf("/") + 1).replace(requireRegistered(stripSourceExtensionReSlot), "");
-  const hits = new Set<string>();
-  for (const file of getBasenameCandidates(filePathMap).get(base) ?? []) {
+  return uniqueOf(getBasenameCandidates(filePathMap).get(base) ?? [], (file) => {
     const path = file.toLowerCase();
-    if (path === lower || path.endsWith(`/${lower}`)) hits.add(file);
-  }
-  if (hits.size === 1) return [...hits][0]!;
-  return hits.size > 1 ? null : undefined;
+    return path === lower || path.endsWith(`/${lower}`);
+  });
 }
 
 const MATCH_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".vue", ".py", ".java", ".kt", ".cs", ".pas", ".go", ".rs", ".rb", ".php", ".swift", ".lua", ".scala", ".pl", ".pm", ".vb", ".bas"];

@@ -4662,7 +4662,9 @@ function valueFlowLinks(links: readonly SymbolLink[], ctx: LinkContext): SymbolL
  */
 function callableQuestion(ctx: LinkContext): (query: CallableQuery) => boolean {
   const fnType = functionTypeQuestion(ctx);
-  const members = new Map<string, boolean>();
+  // Per link run, not per closure: the invoke sites and the solver each build a question and ask the same ones.
+  let members = callableMemos.get(ctx);
+  if (!members) callableMemos.set(ctx, (members = new Map()));
   return (q) => {
     if ("fnType" in q) return fnType(q.file, q.fnType);
     const key = `${q.file}\0${q.symbol}\0${q.receiver}\0${q.member}`;
@@ -4674,25 +4676,25 @@ function callableQuestion(ctx: LinkContext): (query: CallableQuery) => boolean {
   };
 }
 
+const callableMemos = new WeakMap<LinkContext, Map<string, boolean>>();
+
 function callableMember(ctx: LinkContext, q: CallableQuery & { receiver: string; member: string }): boolean {
-  {
-    const analysis = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(q.file);
-    if (!analysis) return false;
-    const dot = q.symbol.indexOf(".");
-    const written = q.receiver === "this"
-      ? dot > 0 ? q.symbol.slice(0, dot) : findEnclosingCallable(analysis, q.symbol)?.enclosingClass
-      : /^\w+$/.test(q.receiver) ? receiverDeclaredType(analysis, q.symbol, q.receiver) : null;
-    const name = written ? receiverTypeName(written, analysis.language) : null;
-    let file = name ? locateClass(ctx, name, q.file, ctx.projectOf.get(q.file) ?? "root") : null;
-    let cls = name;
-    for (let hops = 0; file && cls && hops <= 3; hops++) {
-      if (ctx.classAt.get(memberKey(file, cls))?.properties.some((p) => p.name === q.member && p.callable)) return true;
-      const parent = parentClassOf(ctx, cls, file);
-      file = parent?.parentFile ?? null;
-      cls = parent?.parentClass ?? null;
-    }
-    return false;
+  const analysis = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(q.file);
+  if (!analysis) return false;
+  const dot = q.symbol.indexOf(".");
+  const written = q.receiver === "this"
+    ? dot > 0 ? q.symbol.slice(0, dot) : findEnclosingCallable(analysis, q.symbol)?.enclosingClass
+    : /^\w+$/.test(q.receiver) ? receiverDeclaredType(analysis, q.symbol, q.receiver) : null;
+  const name = written ? receiverTypeName(written, analysis.language) : null;
+  let file = name ? locateClass(ctx, name, q.file, ctx.projectOf.get(q.file) ?? "root") : null;
+  let cls = name;
+  for (let hops = 0; file && cls && hops <= 3; hops++) {
+    if (ctx.classAt.get(memberKey(file, cls))?.properties.some((p) => p.name === q.member && p.callable)) return true;
+    const parent = parentClassOf(ctx, cls, file);
+    file = parent?.parentFile ?? null;
+    cls = parent?.parentClass ?? null;
   }
+  return false;
 }
 
 /**
@@ -7541,8 +7543,11 @@ function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonl
       continue;
     }
     // `repo.findAsync(id).join()`: the unwrapping call takes the value out of the wrapper the call before it declares.
+    // What the hop after this segment takes out of a declared type, asked once: gated on the hop's name, so no
+    // segment's declared type is read for a hop that takes nothing.
+    const takes = after ? valueOutOf(ctx.languageOf.get(point.typeFile))?.takes(after) ?? null : null;
     if (seg.call && after?.call) {
-      const unwrapped = valueOutOf(ctx.languageOf.get(point.typeFile))?.takes(after)?.wrapper ? methodResult(ctx, point, seg.name, false, after) : null;
+      const unwrapped = takes?.wrapper ? methodResult(ctx, point, seg.name, false, after) : null;
       if (unwrapped) {
         point = unwrapped;
         i++;
@@ -7550,11 +7555,9 @@ function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonl
       }
     }
     // `a.getLazy().value`, `a.provider.get()`, `a.lazy.Value`, `repo.all().get(0)`, `club.players.get(0)`: a field or
-    // method declaring a wrapper, a list or a map, then the hop out of it. Gated on the hop's name first: reading the
-    // declared type of every chain segment would cost a lookup per hop.
+    // method declaring a wrapper, a list or a map, then the hop out of it.
     // (A call then a call is the wrapper step above, unless the second takes an element.)
-    const hopLanguage = after ? ctx.languageOf.get(point.typeFile) : undefined;
-    if (after && hopTakesValue(hopLanguage, after) && (!seg.call || !after.call || valueOutOf(hopLanguage)?.takes(after)?.element)) {
+    if (after && takes && (!seg.call || !after.call || takes.element)) {
       const declared = seg.call ? methodDeclaredReturn(ctx, point, seg.name) : fieldDeclaredType(ctx, point, seg.name);
       const unwrapped = declared ? unwrappedDeclared(ctx, declared, after, point.consumer) : null;
       if (unwrapped) {
@@ -7574,11 +7577,6 @@ function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonl
 /** The language's hook for taking a value out of a declared type (`valueOut`), if it states one. */
 function valueOutOf(language: string | undefined): ValueOutHook | undefined {
   return manifestFor((language ?? "") as Language)?.valueOut;
-}
-
-/** Whether `hop` takes a value out of what the segment before it declares: a wrapper, a list or a map. */
-function hopTakesValue(language: string | undefined, hop: ChainSegment): boolean {
-  return !!valueOutOf(language)?.takes(hop);
 }
 
 /**
@@ -7620,7 +7618,7 @@ function wrappedHead(
   hop: ChainSegment | undefined,
   viaSelf: boolean,
 ): InjectionPoint | null {
-  if (!hop || hop.ctor || !hopTakesValue(analysis.language, hop)) return null;
+  if (!hop || hop.ctor || !valueOutOf(analysis.language)?.takes(hop)) return null;
   const key = nameKey(analysis.language, name);
   let type: string | undefined;
   if (!viaSelf) {
@@ -8279,7 +8277,8 @@ function receiverChain(callName: string): ChainSegment[] | null {
     const seg = receiverSegment(text);
     const paren = seg.indexOf("(");
     if (paren < 0) {
-      const head = /^[A-Za-z_$][\w$]*(?=\[)/.exec(seg)?.[0];
+      // Most segments hold no bracket: only one that does can be an index read.
+      const head = seg.includes("[") ? /^[A-Za-z_$][\w$]*(?=\[)/.exec(seg)?.[0] : undefined;
       const group = head ? bracketGroup(seg, head.length) : null;
       if (head && group && group.end === seg.length) {
         out.push({ name: head, call: false }, { name: "", call: true, index: true, args: group.inner });

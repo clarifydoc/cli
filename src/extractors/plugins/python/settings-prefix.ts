@@ -43,11 +43,8 @@ function ownValue(ref: ClassRef, attr: string, ctx: ProjectContext): string | un
 }
 
 function classValue(ref: ClassRef, attr: string, ctx: ProjectContext): string | undefined {
-  const own = ownValue(ref, attr, ctx);
-  if (own !== undefined) return own;
-  for (const anc of ctx.classes.ancestors(ref)) {
-    if (!anc.ref) continue;
-    const v = ownValue(anc.ref, attr, ctx);
+  for (const r of [ref, ...ctx.classes.ancestors(ref).flatMap((a) => (a.ref ? [a.ref] : []))]) {
+    const v = ownValue(r, attr, ctx);
     if (v !== undefined) return v;
   }
   return undefined;
@@ -86,7 +83,7 @@ export const fastapiSettingsPrefix: RouteResolver = {
         const value = ref ? classValue(ref, m[2]!, ctx) : undefined;
         if (value === undefined || !/^(?:\/[\w\-./{}]*)?$/.test(value)) return r;
         // A subclass the instance may really be, stating the attribute differently, makes the value unknowable here.
-        if (ref!.cls && ctx.classes.descendants(ref!).some((d) => { const v = ownValue(d, m[2]!, ctx); return v !== undefined && v !== value; })) return r;
+        if (ctx.classes.descendants(ref!).some((d) => { const v = ownValue(d, m[2]!, ctx); return v !== undefined && v !== value; })) return r;
         const { prefixUnresolved: _, ...rest } = r;
         return { ...rest, path: value === "" ? r.path : joinRoutePath(r.path, value) };
       });

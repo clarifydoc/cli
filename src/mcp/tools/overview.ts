@@ -185,9 +185,10 @@ function kindTag(kind: SearchKind): string {
  */
 /** A route path with the first conventional base it starts with (`/api/v1`, `/api`, …) taken off, or nothing. */
 function pathBelowBase(path: string): string[] {
-  const base = DEFAULT_BASE_PREFIXES.find((b) => path.startsWith(`${b}/`));
-  return base ? [path.slice(base.length)] : [];
+  const base = BASES_WITH_SLASH.find((b) => path.startsWith(b));
+  return base ? [path.slice(base.length - 1)] : [];
 }
+const BASES_WITH_SLASH = DEFAULT_BASE_PREFIXES.map((b) => `${b}/`);
 
 function searchCandidates(loaded: LoadedAnalysis, kinds: Set<SearchKind>, query: string, docs?: DocLookup): Candidate[] {
   const { summary, index } = loaded;

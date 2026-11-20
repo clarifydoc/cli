@@ -9,7 +9,7 @@ import { measuredLabel, measuredTestsFor, testsReaching } from "../../core/impac
 import { roleLine } from "../role.js";
 import { routeFactId } from "../../core/fact-ids.js";
 import { byOrdinal } from "../../core/ordinal.js";
-import { routeSymbolName } from "../../core/route-symbol.js";
+import { routeSymbolOf, hasInlineHandler } from "../../core/route-symbol.js";
 
 type Row = ProjectAnalysis["routeMap"][number];
 type ToolText = (args: Record<string, unknown>) => Promise<string | null>;
@@ -81,11 +81,11 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
         const method = r.httpMethod ?? undefined;
         heading = `# ${label(r)} — ${r.handler ?? "inline handler"} (${r.filePath}:${r.line}) · [${routeFactId(r)}]`;
         home = r.filePath;
-        const seed = r.handler ?? routeSymbolName({ ...r, httpMethod: (r.httpMethod ?? "USE").toUpperCase() });
+        const seed = r.handler ?? routeSymbolOf(r);
         if (r.kind === "api") parts.push({ title: "Contract and callers", get: () => contract({ path: r.path, ...(method ? { method } : {}), file: r.filePath }), follow: `clarifydoc_contract path="${r.path}"` });
         const anchor = routeAnchor(r, summary.symbolLinks ?? []);
         if (anchor) parts.push({ title: "What it reaches", get: () => trace({ symbol: anchor, file: r.filePath, direction: "callees", depth: 3, limit: 15 }), follow: `clarifydoc_trace symbol="${anchor}" file="${r.filePath}" direction="callees"` });
-        if (r.handler || r.handlerEndLine) parts.push({ title: "Handler source", get: (left) => extract({ symbol: seed, file: r.filePath, depth: 0, maxTokens: Math.max(300, left) }), follow: `clarifydoc_extract symbol="${seed}" file="${r.filePath}"` });
+        if (r.handler || hasInlineHandler(r)) parts.push({ title: "Handler source", get: (left) => extract({ symbol: seed, file: r.filePath, depth: 0, maxTokens: Math.max(300, left) }), follow: `clarifydoc_extract symbol="${seed}" file="${r.filePath}"` });
         if (r.filePath) {
           const targets = [...(anchor ? [{ file: r.filePath, symbol: anchor }] : []), ...(r.handler ? [{ file: r.filePath, symbol: r.handler }] : [])];
           if (targets.length) parts.push({ title: "Tests", get: async () => testsPart(summary, targets), follow: `clarifydoc_trace symbol="${targets[0]!.symbol}" file="${r.filePath}" direction="callers"` });
