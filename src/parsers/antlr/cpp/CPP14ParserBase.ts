@@ -197,6 +197,16 @@ function dispatch(atn: ATN, ruleNames: readonly string[]): Map<number, (parser: 
     if (state.ruleIndex === simpleTypeSpecifier && altReaching(atn, n, nestedNameSpecifier) === 1 && altReaching(atn, n, theTypeName) === 2) scopeStarts.push(n);
     if (state.ruleIndex === nestedNameSpecifier && state instanceof StarLoopEntryState) scopeLoops.push(n);
   }
+  // A declaration's `declSpecifierSeq?`: whether the first token starts a specifier, which the predicate of the specifier's
+  // alternatives answers from the first pass's facts; prediction read to the end of the declarator to find out.
+  const specifierSeq = rule("declSpecifierSeq");
+  const specifierStarts: number[] = [];
+  for (const name of ["declaration", "simpleDeclaration", "memberDeclaration"]) {
+    for (let n = 0; n < atn.decisionToState.length; n++) {
+      const state = atn.decisionToState[n]!;
+      if (state.ruleIndex === rule(name) && state.transitions.length === 2 && altReaching(atn, n, specifierSeq) === 1) specifierStarts.push(n);
+    }
+  }
   const functionDefinition = rule("functionDefinition");
   const atScope = decisionBetween(atn, declaration, functionDefinition, declarationTail);
   const inClass = decisionBetween(atn, memberDeclaration, functionDefinition, memberDeclaratorList);
@@ -212,6 +222,7 @@ function dispatch(atn: ATN, ruleNames: readonly string[]): Map<number, (parser: 
   const [selectionStatement, initStatement, condition] = ["selectionStatement", "initStatement", "condition"].map(rule) as [number, number, number];
   for (const n of scopeStarts) table.set(n, (p) => p.settleScopeStart());
   for (const n of scopeLoops) table.set(n, (p) => p.settleScopeStep());
+  for (const n of specifierStarts) table.set(n, (p) => p.settleSpecifiers());
   const inits = decisionsBetween(atn, selectionStatement, initStatement, condition);
   if (inits.length === 0) throw new Error("C++ grammar: no init-statement decision");
   for (const init of inits) table.set(init.decision, (p) => p.settleInit(init.function, init.declarators));
@@ -392,6 +403,15 @@ export abstract class CPP14ParserBase extends Parser {
       else return 0;
     }
     return 0;
+  }
+
+  /** `declSpecifierSeq?`: 1 when the first token starts a specifier, 2 when it starts the declarator, 0 where a macro may be either. */
+  settleSpecifiers(): number {
+    const t = this.lt(1).type;
+    if (TYPE_KEYWORDS.has(t) || SPECIFIER_KEYWORDS.has(t)) return 1;
+    if (t !== CPP14Lexer.Identifier && t !== CPP14Lexer.Doublecolon) return 0;
+    if (this.IsDeclSpecifierType()) return 1;
+    return this.IsMacroSpecifier(true) || this.IsMacroSpecifier(false) ? 0 : 2;
   }
 
   settleInit(init: number, condition: number): number {
