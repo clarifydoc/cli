@@ -109,7 +109,7 @@ export function buildSymbolLinks(
   const memberTypes = buildMemberTypes(typeDecls, typeAliases, packageDirectory);
   const ctx: LinkContext = {
     filePathMap,
-    memos: { projectStatic: new Map(), inScopeBinding: new Map(), moduleStem: new Map(), pathScope: new Map(), typeFile: new Map(), importedFiles: new Map(), includeClosure: new Map() },
+    memos: { projectStatic: new Map(), inScopeBinding: new Map(), moduleStem: new Map(), pathScope: new Map(), typeFile: new Map(), importedFiles: new Map(), includeClosure: new Map(), callableMembers: new Map() },
     typeAliases,
     symbolIndex,
     memberTypes,
@@ -2090,6 +2090,7 @@ interface LinkMemos {
   typeFile: Map<string, string | null>;
   importedFiles: Map<string, string[]>;
   includeClosure: Map<string, Set<string>>;
+  callableMembers: Map<string, boolean>;
   codeHandlers?: Map<string, Array<{ file: string; handler: string; line: number }>>;
   codeContracts?: Map<string, Array<{ file: string; symbol: string; line: number }>>;
   methodLeaves?: Map<string, Array<{ file: string; symbol: string; className: string }>>;
@@ -4680,8 +4681,7 @@ function callableQuestions(ctx: LinkContext): CallableQuestions {
  */
 function callableMemberQuestion(ctx: LinkContext): CallableMemberQuestion {
   // Per link run, not per closure: the invoke sites and the solver each build a question and ask the same ones.
-  let members = callableMemos.get(ctx);
-  if (!members) callableMemos.set(ctx, (members = new Map()));
+  const members = ctx.memos.callableMembers;
   return (q) => {
     const key = `${q.file}\0${q.symbol}\0${q.receiver}\0${q.member}`;
     const known = members.get(key);
@@ -4691,8 +4691,6 @@ function callableMemberQuestion(ctx: LinkContext): CallableMemberQuestion {
     return answer;
   };
 }
-
-const callableMemos = new WeakMap<LinkContext, Map<string, boolean>>();
 
 function callableMember(ctx: LinkContext, q: Parameters<CallableMemberQuestion>[0]): boolean {
   const analysis = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(q.file);
