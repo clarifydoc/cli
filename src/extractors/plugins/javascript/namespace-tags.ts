@@ -13,32 +13,41 @@ import { buildFilePathMap, resolveTarget } from "../../shared/link-scoring.js";
  */
 const MAX_HOPS = 4;
 
+/** The file an import or re-export specifier written in `fromFile` names. */
+function target(source: string, fromFile: string, map: Map<string, string>): string | undefined {
+  return resolveTarget(source, fromFile, map)?.split("\u0000")[0];
+}
+
+/** What `follow` finds through the module's `export *` sources — only when exactly one file answers. */
+function uniqueStarHit(owner: FileAnalysis, map: Map<string, string>, follow: (next: string) => string | null): string | null {
+  const found = new Set<string>();
+  for (const e of owner.exports) {
+    if (e.kind !== "re-export" || !e.source || e.name !== "*") continue;
+    const next = target(e.source, owner.filePath, map);
+    const hit = next ? follow(next) : null;
+    if (hit) found.add(hit);
+  }
+  return found.size === 1 ? [...found][0]! : null;
+}
+
 function memberFile(file: string, member: string, byPath: Map<string, FileAnalysis>, map: Map<string, string>, hop: number): string | null {
   const owner = byPath.get(file);
   if (!owner || hop > MAX_HOPS) return null;
   if (owner.exports.some((e) => e.name === member && !(e.kind === "re-export" && e.source))) return file;
-  const named = owner.exports.filter((e) => e.kind === "re-export" && e.source && e.name === member);
-  if (named.length > 0) {
-    const e = named[0]!;
-    const next = resolveTarget(e.source!, owner.filePath, map)?.split("\u0000")[0];
+  const e = owner.exports.find((x) => x.kind === "re-export" && x.source && x.name === member);
+  if (e) {
+    const next = target(e.source!, owner.filePath, map);
     if (!next) return null;
     const hit = memberFile(next, e.sourceName ?? member, byPath, map, hop + 1);
     if (hit || e.sourceName !== "default") return hit;
     // `export { default as ConfirmDialog } from "./ConfirmDialog.vue"`: a component file that states no export names
     // itself the default (an SFC), unless it forwards a default of its own, which the walk above followed.
-    const target = byPath.get(next);
-    return target && /\.(?:vue|svelte)$/.test(next) && !target.exports.some((x) => x.name === "default") ? next : null;
+    const forwarded = byPath.get(next);
+    return forwarded && /\.(?:vue|svelte)$/.test(next) && !forwarded.exports.some((x) => x.name === "default") ? next : null;
   }
   // `export *` never forwards a default.
   if (member === "default") return null;
-  const found = new Set<string>();
-  for (const e of owner.exports) {
-    if (e.kind !== "re-export" || !e.source || e.name !== "*") continue;
-    const next = resolveTarget(e.source, owner.filePath, map)?.split("\u0000")[0];
-    const hit = next ? memberFile(next, member, byPath, map, hop + 1) : null;
-    if (hit) found.add(hit);
-  }
-  return found.size === 1 ? [...found][0]! : null;
+  return uniqueStarHit(owner, map, (next) => memberFile(next, member, byPath, map, hop + 1));
 }
 
 /**
@@ -48,27 +57,18 @@ function memberFile(file: string, member: string, byPath: Map<string, FileAnalys
 function moduleOf(file: string, name: string, byPath: Map<string, FileAnalysis>, map: Map<string, string>, hop: number): string | null {
   const owner = byPath.get(file);
   if (!owner || hop > MAX_HOPS) return null;
-  const step = (source: string) => resolveTarget(source, owner.filePath, map)?.split("\u0000")[0];
-  const named = owner.exports.filter((e) => e.kind === "re-export" && e.source && e.name === name);
-  if (named.length > 0) {
-    const e = named[0]!;
-    const next = step(e.source!);
+  const e = owner.exports.find((x) => x.kind === "re-export" && x.source && x.name === name);
+  if (e) {
+    const next = target(e.source!, owner.filePath, map);
     if (!next) return null;
     return e.sourceName === "*" ? next : moduleOf(next, e.sourceName ?? name, byPath, map, hop + 1);
   }
-  const found = new Set<string>();
-  for (const e of owner.exports) {
-    if (e.kind !== "re-export" || !e.source || e.name !== "*") continue;
-    const next = step(e.source);
-    const hit = next ? moduleOf(next, name, byPath, map, hop + 1) : null;
-    if (hit) found.add(hit);
-  }
-  return found.size === 1 ? [...found][0]! : null;
+  return uniqueStarHit(owner, map, (next) => moduleOf(next, name, byPath, map, hop + 1));
 }
 
 /** The file a namespaced tag's member lives in: the head's module, each namespace segment followed, then the member. */
 function namespacedFile(from: FileAnalysis, tag: NonNullable<SubComponentInfo["namespaceMember"]>, byPath: Map<string, FileAnalysis>, map: Map<string, string>): string | null {
-  let module: string | null | undefined = resolveTarget(tag.source, from.filePath, map)?.split("\u0000")[0];
+  let module: string | null | undefined = target(tag.source, from.filePath, map);
   if (module && tag.through) module = moduleOf(module, tag.through, byPath, map, 0);
   const segments = tag.member.split(".");
   const last = segments.pop()!;
@@ -125,7 +125,7 @@ function resolveViews(analyses: FileAnalysis[]): FileAnalysis[] {
       // A plain import: when it names a barrel, the file its export walk reaches for the name asked.
       if (s.importSource && !s.namespaceMember) {
         const name = importedName(a, s.name, s.importSource);
-        const module = name ? resolveTarget(s.importSource, a.filePath, map)?.split("\u0000")[0] : null;
+        const module = name ? target(s.importSource, a.filePath, map) : null;
         if (!name || !module || module === a.filePath) return s;
         const file = memberFile(module, name, byPath, map, 0);
         return file && file !== module && file !== a.filePath ? { ...s, importSource: specifierFor(a.filePath, file) } : s;

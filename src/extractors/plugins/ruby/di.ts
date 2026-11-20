@@ -3,6 +3,7 @@ import type { CallPattern } from "../shared/regex-base.js";
 import { blankStringLiterals, splitTopLevel } from "../shared/regex-base.js";
 import { rubyBodyEnd } from "./blocks.js";
 import { escapeRegex } from "../shared/path-utils.js";
+import { matchingParen } from "../shared/text-scan.js";
 
 /**
  * Dependency injection as Ruby code spells it. Ruby declares no types, so the
@@ -312,41 +313,38 @@ const IVAR_MULTI_RE = /^\s*(@\w+(?:\s*,\s*@\w+)+)\s*=(?![=~>])\s*(.+?)\s*$/;
 const BLOCK_PARAMS_RE = /\|([^|]*)\|/g;
 
 /** An arm of a conditional initializer as a `from` chain: `AdminApi.new(db)` → `AdminApi.new()`, `Clubs.admin(x)` → `Clubs.admin()`. */
+const ARM_NEW_RE = new RegExp(String.raw`^${CONST}\.new\b(?:\s*\([^()]*\))?$`);
 function armFrom(text: string): string | null {
   const t = text.trim();
-  if (new RegExp(String.raw`^${CONST}\.new\b(?:\s*\([^()]*\))?$`).test(t)) return `${constructedClass(t)}.new()`;
+  if (ARM_NEW_RE.test(t)) return `${constructedClass(t)}.new()`;
   return rubyCallChain(t);
 }
 
-/** The index of the first top-level (outside brackets) place where `re` (anchored with `^`) matches `text`, or -1. */
+/** The index of the first top-level (outside brackets) place where the sticky `re` matches `text`, or -1. */
 function topLevelIndex(text: string, re: RegExp): number {
   let depth = 0;
   for (let k = 0; k < text.length; k++) {
     const c = text[k]!;
     if (c === "(" || c === "[" || c === "{") depth++;
     else if (c === ")" || c === "]" || c === "}") depth--;
-    else if (depth === 0 && re.test(text.slice(k))) return k;
+    else if (depth === 0) {
+      re.lastIndex = k;
+      if (re.test(text)) return k;
+    }
   }
   return -1;
 }
 
 /** Whether the opening parenthesis of `text` closes at its last character (`(a ? b : c)`, not `(a).b(c)`). */
-function wrapped(text: string): boolean {
-  if (!text.startsWith("(") || !text.endsWith(")")) return false;
-  let depth = 0;
-  for (let k = 0; k < text.length; k++) {
-    if (text[k] === "(") depth++;
-    else if (text[k] === ")" && --depth === 0) return k === text.length - 1;
-  }
-  return false;
-}
+const wrapped = (text: string): boolean => text.startsWith("(") && matchingParen(text, 0) === text.length - 1;
 
 /** The arms of `cond ? a : b` (nested ternaries flattened); null for anything that is not one. */
 function ternaryArms(rhs: string): string[] | null {
-  const q = topLevelIndex(rhs, /^\s\?\s/);
+  if (!rhs.includes("?")) return null;
+  const q = topLevelIndex(rhs, /\s\?\s/y);
   if (q < 0) return null;
   const rest = rhs.slice(q + 3);
-  const c = topLevelIndex(rest, /^\s:\s/);
+  const c = topLevelIndex(rest, /\s:\s/y);
   if (c < 0) return null;
   const arms = [rest.slice(0, c).trim(), rest.slice(c + 3).trim()];
   const out: string[] = [];
@@ -420,6 +418,11 @@ export function extractRubyLocalTypes(bodyLines: readonly string[], fn: { params
   // Locals initialised by a conditional expression: one entry per arm, sharing a `choice` (see `LocalType.choice`).
   const armed = new Map<string, LocalType[]>();
   const assignedAt = new Set<string>();
+  // A name bound anywhere else in the method says nothing about which arm a call reads.
+  const rebind = (name: string) => {
+    armed.delete(name);
+    assignedAt.add(name);
+  };
   for (let i = 0; i < bodyLines.length; i++) {
     let raw = bodyLines[i]!;
     if (raw.trimStart().startsWith("#")) continue;
@@ -433,17 +436,18 @@ export function extractRubyLocalTypes(bodyLines: readonly string[], fn: { params
       const texts = found?.arms ?? (/^if\b/.test(rhs.trim()) ? null : ternaryArms(rhs.trim()));
       const froms = texts?.map(armFrom);
       if (texts && froms!.every((f) => f)) {
-        // A name bound anywhere else in the method says nothing about which arm a call reads.
-        if (assignedAt.has(name)) armed.delete(name);
-        else armed.set(name, froms!.map((from) => ({ name, type: "", from: from!, choice: i })));
-        assignedAt.add(name);
+        if (assignedAt.has(name)) rebind(name);
+        else {
+          armed.set(name, froms!.map((from) => ({ name, type: "", from: from!, choice: i })));
+          assignedAt.add(name);
+        }
         table.assign(name, UNKNOWN);
         if (found) i = found.end;
         continue;
       }
-      if (assignedAt.has(name)) armed.delete(name);
-      assignedAt.add(name);
+      rebind(name);
     }
+    let m = conditional;
     // `builder = PlayerBuilder.new(` with its arguments on the lines below: read the whole call.
     if (/=\s*[A-Z][\w:]*\.new\s*\($/.test(code.trimEnd())) {
       let depth = 0;
@@ -453,18 +457,17 @@ export function extractRubyLocalTypes(bodyLines: readonly string[], fn: { params
         if (j > i) { raw += " " + bodyLines[j]!.trim(); code += " " + part.trim(); }
         if (depth <= 0) { i = j; break; }
       }
+      m = LOCAL_ASSIGN_RE.exec(code);
     }
     for (const m of code.matchAll(BLOCK_PARAMS_RE)) {
       for (const n of m[1]!.split(",")) {
         const name = n.trim().replace(/^[*&]+/, "");
         if (/^[a-z_]\w*$/.test(name)) {
           table.assign(name, UNKNOWN);
-          armed.delete(name);
-          assignedAt.add(name);
+          rebind(name);
         }
       }
     }
-    const m = LOCAL_ASSIGN_RE.exec(code);
     if (!m) continue;
     table.assign(m[1]!, valueFact(rhsOf(raw, code, code.indexOf(m[1]!) + m[1]!.length), scope));
   }

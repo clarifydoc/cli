@@ -1835,6 +1835,12 @@ function constructorCallsOf(language: string | undefined): readonly string[] {
   return (language && pluginFor(language as Language)?.constructorCalls) || [];
 }
 
+/** Whether `name` is one of the language's constructor calls (`new`, …), compared as the language compares names. */
+function isConstructorCall(language: string | undefined, name: string): boolean {
+  const key = nameKey(language, name);
+  return constructorCallsOf(language).some((c) => nameKey(language, c) === key);
+}
+
 /** Are `language`'s function and method names case-insensitive (all of its identifiers, or `caseInsensitiveCallables` — PHP)? */
 function callablesFoldCase(language: string | undefined): boolean {
   if (!language) return false;
@@ -3171,7 +3177,7 @@ function classNameMember(
     }
     // `TfrmPlayers.Create(AOwner)` / `Foo.new` — the language constructs
     // through a class-level call the class does not declare by that name.
-    if (constructorCallsOf(analysis.language).some((c) => nameKey(analysis.language, c) === nameKey(analysis.language, methodName))) {
+    if (isConstructorCall(analysis.language, methodName)) {
       for (const filePath of eligible) {
         const cls = ctx.classAt.get(memberKey(filePath, declaredClass));
         if (!cls || isDesignFormat(ctx.languageOf.get(filePath))) continue;
@@ -7335,7 +7341,7 @@ function chainPoint(
       if (typeFile) {
         point = { typeName: imported?.typeName ?? head.name, typeFile, member: "", consumer, container: false };
         // `Club.new().train()` (`constructorCalls`): the call constructs the class named, so the chain goes on from the instance.
-        if (depth > 0 && rest[0]!.call && constructorCallsOf(analysis.language).some((c) => nameKey(analysis.language, c) === nameKey(analysis.language, rest[0]!.name))) rest = rest.slice(1);
+        if (depth > 0 && rest[0]!.call && isConstructorCall(analysis.language, rest[0]!.name)) rest = rest.slice(1);
       }
     }
     // `store.NewRepo()` — a function reached through an imported package or

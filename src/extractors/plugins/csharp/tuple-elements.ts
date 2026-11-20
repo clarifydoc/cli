@@ -1,4 +1,5 @@
 import { genericParts, splitTypeArgs } from "../shared/element-chain.js";
+import { matchingParen } from "../shared/text-scan.js";
 
 /**
  * The element types of a declared C# tuple a method returns, in order, for a deconstruction
@@ -11,15 +12,7 @@ export function csharpTupleElements(returnType: string): string[] | null {
   let parts: string[];
   if (text.startsWith("(") && text.endsWith(")")) {
     // The opening parenthesis must close at the end (`(A, B)`, not `(A, B).Foo(C)`).
-    let depth = 0;
-    for (let i = 0; i < text.length; i++) {
-      const ch = text[i];
-      if (ch === "(" || ch === "<" || ch === "[") depth++;
-      else if (ch === ")" || ch === ">" || ch === "]") {
-        depth--;
-        if (depth === 0 && i < text.length - 1) return null;
-      }
-    }
+    if (matchingParen(text, 0) !== text.length - 1) return null;
     parts = splitTypeArgs(text.slice(1, -1)).map(stripElementName);
   } else {
     const generic = genericParts(text);

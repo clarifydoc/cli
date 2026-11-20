@@ -246,9 +246,9 @@ export function findBlockingInAsync(analyses: readonly FileAnalysis[], skip: (fi
         });
       }
       // A property read that blocks (`task.Result`): no call states it, the plugin states the read.
-      if (typedApplies && typed?.readMembers) {
+      if (typedApplies && typed?.readMembers && fn.propertyReads) {
         const reads = { ...typed, members: typed.readMembers };
-        for (const read of fn.propertyReads ?? []) {
+        for (const read of fn.propertyReads) {
           if (seen.has(read.name) || !blocksOnReceiver(read.name, reads, fn, owner, classesNamed)) continue;
           seen.add(read.name);
           out.push({

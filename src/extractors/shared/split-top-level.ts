@@ -28,13 +28,7 @@ export interface SplitTopLevelOptions {
  */
 export function splitTopLevel(text: string, o: SplitTopLevelOptions = {}): string[] {
   const sep = o.sep ?? ",";
-  const pairs = o.brackets ?? "()[]{}";
-  const openers = new Set<string>();
-  const closers = new Set<string>();
-  for (let i = 0; i + 1 < pairs.length; i += 2) {
-    openers.add(pairs[i]!);
-    closers.add(pairs[i + 1]!);
-  }
+  const { openers, closers } = bracketSets(o.brackets ?? "()[]{}");
   const quotes = o.quotes ?? "\"'`";
   const escapes = o.escapes ?? "";
   const pieces: string[] = [];
@@ -66,6 +60,7 @@ export function splitTopLevel(text: string, o: SplitTopLevelOptions = {}): strin
   if (!stopped) pieces.push(text.slice(start));
   const last = pieces.length - 1;
   const tail = o.tail ?? "blank";
+  if (!o.dropBlank && !o.trim && tail === "keep") return pieces;
   const kept = pieces.filter((p, k) => {
     if (o.dropBlank && !p.trim()) return false;
     if (k !== last) return true;
@@ -74,4 +69,19 @@ export function splitTopLevel(text: string, o: SplitTopLevelOptions = {}): strin
     return true;
   });
   return o.trim ? kept.map((p) => p.trim()) : kept;
+}
+
+/** The opener and closer sets of a `brackets` string, built once per spelling (callers use a handful). */
+const BRACKET_SETS = new Map<string, { openers: Set<string>; closers: Set<string> }>();
+function bracketSets(pairs: string): { openers: Set<string>; closers: Set<string> } {
+  let sets = BRACKET_SETS.get(pairs);
+  if (!sets) {
+    sets = { openers: new Set<string>(), closers: new Set<string>() };
+    for (let i = 0; i + 1 < pairs.length; i += 2) {
+      sets.openers.add(pairs[i]!);
+      sets.closers.add(pairs[i + 1]!);
+    }
+    BRACKET_SETS.set(pairs, sets);
+  }
+  return sets;
 }

@@ -13,9 +13,10 @@ import { argumentsOf, unwrapExpression } from "./local-types.js";
  *   - a conditional access (`task?.Result`) or any other receiver.
  */
 export function csharpPropertyReads(body: Node | null): Array<{ name: string; line: number }> | undefined {
-  if (!body || !body.text.includes(".Result")) return undefined;
+  if (!body || !fileMentionsResult(body) || !body.text.includes(".Result")) return undefined;
   const found: Array<{ name: string; line: number }> = [];
-  const awaited = awaitedNames(body);
+  let awaitedMemo: Map<string, number> | undefined;
+  const awaited = () => (awaitedMemo ??= awaitedNames(body));
   for (const node of body.descendantsOfType("member_access_expression")) {
     if (node.childForFieldName("name")?.text !== "Result") continue;
     if (insideDeferredScope(node, body)) continue;
@@ -23,15 +24,23 @@ export function csharpPropertyReads(body: Node | null): Array<{ name: string; li
     if (!receiver) continue;
     const target = unwrapExpression(receiver);
     let text: string | null = null;
-    if (target.type === "identifier") text = doneBefore(awaited, target.text, node.startIndex) ? null : target.text;
+    if (target.type === "identifier") text = doneBefore(awaited(), target.text, node.startIndex) ? null : target.text;
     else if (target.type === "member_access_expression" && target.childForFieldName("expression")?.type === "this") {
       const field = target.childForFieldName("name")?.text;
-      text = field && !doneBefore(awaited, field, node.startIndex) ? `this.${field}` : null;
+      text = field && !doneBefore(awaited(), field, node.startIndex) ? `this.${field}` : null;
     } else if (target.type === "invocation_expression") text = callChainText(target, "csharp");
     if (!text) continue;
     found.push({ name: `${text}.Result`, line: node.startPosition.row + 1 });
   }
   return found.length > 0 ? found : undefined;
+}
+
+/** Whether the file mentions `.Result` at all: asked once per parse tree, not once per async method. */
+const MENTIONS = new WeakMap<object, boolean>();
+function fileMentionsResult(body: Node): boolean {
+  let hit = MENTIONS.get(body.tree);
+  if (hit === undefined) MENTIONS.set(body.tree, (hit = body.tree.rootNode.text.includes(".Result")));
+  return hit;
 }
 
 /**
