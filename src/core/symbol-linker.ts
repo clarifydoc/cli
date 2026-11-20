@@ -201,7 +201,10 @@ export function buildSymbolLinks(
         const link = resolveCallToDefinition(
           sourceFile, fn.name, call, analysis, ctx,
         );
-        if (link) links.push(link);
+        if (link) {
+          links.push(link);
+          macroBodyLinks(ctx, analysis, sourceFile, fn.name, call, link, links);
+        }
       }
     }
 
@@ -213,7 +216,10 @@ export function buildSymbolLinks(
           const link = resolveCallToDefinition(
             sourceFile, sourceSymbol, call, analysis, ctx,
           );
-          if (link) links.push(link);
+          if (link) {
+            links.push(link);
+            macroBodyLinks(ctx, analysis, sourceFile, sourceSymbol, call, link, links);
+          }
         }
       }
     }
@@ -10513,6 +10519,35 @@ function macroDefinition(ctx: LinkContext, analysis: FileAnalysis, sourceFile: s
     if (hits) return hits.length === 1 ? hits[0]! : null;
   }
   return null;
+}
+
+/** How many macros deep a macro's body is followed (`#define A(x) B(x)`). */
+const MACRO_DEPTH = 4;
+
+/**
+ * A call that landed on a function-like macro's `#define` makes the calls the macro's body makes, as the function
+ * around it makes them: the expansion happens at the use, so the body's names resolve in the caller's scope. Each is
+ * INFERRED and carries `viaMacro` — its line is the use, which does not spell the name. A macro the body uses is
+ * followed in turn, to `MACRO_DEPTH`, never through one already on the way.
+ */
+function macroBodyLinks(
+  ctx: LinkContext, analysis: FileAnalysis, sourceFile: string, sourceSymbol: string,
+  call: CallInfo, link: SymbolLink, out: SymbolLink[], seen: readonly string[] = [], depth = 0,
+): void {
+  if (depth >= MACRO_DEPTH || call.kind !== "internal" || link.callName !== call.name || link.viaMacro) return;
+  const hit = macroDefinition(ctx, analysis, sourceFile, call.name);
+  if (!hit?.macro.calls || link.targetFile !== hit.file || link.targetSymbol !== call.name || link.targetLine !== hit.macro.line) return;
+  const path = [...seen, call.name];
+  for (const name of hit.macro.calls) {
+    if (path.includes(name)) continue;
+    const body: CallInfo = { name, kind: "internal", target: null, line: call.line };
+    const inner = resolveCallToDefinition(sourceFile, sourceSymbol, body, analysis, ctx);
+    if (!inner) continue;
+    inner.confidence = "INFERRED";
+    inner.viaMacro = call.name;
+    out.push(inner);
+    macroBodyLinks(ctx, analysis, sourceFile, sourceSymbol, body, { ...inner, viaMacro: undefined }, out, path, depth + 1);
+  }
 }
 
 /** A symbol of `file` by name — case-insensitively where the file's language names callables so. */

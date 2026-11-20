@@ -1072,6 +1072,8 @@ export interface MacroInfo {
   endLine: number;
   /** The file `#undef`s it later: the name means it only inside this file, never in a file that includes it. */
   fileScoped?: true;
+  /** The bare functions its body calls (`#define SAVE_CLUB(c) club_store_save(c)` → `club_store_save`), carried by a use of the macro. */
+  calls?: string[];
 }
 
 /** A type alias a file declares: `name` stands for `type`, as written. */
@@ -4185,6 +4187,11 @@ export interface SymbolLink {
    * of them. The method is certain, its body is not. Absent when the call chose one.
    */
   overloadsFit?: number;
+  /**
+   * The function-like macro whose body makes this call: `transfer` uses `SAVE_CLUB(x)` and so reaches the
+   * `club_store_save` the macro's body calls. `sourceLine` is the use, `callName` the body's name.
+   */
+  viaMacro?: string;
   resolvedBy?: "text" | "lsp";
   confidence?: Confidence;
   /**

@@ -6,6 +6,40 @@ import { blankStringLiterals } from "./regex-base.js";
 const FUNCTION_LIKE = /^\s*#\s*define\s+([A-Za-z_]\w*)\(([^)]*)\)/;
 const UNDEF = /^\s*#\s*undef\s+([A-Za-z_]\w*)/;
 
+/** Words before `(` that are no call. */
+const NOT_CALLS = new Set(["if", "while", "for", "switch", "return", "sizeof", "alignof", "_Alignof", "typeof", "__typeof__", "defined", "do", "else", "case", "static_assert", "_Static_assert", "__attribute__", "__declspec", "asm", "__asm__", "decltype", "noexcept", "new", "delete", "throw", "catch", "alignas", "_Alignas", "_Generic", "__builtin_expect", "va_arg", "va_start", "va_end"]);
+const MAX_BODY_CALLS = 16;
+
+/**
+ * The bare calls a function-like macro's body makes (`#define SAVE_CLUB(c) club_store_save(c)`), for the call of the
+ * macro to carry as the calling function's own. Only a body that reads as calls: one using `#` or `##` (stringizing,
+ * token pasting) builds names or text from its arguments and yields none; a parameter's name, a member call
+ * (`a.b(`, `p->f(`), a name after a type or another name (`int f(`), keywords and the macro's own name are no call.
+ * `body` is the definition's text after its head, one entry per physical line.
+ */
+export function macroBodyCalls(name: string, params: readonly string[], body: readonly string[]): string[] {
+  let text = body.map((l) => l.replace(/\\\s*$/, " ")).join(" ");
+  text = text.replace(/\/\*.*?\*\//g, " ");
+  const cut = text.indexOf("/*");
+  if (cut >= 0) text = text.slice(0, cut);
+  text = blankStringLiterals(text, ["//"]);
+  if (text.includes("#")) return [];
+  const out: string[] = [];
+  const formal = new Set(params.map((p) => p.replace(/\.\.\./, "").trim()));
+  const re = /([A-Za-z_]\w*)\s*\(/g;
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    const id = m[1]!;
+    if (NOT_CALLS.has(id) || formal.has(id) || id === name || out.includes(id)) continue;
+    const before = text.slice(0, m.index).trimEnd();
+    const last = before.at(-1);
+    // A member, a scoped name, or a name that follows a type or another name (a declaration).
+    if (last === "." || last === ">" && before.at(-2) === "-" || last === ":" || last === "~" || (last !== undefined && /[\w*&]/.test(last) && /[A-Za-z_]\w*$/.test(before) && !/\b(return|else|case)$/.test(before))) continue;
+    out.push(id);
+    if (out.length >= MAX_BODY_CALLS) break;
+  }
+  return out;
+}
+
 /**
  * The function-like macros a C or C++ file defines, for a call of one to link to its `#define`
  * (`for_each_club(c, list) { … }` reads as a call; its definition is a header's line).
@@ -52,7 +86,10 @@ export function extractCFamilyMacros(lines: readonly string[], analysis: FileAna
       if (out.has(u[1]!)) undefined_.add(u[1]!);
     } else if (m && !out.has(m[1]!) && !bodies.some(([a, b]) => i + 1 > a && i + 1 <= b)) {
       const params = m[2]!.split(",").map((p) => p.trim()).filter(Boolean);
-      out.set(m[1]!, { name: m[1]!, params, line: i + 1, endLine: end + 1 });
+      const info: MacroInfo = { name: m[1]!, params, line: i + 1, endLine: end + 1 };
+      const calls = macroBodyCalls(m[1]!, params, [line.slice(m[0].length), ...lines.slice(i + 1, end + 1)]);
+      if (calls.length > 0) info.calls = calls;
+      out.set(m[1]!, info);
     }
     i = end;
   }
