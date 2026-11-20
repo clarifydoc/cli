@@ -18,11 +18,17 @@ paths:
     get:
       operationId: playerList
       responses: {"200": {description: ok}}
+  /api/v1/matches/{id}:
+    get:
+      operationId: loadMatch
+      responses: {"200": {description: ok}}
 `,
   "server/app.js": `const express = require("express");
 const app = express();
 function destroyClub(req, res) { res.send("ok"); }
 app.delete("/api/v1/clubs/:id", destroyClub);
+function loadMatch(req, res) { res.send("ok"); }
+app.get("/api/v1/matches/:id", loadMatch);
 module.exports = app;
 `,
   "web/clubs.js": `export function deleteClubs(ids) { return ids.length; }
@@ -32,7 +38,7 @@ export function getPlayers() { return []; }
 
 describe("spec join beside a code route of the same method and path", () => {
   let dir: string;
-  let links: Array<{ sourceSymbol: string; targetSymbol: string; strategy?: string }>;
+  let links: Array<{ sourceSymbol: string; targetFile: string; targetSymbol: string; strategy?: string }>;
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), "clarifydoc-spec-twin-"));
     for (const [p, text] of Object.entries(FILES)) {
@@ -45,7 +51,11 @@ describe("spec join beside a code route of the same method and path", () => {
   afterAll(async () => { await rm(dir, { recursive: true, force: true }); });
 
   it("does not join the served contract row to a namesake client function", () => {
-    expect(links.filter((l) => l.strategy === "spec-join" && l.sourceSymbol.startsWith("route:DELETE"))).toEqual([]);
+    expect(links.filter((l) => l.strategy === "spec-join" && l.sourceSymbol === "route:DELETE /api/v1/clubs/{id}")).toEqual([]);
+  });
+
+  it("still joins the operation's own id beside the code route", () => {
+    expect(links.some((l) => l.strategy === "spec-join" && l.sourceSymbol === "route:GET /api/v1/matches/{id}" && l.targetFile === "server/app.js" && l.targetSymbol === "loadMatch")).toBe(true);
   });
 
   it("still joins a contract row no code serves", () => {

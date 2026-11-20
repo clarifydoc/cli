@@ -1,5 +1,5 @@
 import { routeSymbolName } from "./route-symbol.js";
-import { normalizeRoutePath, routeUrlNames } from "./route-linker.js";
+import { isJoinableRoute, normalizeRoutePath, routeUrlNames } from "./route-linker.js";
 import {
   relationForStrategy,
   type ClassInfo,
@@ -157,14 +157,26 @@ export function buildSymbolLinks(
     return specTestFiles.has(filePath);
   };
 
-  // `<METHOD> <normalized path>` of every code API route, built on the first spec route that asks.
-  let codeRouteKeys: Set<string> | null = null;
-  const routeKey = (r: Pick<RouteInfo, "httpMethod" | "path" | "aliases" | "pathUnresolved" | "mount" | "prefixUnresolved">): string =>
-    `${(r.httpMethod ?? "").toUpperCase()} ${normalizeRoutePath(routeUrlNames(r)[0] ?? r.path)}`;
+  // `<METHOD> <normalized path>` of the production code API routes, counted, built on the first spec route that
+  // asks: a twin is one row (`pairContractTwins` pairs nothing for two).
+  let codeRouteKeys: Map<string, number> | null = null;
+  const routeKey = (r: Pick<RouteInfo, "httpMethod" | "path" | "aliases" | "pathUnresolved" | "mount" | "prefixUnresolved">): string | null => {
+    const url = isJoinableRoute(r) ? routeUrlNames(r)[0] : undefined;
+    return url && r.httpMethod ? `${r.httpMethod.toUpperCase()} ${normalizeRoutePath(url)}` : null;
+  };
   const codeServes = (route: Parameters<typeof routeKey>[0]): boolean => {
-    codeRouteKeys ??= new Set(analyses.filter((a) => !isApiContractLanguage(a.language))
-      .flatMap((a) => a.routes.filter((r) => r.kind === "api" && r.httpMethod).map(routeKey)));
-    return !!route.httpMethod && codeRouteKeys.has(routeKey(route));
+    if (!codeRouteKeys) {
+      codeRouteKeys = new Map();
+      for (const a of analyses) {
+        if (isApiContractLanguage(a.language) || isSpecJoinExcluded(a.filePath)) continue;
+        for (const r of a.routes) {
+          const k = r.kind === "api" ? routeKey(r) : null;
+          if (k) codeRouteKeys.set(k, (codeRouteKeys.get(k) ?? 0) + 1);
+        }
+      }
+    }
+    const k = routeKey(route);
+    return !!k && codeRouteKeys.get(k) === 1;
   };
 
   for (const analysis of analyses) {
@@ -434,10 +446,10 @@ export function buildSymbolLinks(
       // symbol. Join by the spec operationId (route.handler) when present, else
       // derive a handler name from the path — unique-or-nothing, no guessing.
       // A code route serving the same method and path is the implementation — the pairing of the two rows
-      // (`pairContractTwins`) says so, and a function that merely shares a name derived from the path
-      // (a client's `deleteClubs`) is no better answer than the handler.
-      if (route.kind === "api" && isSpecFile && !codeServes(route)) {
-        const specLink = specRouteHandlerLink(route, sourceFile, sourceSymbol, ctx, isSpecJoinExcluded);
+      // (`pairContractTwins`) says so — so a name derived from the path (a client's `deleteClubs`) is not tried;
+      // the operation's own id still is.
+      if (route.kind === "api" && isSpecFile) {
+        const specLink = specRouteHandlerLink(route, sourceFile, sourceSymbol, ctx, isSpecJoinExcluded, codeServes(route));
         if (specLink) links.push(specLink);
       }
 
@@ -1435,6 +1447,8 @@ function specRouteHandlerLink(
   sourceSymbol: string,
   ctx: LinkContext,
   isExcluded: (filePath: string) => boolean,
+  /** A code route serves the row's method and path: only the operation's own id may name the function. */
+  codeTwin = false,
 ): SymbolLink | null {
   const segment = route.path.split("/").filter((s) => s && !/[{:}]/.test(s)).pop();
   const words = segment ? segment.split(/[-_]/).filter(Boolean) : [];
@@ -1457,8 +1471,8 @@ function specRouteHandlerLink(
   const candidates = [
     ...(opId ? [opId] : []),
     ...(opIdLower && opIdLower !== opId ? [opIdLower] : []),
-    ...(pascal && verb ? [`${verb}${pascal}`] : []),
-    ...(camel ? [camel] : []),
+    ...(pascal && verb && !codeTwin ? [`${verb}${pascal}`] : []),
+    ...(camel && !codeTwin ? [camel] : []),
   ];
   if (candidates.length === 0) return null;
   const link = (cand: string, file: string, def: SymbolDef): SymbolLink => ({
