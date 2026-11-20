@@ -91,6 +91,7 @@ export function readDartTree(root: TSNode, text: string): ParsedStructure {
     }),
     topLevelCalls: recordPatternCalls(topLevel),
     ...(moduleFlow.length ? { moduleValueFlow: moduleFlow } : {}),
+    ...(walk.file.functionTypedefs.length ? { functionTypeAliases: walk.file.functionTypedefs } : {}),
     syntaxErrors: countSyntaxErrors(root),
   };
 }

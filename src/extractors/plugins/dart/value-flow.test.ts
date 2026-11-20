@@ -257,3 +257,50 @@ void resolve() {
     expect(all.some((l) => l.startsWith("resolve: getIt<Repo> -> Repo"))).toBe(true);
   });
 });
+
+describe("Dart value flow through a typedef'd function type", () => {
+  it("recognises a typedef of the same file or another, never a class of that name", async () => {
+    const found = flow(await analyzeAll({
+      "lib/types.dart": `typedef ClubTask = void Function(Club club);
+class Club {}
+class Squad {}
+`,
+      "lib/actions.dart": `void saveClub(Club c) {}
+void loadClub(Club c) {}
+void retireClub(Club c) {}
+`,
+      "lib/editor.dart": `import 'types.dart';
+import 'actions.dart';
+typedef LocalTask = void Function();
+void localOne() {}
+class Editor {
+  Editor({required this.onSave, required this.onLoad});
+  final ClubTask onSave;
+  final LocalTask onLoad;
+  ClubTask? onRetire;
+  void fire(Club c) {
+    onSave(c);
+    onLoad();
+    onRetire?.call(c);
+  }
+}
+class Lookalike {
+  Lookalike(this.onSave);
+  final Squad onSave;
+  void fire(Club c) {
+    onSave(c);
+  }
+}
+void assemble() {
+  final e = Editor(onSave: saveClub, onLoad: localOne);
+  e.onRetire = retireClub;
+  e.fire(Club());
+}
+`,
+    }));
+    expect(found).toContain("Editor.fire: onSave -> lib/actions.dart::saveClub");
+    expect(found).toContain("Editor.fire: onLoad -> lib/editor.dart::localOne");
+    expect(found).toContain("Editor.fire: onRetire.call -> lib/actions.dart::retireClub");
+    expect(found.filter((l) => l.startsWith("Lookalike.fire:"))).toEqual([]);
+  });
+});

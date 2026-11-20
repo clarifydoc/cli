@@ -2159,6 +2159,8 @@ export interface ParsedStructure {
   topLevelCalls: CallInfo[];
   /** The function-value steps the file's own statements state (`FileAnalysis.moduleValueFlow`). */
   moduleValueFlow?: ValueFlowFact[];
+  /** The names the file declares as function types (`FileAnalysis.functionTypeAliases`). */
+  functionTypeAliases?: string[];
   /** Syntax errors the parser recovered from. Any makes core keep the regex reading of the file. */
   syntaxErrors: number;
 }

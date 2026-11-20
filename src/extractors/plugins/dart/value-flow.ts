@@ -28,7 +28,11 @@ export interface ClassScope {
 }
 
 /** What a name may hold: a function value (`fn`), a collection, something that is no callable (`other`), unknown (`may`), or a call's result (`call`). */
-type Kind = "fn" | "coll" | "other" | "may" | "call" | "named";
+type Kind = "fn" | "coll" | "other" | "may" | "call" | "named" | `named:${string}`;
+
+/** A declared type nothing in the file says is a function; `named:T` keeps T for the project to judge (a function-type alias of another file). */
+const isNamed = (k: Kind | undefined): boolean => k === "named" || (k?.startsWith("named:") ?? false);
+const namedType = (k: Kind | undefined): string | undefined => (k?.startsWith("named:") ? k.slice(6) : undefined);
 
 const PRIMITIVES = /^(?:int|double|num|String|bool|BigInt|DateTime|Duration|Uri|Object|void|BuildContext|Widget|Key|Color|Text|Icon|Future|Stream|Iterable|List|Map|Set|Type|RegExp|Offset|Size|Rect|Locale|TextStyle|EdgeInsets|Navigator|Exception|Error)\b/;
 const FUNCTION_TYPE = /\bFunction\b|(?:Callback|Handler|Listener|Builder|Action|Fn|Func|Predicate|Comparator|Setter|Getter|Validator)(?:<.*)?\??$|^Value(?:Changed|Setter|Getter)\b/;
@@ -86,7 +90,7 @@ function kindOfType(typeText: string, classes: ReadonlySet<string>, typedefs: Re
   if (/^(?:List|Map|Set|Iterable)\b/.test(t)) return "coll";
   if (PRIMITIVES.test(t) || classes.has(base)) return "other";
   // A stated type nothing here says is a function (a callable object like `GetIt`, or a typedef from another file).
-  return "named";
+  return /^[A-Za-z_]\w*$/.test(base) ? `named:${base}` : "named";
 }
 
 /** The type text a declaration's children state before the name (modifiers aside), as written. */
@@ -118,6 +122,8 @@ export interface FileScope {
   /** Declared class names of the file. */
   classes: Map<string, ClassScope>;
   typedefs: Set<string>;
+  /** The typedefs that name a function type (`typedef Task = void Function()`), which other files' held values may be typed by. */
+  functionTypedefs: string[];
   /** Top-level variables of the file: module cells. */
   moduleNames: Map<string, Kind>;
   src: string;
@@ -573,10 +579,10 @@ class FactReader {
     const ref = this.calls.get(args.id);
     if (!ref) return;
     const head = callee[0]!;
-    const invoke = (cell: ValueCell): void => {
-      this.facts.push({ kind: "invoke", cell, call: ref.name, line: ref.line });
+    const invoke = (cell: ValueCell, ifFnType?: string): void => {
+      this.facts.push({ kind: "invoke", cell, call: ref.name, line: ref.line, ...(ifFnType ? { ifFnType } : {}) });
     };
-    const heldBy = (name: string, forCall: boolean): ValueCell | null => {
+    const heldBy = (name: string, forCall: boolean): { cell: ValueCell; ifFnType?: string } | null => {
       const k = this.kindOf(name);
       if (!k || k.kind === "other") return null;
       // A callable object (`final getIt = createLocator(); getIt<Repo>()`) is no function: a call's result holds one
@@ -585,18 +591,20 @@ class FactReader {
       if (k.kind === "named") return null;
       // `x.call()` is a call on a function only where x says it is one; a class's own `call` method is its own.
       if (forCall && k.kind === "may" && k.where === "field") return null;
-      return this.cellOfName(name);
+      const cell = this.cellOfName(name);
+      const ifFnType = namedType(k.kind);
+      return cell ? { cell, ...(ifFnType ? { ifFnType } : {}) } : null;
     };
     if (callee.length === 1 && head.type === "identifier") {
-      const cell = heldBy(head.text, false);
-      if (cell) invoke(cell);
+      const held = heldBy(head.text, false);
+      if (held) invoke(held.cell, held.ifFnType);
       return;
     }
     if (callee.length === 2 && head.type === "identifier") {
       const member = memberOf(callee[1]!);
       if (member === "call") {
-        const cell = heldBy(head.text, true);
-        if (cell) invoke(cell);
+        const held = heldBy(head.text, true);
+        if (held) invoke(held.cell, held.ifFnType);
         return;
       }
       // `widget.onPressed()`: a field the widget class declares in this file (a method of it is an ordinary call).
@@ -604,7 +612,7 @@ class FactReader {
         const owner = this.file.classes.get(this.cls.stateOf);
         const field = owner?.fields.get(member);
         if (owner && field && field !== "other" && field !== "named" && !owner.methods.has(member)) {
-          invoke({ name: "widget", member, field: true });
+          invoke({ name: "widget", member, field: true }, namedType(field));
         }
       }
       if (member) return;
@@ -612,7 +620,7 @@ class FactReader {
     if (callee.length === 2 && head.type === "this") {
       const member = memberOf(callee[1]!);
       const field = member ? this.cls?.fields.get(member) : undefined;
-      if (member && field && field !== "other" && field !== "named" && !this.cls!.methods.has(member)) invoke({ name: "this", member });
+      if (member && field && field !== "other" && field !== "named" && !this.cls!.methods.has(member)) invoke({ name: "this", member }, namedType(field));
       return;
     }
     // `handlers['save']!()`, `hs[0]()`: an element of a collection.
@@ -749,6 +757,7 @@ export function moduleFacts(root: TSNode, file: FileScope, calls: CallRefs): Val
 export function fileScopeOf(root: TSNode, src: string): FileScope {
   const classes = new Map<string, ClassScope>();
   const typedefs = new Set<string>();
+  const functionTypedefs: string[] = [];
   const moduleNames = new Map<string, Kind>();
   const classNames = new Set<string>();
   const nodes = namedChildren(root);
@@ -756,6 +765,7 @@ export function fileScopeOf(root: TSNode, src: string): FileScope {
     if (n.type === "type_alias") {
       const id = namedChildren(n).find((c) => c.type === "type_identifier");
       if (id) typedefs.add(id.text);
+      if (id && (/\bFunction\b/.test(n.text) || (!n.text.includes("=") && n.text.includes("(")))) functionTypedefs.push(id.text);
     }
     if (n.type === "class_definition" || n.type === "mixin_declaration") {
       const id = n.childForFieldName("name") ?? namedChildren(n).find((c) => c.type === "identifier");
@@ -784,5 +794,5 @@ export function fileScopeOf(root: TSNode, src: string): FileScope {
     const scope = classScopeOf(n, { classes: classNames, typedefs, src });
     if (scope.name) classes.set(scope.name, scope);
   }
-  return { classes, typedefs, moduleNames, src };
+  return { classes, typedefs, functionTypedefs, moduleNames, src };
 }

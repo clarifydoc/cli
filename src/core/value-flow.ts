@@ -74,17 +74,37 @@ function closureClassOf(analysis: FileAnalysis, fn: FunctionInfo): ClassInfo | n
   return fn.enclosingClass ? analysis.classes.find((c) => c.name === fn.enclosingClass) ?? null : null;
 }
 
-function* scopesOf(analysis: FileAnalysis): Generator<Scope> {
+/** The names each language's files declare as function types (`FileAnalysis.functionTypeAliases`). */
+type FnTypeAliases = ReadonlyMap<string, ReadonlySet<string>>;
+
+function functionTypeAliasesOf(analyses: readonly FileAnalysis[]): FnTypeAliases {
+  const out = new Map<string, Set<string>>();
+  for (const a of analyses) {
+    if (!a.functionTypeAliases?.length) continue;
+    const set = out.get(a.language) ?? out.set(a.language, new Set()).get(a.language)!;
+    for (const n of a.functionTypeAliases) set.add(n);
+  }
+  return out;
+}
+
+/** The facts a scope states: an `invoke` of a value typed by a name no file of the language reads as a function type states nothing. */
+function gated(facts: readonly ValueFlowFact[], language: string, aliases: FnTypeAliases): readonly ValueFlowFact[] {
+  if (!facts.some((f) => f.kind === "invoke" && f.ifFnType !== undefined)) return facts;
+  return facts.filter((f) => f.kind !== "invoke" || f.ifFnType === undefined || aliases.get(language)?.has(f.ifFnType));
+}
+
+function* scopesOf(analysis: FileAnalysis, aliases: FnTypeAliases): Generator<Scope> {
   const setup = analysis.functions.find((f) => f.name === "<setup>") ?? null;
   const moduleFacts = analysis.moduleValueFlow ?? [];
+  const lang = analysis.language;
   for (const fn of analysis.functions) {
     const facts = fn === setup ? [...(fn.valueFlow ?? []), ...moduleFacts] : fn.valueFlow ?? [];
-    yield { file: analysis.filePath, symbol: fn.name, analysis, fn, cls: closureClassOf(analysis, fn), facts };
+    yield { file: analysis.filePath, symbol: fn.name, analysis, fn, cls: closureClassOf(analysis, fn), facts: gated(facts, lang, aliases) };
   }
   for (const cls of analysis.classes) {
-    for (const m of cls.methods) yield { file: analysis.filePath, symbol: `${cls.name}.${m.name}`, analysis, fn: m, cls, facts: m.valueFlow ?? [] };
+    for (const m of cls.methods) yield { file: analysis.filePath, symbol: `${cls.name}.${m.name}`, analysis, fn: m, cls, facts: gated(m.valueFlow ?? [], lang, aliases) };
   }
-  if (!setup && moduleFacts.length > 0) yield { file: analysis.filePath, symbol: "<setup>", analysis, fn: null, cls: null, facts: moduleFacts };
+  if (!setup && moduleFacts.length > 0) yield { file: analysis.filePath, symbol: "<setup>", analysis, fn: null, cls: null, facts: gated(moduleFacts, lang, aliases) };
 }
 
 /**
@@ -96,6 +116,7 @@ function* scopesOf(analysis: FileAnalysis): Generator<Scope> {
  */
 export function valueFlowInvokeSites(analyses: readonly FileAnalysis[]): Map<string, "suppress" | "same-file"> {
   const out = new Map<string, "suppress" | "same-file">();
+  const aliases = functionTypeAliasesOf(analyses);
   const writtenMembers = new Set<string>();
   // Only a seed or a copy says what a cell holds; a call's result (`debounce(load)`) is a value the facts do not follow.
   const writes = (f: ValueFlowFact): ValueCell | null => (f.kind === "seed" || f.kind === "copy" ? f.to : null);
@@ -103,7 +124,7 @@ export function valueFlowInvokeSites(analyses: readonly FileAnalysis[]): Map<str
   // statement writes `clubKeys.one` itself, never because another object anywhere has a member named `one`.
   // Keyed per writing file: another file's namesake object (`IFrameHelper` declared twice) is not this one.
   const writtenPairs = new Map<string, string[]>();
-  for (const a of analyses) for (const s of scopesOf(a)) for (const f of s.facts) {
+  for (const a of analyses) for (const s of scopesOf(a, aliases)) for (const f of s.facts) {
     const to = writes(f);
     if (to?.member === undefined) continue;
     writtenMembers.add(to.member);
@@ -131,13 +152,13 @@ export function valueFlowInvokeSites(analyses: readonly FileAnalysis[]): Map<str
       for (const n of Object.keys(i.aliases ?? {})) imported.add(n);
     }
     const moduleWritten = new Set<string>();
-    for (const s of scopesOf(a)) for (const f of s.facts) {
+    for (const s of scopesOf(a, aliases)) for (const f of s.facts) {
       const to = writes(f);
       if (!to) continue;
       if (to.name === MODULE_CELL && to.member !== undefined) moduleWritten.add(to.member);
       else if (to.module || s.fn === null || s.fn.name === "<setup>") moduleWritten.add(to.name);
     }
-    for (const s of scopesOf(a)) {
+    for (const s of scopesOf(a, aliases)) {
       let local: Set<string> | null = null;
       for (const f of s.facts) {
         if (f.kind !== "invoke") continue;
@@ -181,9 +202,10 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
   const { analyses } = host;
   if (!hasValueFlowFacts(analyses)) return [];
 
+  const aliases = functionTypeAliasesOf(analyses);
   const scopes: Scope[] = [];
   let factCount = 0;
-  for (const a of analyses) for (const s of scopesOf(a)) { scopes.push(s); factCount += s.facts.length; }
+  for (const a of analyses) for (const s of scopesOf(a, aliases)) { scopes.push(s); factCount += s.facts.length; }
   const budget = BASE_BUDGET + factCount * BUDGET_PER_FACT;
 
   const analysisAt = new Map(analyses.map((a) => [a.filePath, a]));

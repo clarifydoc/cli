@@ -287,6 +287,12 @@ export interface DataAccessGraph {
 export interface FileAnalysis {
   /** Value-flow facts of the file's module-level code (see `ValueFlowFact`); omitted when it states none. */
   moduleValueFlow?: ValueFlowFact[];
+  /**
+   * Names the file declares as function types (`typedef ClubAction = void Function(Club)`, `typealias ClubAction = (Club) -> Void`),
+   * for the `invoke` facts that say `ifFnType`: a held value of a type another file declares is a function only when
+   * some file of the same language says that name is one. Omitted when the file declares none.
+   */
+  functionTypeAliases?: string[];
   filePath: string;
   language: Language;
   frameworks: string[];
@@ -1186,7 +1192,12 @@ export type ValueFlowFact =
    * `held`: the call runs a member of a module-level object (the file's own, or one it imports) that the function
    * itself never stores into — it is the value's only while some statement writes that same object's member.
    */
-  | { kind: "invoke"; cell: ValueCell; call: string; line: number; held?: "module" };
+  /**
+   * `ifFnType`: the cell is declared with a type this file neither declares nor reads as a function type (a name that may be
+   * a class or a function-type alias another file declares); the call runs it only when a file of the same language lists
+   * that name in `FileAnalysis.functionTypeAliases`.
+   */
+  | { kind: "invoke"; cell: ValueCell; call: string; line: number; held?: "module"; ifFnType?: string };
 
 export interface CallInfo {
   name: string;
