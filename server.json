@@ -1,0 +1,24 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.clarifydoc/clarifydoc",
+  "title": "ClarifyDoc",
+  "description": "Static map of a codebase from screen to API route to database table, for AI agents.",
+  "version": "1.1.1",
+  "websiteUrl": "https://github.com/clarifydoc/cli",
+  "repository": {
+    "url": "https://github.com/clarifydoc/cli",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "clarifydoc",
+      "version": "1.1.1",
+      "runtimeHint": "npx",
+      "transport": { "type": "stdio" },
+      "packageArguments": [
+        { "type": "positional", "value": "mcp" }
+      ]
+    }
+  ]
+}

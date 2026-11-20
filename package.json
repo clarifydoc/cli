@@ -1,6 +1,7 @@
 {
   "name": "clarifydoc",
   "version": "1.1.1",
+  "mcpName": "io.github.clarifydoc/clarifydoc",
   "description": "Extract structured information from any codebase — routes, endpoints, data flow, components",
   "type": "module",
   "main": "dist/index.js",
@@ -11,7 +12,8 @@
     "docker",
     "ci",
     "CHANGELOG.md",
-    "SECURITY.md"
+    "SECURITY.md",
+    "server.json"
   ],
   "bin": {
     "clarifydoc": "dist/cli.js"
