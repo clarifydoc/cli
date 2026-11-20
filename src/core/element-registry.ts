@@ -808,7 +808,6 @@ export function normalizeProject(p: ProjectAnalysis): NormalizedProjectAnalysis 
     if (l.relation !== undefined) out.relation = l.relation;
     if (l.overloadsFit !== undefined) out.overloadsFit = l.overloadsFit;
     if (l.viaMacro !== undefined) out.viaMacro = l.viaMacro;
-    if (l.inGetter !== undefined) out.inGetter = l.inGetter;
     if (usage) out.viaUsage = usage.map(([file, line]) => [remap[file]!, line]);
     return out;
   });
@@ -1007,7 +1006,6 @@ export function denormalizeProject(obj: unknown): ProjectAnalysis {
     if (nl.relation !== undefined) out.relation = nl.relation;
     if (nl.overloadsFit !== undefined) out.overloadsFit = nl.overloadsFit;
     if (nl.viaMacro !== undefined) out.viaMacro = nl.viaMacro;
-    if (nl.inGetter !== undefined) out.inGetter = nl.inGetter;
     if (nl.viaUsage) out.viaUsage = nl.viaUsage.map(([file, line]) => ({ file: fileOf(elements, file), line }));
     return out;
   });

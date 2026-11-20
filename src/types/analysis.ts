@@ -1597,7 +1597,7 @@ export interface FunctionInfo {
   getter?: true;
   /**
    * A Vue Options-API member the framework runs to derive or react to state, never a person's action: a `computed` getter
-   * or a `watch` callback. A call inside it runs when a value changes or is read (`SymbolLink.inGetter`).
+   * or a `watch` callback. A call inside it runs when a value changes or is read, never on a person's action.
    */
   reactiveGetter?: "computed" | "watch";
   /** A `static` method of its class: `this` inside it is the class, not an instance. Set by the JS/TS plugin; omitted otherwise. */
@@ -4228,11 +4228,6 @@ export interface SymbolLink {
    * `club_store_save` the macro's body calls. `sourceLine` is the use, `callName` the body's name.
    */
   viaMacro?: string;
-  /**
-   * A Vue prop's run site that sits in a computed getter or a watch callback of the child (`FunctionInfo.reactiveGetter`):
-   * the prop runs when state changes, not when a person acts. Only on the prop-callback links into `<Comp:prop@L>`.
-   */
-  inGetter?: "computed" | "watch";
   resolvedBy?: "text" | "lsp";
   confidence?: Confidence;
   /**

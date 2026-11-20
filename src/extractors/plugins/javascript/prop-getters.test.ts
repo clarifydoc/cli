@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile } from "fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { analyze } from "../../../core/analyzer.js";
@@ -8,7 +8,7 @@ import type { ProjectAnalysis } from "../../../types/analysis.js";
 
 /**
  * A function a parent binds to a child's prop is run by a person's click only when the child runs it from an event
- * handler; a run inside a computed getter or a watch callback (Options API) is the framework's (`SymbolLink.inGetter`).
+ * handler; a run inside a computed getter or a watch callback (Options API) is the framework's (`FunctionInfo.reactiveGetter`, read off the link's source function).
  * A prop run from a plain method, and a same-shaped prop in a decoy child that only a method runs, stay unmarked.
  */
 const FILES: Record<string, string> = {
@@ -67,9 +67,20 @@ async function run(dir: string): Promise<ProjectAnalysis> {
 describe("a prop run inside a computed getter or watch callback", () => {
   let dir: string;
   let summary: ProjectAnalysis;
+  /** `<file>::<function>` of every function the per-file analyses mark `reactiveGetter`. */
+  const marks = new Map<string, string>();
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), "clarifydoc-prop-getters-"));
     summary = await run(dir);
+    for (const file of new Set(summary.symbolLinks.map((l) => l.sourceFile))) {
+      let analysis: { functions?: Array<{ name: string; reactiveGetter?: string }> };
+      try {
+        analysis = JSON.parse(await readFile(join(dir, "out", `${file}.json`), "utf-8"));
+      } catch {
+        continue;
+      }
+      for (const fn of analysis.functions ?? []) if (fn.reactiveGetter) marks.set(`${file}::${fn.name}`, fn.reactiveGetter);
+    }
   }, 120_000);
   afterAll(async () => {
     await rm(dir, { recursive: true, force: true });
@@ -78,7 +89,7 @@ describe("a prop run inside a computed getter or watch callback", () => {
   const into = (file: string) =>
     summary.symbolLinks
       .filter((l) => l.sourceFile === file && /^<[^<>]+:[^<>]+@\d+>$/.test(l.targetSymbol))
-      .map((l) => `${l.sourceSymbol}:${l.targetSymbol.replace(/@\d+>$/, ">")}${l.inGetter ? ` [${l.inGetter}]` : ""}`)
+      .map((l) => `${l.sourceSymbol}:${l.targetSymbol.replace(/@\d+>$/, ">")}${marks.has(`${l.sourceFile}::${l.sourceSymbol}`) ? ` [${marks.get(`${l.sourceFile}::${l.sourceSymbol}`)}]` : ""}`)
       .sort();
 
   it("marks the run site of an Options computed getter and a watch callback, not a method's", () => {
