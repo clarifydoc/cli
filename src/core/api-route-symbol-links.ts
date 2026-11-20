@@ -1,4 +1,5 @@
 import { routeSymbolName } from "./route-symbol.js";
+import { normalizeRoutePath } from "./route-linker.js";
 import type { ApiRouteLink, FileAnalysis, SymbolDataAccess, SymbolLink } from "../types/analysis.js";
 import { queueHoleKey } from "./data-access-graph.js";
 
@@ -185,7 +186,8 @@ export function synthesizeApiRouteSymbolLinks(
     // call reached it by — a version alias, a forwarded prefix).
     const routeRow = () => {
       const atLine = (fileOf.get(link.target)?.routes ?? []).filter((r) => r.kind === "api" && r.line === link.targetLine);
-      const onPath = atLine.filter((r) => r.path === link.routePath);
+      // The link states the path with `{param}` holes where the row has `:param` (or a framework's own): the same route.
+      const onPath = atLine.filter((r) => r.path === link.routePath || normalizeRoutePath(r.path) === normalizeRoutePath(link.routePath));
       const byPath = onPath.find((r) => link.method && r.httpMethod === link.method) ?? onPath.find((r) => r.httpMethod === null) ?? onPath[0];
       if (byPath) return byPath;
       const byMethod = atLine.filter((r) => !link.method || r.httpMethod === link.method);
