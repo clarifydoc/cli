@@ -1595,6 +1595,11 @@ export interface FunctionInfo {
   isConstructor?: true;
   /** Declared as a getter (Dart `int get squadSize`): a read of its name runs it (`CallInfo.read: "getter"`). */
   getter?: true;
+  /**
+   * A Vue Options-API member the framework runs to derive or react to state, never a person's action: a `computed` getter
+   * or a `watch` callback. A call inside it runs when a value changes or is read (`SymbolLink.inGetter`).
+   */
+  reactiveGetter?: "computed" | "watch";
   /** A `static` method of its class: `this` inside it is the class, not an instance. Set by the JS/TS plugin; omitted otherwise. */
   isStatic?: true;
   /** Declared on a pointer receiver (Go `func (c *Club) Sign()`): only the pointer type's method set holds it. Omitted for a value receiver and for languages without the distinction. */
@@ -4223,6 +4228,11 @@ export interface SymbolLink {
    * `club_store_save` the macro's body calls. `sourceLine` is the use, `callName` the body's name.
    */
   viaMacro?: string;
+  /**
+   * A Vue prop's run site that sits in a computed getter or a watch callback of the child (`FunctionInfo.reactiveGetter`):
+   * the prop runs when state changes, not when a person acts. Only on the prop-callback links into `<Comp:prop@L>`.
+   */
+  inGetter?: "computed" | "watch";
   resolvedBy?: "text" | "lsp";
   confidence?: Confidence;
   /**

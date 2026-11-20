@@ -713,7 +713,7 @@ export class JsPropCallbackResolver implements DispatchResolver {
           if (rest && name.startsWith(`${rest}.`)) return name.slice(rest.length + 1) === prop;
           return name === prop && freeName;
         };
-        const callers: Array<{ symbol: string; line: number; callName: string }> = [];
+        const callers: Array<{ symbol: string; line: number; callName: string; inGetter?: "computed" | "watch" }> = [];
         for (const fn of [...child.functions, ...child.classes.flatMap((c) => c.methods.map((m) => ({ ...m, name: `${c.name}.${m.name}` })))]) {
           if (within && (fn.line < within.line || fn.line > within.endLine)) continue;
           // `this.onSubmit(…)`: an options-API component calls its prop through `this` (its own method of that name is `defined`).
@@ -723,7 +723,7 @@ export class JsPropCallbackResolver implements DispatchResolver {
             if (c.passed || c.read || sites.has(c.line)) continue;
             if (c.name !== `props.${prop}` && c.name !== `this.props.${prop}` && c.name !== `this.${prop}` && !callsProp(c.name, c.line)) continue;
             sites.add(c.line);
-            callers.push({ symbol: fn.name, line: c.line, callName: c.name });
+            callers.push({ symbol: fn.name, line: c.line, callName: c.name, ...(fn.reactiveGetter ? { inGetter: fn.reactiveGetter } : {}) });
           }
         }
         // Markup's own handler (a template the script holds no call for): the prop's under the same rule —
@@ -753,6 +753,7 @@ export class JsPropCallbackResolver implements DispatchResolver {
               targetLine: t.span.line,
               confidence: "INFERRED",
               viaUsage: t.usage,
+              ...(c.inGetter ? { inGetter: c.inGetter } : {}),
             });
           }
         }
