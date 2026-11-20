@@ -29,7 +29,11 @@ const BASE_BUDGET = 2_000_000;
 const BUDGET_PER_FACT = 200;
 
 const RECEIVER_NAMES = new Set(["this", "self"]);
-/** A cell name standing for the file's own module binding named by `member`: how a function writes a global it does not declare. */
+/**
+ * A spelling of the file's own module binding named by `member` (`{ name: "<module>", member: "g_hook" }`): how a
+ * function writes a global it does not declare. It is folded on read into `{ name: "g_hook", module: true }`
+ * (`ValueCell.module`), so the solver knows one way to name such a binding.
+ */
 export const MODULE_CELL = "<module>";
 const CONSTRUCTOR_NAMES = ["constructor", "__init__", "__construct", "init", "new"];
 
@@ -106,17 +110,39 @@ function gated(facts: readonly ValueFlowFact[], analysis: FileAnalysis, aliases:
     || (aliases.names.get(lang)?.has(f.ifFnType) === true && !aliases.classes.has(`${lang}\0${analysis.projectId ?? ""}\0${f.ifFnType}`)));
 }
 
+const foldedFacts = new WeakMap<readonly ValueFlowFact[], readonly ValueFlowFact[]>();
+
+/** `{ name: "<module>", member: X }` read as `{ name: X, module: true }`; a list that names no such cell is returned as it is. */
+function foldModuleCells(facts: readonly ValueFlowFact[]): readonly ValueFlowFact[] {
+  const cached = foldedFacts.get(facts);
+  if (cached) return cached;
+  const isOld = (c: ValueCell): boolean => c.name === MODULE_CELL && c.member !== undefined;
+  const fold = (c: ValueCell): ValueCell => (isOld(c) ? { name: c.member!, module: true } : c);
+  const out = facts.some((f) => ("to" in f && isOld(f.to)) || ("from" in f && isOld(f.from)) || ("cell" in f && isOld(f.cell)))
+    ? facts.map((f): ValueFlowFact => {
+        switch (f.kind) {
+          case "seed": case "result": return { ...f, to: fold(f.to) };
+          case "copy": return { ...f, from: fold(f.from), to: fold(f.to) };
+          case "arg": case "return": return { ...f, from: fold(f.from) };
+          case "invoke": return { ...f, cell: fold(f.cell) };
+        }
+      })
+    : facts;
+  foldedFacts.set(facts, out);
+  return out;
+}
+
 function* scopesOf(analysis: FileAnalysis, aliases: FnTypeAliases): Generator<Scope> {
   const setup = analysis.functions.find((f) => f.name === "<setup>") ?? null;
   const moduleFacts = analysis.moduleValueFlow ?? [];
   for (const fn of analysis.functions) {
     const facts = fn === setup ? [...(fn.valueFlow ?? []), ...moduleFacts] : fn.valueFlow ?? [];
-    yield { file: analysis.filePath, symbol: fn.name, analysis, fn, cls: closureClassOf(analysis, fn), facts: gated(facts, analysis, aliases) };
+    yield { file: analysis.filePath, symbol: fn.name, analysis, fn, cls: closureClassOf(analysis, fn), facts: gated(foldModuleCells(facts), analysis, aliases) };
   }
   for (const cls of analysis.classes) {
-    for (const m of cls.methods) yield { file: analysis.filePath, symbol: `${cls.name}.${m.name}`, analysis, fn: m, cls, facts: gated(m.valueFlow ?? [], analysis, aliases) };
+    for (const m of cls.methods) yield { file: analysis.filePath, symbol: `${cls.name}.${m.name}`, analysis, fn: m, cls, facts: gated(foldModuleCells(m.valueFlow ?? []), analysis, aliases) };
   }
-  if (!setup && moduleFacts.length > 0) yield { file: analysis.filePath, symbol: "<setup>", analysis, fn: null, cls: null, facts: gated(moduleFacts, analysis, aliases) };
+  if (!setup && moduleFacts.length > 0) yield { file: analysis.filePath, symbol: "<setup>", analysis, fn: null, cls: null, facts: gated(foldModuleCells(moduleFacts), analysis, aliases) };
 }
 
 /**
@@ -167,8 +193,7 @@ export function valueFlowInvokeSites(analyses: readonly FileAnalysis[]): Map<str
     for (const s of scopesOf(a, aliases)) for (const f of s.facts) {
       const to = writes(f);
       if (!to) continue;
-      if (to.name === MODULE_CELL && to.member !== undefined) moduleWritten.add(to.member);
-      else if (to.module || s.fn === null || s.fn.name === "<setup>") moduleWritten.add(to.name);
+      if (to.module || s.fn === null || s.fn.name === "<setup>") moduleWritten.add(to.name);
     }
     for (const s of scopesOf(a, aliases)) {
       let local: Set<string> | null = null;
@@ -180,7 +205,7 @@ export function valueFlowInvokeSites(analyses: readonly FileAnalysis[]): Map<str
           const dot = name.indexOf(".");
           if (dot > 0 && imported.has(name.slice(0, dot))) continue;
           const written = f.held === "module" ? heldWritten(a, name, member) : writtenMembers.has(member);
-          if (written || name === MODULE_CELL) out.set(key, "suppress");
+          if (written) out.set(key, "suppress");
           continue;
         }
         if (!local) {
@@ -291,16 +316,6 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
 
   /** The innermost enclosing top-level function that binds `name` (a closure reads its parent's locals). */
   /** The innermost enclosing top-level function that binds `name` (a closure reads its parent's locals). */
-  // A function that writes a module binding it does not declare (`{ name: "<module>", member: "handler" }`) binds it for the file.
-  for (const s of scopes) {
-    for (const f of s.facts) {
-      const to = f.kind === "seed" || f.kind === "copy" || f.kind === "result" ? f.to : null;
-      if (to?.name !== MODULE_CELL || !to.member) continue;
-      const set = moduleBound.get(s.file) ?? moduleBound.set(s.file, new Set()).get(s.file)!;
-      set.add(to.member);
-    }
-  }
-
   const enclosingBinder = (s: Scope, name: string): Scope | null => {
     if (!s.fn || (s.cls && !s.fn.enclosingClass) || s.symbol === "<setup>") return null;
     let best: Scope | null = null;
@@ -443,7 +458,6 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
       if (moduleBound.get(s.file)?.has(name)) return cellOfKey(`M\0${s.file}\0${name}${member === undefined ? "" : `.${member}`}`);
       return null;
     }
-    if (name === MODULE_CELL) return member === undefined ? null : cellOfKey(`M\0${s.file}\0${member}`);
     if (member === undefined) {
       const base = baseOf(s, name);
       if (!base) return null;
