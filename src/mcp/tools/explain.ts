@@ -82,7 +82,7 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
         heading = `# ${label(r)} — ${r.handler ?? "inline handler"} (${r.filePath}:${r.line}) · [${routeFactId(r)}]`;
         home = r.filePath;
         // A named handler is the seed; an inline one is the route's own definition.
-        const inline = inlineRouteDefinitions(summary).find((d) => d.file === r.filePath && d.symbol === routeSymbolOf(r));
+        const inline = inlineRouteDefinitions(summary).find((d) => d.file === r.filePath && d.symbol === routeSymbolOf(r) && d.line === r.line);
         const seed = r.handler ?? inline?.symbol;
         if (r.kind === "api") parts.push({ title: "Contract and callers", get: () => contract({ path: r.path, ...(method ? { method } : {}), file: r.filePath }), follow: `clarifydoc_contract path="${r.path}"` });
         const anchor = routeAnchor(r, summary.symbolLinks ?? []);

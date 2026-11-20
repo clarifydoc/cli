@@ -50,7 +50,7 @@ export function inlineRouteDefinitions(project: { routeMap?: ReadonlyArray<{ han
   for (const r of rows) {
     if (!hasInlineHandler(r) || !r.filePath || r.handlerEndLine! < r.line) continue;
     const symbol = routeSymbolOf(r);
-    const key = `${r.filePath}::${symbol}`;
+    const key = `${r.filePath}::${symbol}::${r.line}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push({ symbol, file: r.filePath, line: r.line, endLine: r.handlerEndLine! });

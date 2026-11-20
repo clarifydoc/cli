@@ -12,7 +12,7 @@ import { declarationHeadLine } from "../../core/doc-comments.js";
 import { manifestFor } from "../../extractors/registry.js";
 import { analyzeWorkingFiles } from "../../core/changed-symbols.js";
 import { untrackedAmong } from "../../core/source-revision.js";
-import { inlineRouteDefinitions } from "../../core/route-symbol.js";
+import { inlineRouteDefinitions, hasInlineHandler, routeSymbolOf } from "../../core/route-symbol.js";
 
 /** Rough tokens per character of source — the usual 4-characters-per-token rule. */
 const CHARS_PER_TOKEN = 4;
@@ -105,10 +105,13 @@ export function extractTool(ctx: ToolContext): McpTool {
           if (named(l.sourceSymbol)) files.add(l.sourceFile);
         }
         // A definition nothing links to: a function by its complexity row, a class by its node.
-        for (const d of inlineRouteDefinitions(loaded.summary)) if (named(d.symbol)) files.add(d.file);
+        for (const d of inlineRouteDefinitions(loaded.summary)) if (d.symbol.toLowerCase() === want) files.add(d.file);
         for (const c of loaded.summary.complexity ?? []) if (c.functions.some((f) => named(f.functionName))) files.add(c.filePath);
         for (const n of loaded.summary.classGraph?.nodes ?? []) if (!n.isFile && !n.isExternal && named(n.name)) files.add(n.filePath);
       }
+      // The inline-handler routes the analysis states for a file, as definitions at their own span.
+      const routeDefinitions = (f: string, a: FileAnalysis | null): Definition[] =>
+        inlineRouteDefinitions(loaded.summary).filter((d) => d.file === f).map((d) => ({ symbol: d.symbol, line: d.line, endLine: d.endLine, head: { language: a?.language } }));
       const analyses = new Map<string, FileAnalysis | null>();
       const analysisOf = async (f: string) => {
         if (!analyses.has(f)) analyses.set(f, await ctx.store.fileAnalysis(f));
@@ -120,7 +123,7 @@ export function extractTool(ctx: ToolContext): McpTool {
         const a = await analysisOf(f);
         for (const def of [...definitions(a), ...classDefinitions(a)]) if (named(def.symbol)) matched.push({ file: f, ...def, depth: 0 });
         // A route written with an inline handler is a definition at its own span.
-        for (const d of inlineRouteDefinitions(loaded.summary)) if (d.file === f && named(d.symbol)) matched.push({ file: f, symbol: d.symbol, line: d.line, endLine: d.endLine, head: { language: a?.language }, depth: 0 });
+        for (const def of routeDefinitions(f, a)) if (def.symbol.toLowerCase() === want) matched.push({ file: f, ...def, depth: 0 });
       }
       // The definition the name names: the exact spelling first, production code before tests.
       const seeds = bestNamed(symbol, matched, (s) => s.symbol, (s) => isTestPath(loaded.summary, s.file));
@@ -179,7 +182,7 @@ export function extractTool(ctx: ToolContext): McpTool {
             if (seen.has(k)) continue;
             seen.add(k);
             const a = await analysisOf(l.targetFile);
-            const defs = definitions(a).filter((x) => x.symbol === l.targetSymbol);
+            const defs = [...definitions(a), ...routeDefinitions(l.targetFile, a)].filter((x) => x.symbol === l.targetSymbol);
             // The overload the linker picked, when it did; else every one.
             const picked = defs.filter((x) => x.line === l.targetLine);
             for (const def of picked.length ? picked : defs) next.push({ file: l.targetFile, ...def, depth: d, via: l });
@@ -209,7 +212,13 @@ export function extractTool(ctx: ToolContext): McpTool {
         if (!current.has(f)) {
           const now = (await analyzeWorkingFiles(ctx.store.projectRoot, [f]).catch(() => new Map())).get(f);
           const language = analyses.get(f)?.language;
-          current.set(f, now && language ? [...definitions({ ...now, language } as FileAnalysis), ...classDefinitions({ ...now, language } as FileAnalysis)] : []);
+          // An inline route is found again by its symbol among the working file's own routes.
+          const routesNow: Definition[] = [];
+          for (const r of now?.routes ?? []) {
+            const known = inlineRouteDefinitions(loaded.summary).some((d) => d.file === f && d.symbol === routeSymbolOf(r));
+            if (known && hasInlineHandler(r) && r.handlerEndLine! >= r.line) routesNow.push({ symbol: routeSymbolOf(r), line: r.line, endLine: r.handlerEndLine!, head: { language } });
+          }
+          current.set(f, now && language ? [...definitions({ ...now, language } as FileAnalysis), ...classDefinitions({ ...now, language } as FileAnalysis), ...routesNow] : []);
         }
         return current.get(f)!;
       };
