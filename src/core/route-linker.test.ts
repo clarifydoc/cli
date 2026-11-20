@@ -7,6 +7,7 @@ import {
   pairContractTwins,
   implementedContracts,
   isJoinableRoute,
+  codeTwinsIndex,
 } from "./route-linker.js";
 import type { CallInfo, DataSourceInfo, RouteInfo } from "../types/analysis.js";
 
@@ -700,6 +701,19 @@ describe("linkApiCallsToRoutes — code rows and their API-contract twins", () =
     const v2 = route("pkg/routes/api/v2/clubs.go", "GET", "/api/v2/clubs/{id}", "clubsRead", 51);
     const spec = route("pkg/swagger/swagger.json", "GET", "/api/v1/clubs/{id}", "", 944);
     expect(pairContractTwins([v1, v2, spec], [], isContract).get(spec)).toBe(v1);
+  });
+
+  it("fills a literal contract segment into a parameter row, by segment count and first literal (loose index)", () => {
+    const kind = route("garage/cars.go", "POST", "/garage/:kind/start", "start", 10);
+    const other = route("garage/other.go", "POST", "/depot/:kind/start", "startOther", 11);
+    const longer = route("garage/long.go", "POST", "/garage/:kind/start/now", "startNow", 12);
+    const wrongMethod = route("garage/get.go", "GET", "/garage/:kind/start", "show", 13);
+    const index = codeTwinsIndex([other, longer, wrongMethod, kind]);
+    const spec = route("spec.json", "POST", "/garage/Sedan/start", "", 1);
+    expect(index(spec)).toEqual([]);
+    expect(index(spec, true)).toEqual([kind]);
+    expect(index(route("spec.json", "POST", "/garage/Sedan/start", "", 2), true)).toEqual([kind]);
+    expect(index(route("spec.json", "POST", "/parking/{Name}/start", "", 3), true)).toEqual([]);
   });
 
   it("reads the contract row's version off its path, not the document version a spec states", () => {

@@ -162,20 +162,22 @@ export function buildSymbolLinks(
   // a twin is one row, by the very rule `pairContractTwins` pairs with (`codeTwinsIndex`: method, normalized path,
   // the path's API version), and where that finds none, the same row under a conventional base or behind a
   // parameter (`loose`) — the file declaring it, or null when there is not exactly one.
-  let codeTwins: ((contract: TwinRoute, loose?: boolean) => Array<RouteInfo>) | null = null;
-  const routeFile = new Map<RouteInfo, string>();
+  type FiledTwin = TwinRoute & { filePath: string };
+  let codeTwins: ((contract: TwinRoute, loose?: boolean) => FiledTwin[]) | null = null;
   const codeTwinFile = (route: TwinRoute): string | null => {
     if (!codeTwins) {
-      const code: RouteInfo[] = [];
+      const code: FiledTwin[] = [];
       for (const a of analyses) {
         if (isApiContractLanguage(a.language) || isSpecJoinExcluded(a.filePath)) continue;
-        for (const r of a.routes) if (r.kind === "api" && isJoinableRoute(r)) { code.push(r); routeFile.set(r, a.filePath); }
+        for (const r of a.routes) if (r.kind === "api" && isJoinableRoute(r)) {
+          code.push({ httpMethod: r.httpMethod, path: r.path, aliases: r.aliases, pathUnresolved: r.pathUnresolved, mount: r.mount, prefixUnresolved: r.prefixUnresolved, versions: r.versions, filePath: a.filePath });
+        }
       }
       codeTwins = codeTwinsIndex(code);
     }
     if (!isJoinableRoute(route)) return null;
     const twins = codeTwins(route, true);
-    return twins.length === 1 ? routeFile.get(twins[0]!) ?? null : null;
+    return twins.length === 1 ? twins[0]!.filePath : null;
   };
 
   for (const analysis of analyses) {
