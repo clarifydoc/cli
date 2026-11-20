@@ -9402,7 +9402,21 @@ function isNameableFrom(ctx: LinkContext, file: string, typeName: string, source
  * else a definition unique across the whole language family. Null when the
  * type is not a project class or is ambiguous.
  */
+const typeFileMemo = new WeakMap<LinkContext, Map<string, string | null>>();
+
 function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, projectId: string): string | null {
+  // One answer per (type, file, project) in a link run: the same few thousand questions are asked ~13 times each.
+  let memo = typeFileMemo.get(ctx);
+  if (!memo) typeFileMemo.set(ctx, (memo = new Map()));
+  const key = `${typeName}\0${sourceFile}\0${projectId}`;
+  const hit = memo.get(key);
+  if (hit !== undefined) return hit;
+  const found = typeFileForUncached(ctx, typeName, sourceFile, projectId);
+  memo.set(key, found);
+  return found;
+}
+
+function typeFileForUncached(ctx: LinkContext, typeName: string, sourceFile: string, projectId: string): string | null {
   const named = typeFileByImportedNamespace(ctx, typeName, sourceFile);
   if (named !== undefined) return named;
   const file = typeFileForInner(ctx, typeName, sourceFile, projectId);
