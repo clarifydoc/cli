@@ -1,3 +1,4 @@
+import { rustServiceConfig } from "./service-config.js";
 import { rustCollectionElement } from "./collection-element.js";
 import { rustMigrationFiles } from "./migration-files.js";
 import { rustProjectCommands } from "./project-commands.js";
@@ -18,6 +19,7 @@ import { rustForeignBindings } from "./foreign-bindings.js";
 export const rustManifest: LanguagePluginManifest = {
   docComments: C_STYLE_DOCS,
   migrationFiles: rustMigrationFiles,
+  serviceConfig: rustServiceConfig,
   resolveImport: resolveRustImport,
   importConfinement: rustImportConfinement,
   testCommand: rustTestCommand,
