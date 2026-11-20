@@ -4,7 +4,7 @@
  * changes added: where C++ cannot be read without knowing which names are types and templates, they read what the
  * file's first pass (CppTypes.ts, `prepare`) says of each token, fixed for the whole parse.
  */
-import { Parser, RuleTransition, Token, type ATN, type ATNState, type CommonTokenStream, type ParserRuleContext, type TokenStream } from "antlr4ng";
+import { Parser, RuleTransition, StarLoopEntryState, Token, type ATN, type ATNState, type CommonTokenStream, type ParserRuleContext, type TokenStream } from "antlr4ng";
 import { CPP14Lexer } from "./CPP14Lexer.js";
 import { CLASS_KEYWORDS, SPECIFIER_KEYWORDS, TYPE_KEYWORDS, readTypes, type CppTokenFacts } from "./CppTypes.js";
 
@@ -181,6 +181,17 @@ function dispatch(atn: ATN, ruleNames: readonly string[]): Map<number, (parser: 
   const [memberDeclaration, memberMacro, memberDeclaratorList] = ["memberDeclaration", "memberMacro", "memberDeclaratorList"].map(rule) as [number, number, number];
   const m = decisionOf(atn, memberDeclaration, [memberMacro, memberDeclaratorList]);
   const memberAlts: MemberAlts = { macro: altReaching(atn, m, memberMacro), member: altReaching(atn, m, memberDeclaratorList) };
+  // A qualified name's scopes: `nestedNameSpecifier? theTypeName` reads `std::vector<Club>` as the scope `std::` and the
+  // type, and each further `Name::` of the scope is one more turn of the rule's loop. Full-context prediction scanned
+  // a whole declaration to tell them from a type followed by a declarator that starts with `::`.
+  const [simpleTypeSpecifier, nestedNameSpecifier, theTypeName] = ["simpleTypeSpecifier", "nestedNameSpecifier", "theTypeName"].map(rule) as [number, number, number];
+  const scopeStarts: number[] = [];
+  const scopeLoops: number[] = [];
+  for (let n = 0; n < atn.decisionToState.length; n++) {
+    const state = atn.decisionToState[n]!;
+    if (state.ruleIndex === simpleTypeSpecifier && altReaching(atn, n, nestedNameSpecifier) === 1 && altReaching(atn, n, theTypeName) === 2) scopeStarts.push(n);
+    if (state.ruleIndex === nestedNameSpecifier && state instanceof StarLoopEntryState) scopeLoops.push(n);
+  }
   const functionDefinition = rule("functionDefinition");
   const atScope = decisionBetween(atn, declaration, functionDefinition, declarationTail);
   const inClass = decisionBetween(atn, memberDeclaration, functionDefinition, memberDeclaratorList);
@@ -194,6 +205,8 @@ function dispatch(atn: ATN, ruleNames: readonly string[]): Map<number, (parser: 
   // `if (init; condition)`, `switch (…)`: whether an init statement comes first. Its predicate reads the `(` before
   // the decision, and prediction that met it through a cached state had read another file's choice there.
   const [selectionStatement, initStatement, condition] = ["selectionStatement", "initStatement", "condition"].map(rule) as [number, number, number];
+  for (const n of scopeStarts) table.set(n, (p) => p.settleScopeStart());
+  for (const n of scopeLoops) table.set(n, (p) => p.settleScopeStep());
   const inits = decisionsBetween(atn, selectionStatement, initStatement, condition);
   if (inits.length === 0) throw new Error("C++ grammar: no init-statement decision");
   for (const init of inits) table.set(init.decision, (p) => p.settleInit(init.function, init.declarators));
@@ -319,6 +332,37 @@ export abstract class CPP14ParserBase extends Parser {
       i = this.following(end);
     }
     return 0;
+  }
+
+  /**
+   * `nestedNameSpecifier?` of a simple type: 1 to read a scope, 2 for none, 0 where the tokens do not say. A scope is
+   * every `Name::` of a plain qualified name before its last name; a `template` keyword, a `::` that no name follows
+   * and a leading `::` after a name (`Club<T>::template Of<I>` also reads as a type and a second specifier) are left
+   * to prediction.
+   */
+  settleScopeStart(): number {
+    const t = this.lt(1).type;
+    if (t === CPP14Lexer.Doublecolon) return 1;
+    if (t !== CPP14Lexer.Identifier) return 0;
+    let scopes = 0;
+    let i = this.lt(1).tokenIndex;
+    for (;;) {
+      i = this.following(i);
+      if ((this.facts.angle[i] ?? -1) >= 0) i = this.following(this.facts.angle[i]!);
+      if (this.typeAt(i) !== CPP14Lexer.Doublecolon) return scopes > 0 ? 1 : 2;
+      i = this.following(i);
+      if (this.typeAt(i) !== CPP14Lexer.Identifier) return 0;
+      scopes++;
+    }
+  }
+
+  /** One more `Name::` of a scope: 1 when a name (with its template arguments), `::` and another name follow, 2 when the name is the last. */
+  settleScopeStep(): number {
+    if (this.lt(1).type !== CPP14Lexer.Identifier) return 0;
+    let i = this.following(this.lt(1).tokenIndex);
+    if ((this.facts.angle[i] ?? -1) >= 0) i = this.following(this.facts.angle[i]!);
+    if (this.typeAt(i) !== CPP14Lexer.Doublecolon) return 2;
+    return isName(this.typeAt(this.following(i))) ? 1 : 0;
   }
 
   settleInit(init: number, condition: number): number {
