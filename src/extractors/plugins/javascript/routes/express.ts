@@ -389,8 +389,8 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
             : null;
           const constant = pathParam ? `\${${firstArg!.text}}` : method !== "use" ? constantRoutePath(firstArg) : null;
           // `Router().use(clubs)`: a router handed to a chain with no path, mounted where the chain is (the project pass
-          // resolves the name to its file, and drops it when it names no router). A guard is no router.
-          const chainedRouter = routerChain !== undefined && args.namedChildren.length === 1 && firstArg?.type === "identifier" && !guardFromMiddleware(firstArg);
+          // resolves the name to its file, and drops it when it names no router — a name that reads as a guard may be a controller, `authController`).
+          const chainedRouter = routerChain !== undefined && args.namedChildren.length === 1 && firstArg?.type === "identifier";
           const paths = chainedRouter ? [""] : constant !== null ? [constant] :
             firstArg &&
             (firstArg.type === "string" || firstArg.type === "template_string") &&

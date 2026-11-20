@@ -40,8 +40,8 @@ describe("a prefix mounted through a chained router", () => {
       "routes/decoys.ts": DECOYS,
       "routes.ts": `import { Router } from 'express';
 import clubs from './routes/clubs';
-import players from './routes/players';
-const api = Router().use(clubs).use(players);
+import authController from './routes/players';
+const api = Router().use(clubs).use(authController);
 export default Router().use('/api', api);`,
       "main.ts": `import routes from './routes';
 import decoys from './routes/decoys';
@@ -62,20 +62,17 @@ app.use('/v2', routes);`,
     })).toEqual(["GET /v1/players", "GET /v2/players"]);
   });
 
-  it("stays at the root when nothing mounts the chain, and a guard in the chain is no router", async () => {
+  it("composes a chain exported as the module's router, and a name that is no router file adds nothing", async () => {
     expect(await composed({
       "routes/clubs.ts": CLUBS,
       "routes.ts": `import { Router } from 'express';
 import clubs from './routes/clubs';
 import requireAuth from './auth';
 export default Router().use(requireAuth).use(clubs);`,
-      "auth.ts": `import { Router } from 'express';
-const router = Router();
-router.get('/login', login);
-export default router;`,
+      "auth.ts": `export default function requireAuth(req, res, next) { next(); }`,
       "main.ts": `import routes from './routes';
 app.use('/api', routes);`,
-    })).toEqual(["GET /api/clubs", "GET /login", "POST /api/clubs/:id/join"]);
+    })).toEqual(["GET /api/clubs", "POST /api/clubs/:id/join"]);
   });
 
   it("leaves a chain handed to another call alone, and prefixes a cross-file router mounted under a local one", async () => {
