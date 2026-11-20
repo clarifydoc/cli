@@ -68,15 +68,37 @@ const LIBRARY_HEADS = new Set(["log", "logger", "LOG", "LOGGER", "System", "Math
 
 const norm = (text: string): string => text.replace(/\s+/g, "");
 
-/** Whether `text` (a Java or Kotlin type as written) is a function: a JDK functional interface or a Kotlin function type. */
-export function isFunctionType(text: string | null | undefined): boolean {
+/** Packages whose wildcard import brings the JDK functional interfaces into scope. */
+const FN_PACKAGES = new Set(["java.util.function", "java.util", "java.util.concurrent"]);
+/** Functional interfaces a file names without an import: `java.lang`'s (and Kotlin's `Comparator` alias). */
+const FN_DEFAULT_IMPORTED = new Set(["Runnable", "Comparator"]);
+
+/**
+ * Whether a bare functional-interface name is the platform's in this file. `Consumer` needs an import (or a wildcard
+ * one of the JDK package); a file that has none names a project class of that name in its own package, which is no
+ * function type. Without a file context (`lib` null) the name decides, as before.
+ */
+function namesPlatformInterface(lib: LibraryContext | null | undefined, simple: string): boolean {
+  if (!lib || FN_DEFAULT_IMPORTED.has(simple)) return true;
+  if (lib.declared.has(simple)) return false;
+  return lib.imports.some((i) => !i.static && (i.star ? FN_PACKAGES.has(i.path) : i.name === simple && externalPath(lib, i.path)));
+}
+
+/**
+ * Whether `text` (a Java or Kotlin type as written) is a function: a JDK functional interface or a Kotlin function
+ * type. `lib`, the file's imports, keeps a project class that shares a JDK interface's simple name from passing.
+ */
+export function isFunctionType(text: string | null | undefined, lib?: LibraryContext | null): boolean {
   if (!text) return false;
   let t = text.trim().replace(/\s+/g, " ").replace(/^(?:@\w+\s+)+/, "").replace(/^final\s+/, "").replace(/\?$/, "");
   if (t.startsWith("suspend ")) t = t.slice(8).trim();
   while (t.startsWith("(") && t.endsWith(")") && wrapsWhole(t)) t = t.slice(1, -1).trim().replace(/\?$/, "");
   if (hasTopLevelArrow(t)) return true;
-  const simple = t.replace(/<[\s\S]*$/, "").split(".").pop()!;
-  return FN_INTERFACES.has(simple);
+  const path = t.replace(/<[\s\S]*$/, "").split(".");
+  const simple = path.pop()!;
+  if (!FN_INTERFACES.has(simple)) return false;
+  // Written with its package (`java.util.function.Consumer`): the platform's, whatever the project declares.
+  return path.length > 0 || namesPlatformInterface(lib, simple);
 }
 
 function hasTopLevelArrow(t: string): boolean {
@@ -110,15 +132,15 @@ function typeArguments(text: string): string[] {
 }
 
 /** Whether `text` is a collection (or array) whose elements are functions. */
-export function isFunctionCollectionType(text: string | null | undefined): boolean {
+export function isFunctionCollectionType(text: string | null | undefined, lib?: LibraryContext | null): boolean {
   if (!text) return false;
   const t = text.trim().replace(/\?$/, "");
-  if (t.endsWith("[]")) return isFunctionType(t.slice(0, -2));
+  if (t.endsWith("[]")) return isFunctionType(t.slice(0, -2), lib);
   const base = t.replace(/<[\s\S]*$/, "").split(".").pop()!;
   if (!COLLECTIONS.has(base)) return false;
   const args = typeArguments(t);
   if (args.length === 0) return false;
-  return isFunctionType(/Map$/.test(base) ? args[args.length - 1] : args[0]);
+  return isFunctionType(/Map$/.test(base) ? args[args.length - 1] : args[0], lib);
 }
 
 /**
@@ -271,18 +293,18 @@ export function classFlowOf(body: Node, lang: Lang, headerFields: ReadonlyArray<
   const decls: Array<{ name: string; type: string | null; init: Node | null }> = [];
   for (const h of headerFields) {
     ctx.fields.add(h.name);
-    if (isFunctionType(h.type)) ctx.fn.add(h.name);
-    else if (isFunctionCollectionType(h.type)) ctx.elem.add(h.name);
+    if (isFunctionType(h.type, library)) ctx.fn.add(h.name);
+    else if (isFunctionCollectionType(h.type, library)) ctx.elem.add(h.name);
   }
   for (const m of members(body)) {
     if (m.type === "method_declaration") {
       const name = m.childForFieldName("name")?.text;
-      if (name && isFunctionType(m.childForFieldName("type")?.text)) ctx.returnsFn.add(name);
+      if (name && isFunctionType(m.childForFieldName("type")?.text, library)) ctx.returnsFn.add(name);
     } else if (m.type === "function_declaration") {
       const name = m.children.find((c) => c.type === "simple_identifier")?.text;
       const colon = m.children.findIndex((c) => c.type === ":");
       const ret = colon >= 0 && m.children.findIndex((c) => c.type === "function_value_parameters") < colon ? m.children[colon + 1] : undefined;
-      if (name && ret && isFunctionType(ret.text)) ctx.returnsFn.add(name);
+      if (name && ret && isFunctionType(ret.text, library)) ctx.returnsFn.add(name);
     } else if (m.type === "field_declaration" && lang === "java") {
       const type = m.childForFieldName("type")?.text ?? null;
       for (const d of m.children) {
@@ -302,8 +324,8 @@ export function classFlowOf(body: Node, lang: Lang, headerFields: ReadonlyArray<
   const flow = new Flow(lang, ctx, null, false, ctx.library);
   for (const d of decls) {
     ctx.fields.add(d.name);
-    if (isFunctionType(d.type) && !buildsObject(d.init)) ctx.fn.add(d.name);
-    else if (isFunctionCollectionType(d.type)) ctx.elem.add(d.name);
+    if (isFunctionType(d.type, library) && !buildsObject(d.init)) ctx.fn.add(d.name);
+    else if (isFunctionCollectionType(d.type, library)) ctx.elem.add(d.name);
   }
   // Initializers: a method reference or collection of them makes an untyped field a function / collection of them.
   for (const d of decls) {
@@ -625,13 +647,13 @@ class Flow {
   }
 
   /** The element type a Kotlin collection builder states (`mutableListOf<() -> Unit>()`). */
-  private static kotlinBuilderElementIsFunction(node: Node | null | undefined): boolean {
+  private static kotlinBuilderElementIsFunction(node: Node | null | undefined, lib: LibraryContext | null): boolean {
     if (!node || node.type !== "call_expression") return false;
     const name = node.children[0]?.type === "simple_identifier" ? node.children[0].text : "";
     const args = node.children.find((c) => c.type === "call_suffix")?.namedChildren.find((c) => c.type === "type_arguments");
     if (!args || !(LIST_LITERALS.has(name) || MAP_LITERALS.has(name) || COLLECTIONS.has(name))) return false;
     const last = args.namedChildren[args.namedChildren.length - 1];
-    return !!last && isFunctionType(last.text);
+    return !!last && isFunctionType(last.text, lib);
   }
 
   /**
@@ -642,7 +664,7 @@ class Flow {
     if (!declaredFn) {
       const ref: Ref = { cell: dest, fn: false, elem: true, name, ...(field ? { field: name } : {}) };
       if (this.literalInto(ref, init)) return "elem";
-      if (declaredElem || (untyped && Flow.kotlinBuilderElementIsFunction(init))) return "elem";
+      if (declaredElem || (untyped && Flow.kotlinBuilderElementIsFunction(init, this.library))) return "elem";
     }
     if (declaredFn || (untyped && this.isFnExpr(init))) {
       this.flowInto(dest, init, declaredFn);
@@ -656,7 +678,7 @@ class Flow {
   run(params: readonly ParamInfo[], body: Node): void {
     for (const p of params) {
       if (p.isReceiver) continue;
-      this.bind(p.name, isFunctionType(p.type), isFunctionCollectionType(p.type));
+      this.bind(p.name, isFunctionType(p.type, this.library), isFunctionCollectionType(p.type, this.library));
       if (p.type) this.paramTypes.set(p.name, p.type);
     }
     // Kotlin `fun mk(): () -> Unit = ::load`: the body is the returned expression.
@@ -863,8 +885,8 @@ class Flow {
   }
 
   private declare(name: string, type: string | null, init: Node | null | undefined): void {
-    const declaredFn = isFunctionType(type) && !buildsObject(init);
-    const declaredElem = isFunctionCollectionType(type);
+    const declaredFn = isFunctionType(type, this.library) && !buildsObject(init);
+    const declaredElem = isFunctionCollectionType(type, this.library);
     // The initializer is read before the name it declares is bound (`var f = f2`).
     let kind: Kind = null;
     if (init) kind = this.initialize({ name }, name, false, init, declaredFn, declaredElem, type === null);
@@ -876,7 +898,7 @@ class Flow {
     const source = this.refOf(node.childForFieldName("value")) ?? this.valuesOf(node.childForFieldName("value"));
     if (!name) return;
     const type = node.childForFieldName("type")?.text ?? null;
-    const fn = isFunctionType(type) || !!source?.elem;
+    const fn = isFunctionType(type, this.library) || !!source?.elem;
     this.bind(name, fn, false);
     if (source?.elem) this.push({ kind: "copy", from: this.elementCell(source), to: { name }, line: node.startPosition.row + 1 });
   }
@@ -1127,16 +1149,17 @@ export function methodValueFlow(
   library?: LibraryContext | null,
 ): ValueFlowFact[] {
   if (!body) return [];
-  const flow = new Flow(lang, classFlow, calls, isFunctionType(returnType), library === undefined ? classFlow?.library ?? null : library);
+  const lib = library === undefined ? classFlow?.library ?? null : library;
+  const flow = new Flow(lang, classFlow, calls, isFunctionType(returnType, lib), lib);
   flow.run(params, body);
   return flow.facts;
 }
 
 /** Facts for a Kotlin primary constructor: each `val`/`var` function parameter is the field of that name. */
-export function constructorFieldFlow(params: ReadonlyArray<{ name: string; type: string | null }>, line: number): ValueFlowFact[] {
+export function constructorFieldFlow(params: ReadonlyArray<{ name: string; type: string | null }>, line: number, lib?: LibraryContext | null): ValueFlowFact[] {
   const out: ValueFlowFact[] = [];
   for (const p of params) {
-    if (isFunctionType(p.type) || isFunctionCollectionType(p.type)) out.push({ kind: "copy", from: { name: p.name }, to: { name: "this", member: p.name }, line });
+    if (isFunctionType(p.type, lib) || isFunctionCollectionType(p.type, lib)) out.push({ kind: "copy", from: { name: p.name }, to: { name: "this", member: p.name }, line });
   }
   return out;
 }

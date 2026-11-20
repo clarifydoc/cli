@@ -187,7 +187,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     if (primary) {
       methods.push(primary);
       // A `val cb: () -> Unit` parameter is the field of that name.
-      const fieldFlow = constructorFieldFlow(headerFields, primary.line);
+      const fieldFlow = constructorFieldFlow(headerFields, primary.line, this.library);
       if (fieldFlow.length > 0) primary.valueFlow = fieldFlow;
     }
     if (body) this.collectMembers(body, lang, methods, properties, primary);

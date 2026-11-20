@@ -594,3 +594,34 @@ describe("Kotlin value flow: named arguments", () => {
     expect(out.filter((l) => l.includes("onKickOff"))).toEqual([]);
   });
 });
+
+describe("a project class named like a JDK functional interface", () => {
+  const java = {
+    "league/Consumer.java": ["package league;", "public class Consumer {", "  public void accept(String who) {}", "}"].join("\n"),
+    "league/Club.java": ["package league;", "public class Club {", "  void feed(Consumer c) {", "    c.accept(\"x\");", "  }", "}"].join("\n"),
+    // The platform's interface, imported: still a held function, so a call on it leaves the name tiers.
+    "league/Player.java": [
+      "package league;",
+      "import java.util.function.Consumer;",
+      "public class Player {",
+      "  void sign(Consumer<String> c) {",
+      "    c.accept(\"x\");",
+      "  }",
+      "}",
+    ].join("\n"),
+    "league/Coach.java": ["package league;", "public class Coach {", "  void sign(java.util.function.Consumer<String> c) {", "    c.accept(\"x\");", "  }", "}"].join("\n"),
+  };
+  it("links a call on the project class to its method and keeps the imported or qualified interface a function (Java)", async () => {
+    const l = links(await analyzeAll(java, "java"));
+    expect(l.filter((x) => x.startsWith("Club.feed")).map((x) => x.replace(/ \[.*\]$/, ""))).toEqual(["Club.feed: c.accept -> Consumer.java::Consumer.accept"]);
+    expect(l.filter((x) => x.startsWith("Player.") || x.startsWith("Coach."))).toEqual([]);
+  });
+  const kotlin = {
+    "league/Consumer.kt": ["package league", "class Consumer {", "  fun accept(who: String) {}", "}"].join("\n"),
+    "league/Club.kt": ["package league", "class Club {", "  fun feed(c: Consumer) {", "    c.accept(\"x\")", "  }", "}"].join("\n"),
+  };
+  it("the same for Kotlin", async () => {
+    const l = links(await analyzeAll(kotlin, "kotlin"));
+    expect(l.filter((x) => x.startsWith("Club.feed")).map((x) => x.replace(/ \[.*\]$/, ""))).toEqual(["Club.feed: c.accept -> Consumer.kt::Consumer.accept"]);
+  });
+});
