@@ -103,8 +103,8 @@ export interface ClassChange extends ChangedClass {
 /** What `symbolsInHunks` reads of a file: its spans, where its import block is, and whether it hands imports on. */
 export type HunkSpans = Pick<FileAnalysis, "functions" | "classes"> & {
   imports?: ReadonlyArray<{ line: number }>;
-  /** The file forwards what it imports (a re-export, or an export named like an import): an edit to its imports changes what it offers. */
-  reexports?: boolean;
+  /** The names the file forwards from what it imports (a re-export, or an export named like an import): an edit to its imports can change what it offers them. */
+  reexports?: string[];
 };
 
 /**
@@ -119,8 +119,9 @@ export type HunkSpans = Pick<FileAnalysis, "functions" | "classes"> & {
 export function symbolsInHunks(
   analyses: ReadonlyMap<string, HunkSpans>,
   hunks: ChangedHunks,
-): { symbols: ChangedSymbol[]; moduleLevel: string[]; classLevel: ChangedClass[]; moduleOnly: string[]; importOnly: string[] } {
+): { symbols: ChangedSymbol[]; moduleLevel: string[]; classLevel: ChangedClass[]; moduleOnly: string[]; importOnly: string[]; forwarded: Map<string, string[]> } {
   const importOnly = new Set<string>();
+  const forwarded = new Map<string, string[]>();
   const symbols = new Map<string, ChangedSymbol>();
   const moduleLevel = new Set<string>();
   // Hunks in a type's body but in none of its methods; and files with a hunk in neither a method nor a type.
@@ -156,8 +157,9 @@ export function symbolsInHunks(
         // Edits inside the file's import block change what IT imports, not what it offers its importers —
         // unless the file declares nothing and is only a barrel of imports.
         const lines = (a.imports ?? []).map((i) => i.line);
-        if ((a.functions.length || a.classes.length) && !a.reexports && lines.length && s >= Math.min(...lines) && e <= Math.max(...lines)) {
+        if ((a.functions.length || a.classes.length) && lines.length && s >= Math.min(...lines) && e <= Math.max(...lines)) {
           importOnly.add(file);
+          if (a.reexports?.length) forwarded.set(file, a.reexports);
           continue;
         }
         const type = typeSpans.filter((sp) => sp.line <= e && sp.endLine >= s).sort((x, y) => (x.endLine - x.line) - (y.endLine - y.line))[0];
@@ -172,6 +174,7 @@ export function symbolsInHunks(
     classLevel: [...classLevel.values()].sort((x, y) => byOrdinal(x.file, y.file) || x.line - y.line),
     moduleOnly: [...moduleOnly].sort(byOrdinal),
     importOnly: [...importOnly].sort(byOrdinal),
+    forwarded,
   };
 }
 
@@ -253,8 +256,8 @@ export async function loadFileAnalyses(analysisDir: string, files: readonly stri
     try {
       const a = JSON.parse(await readFile(join(analysisDir, `${f}.json`), "utf8")) as FileAnalysis;
       const imported = new Set((a.imports ?? []).flatMap((i) => [...i.specifiers, ...Object.keys(i.aliases ?? {})]));
-      const reexports = (a.exports ?? []).some((e) => e.kind === "re-export" || imported.has(e.name));
-      out.set(f, { functions: a.functions ?? [], classes: a.classes ?? [], imports: (a.imports ?? []).map((i) => ({ line: i.line })), ...(reexports ? { reexports } : {}) });
+      const reexports = (a.exports ?? []).filter((e) => e.kind === "re-export" || imported.has(e.name)).flatMap((e) => (e.sourceName ? [e.name, e.sourceName] : [e.name]));
+      out.set(f, { functions: a.functions ?? [], classes: a.classes ?? [], imports: (a.imports ?? []).map((i) => ({ line: i.line })), ...(reexports.length ? { reexports } : {}) });
     } catch {
       // Not analyzed (new since the analysis, or not a source file).
     }
@@ -586,6 +589,7 @@ export async function symbolsOfChange(
     moduleLevel: found.moduleLevel,
     moduleOnly: found.moduleOnly,
     importOnly: found.importOnly,
+    forwarded: Object.fromEntries(found.forwarded),
     signatureChanges: await judgeSignatures(analysisDir, before, after, summary, new Set(found.symbols.map((x) => `${x.file}::${x.symbol}`))),
     classChanges: classChanges(before, after, found.classLevel),
     hunks,

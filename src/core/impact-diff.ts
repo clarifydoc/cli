@@ -2,7 +2,7 @@ import { EXTENSION_TO_LANGUAGE, manifestFor } from "../extractors/registry.js";
 import type { TestTarget } from "../types/language-plugin.js";
 import { ownersOf } from "./code-owners.js";
 import { describeSignatureChange, signatureChangeTail, reverseSymbolReach, type ChangedClass, type ChangedSymbol, type ClassChange, type SignatureChange, type SymbolCaller } from "./changed-symbols.js";
-import { filesNaming, type MemberTarget } from "./member-dependents.js";
+import { filesImportingNames, filesNaming, type MemberTarget } from "./member-dependents.js";
 import type {
   Language,
   ProjectAnalysis,
@@ -209,6 +209,8 @@ export function computeImpactDiff(
       moduleOnly?: string[];
       /** Files with a changed line inside their import block (what they import, not what they offer). */
       importOnly?: string[];
+      /** Of those, the names a file forwards from what it imports (`export { x }`, a Python import): the importers naming one are charged. */
+      forwarded?: Record<string, string[]>;
     };
   },
 ): ImpactDiffResult {
@@ -631,6 +633,15 @@ function narrowDependents(
     }
     const named = filesNaming(summary, targets);
     if (named.undecided) continue;
+    // An import edited in a file that forwards names: its importers that import one of them.
+    const forwards = symbols.forwarded?.[file];
+    if (forwards?.length && symbols.importOnly?.includes(file)) {
+      const importers = new Set((summary.blastRadius ?? []).find((b) => b.filePath === file)?.affectedFiles ?? []);
+      for (const f of filesImportingNames(summary, importers, forwards)) {
+        const rows = named.files.get(f) ?? named.files.set(f, []).get(f)!;
+        rows.push(`imports a name ${file} forwards`);
+      }
+    }
     byFile.set(file, new Set([...named.files.keys()].filter((f) => !changedFiles.includes(f))));
     for (const [f, reasons] of named.files) {
       const rows = why.get(f) ?? why.set(f, []).get(f)!;

@@ -81,6 +81,17 @@ export function filesNaming(summary: Pick<ProjectAnalysis, "symbolLinks" | "blas
 }
 
 /**
+ * The `importers` that import one of `names` by name — their `(reference)` rows for it, which lead to the
+ * definition however many files forward it. What a file that re-exports an import offers, by name.
+ */
+export function filesImportingNames(summary: Pick<ProjectAnalysis, "symbolLinks">, importers: ReadonlySet<string>, names: readonly string[]): string[] {
+  const wanted = new Set(names);
+  const out = new Set<string>();
+  for (const l of summary.symbolLinks ?? []) if (l.sourceSymbol === "(reference)" && importers.has(l.sourceFile) && wanted.has(l.targetSymbol)) out.add(l.sourceFile);
+  return [...out].sort(byOrdinal);
+}
+
+/**
  * Targets from names a caller states for one file (`Class.method`, `function`, `Type`): a name the file's
  * type usages know is a type, anything else a symbol. `adding` says the names are new members.
  */
