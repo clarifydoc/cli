@@ -81,6 +81,9 @@ describe("splitTopLevel with lineComment (go/huma splitTop)", () => {
     ];
     for (const t of inputs) expect(shared(t), t).toEqual(legacy(t));
   });
+  it("the newline ending a comment still separates", () => {
+    expect(splitTopLevel("a // x\nb", { sep: "\n", lineComment: "//" })).toEqual(["a // x", "b"]);
+  });
   it("a comment opener is not read without the option", () => {
     expect(splitTopLevel("a // x, y", { trim: true })).toEqual(["a // x", "y"]);
   });

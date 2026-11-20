@@ -48,7 +48,7 @@ export function splitTopLevel(text: string, o: SplitTopLevelOptions = {}): strin
     if (quotes.includes(ch)) quote = ch;
     else if (o.lineComment && text.startsWith(o.lineComment, i)) {
       const nl = text.indexOf("\n", i);
-      i = nl < 0 ? text.length : nl;
+      i = nl < 0 ? text.length : nl - 1; // the newline itself is still read, so `sep: "\n"` splits there
     } else if (openers.has(ch)) depth++;
     else if (closers.has(ch)) {
       if (depth === 0 && o.stopAtCloser) {
