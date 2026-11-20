@@ -318,8 +318,8 @@ export interface TestVerdictContext {
   navigationOf(path: string): TestNavigationReach | undefined;
   /** The test files that replace the file with a double. */
   mockedBy(path: string): string[];
-  /** The first suite, in a spec with at least one case, describing the type of this name. */
-  describing(typeName: string): { test: string; line: number } | undefined;
+  /** The first suite, in a spec of the same sub-project as `path` with at least one case, describing the type of this name. */
+  describing(typeName: string, path: string): { test: string; line: number } | undefined;
 }
 
 type VerdictSummary = ReachSummary & Pick<ProjectAnalysis, "componentGraph" | "testCoverage" | "testSetupRuns" | "testNavigations" | "pageParts">;
@@ -332,18 +332,24 @@ export function testVerdictContext(summary: VerdictSummary): TestVerdictContext 
   let setup: Map<string, string> | undefined;
   let navigated: Map<string, TestNavigationReach> | undefined;
   let mockedBy: Map<string, string[]> | undefined;
-  let described: Map<string, { test: string; line: number }> | undefined;
+  let described: Map<string, Array<{ test: string; line: number }>> | undefined;
   return {
     testCode,
-    describing(typeName) {
+    describing(typeName, path) {
       if (!described) {
         described = new Map();
         for (const [test, rows] of Object.entries(summary.testFunctions ?? {})) {
           if (!testCode.isTestFile(test) || !rows.some((r) => r.kind === "case")) continue;
-          for (const r of rows) if (r.kind === "suite" && r.subject && !described.has(r.subject)) described.set(r.subject, { test, line: r.line });
+          for (const r of rows) {
+            if (r.kind !== "suite" || !r.subject) continue;
+            const key = r.subject.replace(/^::/, "");
+            (described.get(key) ?? described.set(key, []).get(key)!).push({ test, line: r.line });
+          }
         }
       }
-      return described.get(typeName.replace(/^::/, ""));
+      // A namesake in another sub-project is no match: its specs name their own project's type.
+      const project = summary.fileProjects?.[path];
+      return described.get(typeName)?.find((d) => summary.fileProjects?.[d.test] === project);
     },
     testImportersOf(path) {
       if (!importers) {
@@ -427,7 +433,7 @@ export function fileTestVerdict(
   const navigation = ctx.navigationOf(path);
   if (navigation) basis.push("navigation");
   // A spec describing a type the file declares runs it through whatever wiring the framework adds, in a place no call states.
-  const described = file && !excluded ? describedBy(file, ctx) : undefined;
+  const described = file && !excluded && !mockedBy.length ? describedBy(file, path, ctx) : undefined;
   if (described) basis.push("described");
   const state = !functions.length ? "nothing_to_test" : basis.length ? "tested" : "untested";
   return {
@@ -441,9 +447,9 @@ export function fileTestVerdict(
   };
 }
 
-function describedBy(file: Pick<FileAnalysis, "classes">, ctx: TestVerdictContext): FileTestVerdict["described"] {
+function describedBy(file: Pick<FileAnalysis, "classes">, path: string, ctx: TestVerdictContext): FileTestVerdict["described"] {
   for (const c of file.classes) {
-    const hit = ctx.describing(c.name);
+    const hit = ctx.describing(c.name, path);
     if (hit) return { test: hit.test, subject: c.name, line: hit.line };
   }
   return undefined;
