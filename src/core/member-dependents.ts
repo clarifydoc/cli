@@ -25,6 +25,8 @@ export type MemberTarget =
       mode: "added" | "changed";
       /** An interface, or a type declared for its subclasses to complete. */
       interfaceLike: boolean;
+      /** Members were added and one is a field: a class gaining a required field breaks what builds it, as an interface does. */
+      field?: true;
     };
 
 /** Usage kinds that make a value of the type, extend it or implement it: what a new required member breaks. */
@@ -71,11 +73,11 @@ export function filesNaming(summary: Pick<ProjectAnalysis, "symbolLinks" | "blas
     for (const u of usage.usagesByFile) {
       if (u.filePath === t.file) continue;
       const kinds = Object.keys(u.byKind) as TypeUsageKind[];
-      const used = t.mode === "changed" ? kinds : t.interfaceLike ? kinds.filter((k) => PRODUCER_KINDS.has(k)) : [];
+      const used = t.mode === "changed" ? kinds : t.interfaceLike || t.field ? kinds.filter((k) => PRODUCER_KINDS.has(k)) : [];
       if (used.length) add(u.filePath, `${used.join("/")} ${t.type}`);
     }
     if (t.mode === "changed") for (const l of into.get(`${t.file}::${t.type}`) ?? []) add(l.sourceFile, l.sourceSymbol === "(reference)" ? `imports ${t.type}` : `constructs ${t.type}`);
-    else if (t.interfaceLike) for (const l of into.get(`${t.file}::${t.type}`) ?? []) if (l.sourceSymbol !== "(reference)") add(l.sourceFile, `constructs ${t.type}`);
+    else if (t.interfaceLike || t.field) for (const l of into.get(`${t.file}::${t.type}`) ?? []) if (l.sourceSymbol !== "(reference)") add(l.sourceFile, `constructs ${t.type}`);
   }
   return { files, undecided };
 }

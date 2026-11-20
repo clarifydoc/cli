@@ -107,6 +107,10 @@ describe("impact keeps what a member rule cannot judge", () => {
     "src/sink.ts": "export function forward(x: unknown) {\n  return JSON.stringify(x);\n}\n",
     "src/sink2.ts": "export function forward(x: unknown) {\n  return String(x);\n}\n",
     "src/barrel.ts": BARREL,
+    "src/lot.test.ts": 'import { arrive } from "./lot";\nexport function testArrive() {\n  return arrive();\n}\n',
+    "src/fleet.ts": 'export class Truck {\n  plate: string = "";\n}\n',
+    "src/builds-truck.ts": 'import { Truck } from "./fleet";\nexport function build() {\n  return new Truck();\n}\n',
+    "src/names-truck.ts": 'import { Truck } from "./fleet";\nexport function show(t: Truck) {\n  return typeof t;\n}\n',
     "src/uses-own.ts": 'import { own } from "./barrel";\nexport function count() {\n  return own();\n}\n',
     "src/uses-barrel.ts": 'import { forward } from "./barrel";\nexport function send() {\n  return forward(1);\n}\n',
     "src/showroom.ts": SHOWROOM,
@@ -149,5 +153,21 @@ describe("impact keeps what a member rule cannot judge", () => {
   it("a required member added to an interface charges a file that holds or returns a value of the type", async () => {
     const r = await run("src/showroom.ts", SHOWROOM.replace("  plate: string;\n", "  plate: string;\n  colour: string;\n"));
     expect(r.dependents).toEqual(["src/holds-car.ts", "src/returns-car.ts"]);
+  });
+
+  it("a helper removed is still breaking when the caller that stays is edited on another line", async () => {
+    const r = await run("src/garage.ts", GARAGE.replace("park(bay: number)", "park(bay: number, lot = 1)").replace(/function checkBay[\s\S]*?\n}\n\n/, ""));
+    expect(r.symbolImpact?.signatureChanges?.filter((c) => c.breaking).map((c) => c.symbol)).toEqual(["checkBay"]);
+  });
+
+  it("the tests that reach the files naming the change are still listed", async () => {
+    const r = await run("src/garage.ts", GARAGE.replace("bay > 0 ?", "bay > 1 ?").replace("checkBay(bay) ?", "bay > 1 ?"));
+    expect(r.dependents).toEqual(["src/lot.ts"]);
+    expect(r.tests).toContain("src/lot.test.ts");
+  });
+
+  it("a class gaining a field charges what builds it, not what only takes it", async () => {
+    const r = await run("src/fleet.ts", 'export class Truck {\n  plate: string = "";\n  colour: string = "";\n}\n');
+    expect(r.dependents).toEqual(["src/builds-truck.ts"]);
   });
 });

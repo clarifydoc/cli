@@ -254,6 +254,8 @@ export function computeImpactDiff(
   let truncated = false;
   // Importers per changed file, for the files whose dependents get narrowed to the members that changed.
   const importersOf = new Map<string, Set<string>>();
+  // Files reaching a narrowed file's named dependents by imports: where its tests are looked for.
+  const reached = new Set<string>();
   let dangerous: string | null = null;
   let moderate: string | null = null;
   // The most severe verdict among the changed files. "you touched a foundation
@@ -272,13 +274,16 @@ export function computeImpactDiff(
       importersOf.set(file, new Set([...b.affectedFiles, ...b.transitiveFiles]));
       for (const f of named) dependents.add(f);
       // The file-level verdicts (dangerous, moderate, foundation file) describe the module, not this change.
+      // What imports the files that name the change, however far, may still hold the test that runs it.
+      const reach = reverseReach(summary.componentGraph, [file, ...named], 8);
+      for (const f of reach) reached.add(f);
       const t = b.traceImpact;
       if (!t) continue;
-      const reach = reverseReach(summary.componentGraph, [file, ...named], 8);
       for (const s of t.screens) if (reach.has(s.file)) screens.set(s.file, s);
       for (const r of t.routes) if (reach.has(r.file)) routes.set(`${r.method ?? ""} ${r.path} ${r.file}`, r);
       for (const e of t.entities) entities.add(e);
       for (const q of t.queues) queues.add(q);
+      truncated ||= t.screenCount > t.screens.length || t.routeCount > t.routes.length || t.entityCount > t.entities.length || t.queueCount > t.queues.length;
       continue;
     }
     if (b.changeRisk === "dangerous" && !dangerous) dangerous = file;
@@ -313,7 +318,7 @@ export function computeImpactDiff(
   for (const f of changedSet) importers.delete(f);
 
   // ── Tests to run: test files among changed ∪ dependents ──
-  const tests = [...new Set([...changedSet, ...dependents])]
+  const tests = [...new Set([...changedSet, ...dependents, ...reached])]
     // The summary's layer map is language-aware; the bare check stays as the
     // fallback for summaries written before it was.
     .filter((f) => summary.fileLayerMap?.[f] === "test" || isTestFile(f))
@@ -629,7 +634,7 @@ function narrowDependents(
     // A type whose members compare equal changed in a way the comparison does not see (a default, a comment): not judged.
     if (types.some((c) => !c.added.length && !c.changed.length)) continue;
     for (const c of types) {
-      targets.push({ file, type: c.name, mode: c.changed.length ? "changed" : "added", interfaceLike: c.interfaceLike });
+      targets.push({ file, type: c.name, mode: c.changed.length ? "changed" : "added", interfaceLike: c.interfaceLike, ...(c.addedField ? { field: true as const } : {}) });
     }
     const named = filesNaming(summary, targets);
     if (named.undecided) continue;

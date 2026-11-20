@@ -96,6 +96,8 @@ export interface ChangedClass {
  * and names it removed, re-typed or re-parameterized (`*`: the type itself is gone).
  */
 export interface ClassChange extends ChangedClass {
+  /** A property was among the added members (a new required field breaks what builds the type). */
+  addedField?: boolean;
   added: string[];
   changed: string[];
 }
@@ -394,10 +396,10 @@ export function signatureChanges(
     /** The overrides below each method of `before`, keyed `${file}::${Class.method}` (`overridesOfMethods`). */
     overrides?: ReadonlyMap<string, ReadonlyArray<{ file: string; symbol: string; line: number }>>;
     /**
-     * The functions the diff's lines touch (`file::symbol`). A caller among them is edited by the same change, so a
-     * removal or re-typing leaves it nothing to be stranded by; a function calling itself never counts.
+     * Whether the diff edits a line (old side) of a file. A call on an edited line is rewritten by the same change,
+     * so a removal or re-typing leaves it nothing to be stranded by; a function calling itself never counts.
      */
-    touched?: ReadonlySet<string>;
+    edited?: (file: string, line: number) => boolean;
   } = {},
 ): SignatureChange[] {
   // Files importing each symbol by name, its own file aside.
@@ -419,8 +421,8 @@ export function signatureChanges(
   for (const l of links) {
     if (l.navigational || l.sourceSymbol.startsWith("(") || l.confidence !== "EXTRACTED") continue;
     const key = `${l.targetFile}::${l.targetSymbol}`;
-    const edited = options.touched && ((l.sourceSymbol === l.targetSymbol && l.sourceFile === l.targetFile) || options.touched.has(`${l.sourceFile}::${l.sourceSymbol}`));
-    if (!edited) openCallers.set(key, (openCallers.get(key) ?? 0) + 1);
+    const rewritten = options.edited && ((l.sourceSymbol === l.targetSymbol && l.sourceFile === l.targetFile) || options.edited(l.sourceFile, l.sourceLine));
+    if (!rewritten) openCallers.set(key, (openCallers.get(key) ?? 0) + 1);
     sureCallers.set(key, (sureCallers.get(key) ?? 0) + 1);
     if (l.relation !== "passes") sureInvokers.set(key, (sureInvokers.get(key) ?? 0) + 1);
     (callerFiles.get(key) ?? callerFiles.set(key, new Set()).get(key)!).add(l.sourceFile);
@@ -529,7 +531,7 @@ export async function judgeSignatures(
   before: ReadonlyMap<string, Spans>,
   after: ReadonlyMap<string, Spans>,
   summary: Pick<ProjectAnalysis, "symbolLinks" | "classGraph">,
-  touched?: ReadonlySet<string>,
+  edited?: (file: string, line: number) => boolean,
 ): Promise<SignatureChange[]> {
   const { overridesOfMethods } = await import("./overrides.js");
   const links = summary.symbolLinks ?? [];
@@ -540,7 +542,7 @@ export async function judgeSignatures(
     return loaded.get(f) ?? null;
   };
   const overrides = await overridesOfMethods(summary.classGraph, links, before, classesOf);
-  return signatureChanges(before, after, links, { overrides, ...(touched ? { touched } : {}) });
+  return signatureChanges(before, after, links, { overrides, ...(edited ? { edited } : {}) });
 }
 
 /**
@@ -564,8 +566,16 @@ export function classChanges(before: ReadonlyMap<string, Spans>, after: Readonly
     const added = [...b.keys()].filter((k) => !a.has(k));
     const changed = [...a].filter(([k, v]) => b.get(k) !== v).map(([k]) => k);
     if ((was.extends ?? "") !== (now.extends ?? "") || [...(was.implements ?? [])].sort().join() !== [...(now.implements ?? [])].sort().join()) changed.push("<heritage>");
-    return { ...t, added, changed };
+    return { ...t, added, changed, ...(added.some((k) => b.get(k)?.startsWith("p:")) ? { addedField: true } : {}) };
   });
+}
+
+/** Whether the diff edits a line of a file, on the side the stored analysis describes (old, else the Map as written). */
+export function editedLines(hunks: ChangedHunks): (file: string, line: number) => boolean {
+  return (file, line) => {
+    const oldSide = [...(hunks.old?.get(file) ?? []), ...(hunks.deleted?.get(file) ?? [])];
+    return (oldSide.length ? oldSide : [...(hunks.get(file) ?? [])]).some(([a, b]) => a <= line && line <= b);
+  };
 }
 
 /**
@@ -590,7 +600,7 @@ export async function symbolsOfChange(
     moduleOnly: found.moduleOnly,
     importOnly: found.importOnly,
     forwarded: Object.fromEntries(found.forwarded),
-    signatureChanges: await judgeSignatures(analysisDir, before, after, summary, new Set(found.symbols.map((x) => `${x.file}::${x.symbol}`))),
+    signatureChanges: await judgeSignatures(analysisDir, before, after, summary, editedLines(hunks)),
     classChanges: classChanges(before, after, found.classLevel),
     hunks,
   };
