@@ -3,7 +3,6 @@ import type { FunctionInfo } from "../../../types/analysis.js";
 import { CSHARP_BUILTINS } from "./builtins.js";
 import { typeTestNarrowedType } from "./type-tests.js";
 import { callChainText } from "../../shared/call-graph.js";
-import { csharpManifest } from "./manifest.js";
 
 /**
  * What a C# expression or declaration says about the TYPE of a value — the
@@ -439,9 +438,9 @@ function localTypesFrom(found: Node[], scopeIds: ReadonlySet<number>, intoLambda
               // `var s = await repo.FindAsync(id)` — typed by what the call
               // is declared to return; the linker reads that.
               const call = init ? initializerCall(init) : null;
-              const read = call || !init ? null : wrapperMemberRead(init);
+              const read = call || !init ? null : plainMemberRead(init);
               if (call) put(name, { name, type: "", ...call });
-              // `var s = _options.Value`: the member read that takes a value out of a wrapper, for the linker to type.
+              // `var s = _options.Value` / `var m = club.Manager`: a plain member read, for the linker to type.
               else if (read) put(name, { name, type: "", from: read, member: true });
               // `var api = x ? Clubs() : Players()`: each arm's call, marked as one choice.
               else for (const arm of init ? conditionalArmCalls(init) ?? [] : []) put(name, { name, type: "", choice: decl.startIndex, ...arm });
@@ -511,13 +510,14 @@ function conditionalArmCalls(init: Node): Array<{ from: string; awaited?: true }
 }
 
 /**
- * An initializer that reads the member a wrapper's value comes out of (`_options.Value`, `this.lazy.Value`, the
- * manifest's `unwrapMembers`) off plain names, as `localTypes[].from` spells it; null for any other member read, a
- * call in the path or a null-conditional access.
+ * An initializer that reads a member off plain names (`_options.Value`, `this.lazy.Value`, `club.Manager`), as
+ * `localTypes[].from` spells it; null for a call in the path or a null-conditional access. Every plain read is
+ * stated: the linker takes the value out of a wrapper where the manifest's `unwrapMembers` says so, else types the
+ * local by the member's declared type, and leaves it untyped where that is no project class.
  */
-function wrapperMemberRead(init: Node): string | null {
+function plainMemberRead(init: Node): string | null {
   const node = unwrapExpression(init);
-  if (node.type !== "member_access_expression" || !csharpManifest.unwrapMembers || !Object.hasOwn(csharpManifest.unwrapMembers, node.childForFieldName("name")?.text ?? "")) return null;
+  if (node.type !== "member_access_expression") return null;
   const parts: string[] = [];
   for (let cur: Node | null = node; cur; ) {
     if (cur.type === "member_access_expression") {

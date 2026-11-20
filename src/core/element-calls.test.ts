@@ -82,6 +82,18 @@ class Use(val repo: Pitches, val settings: Settings, val byName: Map<String, Tur
   fun direct(m: Map<String, Turf>) { for (en in m) en.value.reload() }
 }
 `,
+      "cs/Club.cs": `namespace League {
+  public class Manager { public void Promote() {} }
+  public class Coach { public void Promote() {} }
+  public class Club { public Manager Boss { get; } public Coach Assistant { get; } public static int Founded = 1900; }
+  public class Season {
+    private Club _club;
+    public void Read() { var m = _club.Boss; m.Promote(); }
+    public void Chain(Club club) { var a = club.Assistant; a.Promote(); }
+    public void Const() { var y = Club.Founded; y.ToString(); }
+  }
+}
+`,
     }));
   });
   afterAll(() => done());
@@ -124,5 +136,10 @@ class Use(val repo: Pitches, val settings: Settings, val byName: Map<String, Tur
   it("types a Kotlin entry's value", () => {
     expect(targets(summary, "Use.entries", "e.value.reload")).toEqual(["Turf.reload"]);
     expect(targets(summary, "Use.direct", "en.value.reload")).toEqual(["Turf.reload"]);
+  });
+  it("types a C# local from any plain member read, and a constant's member nothing", () => {
+    expect(targets(summary, "Season.Read", "m.Promote")).toEqual(["Manager.Promote"]);
+    expect(targets(summary, "Season.Chain", "a.Promote")).toEqual(["Coach.Promote"]);
+    expect(summary.symbolLinks.filter((l) => l.sourceSymbol === "Season.Const" && l.callName === "y.ToString")).toEqual([]);
   });
 });
