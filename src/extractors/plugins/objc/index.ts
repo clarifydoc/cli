@@ -1,6 +1,7 @@
 import { conditionalBlocks } from "../shared/preprocessor-branches.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import type { ClassInfo } from "../../../types/analysis.js";
+import { extractCFamilyMacros } from "../shared/c-family-macros.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { declarationLines, extractObjcLocalTypes, objcClasses, objcParams, parseObjcReturnType } from "./receivers.js";
 
@@ -49,6 +50,9 @@ export const objcSpec: RegexLangSpec = {
       buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2] }),
     },
   ],
+
+  // A function-like `#define` in the file: calls on it carry the calls its body makes (the C reading).
+  extractMacros: (lines, analysis) => extractCFamilyMacros(lines, analysis, false),
 
   // Raw SQL in string literals (sqlite3 / FMDB-style executeQuery:@"SELECT …").
   extractDataSources: (lines) => extractSqlStringDataSources(lines),

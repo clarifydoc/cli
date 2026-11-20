@@ -7,10 +7,12 @@ import { readC } from "./antlr.js";
 import { readCpp } from "../cpp/antlr.js";
 import { normalizeProject, denormalizeProject } from "../../../core/element-registry.js";
 import type { ProjectAnalysis } from "../../../types/analysis.js";
+import { loadObjcReader } from "../objc/tree-sitter.js";
+import type { ParsedStructure } from "../../../types/language-plugin.js";
 import { macroBodyCalls } from "../shared/c-family-macros.js";
 
 beforeAll(async () => {
-  await ensureLanguagesLoaded(["c", "cpp"]);
+  await ensureLanguagesLoaded(["c", "cpp", "objc"]);
 });
 
 const readAs = (src: string, rel: string, project = "root"): FileAnalysis => {
@@ -111,5 +113,34 @@ describe("viaMacro survives the summary", () => {
     const project = { symbolLinks, fileProjects: {}, subProjects: [] } as unknown as ProjectAnalysis;
     const back = denormalizeProject(JSON.parse(JSON.stringify(normalizeProject(project))));
     expect(back.symbolLinks.filter((l) => l.viaMacro).map((l) => [l.callName, l.viaMacro])).toEqual([["club_store_save", "SAVE_CLUB"]]);
+  });
+});
+
+describe("a header reached through the include roots", () => {
+  it("links a macro through `league/store.h` written from another directory, beside a body file of that stem", () => {
+    const user = `#include "league/store.h"\nvoid transfer(int x) {\n    SAVE_CLUB(x);\n}\n`;
+    const got = links([readAs(storeH, "src/league/store.h"), readAs(storeC, "src/league/store.c"), readAs(user, "src/app/main.c")], "src/app/main.c");
+    expect(got).toContainEqual([3, "SAVE_CLUB", "src/league/store.h", null]);
+    expect(got).toContainEqual([3, "club_store_save", "src/league/store.c", "SAVE_CLUB"]);
+  });
+
+  it("refuses a header two roots spell the same way", () => {
+    const user = `#include "league/store.h"\nvoid transfer(int x) {\n    SAVE_CLUB(x);\n}\n`;
+    const got = links([readAs(storeH, "src/league/store.h"), readAs(storeH, "vendor/league/store.h"), readAs(storeC, "src/league/store.c"), readAs(user, "src/app/main.c")], "src/app/main.c");
+    expect(got.filter((r) => r[3])).toEqual([]);
+  });
+});
+
+describe("Objective-C macros", () => {
+  let readObjc: (source: string) => ParsedStructure;
+  beforeAll(async () => {
+    readObjc = await loadObjcReader();
+  });
+  const objc = (src: string, rel: string): FileAnalysis => ({ ...extractWithRegex(src, rel, "objc", undefined, readObjc(src)), projectId: "root" });
+
+  it("carries the calls of a function-like #define the .m file writes itself", () => {
+    const fan = `#define FAN_SIGN(x) fan_sign_impl(x)\nstatic int fan_sign_impl(int x) { return x; }\n@implementation Fan\n- (int)run:(int)a {\n  return FAN_SIGN(a);\n}\n@end\n`;
+    const got = links([objc(fan, "Fan.m")], "Fan.m");
+    expect(got).toContainEqual([5, "fan_sign_impl", "Fan.m", "FAN_SIGN"]);
   });
 });
