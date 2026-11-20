@@ -31,6 +31,8 @@ describe("PHP local typed by an assignment and assigned from a call elsewhere", 
         "function guardIsNull($g, $x) { $c = $g->first(); if (is_null($c)) { $c = new Club(); } return $c->save(); }",
         "function guardEmpty($g, $x) { $c = $g->first(); if (empty($c)) { $c = new Club(); } return $c->save(); }",
         "function guardIsset($g, $x) { $c = $g->first(); if (!isset($c)) { $c = new Club(); } return $c->save(); }",
+        "function afterExit($g, $x) { $c = $g->first(); if (null !== $c) { throw new Exception('x'); } $c = new Club(); return $c->save(); }",
+        "function builtThenCall($g, $x) { $c = new Club(); $c = $g->first(); return $c->save(); }",
         "function guardOther($g, $x) { $c = $g->first(); if (!$x) { $c = new Club(); } return $c->save(); }",
         "function written($x) { /** @var Club $c */ $c = ext(); return $c->save(); }",
         "function writtenThenNew($x) { /** @var Club $c */ if ($x) { $c = new Club(); } else { $c = ext(); } return $c->save(); }",
@@ -51,6 +53,8 @@ describe("PHP local typed by an assignment and assigned from a call elsewhere", 
   it("keeps the type of a find-or-create default, every spelling of the null check", async () => {
     for (const fn of ["guardNull", "guardBang", "guardYoda", "guardIsNull", "guardEmpty", "guardIsset"]) expect(await links(fn)).toEqual(["Club.save:INFERRED"]);
   });
+  it("keeps the type when the construction is the last straight-line assignment", async () => expect(await links("afterExit")).toEqual(["Club.save:INFERRED"]));
+  it("untypes when an untypable call is assigned after the construction", async () => expect(await links("builtThenCall")).toEqual([]));
   it("still untypes when the guard tests another variable", async () => expect(await links("guardOther")).toEqual([]));
   it("keeps a written docblock type", async () => {
     expect(await links("written")).toEqual(["Club.save:INFERRED"]);

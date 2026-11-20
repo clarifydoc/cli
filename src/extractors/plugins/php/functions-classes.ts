@@ -814,11 +814,15 @@ function extractLocalTypes(
   const inferredNames = new Set<string>();
   // Names whose construction is the default of a null check on that very name (`$x = find(); if (!$x) { $x = new X(); }`): the find-or-create idiom keeps the type.
   const guardDefaults = new Set<string>();
+  // Names whose construction is a top-level statement of the body (the last straight-line assignment wins), and those assigned from a call after it.
+  const straightBuilt = new Set<string>();
+  const callAfterBuilt = new Set<string>();
   const testsNull = (cond: string, name: string): boolean => {
     const v = "\\$" + name + "\\b";
     return new RegExp(`^\\(?\\s*(?:!\\s*(?:isset\\s*\\(\\s*${v}\\s*\\)|${v})|(?:null\\s*===?\\s*${v}|${v}\\s*===?\\s*null)|(?:is_null|empty)\\s*\\(\\s*${v}\\s*\\))\\s*\\)?$`, "i").test(cond.trim());
   };
   const noteFrom = (name: string, from: string, choice?: number): void => {
+    if (straightBuilt.has(name)) callAfterBuilt.add(name);
     const calls = fromCalls.get(name) ?? new Map<string, number | undefined>();
     // The same call under another initializer (or none) is no single choice.
     calls.set(from, calls.has(from) && calls.get(from) !== choice ? undefined : choice);
@@ -928,6 +932,7 @@ function extractLocalTypes(
           add(name, looked.type, looked.qualifier);
           if (out.length > before) {
             inferredNames.add(name);
+            if (n.parent?.type === "expression_statement" && n.parent.parent?.id === body.id) straightBuilt.add(name);
             for (let p: Node | null = n.parent; p && p.id !== body.id; p = p.parent) {
               if (p.type === "if_statement" && testsNull(p.childForFieldName("condition")?.text ?? "", name)) { guardDefaults.add(name); break; }
             }
@@ -984,7 +989,7 @@ function extractLocalTypes(
   // A name typed by one assignment and assigned from a call elsewhere: the linker settles whether that call agrees.
   for (const name of inferredNames) {
     const froms = fromCalls.get(name);
-    if (!froms || guardDefaults.has(name)) continue;
+    if (!froms || guardDefaults.has(name) || (straightBuilt.has(name) && !callAfterBuilt.has(name))) continue;
     for (const l of out) if (l.name === name && l.type) l.inferred = true;
     for (const from of froms.keys()) out.push({ name, type: "", from });
   }
