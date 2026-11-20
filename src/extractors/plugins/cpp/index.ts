@@ -265,6 +265,19 @@ export const cppSpec: RegexLangSpec = {
 
   propertyPatterns: [
     {
+      // A field declared with a function type written out: `void (*on_fire)(int);`, `std::function<void(int)> on_sign;`.
+      // Its type is kept as written (a function type names no class), flagged `callable` for the value-flow pass.
+      pattern: /^\s+(?:mutable\s+|static\s+)*(?:([\w:<>,*&\s]+?)\s*\(\s*\*\s*([A-Za-z_]\w*)\s*\)\s*\(((?:[^()]|\([^()]*\))*)\)\s*(?:noexcept\s*)?|((?:std\s*::\s*)?function\s*<[^;]*>)\s*([A-Za-z_]\w*)\s*)(?:=\s*[^;]+|\{[^;]*\})?\s*;\s*(?:\/\/.*|\/\*.*\*\/\s*)?$/,
+      build: (m, line): PropertyInfo | null => {
+        const name = m[2] ?? m[5];
+        if (!name) return null;
+        const ret = m[1]?.trim();
+        if (ret && /^(?:return|typedef|using|friend|else|delete|throw|new|case|co_return|co_yield|co_await)\b/.test(ret)) return null;
+        const type = m[4] ? m[4].replace(/\s+/g, " ").trim() : `${ret} (*)(${m[3]!.trim()})`;
+        return { name, type, visibility: "public", isStatic: /^\s*static\b/.test(line ?? ""), isReadonly: false, callable: true };
+      },
+    },
+    {
       // An annotation macro may follow the declarator: `Coach coach_ GUARDED_BY(mu_);`.
       // A trailing comment may follow it: `Version* current_;  // == dummy_versions_.prev_`.
       pattern: /^\s+(?:mutable\s+|static\s+|const\s+)*((?:struct\s+|class\s+|enum\s+)?[\w:<>,*&\s]+?)[\s*&]+([a-zA-Z_]\w*)\s*(?:\[[^\]]*\])?(?:\s+[A-Z][A-Z0-9_]+(?:\s*\([^()]*\))?)*\s*(?:=\s*[^;]+)?\s*;\s*(?:\/\/.*|\/\*.*\*\/\s*)?$/,

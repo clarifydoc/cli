@@ -26,6 +26,8 @@ const PRIMITIVES = new Set([
   "intptr_t", "uintptr_t", "int8_t", "int16_t", "int32_t", "int64_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t", "_Bool", "string", "FILE",
 ]);
 const FN_TYPE = /function|\(\s*[*^]|Callback|Handler|Callable|Delegate|Listener/;
+/** Member names that read as accessors or container operations, never a stored callback. */
+const ACCESSOR_NAME = /^(?:(?:is|has|get|set|to|can)[A-Z_]\w*|size|length|data|value|at|count|contains|begin|end|empty|clear|first|last|front|back|name|title|text|isEmpty|isNull|isValid)$/;
 const LITERALS = new Set(["NULL", "nullptr", "true", "false", "this", "TRUE", "FALSE", "nil"]);
 /** Words that make a type's name one a callable has (`handler_t`, `ClubCallback`, `sign_fn`). */
 const TYPE_WORDS = new Set([
@@ -389,6 +391,10 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
   for (const m of text.matchAll(/\busing\s+([A-Za-z_]\w*)\s*=\s*(?:std\s*::\s*function\b|[^;]*\(\s*[*^]\s*\))/g)) fpTypedefs.add(m[1]!);
   for (const m of text.matchAll(/\btypedef\s+std\s*::\s*function\b[^;]*?\b([A-Za-z_]\w*)\s*;/g)) fpTypedefs.add(m[1]!);
   const classes = analysis.classes;
+  // A C++ field typed by a function-pointer typedef or alias the file declares (`http_cb on_done;`) holds a function.
+  if (cpp && fpTypedefs.size > 0) {
+    for (const c of classes) for (const p of c.properties) if (!p.callable && p.type && fpTypedefs.has(p.type)) p.callable = true;
+  }
   const callable = [...new Set([...analysis.functions.filter((f) => f.name !== "<setup>"), ...classes.flatMap((c) => c.methods)])];
   const definedNames = new Set(callable.map((f) => f.name));
   const methodNames = new Set(classes.flatMap((c) => c.methods.map((m) => m.name)));
@@ -939,14 +945,15 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
           if (cell) scope.out.push({ kind: "arg", call: call.name, line: call.line, index, from: cell });
         }
       }
-      const invoke = invokeCell(scope, site, call);
+      const held = invokeCell(scope, site, call);
+      const invoke = held ?? fieldInvokeCell(scope, site, call);
       if (invoke) {
         const name = call?.name ?? (site.form === "id" ? leafName : leafName);
         const line = call?.line ?? lineOf(starts, site.leaf);
         const key = `${name}\0${line}\0${invoke.name}.${invoke.member ?? ""}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        scope.out.push({ kind: "invoke", cell: invoke, call: name, line });
+        scope.out.push({ kind: "invoke", cell: invoke, call: name, line, ...(held ? {} : { ifFnField: true as const }) });
       }
     }
     while (deferred.length > 0) deferred.shift()!();
@@ -981,6 +988,25 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
       return cellOfSegs(s, segs);
     }
     return cellOfSegs(s, segs);
+  };
+
+  /**
+   * A call `x.m(…)` / `x->m(…)` / `this->m(…)` in C++ whose member this file neither declares as a method nor stores into: a
+   * field of a class a header declares, which another file may fill with a function. Core keeps the invoke only when
+   * the receiver's class declares `m` as a function-typed property (`ifFnField`), so a method of that name keeps its link.
+   */
+  const fieldInvokeCell = (s: Scope, site: Site, call: CallInfo | null): ValueCell | null => {
+    if (!cpp || !call || call.boundLocally || site.form !== "id" || site.opaque || site.segs.length !== 2) return null;
+    const [head, leaf] = site.segs as [string, string];
+    if (methodNames.has(leaf) || definedNames.has(leaf)) return null;
+    if (head === "this") return s.cls ? { name: "this", member: leaf } : null;
+    const info = s.declared.get(head) ?? s.params.get(head);
+    const key = info ? typeKey(info.type) : null;
+    if (!key || key.startsWith("std::") || kindOf(s, head) === "module") return null;
+    // Library receivers (a Qt value type written without arguments) and accessor names (`isEmpty`, `setGroup`, `size`) are no field
+    // a project stores a function into; stating them costs a fact per call for core to discard.
+    if (/^Q[A-Z]\w*$/.test(info!.type.replace(STORAGE, " ").replace(/[*&]/g, " ").trim()) || ACCESSOR_NAME.test(leaf)) return null;
+    return { name: head, member: leaf };
   };
 
   /** A table initializer: `{ .sign = club_sign }` fills the struct type's members, `{ a, b }` an array of handlers. */

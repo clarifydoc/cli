@@ -1202,8 +1202,10 @@ export type ValueFlowFact =
    * `ifFnType`: the cell is declared with a type this file neither declares nor reads as a function type (a name that may be
    * a class or a function-type alias another file declares); the call runs it only when a file of the same language lists
    * that name in `FileAnalysis.functionTypeAliases`.
+   * `ifFnField`: the cell is a member of a value whose class this file does not declare (a header's field, read in a .cpp
+   * file): the call runs it only when the receiver's class, or a base, declares that member as a `callable` property.
    */
-  | { kind: "invoke"; cell: ValueCell; call: string; line: number; held?: "module"; ifFnType?: string };
+  | { kind: "invoke"; cell: ValueCell; call: string; line: number; held?: "module"; ifFnType?: string; ifFnField?: true };
 
 export interface CallInfo {
   name: string;
@@ -1901,6 +1903,11 @@ export interface PropertyInfo {
    * on the class reaches that method.
    */
   readAccessor?: string;
+  /**
+   * The field is declared with a function type written out (C++ `std::function<void(int)>`, a function pointer
+   * `void (*)(int)`): a call through it runs whatever the project stores in it, in any file.
+   */
+  callable?: true;
   /**
    * The method a command property runs, when the class builds it over one
    * (`KeepCommand = new RelayCommand(Keep)`, `new DelegateCommand(() => Keep())`): what a view's

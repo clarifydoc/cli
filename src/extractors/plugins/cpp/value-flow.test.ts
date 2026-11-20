@@ -184,3 +184,56 @@ describe("C++ held lambda cap is counted by core over project functions", () => 
     expect(found.filter((l) => l.includes("src/decoy.cpp"))).toEqual([]);
   });
 });
+
+// A function-typed field a header declares, filled in one file and run in another.
+const carHeader = `#pragma once
+typedef void (*signal_cb)(int);
+#include <functional>
+struct Car {
+  void (*on_fire)(int);
+  std::function<void(int)> on_sign;
+  int on_count;
+  void on_start();
+  void run();
+  signal_cb on_done;
+};
+struct Garage {
+  void on_fire(int n);
+  int on_sign;
+};
+`;
+const setupCpp = `#include "car.h"
+void warmUp(int n) {}
+void signIn(int n) {}
+void prepare(Car& c) { c.on_fire = warmUp; c.on_sign = signIn; c.on_done = warmUp; }
+`;
+const runCpp = `#include "car.h"
+void runCar(Car& c) { c.on_fire(3); c.on_sign(4); c.on_start(); c.on_count(5); c.on_done(9); }
+void runPtr(Car* c) { c->on_fire(6); }
+void Car::run() { this->on_fire(10); }
+void runGarage(Garage& g) { g.on_fire(7); g.on_sign(8); }
+`;
+
+describe("C++ function-typed fields declared in a header", () => {
+  const header = read(carHeader, "src/car.h");
+  it("records a function pointer and a std::function field as callable properties", () => {
+    const car = header.classes.find((c) => c.name === "Car")!;
+    expect(car.properties.filter((p) => p.callable).map((p) => p.name).sort()).toEqual(["on_done", "on_fire", "on_sign"]);
+    expect(car.properties.find((p) => p.name === "on_count")?.callable).toBeUndefined();
+  });
+  const found = buildSymbolLinks([header, read(setupCpp, "src/setup.cpp"), read(runCpp, "src/run.cpp")])
+    .filter((l) => l.strategy === "value-flow")
+    .map((l) => `${l.sourceSymbol}@${l.sourceLine} ${l.callName} -> ${l.targetSymbol}`)
+    .sort();
+  it("a field set in one file reaches the call that runs it in another", () => {
+    expect(found).toContain("runCar@2 c.on_fire -> warmUp");
+    expect(found).toContain("runCar@2 c.on_sign -> signIn");
+    expect(found).toContain("runPtr@3 c.on_fire -> warmUp");
+    expect(found).toContain("runCar@2 c.on_done -> warmUp");
+    expect(found).toContain("Car.run@4 this.on_fire -> warmUp");
+  });
+  it("a method of the field's name, a data field and another class's member never link", () => {
+    expect(found.filter((l) => l.startsWith("runGarage"))).toEqual([]);
+    expect(found.filter((l) => l.includes("c.on_start") || l.includes("c.on_count"))).toEqual([]);
+  });
+});

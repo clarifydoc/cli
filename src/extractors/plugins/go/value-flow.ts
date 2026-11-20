@@ -374,7 +374,14 @@ export function goValueFlow(
       const callee = steps.slice(0, steps.findIndex((st) => st.k === "call" && st.at === at));
       if (callee.some((s) => s.k === "call" || s.k === "other") || !id) continue;
       const base = head(id.name, id);
-      if (!base) continue;
+      if (!base) {
+        // A bare call of a name this file neither binds nor declares: a sibling file's package variable, or a function. Core
+        // resolves the cell only where a sibling binds that name as a variable, so a call of a function states nothing.
+        if (callee.length === 0 && !moduleLevel && !NOT_FUNCTIONS.has(id.name) && !BUILTINS.has(id.name) && id.name !== receiver) {
+          out.push({ kind: "invoke", cell: { name: id.name, package: true }, call: id.name, line: id.line });
+        }
+        continue;
+      }
       if (callee.length === 0 && base !== "this") out.push({ kind: "invoke", cell: { name: base }, call: id.name, line: id.line });
       else if (callee.length === 1 && callee[0]!.k === "dot" && env.funcFields.has((callee[0] as { name: string }).name)) {
         const member = (callee[0] as { name: string }).name;

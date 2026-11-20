@@ -332,3 +332,17 @@ describe("Go function values: package variables written from a function and shar
     expect(valueFlowLinks(analyses)).toEqual([]);
   });
 });
+
+describe("Go: a bare call of a package variable a sibling file declares", () => {
+  const files = {
+    "league/hooks.go": ["package league", "", "func save(n string) {}", "", "var onFull = save", "", "func prepare() string { return \"x\" }", ""].join("\n"),
+    "league/run.go": ["package league", "", "func fire() {", "\tonFull(\"a\")", "\tprepare()", "}", ""].join("\n"),
+    "garage/decoy.go": ["package garage", "", "func onFull(n string) {}", ""].join("\n"),
+  };
+  it("runs what the sibling's variable holds, never a namesake and never a sibling function", async () => {
+    const analyses = await analyzeAll(files);
+    expect(valueFlowLinks(analyses)).toEqual(["fire: onFull -> league/hooks.go::save"]);
+    const plain = buildSymbolLinks(analyses).filter((l) => l.sourceSymbol === "fire" && l.strategy !== "value-flow");
+    expect(plain.map((l) => `${l.callName} -> ${l.targetFile}::${l.targetSymbol}`)).toEqual(["prepare -> league/hooks.go::prepare"]);
+  });
+});
