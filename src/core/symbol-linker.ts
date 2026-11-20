@@ -4669,7 +4669,8 @@ function functionTypeQuestion(ctx: LinkContext): (file: string, type: string) =>
 }
 
 function judgeFunctionType(ctx: LinkContext, file: string, type: string): boolean {
-  const name = type.trim().replace(/\?$/, "");
+  // `Callback<T>?` and a prefixed `k.Callback` name the declaration `Callback`.
+  const name = type.trim().replace(/\?$/, "").replace(/<[\s\S]*$/, "").split(".").pop()!;
   if (!/^[\w$]+$/.test(name)) return false;
   const language = ctx.languageOf.get(file);
   if (!language) return false;
@@ -4702,7 +4703,7 @@ function judgeFunctionType(ctx: LinkContext, file: string, type: string): boolea
   const importedProjects = importedProjectsOf(analysis, ctx);
   return decide((f) => f === file)
     ?? decide((f) => imported.has(f))
-    ?? decide((f) => ctx.projectOf.get(f) === project)
+    ?? (project === undefined ? undefined : decide((f) => ctx.projectOf.get(f) === project))
     ?? decide((f) => importedProjects.has(ctx.projectOf.get(f) ?? ""))
     ?? false;
 }
