@@ -53,7 +53,7 @@ export function dropUnchangedLocalPaths(analyses: FileAnalysis[]): void {
   for (const a of analyses) {
     for (const r of a.routes) {
       if (r.localPath === undefined) continue;
-      if (r.localPath === r.path || r.prefixUnresolved || r.mount) delete r.localPath;
+      if (r.localPath === r.path || r.prefixUnresolved || r.mount || !r.path.endsWith(r.localPath)) delete r.localPath;
     }
   }
 }

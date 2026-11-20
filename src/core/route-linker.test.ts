@@ -1329,3 +1329,11 @@ describe("linkApiCallsToRoutes — a route states the path below its mount", () 
     expect(linkApiCallsToRoutes([apiCall("web/clubs.ts", "get", "/clubs")], [bare])).toHaveLength(0);
   });
 });
+
+describe("linkApiCallsToRoutes — a namesake router mounted in two services", () => {
+  it("leaves a mount-less call unplaced rather than choosing a service", () => {
+    const a = { ...route("league/clubs.ts", "GET", "/svc/league/clubs", "list", 3), localPath: "/clubs", projectId: "league" };
+    const b = { ...route("garage/clubs.ts", "GET", "/internal/garage/clubs", "list", 3), localPath: "/clubs", projectId: "garage" };
+    expect(linkApiCallsToRoutes([apiCall("web/clubs.ts", "get", "/clubs")], [a, b])).toHaveLength(0);
+  });
+});

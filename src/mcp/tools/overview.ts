@@ -190,7 +190,7 @@ function kindTag(kind: SearchKind): string {
  * taken off, or nothing.
  */
 function pathBelowBase(path: string, localPath?: string): string[] {
-  if (localPath) return [localPath];
+  if (localPath && path.endsWith(localPath)) return [localPath];
   const base = BASES_WITH_SLASH.find((b) => path.startsWith(b));
   return base ? [path.slice(base.length - 1)] : [];
 }
