@@ -106,7 +106,7 @@ export function extractTool(ctx: ToolContext): McpTool {
         }
         // A definition nothing links to: a function by its complexity row, a class by its node.
         // An inline route handler is defined where the route is.
-        if (want.startsWith("route:")) for (const r of loaded.summary.routeMap ?? []) if (!r.handler && r.handlerEndLine && r.filePath) files.add(r.filePath);
+        if (want.startsWith("route:")) for (const r of loaded.summary.routeMap ?? []) if (!r.handler && r.handlerEndLine && r.filePath && routeSymbolName({ ...r, httpMethod: (r.httpMethod ?? "USE").toUpperCase() }).toLowerCase() === want) files.add(r.filePath);
         for (const c of loaded.summary.complexity ?? []) if (c.functions.some((f) => named(f.functionName))) files.add(c.filePath);
         for (const n of loaded.summary.classGraph?.nodes ?? []) if (!n.isFile && !n.isExternal && named(n.name)) files.add(n.filePath);
       }
