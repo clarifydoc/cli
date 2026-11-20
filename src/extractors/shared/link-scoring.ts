@@ -452,7 +452,6 @@ function resolveTargetUncached(importSource: string, sourceFile: string, filePat
       // The extension is part of the name: `league/club.h` is the header, not the `club.c` that shares its stem.
       const written = uniquePathEnding(posix.normalize(importSource), filePathMap);
       if (written) return written;
-      if (written === null) return null;
       const hit = uniqueSuffixMatch(posix.normalize(importSource).slice(0, -ext.length), filePathMap);
       if (hit) return hit;
     }
