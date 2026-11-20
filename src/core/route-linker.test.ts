@@ -1269,3 +1269,30 @@ describe("a route declared with a query part", () => {
     ]);
   });
 });
+
+describe("linkApiCallsToRoutes — a query-string hole", () => {
+  const routes = [
+    route("api/clubs.py", "GET", "/api/clubs/{id}/logs", "club_logs", 10),
+    route("api/clubs.py", "POST", "/api/clubs/{id}/logs", "add_log", 20),
+    route("api/clubs.py", "GET", "/api/clubs/{id}", "club", 30),
+    route("api/cars.py", "GET", "/api/cars/search", "search_cars", 5),
+  ];
+
+  it("joins a call whose query holes are glued by a second `?`", () => {
+    const links = linkApiCallsToRoutes([apiCall("web/clubs.ts", "get", "/api/cars/search?club_id={}?name={}")], routes);
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({ handler: "search_cars", method: "GET" });
+  });
+
+  it("a query string never makes a call join the route of a longer path or another method", () => {
+    const longer = linkApiCallsToRoutes([apiCall("web/clubs.ts", "get", "/api/clubs/{}?lines={}")], routes);
+    expect(longer.map((l) => l.handler)).toEqual(["club"]);
+    const other = linkApiCallsToRoutes([apiCall("web/clubs.ts", "delete", "/api/clubs/{}/logs?lines={}")], routes);
+    expect(other).toHaveLength(0);
+  });
+
+  it("a path the project has no route for stays unlinked whatever its query", () => {
+    const links = linkApiCallsToRoutes([apiCall("web/clubs.ts", "get", "/api/clubs/{}/clean/logs?lines={}")], routes);
+    expect(links).toHaveLength(0);
+  });
+});
