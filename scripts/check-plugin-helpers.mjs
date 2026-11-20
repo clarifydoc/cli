@@ -42,8 +42,17 @@ function declarations(text) {
 
 /** The declaration's whole body is one `return call(…);`. */
 function isCallWrapper(body) {
-  const m = /\)\s*(?::\s*[^{]*?)?\s*\{\s*return\s+([\s\S]*?);?\s*\}\s*$/.exec(body.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1"));
-  return !!m && /^[\w$.]+\(/.test(m[1]) && !m[1].includes(";");
+  const clean = body.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+  // Anchored at the declaration's own parameter list and brace: `(params): Type { return call(…); }` and nothing else.
+  const m = /^\s*\([^{}]*\)\s*(?::\s*[^{};]*)?\{\s*return\s+([\s\S]*?);?\s*\}\s*$/.exec(clean);
+  if (!m || !/^[\w$.]+\(/.test(m[1]) || m[1].includes(";")) return false;
+  // The returned expression is that one call: its first `(` closes at the very end.
+  let depth = 0;
+  for (let i = m[1].indexOf("("); i < m[1].length; i++) {
+    if (m[1][i] === "(") depth++;
+    else if (m[1][i] === ")" && --depth === 0) return i === m[1].length - 1;
+  }
+  return false;
 }
 
 function normalize(body) {

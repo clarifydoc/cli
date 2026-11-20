@@ -1,7 +1,7 @@
 import type { ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { RequestSchemaHooks, TypeShape } from "../../../types/language-plugin.js";
 import { splitBracketedArgs } from "../shared/regex-base.js";
-import { dropDottedQualifier } from "../shared/path-utils.js";
+import { dropDottedQualifier } from "../shared/member-names.js";
 import { camelCase } from "../shared/inflection.js";
 export { camelCase };
 

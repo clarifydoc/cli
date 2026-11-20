@@ -5,7 +5,8 @@ import type {
   RouteInfo,
 } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
-import { publicProperty, stripAngleGroups } from "../shared/path-utils.js";
+import { publicProperty } from "../shared/member-names.js";
+import { stripAngleGroups } from "../shared/path-utils.js";
 
 /**
  * Prisma schema (`schema.prisma`) extraction. Prisma is its own file format —

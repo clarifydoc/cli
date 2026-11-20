@@ -1,7 +1,7 @@
 import type { Node } from "web-tree-sitter";
 import { FunctionClassExtractor } from "../../functions-classes/base.js";
 import type { FunctionInfo, ClassInfo, Language, PropertyInfo } from "../../functions-classes/base.js";
-import { publicProperty } from "../shared/path-utils.js";
+import { publicProperty } from "../shared/member-names.js";
 import { extractCalls } from "../../shared/call-graph.js";
 import { isFunctionBinding, stringValue } from "./syntax.js";
 

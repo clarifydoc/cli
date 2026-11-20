@@ -1,5 +1,5 @@
 import type { ClassInfo, EntityRelation, FileAnalysis, PropertyInfo } from "../../../types/analysis.js";
-import { publicProperty } from "./path-utils.js";
+import { publicProperty } from "./member-names.js";
 
 /**
  * A chain of schema migrations replayed into the schema it ends with, from each

@@ -61,7 +61,7 @@ export function splitTopLevel(text: string, o: SplitTopLevelOptions = {}): strin
       depth = o.clamp ? Math.max(0, depth - 1) : depth - 1;
     } else if (depth === 0 && (o.anyOf !== undefined ? o.anyOf.includes(ch) : sep.length === 1 ? ch === sep : sep !== "" && text.startsWith(sep, i))) {
       pieces.push(text.slice(start, i));
-      i += sep.length - 1;
+      if (o.anyOf === undefined) i += sep.length - 1;
       start = i + 1;
     }
   }

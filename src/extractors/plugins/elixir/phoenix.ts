@@ -1,6 +1,6 @@
 import type { ClassInfo, EntityRelation, FunctionInfo, ImportInfo, PropertyInfo, RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../types/analysis.js";
 import type { GuardAttr } from "../../shared/route-metadata.js";
-import { publicProperty } from "../shared/path-utils.js";
+import { publicProperty } from "../shared/member-names.js";
 import { applyRouteMeta } from "../../shared/route-metadata.js";
 
 /**

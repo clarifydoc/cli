@@ -140,5 +140,3 @@ function unquote(arg: string | undefined): string | undefined {
 function blankComments(s: string): string {
   return s.replace(/"(?:[^"\\\n]|\\.)*"|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (c) => (c.startsWith('"') ? c : c.replace(/[^\n]/g, " ")));
 }
-
-

@@ -1,6 +1,6 @@
 import type { PropertyInfo } from "../../../types/analysis.js";
 import type { RequestSchemaHooks, TypeShape } from "../../../types/language-plugin.js";
-import { dropDottedQualifier } from "../shared/path-utils.js";
+import { dropDottedQualifier } from "../shared/member-names.js";
 import { splitGeneric } from "../../shared/type-parser.js";
 
 /**

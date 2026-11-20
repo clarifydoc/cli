@@ -4,7 +4,8 @@ import { middlewareGuardOf } from "../../shared/route-metadata.js";
 import { dropNestedFunctions, tidySetupCalls } from "./function-postprocess.js";
 import { lineAt, lineIndex, preparedLines } from "./text-scan.js";
 import { underscore } from "./inflection.js";
-import { dropDottedQualifier, escapeRegex, publicProperty } from "./path-utils.js";
+import { escapeRegex } from "./path-utils.js";
+import { dropDottedQualifier, publicProperty } from "./member-names.js";
 import { hasDep } from "./project-info-queries.js";
 import type { CallInfo, FunctionInfo } from "../../../types/analysis.js";
 

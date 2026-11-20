@@ -45,4 +45,17 @@ describe("check-plugin-helpers", () => {
     const same = plugins({ "club/a.ts": HELPER, "club/b.ts": HELPER });
     expect(spawnSync("node", [script, same, join(same, "none.json")], { encoding: "utf8" }).status).toBe(0);
   });
+
+  const wrapper = (name: string) => `export function ${name}(text: string): string[] {\n  return splitTopLevel(text, { escapes: "'", dropBlank: true, trim: true, quotes: "'" });\n}\n`;
+  const nested = (name: string) => `function ${name}(x: number, items: number[]): number {\n  const doubled = items.map((i) => i * 2);\n  let total = x;\n  for (const d of doubled) total += d;\n  if (total > 10) { return finish(total) }\n}\n`;
+  const alternative = (name: string) => `function ${name}(text: string, other: string): string[] {\n  return splitTopLevel(text, { trim: true, dropBlank: true, quotes: "'" }) || tidy(other);\n}\n`;
+  it("exempts a one-line wrapper of a shared function but not a larger body ending in a return, nor an alternative", () => {
+    const run = (make: (n: string) => string) => {
+      const dir = plugins({ "club/index.ts": make("a"), "player/index.ts": make("b") });
+      return spawnSync("node", [script, dir, join(dir, "none.json")], { encoding: "utf8" }).status;
+    };
+    expect(run(wrapper)).toBe(0);
+    expect(run(nested)).toBe(1);
+    expect(run(alternative)).toBe(1);
+  });
 });

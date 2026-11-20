@@ -1,6 +1,6 @@
 import type { ClassInfo, FileAnalysis, ImportInfo, PropertyInfo, SchemaOp } from "../../../types/analysis.js";
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
-import { publicProperty } from "../shared/path-utils.js";
+import { publicProperty } from "../shared/member-names.js";
 import { fkRelation, replaySchema } from "../shared/schema-replay.js";
 import { extractSqlClasses } from "../sql/index.js";
 import { schemaOpsOf } from "../sql/entities.js";
