@@ -261,7 +261,7 @@ function hideTypeMacroArguments(all: Token[]): void {
     }
     // `typedef typename BIND_(Sel, Type) TestClass;`: a macro standing for the type after `typename`, which no scope
     // follows — `typename` and the arguments leave, so the macro's name is the type.
-    if (!hide && prev === CPP14Lexer.Typename_ && type(i - 2) !== CPP14Lexer.Doublecolon && after === CPP14Lexer.Identifier) {
+    if (!hide && prev === CPP14Lexer.Typename_ && type(i - 2) === CPP14Lexer.Typedef && after === CPP14Lexer.Identifier) {
       (tokens[i - 1] as { channel: number }).channel = Token.HIDDEN_CHANNEL;
       hide = true;
     }
