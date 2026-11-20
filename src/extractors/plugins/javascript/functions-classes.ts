@@ -2736,8 +2736,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           const from = functions.length;
           this.extractObjectMembers(null, value, functions, false, MAX_NAMESPACE_DEPTH);
           // A computed's body derives a value and a watcher reacts to one: neither is a person's action. A writable
-          // computed's `set` is called by an assignment, so it is left out.
-          if (key === "computed") for (const fn of functions.slice(from)) if (!/\.set$/.test(fn.name)) fn.reactiveGetter = "computed";
+          // computed's `set` is called by an assignment, so only a plain member and a `get` are marked.
+          if (key === "computed") for (const fn of functions.slice(from)) if (!fn.name.includes(".") || fn.name.endsWith(".get")) fn.reactiveGetter = "computed";
         } else if (VUE_HOOKS.has(key) && (value.type === "arrow_function" || value.type === "function_expression")) {
           functions.push(this.parseJsArrowOrExpr(key, value, false));
         }
