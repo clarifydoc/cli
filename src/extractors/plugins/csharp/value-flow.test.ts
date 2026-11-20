@@ -467,3 +467,123 @@ describe("C# value flow: named arguments", () => {
     expect(links.some((l) => l.includes("callback") && l.endsWith("Clock.OnKickOff"))).toBe(false);
   });
 });
+
+describe("C# value flow: leftovers", () => {
+  it("knows a delegate type another file declares", async () => {
+    const links = flowLinks(await analyzeAll({
+      "League/Notify.cs": lines("namespace League;", "public delegate void Notify(string who);"),
+      "League/Club.cs": lines(
+        "namespace League;",
+        "public class Club {",
+        "  public void Save(string who) {}",
+        "  public void Wire() { Run(Save); }",
+        "  void Run(Notify cb) {",
+        "    cb(\"x\");",
+        "  }",
+        "}",
+      ),
+      "League/Decoy.cs": lines("namespace League;", "public class Decoy { public void Save(string who) {} public void Run(Decoy d) { d.Save(\"x\"); } }"),
+    }));
+    expect(links).toContain("Club.Run@6 cb -> League/Club.cs::Club.Save");
+    expect(links.filter((l) => l.includes("Decoy"))).toEqual([]);
+  });
+
+  it("does not take a project class named like a delegate as one", async () => {
+    const links = flowLinks(await analyzeAll({
+      "League/Notify.cs": lines("namespace League;", "public class Notify { public void Send(string who) {} }"),
+      "League/Club.cs": lines(
+        "namespace League;",
+        "public class Club {",
+        "  public void Save(string who) {}",
+        "  public void Wire() { Run(null); }",
+        "  void Run(Notify cb) { cb.Send(\"x\"); }",
+        "}",
+      ),
+    }));
+    expect(links).toEqual([]);
+  });
+
+  it("joins a subscription through a derived variable to the raise in the base class", async () => {
+    const links = flowLinks(await analyzeAll({
+      "League/Referee.cs": lines(
+        "namespace League;",
+        "public class Referee {",
+        "  public event Action Whistled;",
+        "  public void Blow() { Whistled?.Invoke(); }",
+        "}",
+        "public class LineReferee : Referee { }",
+      ),
+      "League/Fan.cs": lines(
+        "namespace League;",
+        "public class Fan {",
+        "  public void Cheer() {}",
+        "  public void Watch(LineReferee r) { r.Whistled += Cheer; }",
+        "}",
+      ),
+      "League/Stadium.cs": lines(
+        "namespace League;",
+        "public class Stadium {",
+        "  public event Action Whistled;",
+        "  public void Cheer() {}",
+        "  public void Hush() { Whistled?.Invoke(); }",
+        "}",
+      ),
+    }));
+    expect(links).toContain("Referee.Blow@4 Whistled?.Invoke -> League/Fan.cs::Fan.Cheer");
+    expect(links.filter((l) => l.startsWith("Stadium."))).toEqual([]);
+  });
+
+  it("states an argument fact for each of two calls of one name in a member", async () => {
+    const links = flowLinks(await analyzeAll({
+      "League/Club.cs": lines(
+        "namespace League;",
+        "public class Club {",
+        "  public void Save() {}",
+        "  public void Load() {}",
+        "  public void Wire() {",
+        "    Run(Save);",
+        "    Run(Load);",
+        "  }",
+        "  void Run(Action cb) { cb(); }",
+        "}",
+      ),
+    }));
+    expect(links).toContain("Club.Run@9 cb -> League/Club.cs::Club.Save");
+    expect(links).toContain("Club.Run@9 cb -> League/Club.cs::Club.Load");
+  });
+
+  it("joins a subscription through an interface that declares the event to the raise in its implementer, not in a namesake", async () => {
+    const links = flowLinks(await analyzeAll({
+      "League/IReferee.cs": lines("namespace League;", "public interface IReferee {", "  event Action Whistled;", "}"),
+      "League/Referee.cs": lines(
+        "namespace League;",
+        "public class Referee : IReferee {",
+        "  public event Action Whistled;",
+        "  public void Blow() { Whistled?.Invoke(); }",
+        "}",
+        "public class Linesman : IReferee {",
+        "  public event Action Whistled;",
+        "  public void Flag() { Whistled?.Invoke(); }",
+        "}",
+      ),
+      "League/Fan.cs": lines(
+        "namespace League;",
+        "public class Fan {",
+        "  public void Cheer() {}",
+        "  public void Watch(IReferee r) { r.Whistled += Cheer; }",
+        "}",
+      ),
+      "League/Coach.cs": lines(
+        "namespace League;",
+        "public class Coach {",
+        "  public void Listen() {}",
+        "  public void Watch(Linesman l) { l.Whistled += Listen; }",
+        "}",
+      ),
+    }));
+    expect(links).toContain("Referee.Blow@4 Whistled?.Invoke -> League/Fan.cs::Fan.Cheer");
+    // A handler subscribed on the concrete namesake is not run by the other implementer's raise.
+    expect(links.filter((l) => l.startsWith("Referee.Blow") && l.includes("Coach"))).toEqual([]);
+    expect(links).toContain("Linesman.Flag@8 Whistled?.Invoke -> League/Coach.cs::Coach.Listen");
+  });
+});

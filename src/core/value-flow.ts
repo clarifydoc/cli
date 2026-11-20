@@ -309,6 +309,17 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
     for (let depth = 0; cur && depth < 16; depth++) {
       const info = host.classAt(cur.file, cur.name);
       if (info?.properties.some((p) => p.name === member)) return cellOfKey(`F\0${cur.file}\0${cur.name}\0${member}`);
+      if (info?.events?.includes(member)) {
+        // A declared event: the cell of the nearest declarer, which also holds what was subscribed through a type
+        // above it that declares the event too (an interface's, redeclared by its implementer).
+        const own = cellOfKey(`F\0${cur.file}\0${cur.name}\0${member}`);
+        let up = host.parentOf(cur.file, cur.name);
+        for (let hops = 0; up && hops < 16; hops++) {
+          if (host.classAt(up.file, up.name)?.events?.includes(member)) addEdge(cellOfKey(`F\0${up.file}\0${up.name}\0${member}`), own);
+          up = host.parentOf(up.file, up.name);
+        }
+        return own;
+      }
       cur = host.parentOf(cur.file, cur.name);
     }
     return cellOfKey(`F\0${file}\0${cls}\0${member}`);

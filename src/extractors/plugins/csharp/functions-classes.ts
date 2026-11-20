@@ -112,6 +112,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
     const body = node.childForFieldName("body");
     const methods: FunctionInfo[] = [];
     const properties: PropertyInfo[] = [];
+    const events: string[] = [];
     const generatedProperties: PropertyInfo[] = [];
 
     // C# 12 primary constructor (`class S(IRepo repo)`, records, structs): its
@@ -163,6 +164,12 @@ export class CSharpExtractor extends FunctionClassExtractor {
         } else if (member.type === "indexer_declaration") {
           // `public Player this[int i] => …`: a method named `Item` (the compiler's name), so `squad[3]` is a call of it.
           methods.push(this.parseCsharpIndexer(member));
+        } else if (member.type === "event_declaration" || member.type === "event_field_declaration") {
+          // `event Action Whistled;` / `event Action Whistled { add {…} remove {…} }`: not a property; value flow keys its subscribers.
+          const names = member.type === "event_declaration"
+            ? [member.childForFieldName("name")?.text]
+            : (this.findChildByType(member, "variable_declaration")?.namedChildren ?? []).filter((d) => d.type === "variable_declarator").map((d) => d.childForFieldName("name")?.text);
+          for (const n of names) if (n) events.push(n);
         } else if (member.type === "property_declaration") {
           const propName =
             member.childForFieldName("name")?.text ?? "unknown";
@@ -266,6 +273,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
       decorators,
       methods,
       properties,
+      ...(events.length > 0 ? { events } : {}),
       ...(strings ? { fieldValues: strings } : {}),
       ...(superArgs ? { superArgs } : {}),
       isExported: classVis === "public" || classVis === null,

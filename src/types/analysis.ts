@@ -1991,6 +1991,11 @@ export interface ClassInfo {
   methods: FunctionInfo[];
   properties: PropertyInfo[];
   /**
+   * Events the class declares (C# `event Action Whistled;`), by name. Optional; read by value flow, which keeps an
+   * event's subscribers in the cell of the class that declares it — a base class's, found through a derived type.
+   */
+  events?: string[];
+  /**
    * String-shaped values the class gives its fields — an initializer or a
    * constructor's top-level `this.x = …` — rendered with `${…}` holes for
    * what is not literal (`baseUrl` → `${environment.apiUrl}`,
