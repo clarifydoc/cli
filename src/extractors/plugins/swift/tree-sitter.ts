@@ -113,6 +113,7 @@ export function readSwiftTree(root: TSNode, text: string): ParsedStructure {
     }),
     topLevelCalls: recordPatternCalls(topLevel),
     ...(moduleFlow.length ? { moduleValueFlow: moduleFlow } : {}),
+    ...(file.functionAliases.length ? { functionTypeAliases: file.functionAliases } : {}),
     syntaxErrors: countSyntaxErrors(root),
   };
 }

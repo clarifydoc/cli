@@ -181,3 +181,51 @@ func plan() {
     expect(found.some((l) => l.endsWith("::onWhistle") && l.startsWith("schedule:"))).toBe(false);
   });
 });
+
+describe("Swift value flow through a typealias'd function type", () => {
+  it("recognises a typealias of the same file or another, never a class of that name", async () => {
+    const found = flow(await analyzeAll({
+      "Sources/Types.swift": `typealias ClubTask = (Club) -> Void
+final class Club {}
+final class Squad {}
+`,
+      "Sources/Actions.swift": `func saveClub(_ c: Club) {}
+func loadClub(_ c: Club) {}
+func retireClub(_ c: Club) {}
+`,
+      "Sources/Editor.swift": `typealias LocalTask = () -> Void
+func localOne() {}
+final class Editor {
+    var onSave: ClubTask
+    var onLoad: LocalTask?
+    var onRetire: ClubTask?
+    init(onSave: @escaping ClubTask) {
+        self.onSave = onSave
+    }
+    func fire(_ c: Club) {
+        onSave(c)
+        onLoad?()
+        onRetire?(c)
+    }
+}
+final class Lookalike {
+    var onSave: Squad
+    init(onSave: Squad) { self.onSave = onSave }
+    func fire(_ c: Club) {
+        onSave(c)
+    }
+}
+func assemble() {
+    let e = Editor(onSave: saveClub)
+    e.onLoad = localOne
+    e.onRetire = retireClub
+    e.fire(Club())
+}
+`,
+    }));
+    expect(found).toContain("Editor.fire: onSave -> Sources/Actions.swift::saveClub");
+    expect(found).toContain("Editor.fire: onLoad -> Sources/Editor.swift::localOne");
+    expect(found).toContain("Editor.fire: onRetire -> Sources/Actions.swift::retireClub");
+    expect(found.filter((l) => l.startsWith("Lookalike.fire:"))).toEqual([]);
+  });
+});

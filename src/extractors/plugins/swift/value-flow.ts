@@ -11,7 +11,10 @@ import { namedChildren, descendants } from "../shared/ts-nodes.js";
 export type CallRefs = Map<number, { name: string; line: number }>;
 
 /** What a name may hold: a function value (`fn`), a collection, something that is no callable (`other`), or unknown (`may`). */
-type Kind = "fn" | "coll" | "other" | "may" | "call" | "named";
+type Kind = "fn" | "coll" | "other" | "may" | "call" | "named" | `named:${string}`;
+
+/** A declared type nothing in the file says is a function; `named:T` keeps T for the project to judge (a typealias of another file). */
+const namedType = (k: Kind | undefined): string | undefined => (k?.startsWith("named:") ? k.slice(6) : undefined);
 
 /** What a type declares that a bare name in its methods can be. */
 export interface TypeScope {
@@ -26,6 +29,8 @@ export interface FileScope {
   types: Map<number, TypeScope>;
   typeNames: Set<string>;
   moduleNames: Map<string, Kind>;
+  /** The typealiases that name a function type (`typealias Task = (Club) -> Void`), which other files' held values may be typed by. */
+  functionAliases: string[];
   src: string;
 }
 
@@ -41,7 +46,7 @@ function kindOfTypeNode(type: TSNode | undefined, typeNames: ReadonlySet<string>
   if (/(?:Callback|Handler|Block|Closure|Action)$/.test(base)) return "fn";
   if (PRIMITIVES.test(base) || typeNames.has(base)) return "other";
   // A stated type nothing here says is a function (a callable object, or a typealias from another file).
-  return "named";
+  return /^[A-Za-z_]\w*$/.test(base) ? `named:${base}` : "named";
 }
 
 function kindOfInit(node: TSNode | undefined): Kind {
@@ -104,9 +109,14 @@ export function typeScopeOf(node: TSNode, typeNames: ReadonlySet<string>): TypeS
 export function fileScopeOf(root: TSNode, src: string): FileScope {
   const typeNames = new Set<string>();
   const decls: TSNode[] = [];
+  const functionAliases: string[] = [];
   const stack = [root];
   while (stack.length) {
     const n = stack.pop()!;
+    if (n.type === "typealias_declaration" && n.text.includes("->")) {
+      const id = namedChildren(n).find((c) => c.type === "type_identifier");
+      if (id) functionAliases.push(id.text);
+    }
     if (n.type === "class_declaration" || n.type === "protocol_declaration") {
       decls.push(n);
       const id = namedChildren(n).find((c) => c.type === "type_identifier");
@@ -122,7 +132,7 @@ export function fileScopeOf(root: TSNode, src: string): FileScope {
     const p = propertyOf(n, typeNames);
     if (p && !p.computed) moduleNames.set(p.name, p.kind);
   }
-  return { types, typeNames, moduleNames, src };
+  return { types, typeNames, moduleNames, functionAliases, src };
 }
 
 const TEAR_OFF = /^[a-z_$][\w$]*$/;
@@ -495,13 +505,13 @@ class FactReader {
   }
 
   private invocation(callee: TSNode, ref: { name: string; line: number }): void {
-    const invoke = (cell: ValueCell): void => {
-      this.facts.push({ kind: "invoke", cell, call: ref.name, line: ref.line });
+    const invoke = (cell: ValueCell, ifFnType?: string): void => {
+      this.facts.push({ kind: "invoke", cell, call: ref.name, line: ref.line, ...(ifFnType ? { ifFnType } : {}) });
     };
     if (callee.type === "simple_identifier") {
       const k = this.kindOf(callee.text);
       // A call's result holds a function only as a local: a property or module value from one may be a callable object.
-      if (k && k.kind !== "other" && k.kind !== "named" && (k.kind !== "call" || k.where === "local")) invoke(this.cellOfName(callee.text)!);
+      if (k && k.kind !== "other" && k.kind !== "named" && (k.kind !== "call" || k.where === "local")) invoke(this.cellOfName(callee.text)!, namedType(k.kind));
       return;
     }
     const nav = navigation(callee);
@@ -509,7 +519,7 @@ class FactReader {
       // `self.onSave?()`: a property this type declares (a method of it is an ordinary call).
       if (nav.target.type === "self_expression" && this.cls) {
         const f = this.cls.fields.get(nav.member);
-        if (f && f !== "other" && f !== "named" && !this.cls.methods.has(nav.member)) invoke({ name: "self", member: nav.member });
+        if (f && f !== "other" && f !== "named" && !this.cls.methods.has(nav.member)) invoke({ name: "self", member: nav.member }, namedType(f));
       }
       return;
     }
