@@ -1858,6 +1858,8 @@ export interface TestFunctionRow {
   title: string;
   /** The titles of the suites around it, outermost first; omitted when none. */
   path?: string[];
+  /** A suite describing a type rather than a behaviour (`FunctionInfo.testCase.subject`): that type, as written. */
+  subject?: string;
 }
 
 export interface PropertyInfo {

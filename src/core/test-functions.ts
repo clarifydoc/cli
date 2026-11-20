@@ -20,7 +20,7 @@ export function collectTestFunctions(analyses: readonly FileAnalysis[]): Record<
     const rows: TestFunctionRow[] = [];
     const add = (symbol: string, fn: FileAnalysis["functions"][number]) => {
       if (!fn.testCase) return;
-      rows.push({ symbol, line: fn.line, kind: fn.testCase.kind, title: fn.testCase.title, ...(fn.testCase.path.length ? { path: fn.testCase.path } : {}) });
+      rows.push({ symbol, line: fn.line, kind: fn.testCase.kind, title: fn.testCase.title, ...(fn.testCase.path.length ? { path: fn.testCase.path } : {}), ...(fn.testCase.subject ? { subject: fn.testCase.subject } : {}) });
     };
     for (const fn of a.functions) add(fn.name, fn);
     for (const c of a.classes) for (const m of c.methods) add(`${c.name}.${m.name}`, m);
@@ -245,9 +245,11 @@ export function testReachWalker(
 /**
  * What a file's test verdict rests on: a test file depending on it, a test reaching one of its functions, a coverage
  * report that ran its lines, the test framework running it while it sets a test run up (`testSetupRuns`), a browser
- * test opening a page it is part of (`testNavigations`, `pageParts`).
+ * test opening a page it is part of (`testNavigations`, `pageParts`), a test suite that names a type the file
+ * declares as its subject (`describe Club`) in a spec that has cases: the framework's own wiring (a prepended
+ * mixin, a listener, a callback the host class's base runs) is exercised where no call is written.
  */
-export type TestVerdictBasis = "importer" | "reached-function" | "coverage" | "test-setup" | "navigation";
+export type TestVerdictBasis = "importer" | "reached-function" | "coverage" | "test-setup" | "navigation" | "described";
 
 /** A browser test opening a page a file is part of: the navigation, and the page (or app start) the file belongs to. */
 export interface TestNavigationReach {
@@ -295,6 +297,8 @@ export interface FileTestVerdict {
   testSetup?: string;
   /** A browser test opening a page it is part of, when one does. */
   navigation?: TestNavigationReach;
+  /** A test suite describing a type the file declares, when one does. */
+  described?: { test: string; subject: string; line: number };
   /** Test files that replace it with a double: left out of `importers` and `reach`. */
   mockedBy?: string[];
   /** The build constraint that leaves it out of the default build: no importer or reach counts. */
@@ -314,6 +318,8 @@ export interface TestVerdictContext {
   navigationOf(path: string): TestNavigationReach | undefined;
   /** The test files that replace the file with a double. */
   mockedBy(path: string): string[];
+  /** The first suite, in a spec with at least one case, describing the type of this name. */
+  describing(typeName: string): { test: string; line: number } | undefined;
 }
 
 type VerdictSummary = ReachSummary & Pick<ProjectAnalysis, "componentGraph" | "testCoverage" | "testSetupRuns" | "testNavigations" | "pageParts">;
@@ -326,8 +332,19 @@ export function testVerdictContext(summary: VerdictSummary): TestVerdictContext 
   let setup: Map<string, string> | undefined;
   let navigated: Map<string, TestNavigationReach> | undefined;
   let mockedBy: Map<string, string[]> | undefined;
+  let described: Map<string, { test: string; line: number }> | undefined;
   return {
     testCode,
+    describing(typeName) {
+      if (!described) {
+        described = new Map();
+        for (const [test, rows] of Object.entries(summary.testFunctions ?? {})) {
+          if (!testCode.isTestFile(test) || !rows.some((r) => r.kind === "case")) continue;
+          for (const r of rows) if (r.kind === "suite" && r.subject && !described.has(r.subject)) described.set(r.subject, { test, line: r.line });
+        }
+      }
+      return described.get(typeName.replace(/^::/, ""));
+    },
     testImportersOf(path) {
       if (!importers) {
         importers = new Map();
@@ -409,6 +426,9 @@ export function fileTestVerdict(
   if (testSetup) basis.push("test-setup");
   const navigation = ctx.navigationOf(path);
   if (navigation) basis.push("navigation");
+  // A spec describing a type the file declares runs it through whatever wiring the framework adds, in a place no call states.
+  const described = file && !excluded ? describedBy(file, ctx) : undefined;
+  if (described) basis.push("described");
   const state = !functions.length ? "nothing_to_test" : basis.length ? "tested" : "untested";
   return {
     state, basis, declared, importers, functions, reach,
@@ -417,5 +437,14 @@ export function fileTestVerdict(
     ...(mockedBy.length ? { mockedBy } : {}),
     ...(excluded ? { excludedFromDefaultBuild: excluded } : {}),
     ...(navigation ? { navigation } : {}),
+    ...(described ? { described } : {}),
   };
+}
+
+function describedBy(file: Pick<FileAnalysis, "classes">, ctx: TestVerdictContext): FileTestVerdict["described"] {
+  for (const c of file.classes) {
+    const hit = ctx.describing(c.name);
+    if (hit) return { test: hit.test, subject: c.name, line: hit.line };
+  }
+  return undefined;
 }
