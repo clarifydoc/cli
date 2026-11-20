@@ -1,3 +1,4 @@
+import { valueOut } from "../../shared/value-out.js";
 import { collectionElementText } from "../../shared/collection-element.js";
 import { csharpTupleElements } from "./tuple-elements.js";
 import { csharpMigrationFiles } from "./migration-files.js";
@@ -35,7 +36,7 @@ export const csharpManifest: LanguagePluginManifest = {
   // `var u = await repo.FindAsync(id)` holds the `User` a declared `Task<User>` resolves to.
   asyncResultTypes: ["Task", "ValueTask"],
   // `_repo.Value` of a declared `Lazy<ClubRepo>`, `_options.Value` of an `IOptions<ClubSettings>`.
-  unwrapMembers: { Value: ["Lazy", "IOptions", "IOptionsSnapshot"], CurrentValue: ["IOptionsMonitor"] },
+  valueOut: valueOut({ members: { Value: ["Lazy", "IOptions", "IOptionsSnapshot"], CurrentValue: ["IOptionsMonitor"] } }),
   packageManagers: [nugetPackageManager],
   packageEcosystems: ["nuget"],
   // appsettings*.json + launchSettings, `IConfiguration[...]`, `__` env overrides.

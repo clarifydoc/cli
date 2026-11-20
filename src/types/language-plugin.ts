@@ -1308,6 +1308,29 @@ export interface ModuleSearchPathSpec {
   pathImportsPin?: boolean;
 }
 
+/** A step of a receiver chain a declared type is taken apart by: a call, a member read or an index read (`x[i]`). */
+export interface ValueHop {
+  name: string;
+  call: boolean;
+  index?: boolean;
+}
+
+/** What `ValueOutHook.at` found: the type the hop yields, and the head of the declared type (a project class of that name shadows it). */
+export interface ValueOut {
+  type: string;
+  wrapper: string;
+  kind: "wrapper" | "element";
+}
+
+export interface ValueOutHook {
+  /** Whether the hop could take a value out of a declared type at all (a cheap gate before any declaration is read). */
+  takes(hop: ValueHop): { wrapper: boolean; element: boolean } | null;
+  /** The value the hop takes out of `declared`, as written; null for any type or hop it does not read. */
+  at(declared: string, hop: ValueHop): ValueOut | null;
+  /** The member an index read `x[i]` calls (Kotlin `get`): where no hop takes an element, the chain follows that member's declared return type. Set only where the language reads index steps. */
+  index?: string;
+}
+
 export interface LanguagePluginManifest {
   language: Language;
   /**
@@ -1637,35 +1660,14 @@ export interface LanguagePluginManifest {
    */
   asyncResultTypes?: readonly string[];
   /**
-   * Calls that take the value out of a wrapper where the language has no
-   * `await` — the method name, and the generic types (by simple name) it
-   * unwraps to their first type argument: Java `join`/`get` on a declared
-   * `CompletableFuture<Club>`, `block` on a `Mono<Club>`, `get`/`orElseThrow`
-   * on an `Optional<Club>`, Kotlin `await` on a `Deferred<Club>`. A receiver
-   * chain `repo.findAsync(id).join().promote()` (or a local initialized by it)
-   * goes on from `Club`. Only where the call before it DECLARES one of those
-   * wrappers: a project class's own `get()` keeps its declared return type.
+   * What a hop out of a declared type yields — one hook for wrappers, lists, maps and index reads. A wrapper hop
+   * (Java `join`/`get`/`orElseThrow`/`block` on a declared `CompletableFuture<Club>`/`Optional<Club>`, Kotlin `await`
+   * and `.value` on `Lazy<Club>`, C# `.Value` on `IOptions<ClubSettings>`) goes on from the wrapper's first type
+   * argument; an element hop (`get` or `[i]` on a declared list, a map's VALUE) from the element. Core reads it only
+   * where the segment before the hop DECLARES the type (never a project class's own `get()`), and refuses a wrapper
+   * name the project declares as a class. Built by `valueOut` (`extractors/shared/value-out.ts`) from the plugin's tables.
    */
-  unwrapCalls?: Readonly<Record<string, readonly string[]>>;
-  /**
-   * The property form of `unwrapCalls`: members that hold the value inside a wrapper, and the wrappers (by simple name)
-   * each one unwraps to their first type argument — Kotlin `.value` on a `Lazy<Club>`, C# `.Value` on a `Lazy<Club>` or
-   * `IOptions<ClubSettings>`. Read where a field, parameter, local or method result DECLARES the wrapper, never for a
-   * wrapper name the project declares itself or a generic the manifest does not list (`Box<Club>.value`).
-   */
-  unwrapMembers?: Readonly<Record<string, readonly string[]>>;
-  /**
-   * Calls that take ONE element out of a declared collection or map — Java/Kotlin `get` (`List.get(i)`, `Map.get(k)`,
-   * Kotlin `x[i]` read as `x.get(i)`). With `indexedElementOf` they type `repo.all().get(0).promote()`, a field's
-   * `club.players.get(0)` and a local initialized by `repo.all()`: only where the declaration BEFORE the call states
-   * a collection or map, so a project class's own `get(int)` keeps its declared return type.
-   */
-  elementCalls?: readonly string[];
-  /**
-   * The element an `elementCalls` call yields on a declared type as written: a list's element, a map's VALUE type;
-   * null for any other type (a project generic, an `Optional`, a type that is not one plain name).
-   */
-  indexedElementOf?: (type: string) => string | null;
+  valueOut?: ValueOutHook;
   /**
    * The element types of a declared tuple return type as the language writes it (`tuple[Club, Car]` →
    * `["Club", "Car"]`), or null for any other type. Reads `FunctionInfo.returnType` for a local bound by
@@ -1772,12 +1774,6 @@ export interface LanguagePluginManifest {
    * whose methods need `self.`) or where this has not been measured.
    */
   bareMembersHideFunctions?: boolean;
-  /**
-   * The member an index expression calls (`league[3]` is `league.get(3)`: Kotlin's `operator fun get`),
-   * so a chain through an index follows the member's declared return type. Unset: an index yields an
-   * element of unknown type.
-   */
-  indexerMethod?: string;
   /**
    * A bare call's name is looked up lexically, in the one namespace that
    * holds variables, functions and classes alike (Python): a parameter of the

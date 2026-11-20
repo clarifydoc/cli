@@ -981,11 +981,13 @@ function extractLocalTypes(body: Node | null, language: JkLang): LocalType[] {
     if (!declared && !fact?.qualifier) {
       // `var dao = DaoFactory.getDAO()` / `val case = repo.find(id)` — typed
       // by what the call is declared to return; the linker reads that.
-      // Kotlin `val c = repo.all()[1]`: the index is the `get` of the call before it (`indexerMethod`).
-      const indexed = init && language === "kotlin" && init.type === "indexing_expression" ? callChainText(init.child(0), language) : null;
-      const from = indexed ? `${indexed}.get()` : callChainText(init, language);
+      // Kotlin `val c = repo.all()[1]`: stated as written, an index step the linker reads through the manifest's `valueOut`.
+      const receiver = init && language === "kotlin" && init.type === "indexing_expression" ? init.child(0) : null;
+      const indexed = receiver ? callChainText(receiver, language) : null;
+      const suffix = receiver ? init!.text.slice(receiver.endIndex - init!.startIndex).trim() : "";
+      const from = indexed && suffix.startsWith("[") && suffix.endsWith("]") ? `${indexed}${suffix}` : callChainText(init, language);
       // `val s = lazy.value` / `var m = club.manager`: a plain member read, typed by the linker through the member's
-      // declared type (or out of the wrapper the manifest's `unwrapMembers` names).
+      // declared type (or out of the wrapper the manifest's `valueOut` names).
       const read = from || !init ? null : plainMemberRead(init, language);
       if (from) noteFrom(name, from);
       else if (read) noteFrom(name, read, undefined, undefined, true);

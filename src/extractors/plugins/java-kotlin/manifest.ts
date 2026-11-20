@@ -1,3 +1,4 @@
+import { valueOut } from "../../shared/value-out.js";
 import { jvmElementText, jvmIndexedElement, kotlinTupleElements } from "./wrapper-elements.js";
 import { jvmMigrationFiles } from "./migration-files.js";
 import { jvmProjectCommands } from "./project-commands.js";
@@ -103,9 +104,7 @@ export const javaManifest: LanguagePluginManifest = {
   language: "java",
   callPathsFromHead: true,
   // No `await`: the value comes out of a future, a `Mono` or an `Optional` through these calls.
-  unwrapCalls: JVM_UNWRAP_CALLS,
-  elementCalls: ["get"],
-  indexedElementOf: jvmIndexedElement,
+  valueOut: valueOut({ calls: JVM_UNWRAP_CALLS, elementCalls: ["get"], elementOf: jvmIndexedElement }),
   collectionElementOf: jvmElementText("java"),
   family: "jvm",
   packageManagers: [mavenPackageManager, gradlePackageManager],
@@ -139,11 +138,8 @@ export const kotlinManifest: LanguagePluginManifest = {
   blockingCalls: /^(?:runBlocking|Thread\.sleep)$/,
   language: "kotlin",
   callPathsFromHead: true,
-  unwrapCalls: { ...JVM_UNWRAP_CALLS, await: ["Deferred"] },
   // `lazy.value` of a declared `Lazy<ClubRepo>`.
-  unwrapMembers: { value: ["Lazy"] },
-  elementCalls: ["get"],
-  indexedElementOf: jvmIndexedElement,
+  valueOut: valueOut({ calls: { ...JVM_UNWRAP_CALLS, await: ["Deferred"] }, members: { value: ["Lazy"] }, elementCalls: ["get"], elementOf: jvmIndexedElement, index: "get" }),
   collectionElementOf: jvmElementText("kotlin"),
   // `val (club, player) = load()` over a declared `Pair<Club, Player>` / `Triple`; over a data class, its constructor's
   // properties in order (`componentN`).
@@ -155,7 +151,6 @@ export const kotlinManifest: LanguagePluginManifest = {
   // ...by `package`, not by folder: `src/a/Club.kt` and `src/b/Use.kt` of one package see each other.
   packageScope: true,
   bareMembersHideFunctions: true,
-  indexerMethod: "get",
   importsDeclaredPackages: true,
   packageEcosystems: ["maven"],
   // Spring relaxed binding: `person.service.url` ← `PERSON_SERVICE_URL`.

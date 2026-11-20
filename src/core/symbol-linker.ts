@@ -22,7 +22,8 @@ import {
   type ModuleBindingInfo,
 } from "../types/analysis.js";
 import { reactiveTriggerLinks } from "./reactive-triggers.js";
-import type { ImportResolveContext, LanguagePluginManifest, PackageRoot, RecordChoice, StructuralMatch } from "../types/language-plugin.js";
+import type { ImportResolveContext, LanguagePluginManifest, PackageRoot, RecordChoice, StructuralMatch, ValueOutHook } from "../types/language-plugin.js";
+import { awaitedType } from "../extractors/shared/value-out.js";
 import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scoring.js";
 import { isExternalImportSource, importResolveContext as buildImportResolveContext } from "./import-index.js";
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
@@ -7279,7 +7280,7 @@ function resolveThroughDeclaredType(
     return linked;
   }
 
-  const receiver = receiverChain(call.name, manifestFor(analysis.language as Language)?.indexerMethod);
+  const receiver = receiverChainOf(call.name, analysis.language);
   if (!receiver || receiver.length === 0 || receiver.length > MAX_RECEIVER_CHAIN + 1 || receiverCutName(analysis, call)) return null;
   // A name a lambda around the call binds, typed by what the lambda is handed (`CallInfo.receiverFrom`): this
   // call's own scope, so another lambda binding the same name elsewhere in the method decides nothing here.
@@ -7338,7 +7339,7 @@ function chainReceiverType(
   sourceSymbol: string,
   call: CallInfo,
 ): { name: string; project: boolean } | null {
-  const receiver = receiverChain(call.name, manifestFor(analysis.language as Language)?.indexerMethod);
+  const receiver = receiverChainOf(call.name, analysis.language);
   if (!receiver || receiver.length < 2 || receiver.length > MAX_RECEIVER_CHAIN + 1 || receiverCutName(analysis, call)) return null;
   const dot = sourceSymbol.indexOf(".");
   const consumer = dot > 0 && !sourceSymbol.startsWith("route:") ? sourceSymbol.slice(0, dot) : "";
@@ -7370,7 +7371,7 @@ function receiverTypeRefuses(
   if (ctx.extensionMethods.has(`${target.file}\0${target.symbol}`)) return false;
   // The call states its receiver's type: Strategy 7's own veto reads it as written.
   if (call.receiverType || call.receiverQualifier || receiverCutName(analysis, call)) return false;
-  const receiver = receiverChain(call.name, manifestFor(analysis.language as Language)?.indexerMethod);
+  const receiver = receiverChainOf(call.name, analysis.language);
   if (!receiver || receiver.length === 0 || receiver.length > MAX_RECEIVER_CHAIN + 1) return false;
   // A head the callable itself binds — a local (typed as written or by its initializer) or a parameter —, its
   // own instance's member chain (`this.club.x`), or, where the name spells the receiver from its head
@@ -7541,8 +7542,7 @@ function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonl
     }
     // `repo.findAsync(id).join()`: the unwrapping call takes the value out of the wrapper the call before it declares.
     if (seg.call && after?.call) {
-      const wrappers = unwrapListFor(ctx.languageOf.get(point.typeFile), after);
-      const unwrapped = wrappers ? methodResult(ctx, point, seg.name, false, wrappers) : null;
+      const unwrapped = valueOutOf(ctx.languageOf.get(point.typeFile))?.takes(after)?.wrapper ? methodResult(ctx, point, seg.name, false, after) : null;
       if (unwrapped) {
         point = unwrapped;
         i++;
@@ -7554,7 +7554,7 @@ function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonl
     // declared type of every chain segment would cost a lookup per hop.
     // (A call then a call is the `unwrapCalls` step above, unless the second takes an element.)
     const hopLanguage = after ? ctx.languageOf.get(point.typeFile) : undefined;
-    if (after && hopTakesValue(hopLanguage, after) && (!seg.call || !after.call || isElementCall(hopLanguage, after))) {
+    if (after && hopTakesValue(hopLanguage, after) && (!seg.call || !after.call || valueOutOf(hopLanguage)?.takes(after)?.element)) {
       const declared = seg.call ? methodDeclaredReturn(ctx, point, seg.name) : fieldDeclaredType(ctx, point, seg.name);
       const unwrapped = declared ? unwrappedDeclared(ctx, declared, after, point.consumer) : null;
       if (unwrapped) {
@@ -7571,24 +7571,14 @@ function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonl
   return point;
 }
 
-/**
- * The wrappers the hop takes the value out of in `language`: its `unwrapCalls` entry for a call, its `unwrapMembers`
- * entry for a member read. Own keys only: `toString`, `constructor` and the rest of `Object.prototype` are no hops.
- */
-function unwrapListFor(language: string | undefined, hop: ChainSegment): readonly string[] | undefined {
-  const manifest = manifestFor((language ?? "") as Language);
-  const table = hop.call ? manifest?.unwrapCalls : manifest?.unwrapMembers;
-  return table && Object.hasOwn(table, hop.name) ? table[hop.name] : undefined;
+/** The language's hook for taking a value out of a declared type (`valueOut`), if it states one. */
+function valueOutOf(language: string | undefined): ValueOutHook | undefined {
+  return manifestFor((language ?? "") as Language)?.valueOut;
 }
 
-/** Whether `hop` is a call the language's manifest says takes one element out of a declared list or map (`elementCalls`). */
-function isElementCall(language: string | undefined, hop: ChainSegment): boolean {
-  return hop.call && !!manifestFor((language ?? "") as Language)?.elementCalls?.includes(hop.name);
-}
-
-/** Whether `hop` takes a value out of what the segment before it declares: a wrapper (`unwrapCalls`/`unwrapMembers`) or a list or map. */
+/** Whether `hop` takes a value out of what the segment before it declares: a wrapper, a list or a map. */
 function hopTakesValue(language: string | undefined, hop: ChainSegment): boolean {
-  return !!unwrapListFor(language, hop) || isElementCall(language, hop);
+  return !!valueOutOf(language)?.takes(hop);
 }
 
 /**
@@ -7611,19 +7601,9 @@ function wrapperShadowed(ctx: LinkContext, name: string, declFile: string): bool
  * generic the manifest does not list (`Box<Club>.value`).
  */
 function unwrappedDeclared(ctx: LinkContext, declared: { type: string; file: string }, hop: ChainSegment, consumer: string): InjectionPoint | null {
-  const language = ctx.languageOf.get(declared.file);
-  const wrappers = unwrapListFor(language, hop);
-  const element = isElementCall(language, hop);
-  if (!wrappers && !element) return null;
-  const written = declared.type.trim();
-  const open = written.indexOf("<");
-  const head = open > 0 ? written.slice(0, open).trim().split(/\.|::/).pop() ?? "" : "";
-  if (!written.endsWith(">") || wrapperShadowed(ctx, head, declared.file)) return null;
-  // A wrapper's first type argument, else (`get` on a declared list or map) the element or the map's value.
-  const inner = wrappers?.includes(head)
-    ? awaitedType(written, wrappers)
-    : element ? manifestFor((language ?? "") as Language)?.indexedElementOf?.(written) : null;
-  return inner ? returnedPoint(ctx, inner, declared.file, { typeName: "", typeFile: null, consumer }) : null;
+  const out = valueOutOf(ctx.languageOf.get(declared.file))?.at(declared.type, hop);
+  if (!out || wrapperShadowed(ctx, out.wrapper, declared.file)) return null;
+  return returnedPoint(ctx, out.type, declared.file, { typeName: "", typeFile: null, consumer });
 }
 
 /**
@@ -7684,7 +7664,7 @@ function wrapperFromInitializer(
   local: NonNullable<FunctionInfo["localTypes"]>[number],
 ): { type: string; file: string } | null {
   if (!isPlainCallInitializer(local)) return null;
-  const chain = receiverChain(`${local.from}.x`, manifestFor(analysis.language as Language)?.indexerMethod);
+  const chain = receiverChainOf(`${local.from}.x`, analysis.language);
   if (!chain || chain.length === 0 || chain.length > MAX_RECEIVER_CHAIN + 1 || !chain[chain.length - 1]!.call) return null;
   // A head naming the local itself would type it by itself again.
   if (nameKey(analysis.language, chain[0]!.name) === nameKey(analysis.language, local.name)) return null;
@@ -7820,7 +7800,7 @@ function heldValuePoint(ctx: LinkContext, file: string, def: SymbolDef, at: { an
   try {
     let point: InjectionPoint | null = null;
     if (value.from) {
-      const chain = receiverChain(`${value.from}.x`, manifestFor(at.analysis.language as Language)?.indexerMethod);
+      const chain = receiverChainOf(`${value.from}.x`, at.analysis.language);
       if (!chain || chain.length === 0 || chain.length > MAX_RECEIVER_CHAIN + 1) return null;
       point = chainPoint(ctx, at.analysis, file, def.name, at.owner, chain, 1, false);
     } else if (value.local) {
@@ -8000,11 +7980,11 @@ function initializerPoint(
   if (local.member) {
     // A member the pattern reads off a value (`const { coach } = club`, `from` = `club.coach`; off a call's result,
     // `club.staff().coach`): the declared type of that field or method, read off the declaration.
-    const chain = receiverChain(`${local.from}.x`, manifestFor(analysis.language as Language)?.indexerMethod);
+    const chain = receiverChainOf(`${local.from}.x`, analysis.language);
     if (!chain || chain.length < 2 || chain.length > MAX_RECEIVER_CHAIN + 1) return null;
     // `var s = _options.Value`: the read takes the value out of the wrapper the head declares, as the same hop in a chain.
     const hop = chain[chain.length - 1]!;
-    if (!hop.call && unwrapListFor(analysis.language, hop)) return chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, chain, depth + 1, false);
+    if (!hop.call && valueOutOf(analysis.language)?.takes(hop)?.wrapper) return chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, chain, depth + 1, false);
     const declared = chainDeclaredType(ctx, analysis, sourceFile, sourceSymbol, consumer, chain, depth);
     if (!declared) return null;
     return returnedPoint(ctx, declared.type, declared.file, { typeName: "", typeFile: null, consumer }, local.awaited === true);
@@ -8012,7 +7992,7 @@ function initializerPoint(
   if (local.fromIndex !== undefined || local.element) {
     // A tuple unpacking (`a, b = repo.load()`) or a loop over a collection (`for c in self.clubs`): the element of
     // the declared type the call returns or the field states — read off the declaration, never inferred.
-    let chain = receiverChain(`${local.from}.x`, manifestFor(analysis.language as Language)?.indexerMethod);
+    let chain = receiverChainOf(`${local.from}.x`, analysis.language);
     // `iterator`: `from` is the call that returned an iterator (`clubs.begin()`, `clubs.find(id)`), so the element is
     // that of the collection it is called on — and when that is no collection, the call is an ordinary one.
     if (local.iterator) {
@@ -8042,7 +8022,7 @@ function initializerPoint(
   }
   // The initializer is the receiver of an imagined member call on its result: a call, or a
   // member read off one (`usePublicApi(slug).explore`).
-  const chain = receiverChain(`${local.from}.x`, manifestFor(analysis.language as Language)?.indexerMethod);
+  const chain = receiverChainOf(`${local.from}.x`, analysis.language);
   if (!chain || chain.length === 0 || chain.length > MAX_RECEIVER_CHAIN + 1 || !chain.some((seg) => seg.call)) return null;
   return chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, chain, depth + 1, local.awaited === true);
 }
@@ -8253,19 +8233,20 @@ interface ChainSegment {
   name: string;
   call: boolean;
   ctor?: boolean;
-  /** The text between the parentheses of a call segment (`club` of `identity(club)`). */
+  /** The text between the parentheses of a call segment (`club` of `identity(club)`), or between the brackets of an index step. */
   args?: string;
+  /** An index read `x[i]`: no name is written; `receiverChainOf` fills in the member the language's indexer is (Kotlin `get`). */
+  index?: boolean;
 }
 
 /**
  * The receiver segments of a call name, leaf dropped: `a.getB(x.y).c` →
  * `a`, `getB()`. Splits on `.` and `::` outside brackets, so arguments that
- * contain dots stay inside their call. Null when the receiver indexes
- * (`rows[i].m()` — an element, not a declared member) or the brackets do not
- * balance. Where the language's indexer is a member (`indexerMethod`: Kotlin's `operator fun get`),
- * `league[3]` is the call `league.get(3)`, so the element's class is the method's declared return type.
+ * contain dots stay inside their call. Null when the brackets do not balance.
+ * An index read (`rows[i]`, `getAll()[0]`) is an `index` segment after what it indexes; `receiverChainOf` keeps
+ * the chain only for a language whose hook reads one.
  */
-function receiverChain(callName: string, indexer?: string): ChainSegment[] | null {
+function receiverChain(callName: string): ChainSegment[] | null {
   const out: ChainSegment[] = [];
   let i = 0;
   const ctor = /^\s*new\s+([\w$\\.]+)\s*(?=\()/.exec(callName);
@@ -8298,9 +8279,10 @@ function receiverChain(callName: string, indexer?: string): ChainSegment[] | nul
     const seg = receiverSegment(text);
     const paren = seg.indexOf("(");
     if (paren < 0) {
-      const index = indexer ? /^([A-Za-z_$][\w$]*)\[([^[\]]*)\]$/.exec(seg) : null;
-      if (index) {
-        out.push({ name: index[1]!, call: false }, { name: indexer!, call: true, args: index[2]! });
+      const head = /^[A-Za-z_$][\w$]*(?=\[)/.exec(seg)?.[0];
+      const group = head ? bracketGroup(seg, head.length) : null;
+      if (head && group && group.end === seg.length) {
+        out.push({ name: head, call: false }, { name: "", call: true, index: true, args: group.inner });
         continue;
       }
       if (seg.includes("[") || seg.includes("<") || !seg) return null;
@@ -8312,18 +8294,41 @@ function receiverChain(callName: string, indexer?: string): ChainSegment[] | nul
     const name = seg.slice(0, paren);
     const close = closingParen(seg, paren);
     if (!name || /[[<]/.test(name) || close < 0) return null;
-    // Where the language indexes by a member (`indexer`), `getAll()[0]` is `getAll().get(0)`: an index step after the call.
     const indexes: string[] = [];
     let tail = seg.slice(close + 1);
-    for (let m = indexer ? /^\[([^[\]]*)\]/.exec(tail) : null; m; m = /^\[([^[\]]*)\]/.exec(tail)) {
-      indexes.push(m[1]!);
-      tail = tail.slice(m[0].length);
+    for (let g = bracketGroup(tail, 0); g; g = bracketGroup(tail, 0)) {
+      indexes.push(g.inner);
+      tail = tail.slice(g.end);
     }
     if (tail !== "") return null;
     out.push({ name, call: true, args: seg.slice(paren + 1, close) });
-    for (const args of indexes) out.push({ name: indexer!, call: true, args });
+    for (const args of indexes) out.push({ name: "", call: true, index: true, args });
   }
   return out;
+}
+
+/**
+ * `receiverChain` for a chain written in `language`: an index step is kept only where the language's `valueOut`
+ * hook reads one, and then stands for the member its indexer is (`index`: Kotlin's `operator fun get`), so a hop that
+ * takes no element still follows that member's declared return type. Null otherwise (`rows[i].m()`).
+ */
+function receiverChainOf(callName: string, language: string | undefined): ChainSegment[] | null {
+  const chain = receiverChain(callName);
+  if (!chain?.some((seg) => seg.index)) return chain;
+  const hook = valueOutOf(language);
+  if (!hook?.takes({ name: "", call: true, index: true })) return null;
+  return chain.map((seg) => (seg.index ? { ...seg, name: hook.index ?? "" } : seg));
+}
+
+/** The `[…]` group opening at `open` — nested brackets balanced — as its inner text and the index past its `]`; null when none. */
+function bracketGroup(s: string, open: number): { inner: string; end: number } | null {
+  if (s[open] !== "[") return null;
+  let depth = 0;
+  for (let i = open; i < s.length; i++) {
+    if (s[i] === "[") depth++;
+    else if (s[i] === "]" && --depth === 0) return { inner: s.slice(open + 1, i), end: i + 1 };
+  }
+  return null;
 }
 
 /** Index of the `)` closing the `(` at `open`, or -1. */
@@ -8355,7 +8360,7 @@ const SELF_TYPES: ReadonlySet<string> = new Set(["self", "static", "$this", "thi
  * (`@return $this`, `-> Self`) keeps the receiver's type, so a fluent chain
  * on a subclass stays on the subclass.
  */
-function methodResult(ctx: LinkContext, point: InjectionPoint, method: string, awaited = false, unwrap?: readonly string[]): InjectionPoint | null {
+function methodResult(ctx: LinkContext, point: InjectionPoint, method: string, awaited = false, unwrap?: ChainSegment): InjectionPoint | null {
   if (!point.typeFile) return null;
   let hit = point.classSide ? findMethodInClass(ctx, point.typeName, point.typeFile, method, undefined, "class", true) : null;
   hit ??= findMethodInClass(ctx, point.typeName, point.typeFile, method);
@@ -8369,11 +8374,9 @@ function methodResult(ctx: LinkContext, point: InjectionPoint, method: string, a
   const def = symbolIn(ctx, hit.file, hit.symbol);
   if (unwrap) {
     // Only a declared wrapper the unwrapping call takes the value out of (`CompletableFuture<Club>` before `.join()`).
-    const written = instanceReturn(def)?.trim() ?? "";
-    const open = written.indexOf("<");
-    const head = open > 0 ? written.slice(0, open).trim().split(/\.|::/).pop() ?? "" : "";
-    if (!unwrap.includes(head) || !written.endsWith(">") || wrapperShadowed(ctx, head, hit.file)) return null;
-    return returnedPoint(ctx, awaitedType(written, unwrap), hit.file, point);
+    const out = valueOutOf(ctx.languageOf.get(point.typeFile))?.at(instanceReturn(def) ?? "", unwrap);
+    if (out?.kind !== "wrapper" || wrapperShadowed(ctx, out.wrapper, hit.file)) return null;
+    return returnedPoint(ctx, out.type, hit.file, point);
   }
   const next = returnedPoint(ctx, instanceReturn(def), hit.file, point, awaited) ?? statedResultPoint(ctx, hit.file, def, point.consumer, awaited, point);
   // A class-level method returning `self` gives the class object, or a query of it (a scope): its
@@ -8465,24 +8468,7 @@ function ownMethodResult(ctx: LinkContext, sourceFile: string, consumer: string,
     ?? statedResultPoint(ctx, sourceFile, def, consumer, awaited);
 }
 
-/** `Task<User>` → `User` when `Task` is one of the language's async result types; otherwise as written. */
-export function awaitedType(written: string, asyncTypes: readonly string[] | undefined): string {
-  if (!asyncTypes?.length) return written;
-  const open = written.indexOf("<");
-  if (open <= 0 || !written.endsWith(">")) return written;
-  const name = written.slice(0, open).trim().split(/\.|::/).pop() ?? "";
-  // `*Result` names a family by suffix: Rust's `io::Result`, `anyhow::Result`, `FlowyResult`.
-  if (!asyncTypes.some((t) => (t.startsWith("*") ? name.endsWith(t.slice(1)) : t === name))) return written;
-  const body = written.slice(open + 1, -1);
-  let depth = 0;
-  for (let i = 0; i < body.length; i++) {
-    const ch = body[i];
-    if (ch === "<" || ch === "(" || ch === "[") depth++;
-    else if (ch === ">" || ch === ")" || ch === "]") depth--;
-    else if (ch === "," && depth === 0) return body.slice(0, i).trim();
-  }
-  return body.trim();
-}
+export { awaitedType };
 
 /**
  * An instance of the project class `written` (`new X(…)`, or — `bareCall` —

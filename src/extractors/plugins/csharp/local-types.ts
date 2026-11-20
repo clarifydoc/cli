@@ -512,7 +512,7 @@ function conditionalArmCalls(init: Node): Array<{ from: string; awaited?: true }
 /**
  * An initializer that reads a member off plain names (`_options.Value`, `this.lazy.Value`, `club.Manager`), as
  * `localTypes[].from` spells it; null for a call in the path or a null-conditional access. Every plain read is
- * stated: the linker takes the value out of a wrapper where the manifest's `unwrapMembers` says so, else types the
+ * stated: the linker takes the value out of a wrapper where the manifest's `valueOut` says so, else types the
  * local by the member's declared type, and leaves it untyped where that is no project class.
  */
 function plainMemberRead(init: Node): string | null {
