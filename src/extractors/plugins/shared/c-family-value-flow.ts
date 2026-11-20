@@ -946,14 +946,16 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
         }
       }
       const held = invokeCell(scope, site, call);
-      const invoke = held ?? fieldInvokeCell(scope, site, call);
+      // A call through a field another file's class may declare callable, when no held value answers it.
+      const field = held ? null : fieldInvokeCell(scope, site, call);
+      const invoke = held ?? field;
       if (invoke) {
-        const name = call?.name ?? (site.form === "id" ? leafName : leafName);
+        const name = call?.name ?? leafName;
         const line = call?.line ?? lineOf(starts, site.leaf);
         const key = `${name}\0${line}\0${invoke.name}.${invoke.member ?? ""}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        scope.out.push({ kind: "invoke", cell: invoke, call: name, line, ...(held ? {} : { ifFnField: true as const }) });
+        scope.out.push({ kind: "invoke", cell: invoke, call: name, line, ...(field ? { ifFnField: true as const } : {}) });
       }
     }
     while (deferred.length > 0) deferred.shift()!();

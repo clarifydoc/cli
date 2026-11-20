@@ -89,14 +89,7 @@ export function parseSll<P extends Parser, T extends ParserRuleContext>(
   makeParser: (tokens: CommonTokenStream) => P,
   entry: (parser: P) => T,
 ): AntlrParse<T> | null {
-  const lexer = makeLexer(CharStream.fromString(normalizeSource(source)));
-  const errors = new ErrorCounter();
-  lexer.removeErrorListeners();
-  lexer.addErrorListener(errors);
-  const parser = makeParser(new CommonTokenStream(lexer));
-  parser.removeErrorListeners();
-  parser.interpreter.predictionMode = PredictionMode.SLL;
-  parser.errorHandler = new BailErrorStrategy();
+  const { parser, errors } = sllParser(source, makeLexer, makeParser);
   try {
     const tree = entry(parser);
     return errors.count === 0 ? { tree, errors: 0 } : null;
@@ -123,13 +116,12 @@ export function boundPredictionCache(parser: Parser, maxStates = MAX_DFA_STATES)
   if (states > maxStates) parser.interpreter.clearDFA();
 }
 
-function parseOnce<P extends Parser, T extends ParserRuleContext>(
+/** A parser over `source` in SLL mode that gives up at its first error, its token stream, and the lexer's error count. */
+function sllParser<P extends Parser>(
   source: string,
   makeLexer: (input: CharStream) => Lexer,
   makeParser: (tokens: CommonTokenStream) => P,
-  entry: (parser: P) => T,
-  options?: { firstError: true },
-): AntlrCheck<T> {
+): { parser: P; tokens: CommonTokenStream; errors: ErrorCounter } {
   const lexer = makeLexer(CharStream.fromString(normalizeSource(source)));
   const errors = new ErrorCounter();
   lexer.removeErrorListeners();
@@ -139,6 +131,17 @@ function parseOnce<P extends Parser, T extends ParserRuleContext>(
   parser.removeErrorListeners();
   parser.interpreter.predictionMode = PredictionMode.SLL;
   parser.errorHandler = new BailErrorStrategy();
+  return { parser, tokens, errors };
+}
+
+function parseOnce<P extends Parser, T extends ParserRuleContext>(
+  source: string,
+  makeLexer: (input: CharStream) => Lexer,
+  makeParser: (tokens: CommonTokenStream) => P,
+  entry: (parser: P) => T,
+  options?: { firstError: true },
+): AntlrCheck<T> {
+  const { parser, tokens, errors } = sllParser(source, makeLexer, makeParser);
   try {
     return { tree: entry(parser), errors: errors.count };
   } catch {

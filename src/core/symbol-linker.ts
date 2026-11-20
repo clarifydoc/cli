@@ -4678,18 +4678,16 @@ function judgeFunctionType(ctx: LinkContext, file: string, type: string): boolea
   if (!language) return false;
   if (!ctx.fnTypeDecls) {
     // Only names some file declares as a function-type alias matter: a class is indexed by such a name, never every class.
-    ctx.fnTypeDecls = new Map();
-    const aliasNames = new Set<string>();
-    for (const a of ctx.analyses) for (const n of a.functionTypeAliases ?? []) aliasNames.add(`${a.language}\0${n}`);
-    if (aliasNames.size > 0) {
-      for (const a of ctx.analyses) {
-        for (const n of a.functionTypeAliases ?? []) {
-          const key = `${a.language}\0${n}`;
-          (ctx.fnTypeDecls.get(key) ?? ctx.fnTypeDecls.set(key, { aliases: [], classes: [] }).get(key)!).aliases.push(a.filePath);
-        }
+    const decls = (ctx.fnTypeDecls = new Map());
+    for (const a of ctx.analyses) {
+      for (const n of a.functionTypeAliases ?? []) {
+        const key = `${a.language}\0${n}`;
+        let decl = decls.get(key);
+        if (!decl) decls.set(key, (decl = { aliases: [], classes: [] }));
+        decl.aliases.push(a.filePath);
       }
-      for (const a of ctx.analyses) for (const c of a.classes) ctx.fnTypeDecls.get(`${a.language}\0${c.name}`)?.classes.push(a.filePath);
     }
+    if (decls.size > 0) for (const a of ctx.analyses) for (const c of a.classes) decls.get(`${a.language}\0${c.name}`)?.classes.push(a.filePath);
   }
   const decl = ctx.fnTypeDecls.get(`${language}\0${name}`);
   if (!decl || decl.aliases.length === 0) return false;
@@ -7510,7 +7508,9 @@ function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonl
     // `a.getLazy().value`, `a.provider.get()`, `a.lazy.Value`, `repo.all().get(0)`, `club.players.get(0)`: a field or
     // method declaring a wrapper, a list or a map, then the hop out of it. Gated on the hop's name first: reading the
     // declared type of every chain segment would cost a lookup per hop.
-    if (after && (!seg.call || !after.call || isElementCall(ctx.languageOf.get(point.typeFile), after)) && hopTakesValue(ctx.languageOf.get(point.typeFile), after)) {
+    // (A call then a call is the `unwrapCalls` step above, unless the second takes an element.)
+    const hopLanguage = after ? ctx.languageOf.get(point.typeFile) : undefined;
+    if (after && hopTakesValue(hopLanguage, after) && (!seg.call || !after.call || isElementCall(hopLanguage, after))) {
       const declared = seg.call ? methodDeclaredReturn(ctx, point, seg.name) : fieldDeclaredType(ctx, point, seg.name);
       const unwrapped = declared ? unwrappedDeclared(ctx, declared, after, point.consumer) : null;
       if (unwrapped) {

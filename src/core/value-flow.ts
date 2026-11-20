@@ -100,23 +100,23 @@ const simpleName = (name: string, language: Language): string => receiverTypeNam
 function callableFieldsOf(analyses: readonly FileAnalysis[]): Map<string, { members: Set<string>; extends: string[] }> {
   const cached = callableFieldsCache.get(analyses);
   if (cached) return cached;
-  const out = new Map<string, { members: Set<string>; extends: string[] }>();
+  let out = new Map<string, { members: Set<string>; extends: string[] }>();
+  let anyCallable = false;
   for (const a of analyses) {
     for (const c of a.classes) {
-      if (!c.properties.some((p) => p.callable)) continue;
+      const callable = c.properties.filter((p) => p.callable);
+      if (callable.length === 0 && !c.extends) continue;
       const key = `${a.language}\0${simpleName(c.name, a.language)}`;
-      const entry = out.get(key) ?? out.set(key, { members: new Set(), extends: [] }).get(key)!;
-      for (const p of c.properties) if (p.callable) entry.members.add(p.name);
+      let entry = out.get(key);
+      if (!entry) out.set(key, (entry = { members: new Set(), extends: [] }));
+      for (const p of callable) entry.members.add(p.name);
+      // A class's bases: a member it inherits from one is callable too.
+      if (c.extends) entry.extends.push(simpleName(c.extends, a.language));
+      anyCallable ||= callable.length > 0;
     }
   }
-  // Bases matter only for a class that has none of its own callable fields: record every class's bases once.
-  if (out.size > 0) {
-    for (const a of analyses) for (const c of a.classes) {
-      if (!c.extends) continue;
-      const entry = out.get(`${a.language}\0${simpleName(c.name, a.language)}`) ?? out.set(`${a.language}\0${simpleName(c.name, a.language)}`, { members: new Set(), extends: [] }).get(`${a.language}\0${simpleName(c.name, a.language)}`)!;
-      entry.extends.push(simpleName(c.extends, a.language));
-    }
-  }
+  // No callable field anywhere: no class declares one, whatever its bases.
+  if (!anyCallable) out = new Map();
   callableFieldsCache.set(analyses, out);
   return out;
 }
@@ -152,14 +152,18 @@ function gatedFields(facts: readonly ValueFlowFact[], scope: { analysis: FileAna
 function* scopesOf(analysis: FileAnalysis, isFunctionType: FunctionTypeQuestion, analyses: readonly FileAnalysis[]): Generator<Scope> {
   const setup = analysis.functions.find((f) => f.name === "<setup>") ?? null;
   const moduleFacts = analysis.moduleValueFlow ?? [];
+  // Both conditional-invoke gates: a held function type (`ifFnType`), a callable field (`ifFnField`).
+  const gate = (facts: readonly ValueFlowFact[], fn: FunctionInfo | null, cls: ClassInfo | null): readonly ValueFlowFact[] =>
+    gatedFields(gated(facts, analysis, isFunctionType), { analysis, fn, cls }, analyses);
   for (const fn of analysis.functions) {
     const facts = fn === setup ? [...(fn.valueFlow ?? []), ...moduleFacts] : fn.valueFlow ?? [];
-    yield { file: analysis.filePath, symbol: fn.name, analysis, fn, cls: closureClassOf(analysis, fn), facts: gatedFields(gated(facts, analysis, isFunctionType), { analysis, fn, cls: closureClassOf(analysis, fn) }, analyses) };
+    const cls = closureClassOf(analysis, fn);
+    yield { file: analysis.filePath, symbol: fn.name, analysis, fn, cls, facts: gate(facts, fn, cls) };
   }
   for (const cls of analysis.classes) {
-    for (const m of cls.methods) yield { file: analysis.filePath, symbol: `${cls.name}.${m.name}`, analysis, fn: m, cls, facts: gatedFields(gated(m.valueFlow ?? [], analysis, isFunctionType), { analysis, fn: m, cls }, analyses) };
+    for (const m of cls.methods) yield { file: analysis.filePath, symbol: `${cls.name}.${m.name}`, analysis, fn: m, cls, facts: gate(m.valueFlow ?? [], m, cls) };
   }
-  if (!setup && moduleFacts.length > 0) yield { file: analysis.filePath, symbol: "<setup>", analysis, fn: null, cls: null, facts: gatedFields(gated(moduleFacts, analysis, isFunctionType), { analysis, fn: null, cls: null }, analyses) };
+  if (!setup && moduleFacts.length > 0) yield { file: analysis.filePath, symbol: "<setup>", analysis, fn: null, cls: null, facts: gate(moduleFacts, null, null) };
 }
 
 /**
@@ -214,11 +218,10 @@ export function valueFlowInvokeSites(analyses: readonly FileAnalysis[], isFuncti
     for (const s of scopesOf(a, isFunctionType, analyses)) {
       let local: Set<string> | null = null;
       for (const f of s.facts) {
-        if (f.kind !== "invoke") continue;
+        // A name a sibling file's package variable may be: a function of that name keeps the name tiers.
+        if (f.kind !== "invoke" || f.cell.package) continue;
         const key = callSiteKey(s.file, s.symbol, f.line, f.call);
         const { name, member } = f.cell;
-        // A name a sibling file's package variable may be: a function of that name keeps the name tiers.
-        if (f.cell.package) continue;
         if (member !== undefined) {
           const dot = name.indexOf(".");
           if (dot > 0 && imported.has(name.slice(0, dot))) continue;
