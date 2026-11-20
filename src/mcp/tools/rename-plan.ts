@@ -280,6 +280,10 @@ async function plan(ctx: ToolContext, loaded: LoadedAnalysis, def: Definition, t
       if (!own) registrations.push(l);
       continue;
     }
+    if (l.viaMacro) {
+      refuse(where, `it is reached through the macro \`${l.viaMacro}\`, whose body names it: rename inside the macro's definition, not this line`);
+      continue;
+    }
     if ((l.confidence ?? "INFERRED") !== "EXTRACTED") {
       refuse(where, `the link to it is ${l.confidence ?? "INFERRED"}${l.strategy ? ` (${l.strategy})` : ""}, so this may not be a call of it`);
       continue;

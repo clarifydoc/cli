@@ -69,7 +69,7 @@ async function buildNameIndex(ctx: ToolContext, loaded: LoadedAnalysis): Promise
   const { summary } = loaded;
   const resolved = new Set<string>();
   for (const l of summary.symbolLinks ?? []) {
-    if (l.relation === "reference" || l.sourceSymbol === "(reference)") continue;
+    if (l.relation === "reference" || l.sourceSymbol === "(reference)" || l.viaMacro) continue;
     resolved.add(`${l.sourceFile}\u0000${l.sourceLine}\u0000${l.callName}`);
   }
   const files = [...new Set([...Object.keys(summary.fileProjects ?? {}), ...loaded.index.byFile.keys()])].sort(byOrdinal).slice(0, MAX_FILES);

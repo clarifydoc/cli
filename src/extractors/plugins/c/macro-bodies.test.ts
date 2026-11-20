@@ -5,6 +5,8 @@ import { ensureLanguagesLoaded } from "../../registry.js";
 import type { FileAnalysis } from "../../../types/analysis.js";
 import { readC } from "./antlr.js";
 import { readCpp } from "../cpp/antlr.js";
+import { normalizeProject, denormalizeProject } from "../../../core/element-registry.js";
+import type { ProjectAnalysis } from "../../../types/analysis.js";
 import { macroBodyCalls } from "../shared/c-family-macros.js";
 
 beforeAll(async () => {
@@ -90,5 +92,15 @@ describe("macroBodyCalls", () => {
     expect(macroBodyCalls("M", ["c"], ["((c) ? club_a(c) : club_b(c))"])).toEqual(["club_a", "club_b"]);
     expect(macroBodyCalls("M", ["c"], ["do club_run(c); while (0)"])).toEqual(["club_run"]);
     expect(macroBodyCalls("M", ["c"], ['club_log(c, "/*"); club_flush(c)'])).toEqual(["club_log", "club_flush"]);
+  });
+});
+
+describe("viaMacro survives the summary", () => {
+  it("round-trips through the normalized form", () => {
+    const user = `#include "store.h"\nvoid transfer(int x) {\n    SAVE_CLUB(x);\n}\n`;
+    const symbolLinks = buildSymbolLinks([readAs(storeH, "src/store.h"), readAs(storeC, "src/store.c"), readAs(user, "src/league.c")]);
+    const project = { symbolLinks, fileProjects: {}, subProjects: [] } as unknown as ProjectAnalysis;
+    const back = denormalizeProject(JSON.parse(JSON.stringify(normalizeProject(project))));
+    expect(back.symbolLinks.filter((l) => l.viaMacro).map((l) => [l.callName, l.viaMacro])).toEqual([["club_store_save", "SAVE_CLUB"]]);
   });
 });

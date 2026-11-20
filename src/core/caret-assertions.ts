@@ -145,7 +145,7 @@ export function factsOfFile(analysis: ProjectAnalysis, path: string, fa: FileAna
   };
   const addCall = (c: FunctionInfo["calls"][number]) => {
     const leaf = leafOf(c.name);
-    const link = links.find((l) => l.sourceLine === c.line && (l.callName === c.name || leafOf(l.callName) === leaf));
+    const link = links.find((l) => !l.viaMacro && l.sourceLine === c.line && (l.callName === c.name || leafOf(l.callName) === leaf));
     const target = link ? `${link.targetFile}::${link.targetSymbol}` : undefined;
     facts.push({ line: c.line, kind: "call", label: target ? `-> ${target}` : "", anchor: leaf, column: c.column, detail: { target } });
   };

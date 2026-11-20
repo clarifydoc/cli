@@ -396,6 +396,7 @@ function collectUnresolvedCalls(analyses: FileAnalysis[], existingLinks: SymbolL
   // Build set of already-resolved calls
   const resolvedSet = new Set<string>();
   for (const link of existingLinks) {
+    if (link.viaMacro) continue;
     resolvedSet.add(`${link.sourceFile}::${link.sourceLine}::${link.callName}`);
   }
 

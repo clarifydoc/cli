@@ -258,7 +258,7 @@ export function extractTool(ctx: ToolContext): McpTool {
         }
         used += tokens;
         const how = span.via
-          ? ` — called as ${span.via.callName} at ${loc(span.via.sourceFile, span.via.sourceLine)}${confidenceNote(span.via.confidence, span.via.resolvedBy, span.via.strategy)}`
+          ? ` — ${span.via.viaMacro ? `reached through the macro ${span.via.viaMacro}, used` : `called as ${span.via.callName}`} at ${loc(span.via.sourceFile, span.via.sourceLine)}${confidenceNote(span.via.confidence, span.via.resolvedBy, span.via.strategy)}`
           : "";
         blocks.push(
           `## ${span.symbol}() — ${span.file}:${from}-${span.endLine}${span.depth ? ` (hop ${span.depth})` : ""}${how}`,

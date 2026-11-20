@@ -136,6 +136,8 @@ export interface NormSymbolLink {
   viaUsage?: Array<[number, number]>;
   /** `SymbolLink.overloadsFit`. */
   overloadsFit?: number;
+  /** `SymbolLink.viaMacro`. */
+  viaMacro?: string;
 }
 
 /** Normalized FileComplexityInfo — filePath → file element; each function → a function element. */
@@ -803,6 +805,7 @@ export function normalizeProject(p: ProjectAnalysis): NormalizedProjectAnalysis 
     if (l.strategy !== undefined) out.strategy = l.strategy;
     if (l.relation !== undefined) out.relation = l.relation;
     if (l.overloadsFit !== undefined) out.overloadsFit = l.overloadsFit;
+    if (l.viaMacro !== undefined) out.viaMacro = l.viaMacro;
     if (usage) out.viaUsage = usage.map(([file, line]) => [remap[file]!, line]);
     return out;
   });
@@ -1000,6 +1003,7 @@ export function denormalizeProject(obj: unknown): ProjectAnalysis {
     if (nl.strategy !== undefined) out.strategy = nl.strategy;
     if (nl.relation !== undefined) out.relation = nl.relation;
     if (nl.overloadsFit !== undefined) out.overloadsFit = nl.overloadsFit;
+    if (nl.viaMacro !== undefined) out.viaMacro = nl.viaMacro;
     if (nl.viaUsage) out.viaUsage = nl.viaUsage.map(([file, line]) => ({ file: fileOf(elements, file), line }));
     return out;
   });

@@ -890,7 +890,7 @@ function unresolvedCalls(ctx: ToolContext, links: SymbolLink[]): UnresolvedCalls
     if (!resolvedSites) {
       resolvedSites = new Map();
       for (const l of links) {
-        if (l.relation === "reference" || l.sourceSymbol === "(reference)") continue;
+        if (l.relation === "reference" || l.sourceSymbol === "(reference)" || l.viaMacro) continue;
         const key = symbolKey(l.sourceFile, l.sourceSymbol);
         const set = resolvedSites.get(key) ?? new Set<string>();
         set.add(`${l.sourceLine}:${l.callName}`);
@@ -1413,7 +1413,7 @@ export async function walk(
         const fan = fanOf(key);
         rows.push({
           key,
-          text: `${otherSymbol}() ${loc(otherFile, otherLine)} — ${relationVerb(edge, direction)} ${edge.callName}${confidenceNote(edge.confidence, edge.resolvedBy, edge.strategy)}${
+          text: `${otherSymbol}() ${loc(otherFile, otherLine)} — ${relationVerb(edge, direction)} ${edge.callName}${edge.viaMacro ? ` (through the macro ${edge.viaMacro})` : ""}${confidenceNote(edge.confidence, edge.resolvedBy, edge.strategy)}${
             fan >= HUB_FAN ? ` [hub: ${fan} ${direction}]` : ""
           }${recursionNote(cycles, key)}`,
         });
@@ -1563,7 +1563,7 @@ export async function pathReport(
     const head = path[0]!;
     const lines = [`- ${weakestOf(path).toLowerCase()} · ${plural(path.length, "hop")}`, `    ${head.sourceSymbol}() (${head.sourceFile})`];
     for (const e of path) {
-      lines.push(`    → ${e.targetSymbol}() (${loc(e.targetFile, e.targetLine)}) — ${e.callName} at ${loc(e.sourceFile, e.sourceLine)}${confidenceNote(e.confidence, e.resolvedBy, e.strategy)}`);
+      lines.push(`    → ${e.targetSymbol}() (${loc(e.targetFile, e.targetLine)}) — ${e.callName}${e.viaMacro ? ` (through the macro ${e.viaMacro})` : ""} at ${loc(e.sourceFile, e.sourceLine)}${confidenceNote(e.confidence, e.resolvedBy, e.strategy)}`);
     }
     return lines;
   };

@@ -242,11 +242,13 @@ function encodeSymbolLink(
     ref(l.sourceFile), sym(l.sourceSymbol), l.sourceLine, sym(l.callName),
     ref(l.targetFile), sym(l.targetSymbol), l.targetLine,
   ];
-  // Rare tail slots, written only on a link that has them: [7] meta, [8] viaUsage as [fileRef, line] pairs, [9] gate kind.
+  // Rare tail slots, written only on a link that has them: [7] meta, [8] viaUsage as [fileRef, line] pairs, [9] gate kind, [10] viaMacro.
   const kind = GATE_KINDS.indexOf(l.strategy) + 1;
-  if (meta !== 0 || l.viaUsage?.length || kind) row.push(meta);
-  if (l.viaUsage?.length || kind) row.push(l.viaUsage?.length ? l.viaUsage.map((u: { file: string; line: number }) => [ref(u.file), u.line]) : 0);
-  if (kind) row.push(kind);
+  // [10] viaMacro: the macro whose body makes the call (its line is the macro's use, which does not spell the callee).
+  if (meta !== 0 || l.viaUsage?.length || kind || l.viaMacro) row.push(meta);
+  if (l.viaUsage?.length || kind || l.viaMacro) row.push(l.viaUsage?.length ? l.viaUsage.map((u: { file: string; line: number }) => [ref(u.file), u.line]) : 0);
+  if (kind || l.viaMacro) row.push(kind);
+  if (l.viaMacro) row.push(l.viaMacro);
   return row;
 }
 
