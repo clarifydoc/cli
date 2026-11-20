@@ -3,6 +3,7 @@
 import { atLeastConfidence, parseConfidence } from "../../core/dead-code.js";
 import { describeDrivers, describeGates } from "../../core/refactor-pressure.js";
 import { byOrdinal } from "../../core/ordinal.js";
+import { DEFAULT_BASE_PREFIXES } from "../../core/route-linker.js";
 import { asksAboutTests, normalize, rankCandidates, type Candidate, type RankedCandidate, type SearchKind } from "../search-rank.js";
 import { BodyIndex, thrownTypes, type BodyHit } from "../body-search.js";
 import { glob } from "../../core/glob.js";
@@ -182,6 +183,12 @@ function kindTag(kind: SearchKind): string {
  * worth it on a hit; on a result with nothing in it, a hint carrying a real
  * count is the cheapest thing this server can offer.
  */
+/** A route path with the first conventional base it starts with (`/api/v1`, `/api`, …) taken off, or nothing. */
+function pathBelowBase(path: string): string[] {
+  const base = DEFAULT_BASE_PREFIXES.find((b) => path.startsWith(`${b}/`));
+  return base ? [path.slice(base.length)] : [];
+}
+
 function searchCandidates(loaded: LoadedAnalysis, kinds: Set<SearchKind>, query: string, docs?: DocLookup): Candidate[] {
   const { summary, index } = loaded;
   const weightOf = (path: string | null | undefined): number =>
@@ -201,6 +208,9 @@ function searchCandidates(loaded: LoadedAnalysis, kinds: Set<SearchKind>, query:
         // "Permission.ManageSquad" or "v5" should find the routes they guard.
         aka: [
           ...(route.handler ? [route.handler] : []),
+          // The path as its controller writes it, below the conventional base it is mounted under
+          // (`/api/clubs/feed` answers "/clubs/feed"), as the route linker meets a client's call.
+          ...pathBelowBase(route.path),
           ...(route.auth?.policies ?? []),
           ...(route.auth?.roles ?? []),
           ...(route.auth?.schemes ?? []),
