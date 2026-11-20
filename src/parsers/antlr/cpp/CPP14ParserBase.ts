@@ -99,6 +99,11 @@ interface DefinitionAlts {
   declarators: number;
 }
 
+/** What may stand between a function's parameter list and its body: cv- and ref-qualifiers, `noexcept`, `override`, `final`. */
+const QUALIFIERS: ReadonlySet<number> = new Set([
+  CPP14Lexer.Const, CPP14Lexer.Volatile, CPP14Lexer.And, CPP14Lexer.AndAnd, CPP14Lexer.Noexcept, CPP14Lexer.Override, CPP14Lexer.Final,
+]);
+
 /** The simulators whose decisions are settled already. */
 const settled = new WeakSet<object>();
 
@@ -325,6 +330,7 @@ export abstract class CPP14ParserBase extends Parser {
     for (let steps = 0; steps < 64 && i >= 0; steps++) {
       const t = this.typeAt(i);
       if (t === CPP14Lexer.LeftBrace) return alts.declarators;
+      if (t === CPP14Lexer.LeftParen) return this.settleParameterList(i, alts);
       if (t !== CPP14Lexer.Identifier && t !== CPP14Lexer.Doublecolon && t !== CPP14Lexer.TemplateLess && !POINTER_OPERATORS.has(t) && t !== CPP14Lexer.LeftBracket) return 0;
       // `Squad<T>::bench`, `squads[3]{…}`.
       const end = t === CPP14Lexer.TemplateLess ? this.facts.angle[i] ?? -1 : t === CPP14Lexer.LeftBracket ? this.facts.close[i] ?? -1 : i;
@@ -363,6 +369,29 @@ export abstract class CPP14ParserBase extends Parser {
     if ((this.facts.angle[i] ?? -1) >= 0) i = this.following(this.facts.angle[i]!);
     if (this.typeAt(i) !== CPP14Lexer.Doublecolon) return 2;
     return isName(this.typeAt(this.following(i))) ? 1 : 0;
+  }
+
+  /**
+   * A parenthesis after a declarator's name: a function's parameter list when what follows its `)` (qualifiers
+   * apart) is a body or the `;` of a declaration, which prediction found by reading the whole list. 0 for anything
+   * else (`= default`, a constructor's initializers, a trailing return type, a macro after the list).
+   */
+  private settleParameterList(open: number, alts: DefinitionAlts): number {
+    const close = this.facts.close[open] ?? -1;
+    if (close < 0) return 0;
+    let i = this.following(close);
+    for (let steps = 0; steps < 8; steps++) {
+      const t = this.typeAt(i);
+      if (t === CPP14Lexer.LeftBrace) return alts.function;
+      if (t === CPP14Lexer.Semi) return alts.declarators;
+      if (t === CPP14Lexer.Noexcept && this.typeAt(this.following(i)) === CPP14Lexer.LeftParen) {
+        const group = this.facts.close[this.following(i)] ?? -1;
+        if (group < 0) return 0;
+        i = this.following(group);
+      } else if (QUALIFIERS.has(t)) i = this.following(i);
+      else return 0;
+    }
+    return 0;
   }
 
   settleInit(init: number, condition: number): number {
