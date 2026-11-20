@@ -155,6 +155,9 @@ function classMemberTypes(cls: Node, language: JkLang): Map<string, string> {
       if (!type) continue;
       for (const d of m.namedChildren) if (d.type === "variable_declarator") {
         const name = d.childForFieldName("name")?.text;
+        // A field built by an anonymous class is that class, not its declared type: the linker types it.
+        const value = d.childForFieldName("value");
+        if (value?.type === "object_creation_expression" && value.children.some((c) => c.type === "class_body")) continue;
         if (name) out.set(name, type);
       }
     }
