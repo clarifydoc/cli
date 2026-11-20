@@ -4,6 +4,7 @@ import { extractCalls } from "../../../shared/call-graph.js";
 import { applyRouteMeta } from "../../../shared/route-metadata.js";
 import { escapeRegex } from "../../shared/path-utils.js";
 import { joinRootedPath } from "../../../shared/route-paths.js";
+import { HTTP_VERBS_LOWER } from "../../../shared/http-verbs.js";
 
 /**
  * Javalin and Spark (sparkjava) — the two Java micro-frameworks whose routes
@@ -31,7 +32,6 @@ import { joinRootedPath } from "../../../shared/route-paths.js";
  * Javalin `<id>` path parameters are written `{id}`, as its `{id}` form is.
  */
 
-const VERBS = new Set(["get", "post", "put", "patch", "delete", "head", "options"]);
 const BLOCKS = new Set(["path", "routes", "apiBuilder", "router"]);
 type Framework = "javalin" | "spark";
 
@@ -180,7 +180,7 @@ export function extractJavalinSparkRoutes(root: Node, sourceText: string, routes
     const call = readCall(n);
     if (call) {
       if (call.object) visit(call.object, prefixes, inBlock);
-      const verb = VERBS.has(call.name) ? call.name : null;
+      const verb = HTTP_VERBS_LOWER.has(call.name) ? call.name : null;
       const path = unquote(call.args[0]);
       // `path("users", () -> { … })`, `app.routes(() -> …)`: what the block registers sits under it.
       if (BLOCKS.has(call.name) && (call.receiver === null || call.name !== "path")) {

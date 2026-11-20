@@ -2,6 +2,7 @@ import type { DataSourceInfo, PathArgCall } from "../../../types/analysis.js";
 import { blankCode } from "../shared/brace-code.js";
 import { RUST_LEXICON } from "./lexicon.js";
 import { parseRustParam } from "./params.js";
+import { HTTP_VERBS } from "../../shared/http-verbs.js";
 
 /**
  * A project's own request wrapper, and the facts the core's request-factory
@@ -50,7 +51,6 @@ export interface RustCode {
 
 const FN_RE = /\bfn\s+([A-Za-z_]\w*)\s*(?:<[^{};()]*>)?\s*\(/g;
 const IMPL_RE = /\bimpl\b\s*(?:<[^{};]*?>)?\s*([^{};]+?)\s*(?:where\b[^{]*)?\{/g;
-const VERBS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 /** A path or URL: `/x`, `api/x`, `${base}/x`, `https://…`. */
 const URLISH = /^(?:\/|\$\{|https?:\/\/|[\w.-]+\/)\S*$/;
 const URL_PARAM = /url|uri|path|endpoint|link/i;
@@ -207,7 +207,7 @@ function bareName(arg: string): string | null {
 /** The verb an argument names: `Method::POST`, `reqwest::Method::DELETE`. */
 function verbArg(arg: string): string | null {
   const m = /^(?:\w+::)*Method::([A-Z]+)$/.exec(arg.trim());
-  return m && VERBS.has(m[1]!) ? m[1]! : null;
+  return m && HTTP_VERBS.has(m[1]!) ? m[1]! : null;
 }
 
 /**

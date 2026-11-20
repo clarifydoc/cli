@@ -2,8 +2,8 @@ import type { DataSourceInfo, RouteInfo } from "../../../types/analysis.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { isKeyword, isSymbol, walk, type Form, type SeqForm } from "../shared/sexpr.js";
 import { callsIn, type LispDialect } from "./forms.js";
+import { HTTP_VERBS_LOWER } from "../../shared/http-verbs.js";
 
-const VERBS = new Set(["get", "post", "put", "patch", "delete", "head", "options"]);
 
 function seq(f: Form | undefined): SeqForm | null {
   return f && (f.kind === "list" || f.kind === "vector") ? f : null;
@@ -64,7 +64,7 @@ export function extractLispRoutes(forms: readonly Form[], dialect: LispDialect):
           const segments = pattern.items.map((seg) => (seg.kind === "string" ? seg.value : `{${(head(seg) ?? "arg").replace(/-arg$/, "")}}`)).filter((x) => x !== "");
           const method = text(plist(r.items, "method"))?.toUpperCase() ?? "GET";
           const handler = r.items.slice(1).find((x, i, all) => isSymbol(x) && !isKeyword(all[i - 1]));
-          push(r, VERBS.has(method.toLowerCase()) ? method : null, "/" + segments.join("/"), isSymbol(handler) ? handler.name : null, []);
+          push(r, HTTP_VERBS_LOWER.has(method.toLowerCase()) ? method : null, "/" + segments.join("/"), isSymbol(handler) ? handler.name : null, []);
         }
       } else if (name === "defroute") {
         // Caveman2: (defroute [name] "/path" | ("/path" :method :post) lambda-list body…); easy-routes: (defroute name ("/path" …) …).
@@ -76,21 +76,21 @@ export function extractLispRoutes(forms: readonly Form[], dialect: LispDialect):
         const path = specSeq ? text(specSeq.items[0]) : text(spec);
         if (path === null) return;
         const method = specSeq ? text(plist(specSeq.items, "method"))?.toUpperCase() ?? "GET" : "GET";
-        push(s, VERBS.has(method.toLowerCase()) ? method : null, path, routeName, s.items.slice(i + 2));
+        push(s, HTTP_VERBS_LOWER.has(method.toLowerCase()) ? method : null, path, routeName, s.items.slice(i + 2));
       } else if (name === "define-easy-handler") {
         const spec = seq(s.items[1]);
         const uri = spec ? text(plist(spec.items, "uri")) : null;
         if (!spec || uri === null) return;
         const type = spec ? text(plist(spec.items, "default-request-type"))?.toUpperCase() : undefined;
-        push(s, type && VERBS.has(type.toLowerCase()) ? type : null, uri, isSymbol(spec.items[0]) ? spec.items[0].name : null, s.items.slice(3));
+        push(s, type && HTTP_VERBS_LOWER.has(type.toLowerCase()) ? type : null, uri, isSymbol(spec.items[0]) ? spec.items[0].name : null, s.items.slice(3));
       } else if (name === "setf" && /(?:^|:)route$/.test(head(s.items[1]) ?? "")) {
         const place = seq(s.items[1])!;
         const path = text(place.items[2]);
         if (path === null) return;
         const method = text(plist(place.items, "method"))?.toUpperCase() ?? "GET";
         const { name: handler, body } = handlerOf(s.items[2]);
-        push(s, VERBS.has(method.toLowerCase()) ? method : null, path, handler, body);
-      } else if (dialect === "scheme" && VERBS.has(name) && s.items[1]?.kind === "string" && s.items[1].value.startsWith("/")) {
+        push(s, HTTP_VERBS_LOWER.has(method.toLowerCase()) ? method : null, path, handler, body);
+      } else if (dialect === "scheme" && HTTP_VERBS_LOWER.has(name) && s.items[1]?.kind === "string" && s.items[1].value.startsWith("/")) {
         const { name: handler, body } = handlerOf(s.items[s.items.length - 1]);
         push(s, name.toUpperCase(), s.items[1].value, handler, body);
       }
@@ -123,8 +123,8 @@ export function extractLispDataSources(forms: readonly Form[]): DataSourceInfo[]
       const leaf = h.replace(/^[\w.-]+:{1,2}/, "");
       let method: string | null = null;
       let url: string | null = null;
-      if (/^(?:dex|dexador|http-easy)$/.test(h.split(":")[0]!) && VERBS.has(leaf)) { method = leaf.toUpperCase(); url = text(s.items[1]); }
-      else if (VERBS.has(h) && s.items[1]?.kind === "string" && /^https?:\/\//.test(s.items[1].value)) { method = h.toUpperCase(); url = s.items[1].value; }
+      if (/^(?:dex|dexador|http-easy)$/.test(h.split(":")[0]!) && HTTP_VERBS_LOWER.has(leaf)) { method = leaf.toUpperCase(); url = text(s.items[1]); }
+      else if (HTTP_VERBS_LOWER.has(h) && s.items[1]?.kind === "string" && /^https?:\/\//.test(s.items[1].value)) { method = h.toUpperCase(); url = s.items[1].value; }
       else if (leaf === "http-request") { url = text(s.items[1]); method = text(plist(s.items, "method"))?.toUpperCase() ?? "GET"; }
       else if (/^http-(get|post|put|delete)$/.test(h)) { method = h.slice(5).toUpperCase(); url = text(s.items[1]); }
       else if (/^(?:get|post|put|delete)-pure-port$/.test(h) && head(s.items[1]) === "string->url") { method = h.split("-")[0]!.toUpperCase(); url = text(seq(s.items[1])!.items[1]); }

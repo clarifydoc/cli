@@ -2,6 +2,7 @@ import type { Node } from "web-tree-sitter";
 import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import { buildAuth, type GuardAttr } from "../../../shared/route-metadata.js";
 import { buildPath } from "./aspnet.js";
+import { HTTP_VERBS } from "../../../shared/http-verbs.js";
 
 /**
  * FastEndpoints: an endpoint is a class deriving from `Endpoint<TReq, TRes>` (or
@@ -34,7 +35,6 @@ export function collectFastPrefix(sourceText: string, facts: RouteFact[]): void 
   if (m) facts.push({ kind: FAST_PREFIX_FACT, line: 1, data: { prefix: m[1]! } satisfies FastPrefixFact });
 }
 const BASE = /^(?:global::)?(?:FastEndpoints\.)?(?:Endpoint(?:WithoutRequest|WithMapping)?\s*(?:<|$)|Ep\.|EndpointWithoutRequest\b)/;
-const VERBS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 const HANDLERS = ["HandleAsync", "ExecuteAsync", "Handle", "Execute"];
 
 function stringArgs(inv: Node): string[] {
@@ -88,13 +88,13 @@ export function extractFastEndpoints(root: Node, routes: RouteInfo[], facts?: Ro
       const args = stringArgs(inv);
       const verb = callee.toUpperCase();
       // `Options(x => x.DontAddRoutePrefix())` configures the endpoint; the fluent verbs are Get/Post/Put/Patch/Delete with a path.
-      if (VERBS.has(verb) && verb !== "OPTIONS" && callee === callee[0]!.toUpperCase() + callee.slice(1).toLowerCase() && args.length > 0 && !args[0]!.includes("=>")) {
+      if (HTTP_VERBS.has(verb) && verb !== "OPTIONS" && callee === callee[0]!.toUpperCase() + callee.slice(1).toLowerCase() && args.length > 0 && !args[0]!.includes("=>")) {
         verbs.push(verb);
         paths.push(args[0]!);
       } else if (callee === "Verbs") {
         for (const a of args) {
           const v = /(?:Http\.)?(\w+)$/.exec(a)?.[1]?.toUpperCase();
-          if (v && VERBS.has(v)) verbs.push(v);
+          if (v && HTTP_VERBS.has(v)) verbs.push(v);
         }
       } else if (callee === "Routes") paths.push(...args);
       else if (callee === "AllowAnonymous") guards.push({ text: "AllowAnonymous", anonymous: true, policies: [], roles: [], schemes: [] });

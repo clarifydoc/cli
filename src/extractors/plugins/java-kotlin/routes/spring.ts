@@ -7,6 +7,7 @@ import { applyRouteMeta, type GuardAttr } from "../../../shared/route-metadata.j
 import { guardsOn, routeParamsOf } from "./meta-annotations.js";
 import { methodRefHandler, predicateParts, staticRoutes } from "./functional-routes.js";
 import { customEndpointPrefix, customEndpointUnresolvedPrefix } from "./halo.js";
+import { HTTP_VERBS } from "../../../shared/http-verbs.js";
 
 /** Spring Boot mapping annotations */
 const SPRING_MAPPING_ANNOTATIONS: Record<string, string | null> = {
@@ -358,7 +359,7 @@ function walkForJavaKotlinRoutes(
   if (!suppress && node.type === "method_invocation") {
     const verb = node.childForFieldName("name")?.text ?? "";
     // The verb is cheap and rare; the receiver text of a chain is the whole chain.
-    if (FUNCTIONAL_VERBS.has(verb) && FUNCTIONAL_ROUTER_RE.test(node.childForFieldName("object")?.text ?? "")) {
+    if (HTTP_VERBS.has(verb) && FUNCTIONAL_ROUTER_RE.test(node.childForFieldName("object")?.text ?? "")) {
       const args = node.childForFieldName("arguments")?.namedChildren ?? [];
       // `.GET(this::listClubs, ops)`: no path of its own — it serves the path it is nested under.
       const pathless = args[0]?.type === "method_reference" || args[0]?.type === "lambda_expression";
@@ -411,7 +412,6 @@ function walkForJavaKotlinRoutes(
   }
 }
 
-const FUNCTIONAL_VERBS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 /** A file that builds functional endpoints: the gate the route index applies before walking. */
 export const FUNCTIONAL_ROUTER_GATE_RE = /\broute\s*\(\s*\)|\broute\s*\(\s*(?:RequestPredicates\.)?(?:GET|POST|PUT|PATCH|DELETE)\b|\bRouterFunctions\b|\bSpringdocRouteBuilder\b/;
 /** A receiver chain rooted at a router builder, or a nest lambda's builder parameter. */

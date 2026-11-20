@@ -7,6 +7,7 @@ import { extractCalls } from "../../../shared/call-graph.js";
 import { applyRouteMeta, type GuardAttr } from "../../../shared/route-metadata.js";
 import type { RouteParamInfo } from "../../../../types/analysis.js";
 import { joinRootedPath } from "../../../shared/route-paths.js";
+import { HTTP_VERBS_LOWER } from "../../../shared/http-verbs.js";
 
 /**
  * Ktor routing DSL (Kotlin server):
@@ -41,9 +42,6 @@ import { joinRootedPath } from "../../../shared/route-paths.js";
  * extractor itself is additionally gated on the file importing io.ktor.
  */
 
-const KTOR_VERBS: ReadonlySet<string> = new Set([
-  "get", "post", "put", "delete", "patch", "head", "options",
-]);
 
 /** First string-literal argument of a call_expression, unquoted. */
 function firstStringArg(call: Node): string | null {
@@ -107,7 +105,7 @@ function dslContext(node: Node): DslContext {
     }
     if (cur.type === "call_expression") {
       const inner = cur.child(0);
-      if ((inner?.type === "call_expression" && KTOR_VERBS.has(calleeName(inner) ?? "")) || KTOR_VERBS.has(calleeName(cur) ?? "")) inVerb = true;
+      if ((inner?.type === "call_expression" && HTTP_VERBS_LOWER.has(calleeName(inner) ?? "")) || HTTP_VERBS_LOWER.has(calleeName(cur) ?? "")) inVerb = true;
       if (inner?.type === "call_expression" && calleeName(inner) === "route") {
         const p = firstStringArg(inner);
         if (p) prefixes.unshift(p);
@@ -130,7 +128,7 @@ function dslContext(node: Node): DslContext {
 }
 
 /** DSL calls that are not installing a route function. */
-const DSL_CALLS = new Set([...KTOR_VERBS, "route", "routing", "authenticate", "install", "static", "staticResources", "staticFiles", "intercept", "handle", "method", "accept", "contentType", "header", "param", "optionalParam", "host", "port", "webSocket", "sse", "rateLimit", "println"]);
+const DSL_CALLS = new Set([...HTTP_VERBS_LOWER, "route", "routing", "authenticate", "install", "static", "staticResources", "staticFiles", "intercept", "handle", "method", "accept", "contentType", "header", "param", "optionalParam", "host", "port", "webSocket", "sse", "rateLimit", "println"]);
 
 /**
  * What the handler lambda reads from the request — Ktor has no parameter
@@ -179,7 +177,7 @@ export function extractKtorRoutes(root: Node, routes: RouteInfo[], facts?: Route
           facts.push({ kind: ROUTER_CALL, line: node.startPosition.row + 1, ...(ctx.ownerFn ? { owner: ctx.ownerFn } : {}), data: call });
         }
       }
-      if (verb && KTOR_VERBS.has(verb)) {
+      if (verb && HTTP_VERBS_LOWER.has(verb)) {
         // Path-arg form: this is the inner call; the outer wrapper (if any)
         // carries the trailing lambda. Path-less form (`get { }`) has the
         // lambda directly on this node and inherits the enclosing prefix.

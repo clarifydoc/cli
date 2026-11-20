@@ -2,8 +2,8 @@ import type { Node, Tree } from "web-tree-sitter";
 import type { RouteInfo } from "../../../types/analysis.js";
 import type { RouteExtractor } from "../../routes/base.js";
 import { calleeName, flattenApplication, stringValue } from "./syntax.js";
+import { HTTP_VERBS } from "../../shared/http-verbs.js";
 
-const METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 /** Giraffe path matchers: a literal path, or a `%i`-format one whose values feed the handler. */
 const ROUTE_FNS = new Set(["route", "routeCi", "routex", "routeCix", "routeStartsWith", "routeStartsWithCi", "routef", "routeCif", "routexp"]);
 const SUBROUTE_FNS = new Set(["subRoute", "subRouteCi", "subRoutef"]);
@@ -90,7 +90,7 @@ export const fsharpRouteExtractor: RouteExtractor = {
         const [head, ...args] = seg;
         if (!head) continue;
         const name = head.type === "long_identifier_or_op" || head.type === "typed_expression" || head.type === "dot_expression" ? calleeName(head) : null;
-        if (name && METHODS.has(name)) {
+        if (name && HTTP_VERBS.has(name)) {
           // `GET >=> …` sets the method for the rest of the chain; endpoint
           // routing's `GET [ route "/x" h ]` sets it for the routes it lists.
           if (args.length === 0) ctx.method = name;

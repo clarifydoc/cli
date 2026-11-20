@@ -9,6 +9,7 @@ import { simpleTypeName } from "../../shared/type-parser.js";
 import { DAPR_TOPIC_RE, daprRow } from "../shared/dapr-pubsub.js";
 import { brokerOfTemplate } from "../../shared/message-brokers.js";
 import { kotlinNameAndType } from "./functions-classes.js";
+import { HTTP_VERBS_LOWER } from "../../shared/http-verbs.js";
 
 /**
  * Java / Kotlin data-source extractor — surfaces jOOQ, Spring Data / JPA,
@@ -201,7 +202,6 @@ const HTTP_HINT_RE = /RestTemplate|WebClient|HttpClient|OkHttpClient|Retrofit/;
 /** RestTemplate methods whose first argument is the URL. */
 const REST_TEMPLATE_URL_FIRST = new Set(["exchange", "getForObject", "getForEntity", "postForObject", "postForEntity", "postForLocation", "put", "delete", "patchForObject"]);
 
-const KTOR_VERBS = new Set(["get", "post", "put", "delete", "patch", "head", "options"]);
 
 /**
  * Whether a call's receiver is a Ktor `HttpClient`: built where it is used (`HttpClient(CIO).get(…)`), or a
@@ -430,7 +430,6 @@ function requestChainVerb(node: Node, receiver: string): string {
 
 /** The calls that send a Spring `WebClient` / `RestClient` request built by a fluent chain. */
 const SPRING_FLUENT_SENDS = new Set(["retrieve", "exchange", "exchangeToMono", "exchangeToFlux"]);
-const FLUENT_VERBS = new Set(["get", "post", "put", "delete", "patch", "head", "options"]);
 /** Apache HttpClient request classes (4.x `org.apache.http.client.methods`, 5.x `classic.methods`). */
 const APACHE_REQUEST_RE = /^Http(Get|Post|Put|Delete|Patch|Head|Options)$/;
 /** Apache HttpClient 5 request builders: `ClassicRequestBuilder.get(url)`, `SimpleRequestBuilder.post(url)`. */
@@ -520,7 +519,7 @@ function apacheRequest(arg: Node, at: Node): { verb: string; target: string | nu
       url = own.firstArg;
     } else {
       const { calls } = fluentChain(expr);
-      const built = calls.find((c) => FLUENT_VERBS.has(c.name) && APACHE_BUILDER_RE.test(c.receiver.trim()));
+      const built = calls.find((c) => HTTP_VERBS_LOWER.has(c.name) && APACHE_BUILDER_RE.test(c.receiver.trim()));
       verb = built?.name;
       url = built?.args[0] ?? null;
     }
@@ -1117,7 +1116,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     // verb is the method, the URL the first argument (or `url("…")` in the request block).
     // `client.request("/clubs") { method = HttpMethod.Post }` is the same request with its verb in the block.
     const ktorRequest = method === "request";
-    if (this.ktorClientText && (KTOR_VERBS.has(method) || ktorRequest) && isKtorClient(receiver, this.ktorClientText)) {
+    if (this.ktorClientText && (HTTP_VERBS_LOWER.has(method) || ktorRequest) && isKtorClient(receiver, this.ktorClientText)) {
       const arg = call.firstArg;
       // Kotlin hangs a trailing lambda on the call expression around this one.
       const withBlock = node.parent?.type === "call_expression" && node.parent.firstChild?.id === node.id ? node.parent.text : node.text;
@@ -1461,10 +1460,10 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     // sends only at the end of a request chain (`webClient.get().uri(…).exchange()`).
     const accessor = (method === "exchange" || method === "retrieve") && callArguments(node).length === 0 && !/\.uri\s*\(|\.(?:get|post|put|patch|delete|method)\s*\(/.test(receiver) && !HTTP_HINT_RE.test(receiver);
     // `WebClient.create(x).get()`: a Spring client's argument-less verb only starts the request its send reads.
-    const springSpec = FLUENT_VERBS.has(method) && callArguments(node).length === 0 && /\b(?:WebClient|RestClient)\b/.test(receiver);
+    const springSpec = HTTP_VERBS_LOWER.has(method) && callArguments(node).length === 0 && /\b(?:WebClient|RestClient)\b/.test(receiver);
     const clientSend = HTTP_SEND_METHODS.has(method) && !springSpec && (HTTP_HINT_RE.test(receiver) ||
       // A client known only by its name: a send of a request, never an argument-less verb that starts a fluent one.
-      (CLIENT_NAMED_RE.test(receiver.trim()) && (!FLUENT_VERBS.has(method) || callArguments(node).length > 0) &&
+      (CLIENT_NAMED_RE.test(receiver.trim()) && (!HTTP_VERBS_LOWER.has(method) || callArguments(node).length > 0) &&
         !REQUEST_BUILDER_RE.test(enclosingBodyText(node))));
     if ((HTTP_METHODS.has(method) && !accessor) || clientSend) {
       // RestTemplate's URL is its first argument: `getForObject(clubsUrl + "/api/clubs/" + id, Club.class)`.
@@ -1535,7 +1534,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     const { calls, root } = fluentChain(receiverNode(node));
     const uri = calls.find((c) => c.name === "uri");
     if (!uri) return null;
-    const verb = calls.find((c) => FLUENT_VERBS.has(c.name) && c.args.length === 0)?.name.toUpperCase() ??
+    const verb = calls.find((c) => HTTP_VERBS_LOWER.has(c.name) && c.args.length === 0)?.name.toUpperCase() ??
       /\bHttpMethod\.(\w+)/.exec(calls.find((c) => c.name === "method")?.args[0]?.text ?? "")?.[1];
     if (!verb) return null;
     const path = fluentUriPath(uri.args[0], node);

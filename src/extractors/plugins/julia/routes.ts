@@ -3,8 +3,8 @@ import type { RouteInfo } from "../../../types/analysis.js";
 import type { RouteExtractor } from "../../routes/base.js";
 import { extractCalls } from "../../shared/call-graph.js";
 import { calleeName, stringValue } from "./syntax.js";
+import { HTTP_VERBS } from "../../shared/http-verbs.js";
 
-const METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 
 /** Genie's `/users/:id::Int` and Oxygen's `/users/{id}` → `/users/{id}`. */
 function juliaPath(path: string): string {
@@ -48,18 +48,18 @@ export const juliaRouteExtractor: RouteExtractor = {
           if (path === null) continue;
           const method = args.find((a) => a.type === "named_argument" && a.namedChildren[0]?.text === "method")?.namedChildren.pop()?.text.replace(/^.*\./, "") ?? "GET";
           const handler = node.namedChildren.find((c) => c.type === "do_clause") ?? args.find((a, i) => i > 0 && a.type !== "named_argument");
-          push(node, METHODS.has(method) ? method : null, path, handler);
+          push(node, HTTP_VERBS.has(method) ? method : null, path, handler);
         } else if (name && /(?:^|\.)register!$/.test(name)) {
           const method = stringValue(args[1])?.toUpperCase() ?? null;
           const path = stringValue(args[2]);
-          if (path !== null) push(node, method && METHODS.has(method) ? method : null, path, args[3]);
+          if (path !== null) push(node, method && HTTP_VERBS.has(method) ? method : null, path, args[3]);
         }
         continue;
       }
       const macro = node.namedChildren.find((c) => c.type === "macro_identifier")?.text.replace(/^@/, "");
       const margs = node.namedChildren.find((c) => c.type === "macro_argument_list")?.namedChildren ?? [];
       if (!macro) continue;
-      if (METHODS.has(macro.toUpperCase()) && macro === macro.toLowerCase()) {
+      if (HTTP_VERBS.has(macro.toUpperCase()) && macro === macro.toLowerCase()) {
         const path = stringValue(margs[0]);
         if (path !== null) push(node, macro.toUpperCase(), path, margs[1]);
       } else if (macro === "route") {

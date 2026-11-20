@@ -3,6 +3,7 @@ import type { CallInfo, RouteInfo } from "../../../../types/analysis.js";
 import { stripQuotes } from "../../../shared/node-helpers.js";
 import { extractCalls } from "../../../shared/call-graph.js";
 import { stripTypeArguments } from "../../shared/path-utils.js";
+import { HTTP_VERBS } from "../../../shared/http-verbs.js";
 
 /**
  * Functional routing that names its handlers by method reference:
@@ -15,7 +16,6 @@ import { stripTypeArguments } from "../../shared/path-utils.js";
  * instead of guessing among namesakes. `this::x` and an untyped receiver stay the bare method name.
  */
 
-export const VERBS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 
 /** The class a type node names: generics, nullability and package qualifiers dropped. Null for `var`/primitives. */
 function typeName(text: string): string | null {
@@ -135,11 +135,11 @@ export function predicateParts(node: Node): PredicatePart[] {
     return left.flatMap((l) => right.map((r) => ({ verb: l.verb ?? r.verb, path: l.path ?? r.path })));
   }
   if (isPredicateFactory(obj?.text)) {
-    if (VERBS.has(name)) return [{ verb: name, path: args[0] }];
+    if (HTTP_VERBS.has(name)) return [{ verb: name, path: args[0] }];
     if (name === "path" && args[0]) return [{ path: args[0] }];
     if (name === "method" && args[0]) {
       const verb = args[0].text.split(".").pop()!;
-      return VERBS.has(verb) ? [{ verb }] : [];
+      return HTTP_VERBS.has(verb) ? [{ verb }] : [];
     }
   }
   // Anything else (`accept(JSON)`, `headers(…)`) pins nothing; a chain is read through its receiver.
@@ -200,7 +200,7 @@ export function extractKotlinRouterDsl(root: Node, routes: RouteInfo[]): void {
   const visit = (node: Node, prefix: string): void => {
     if (node.type === "call_expression") {
       const name = callee(node);
-      if (name && VERBS.has(name)) {
+      if (name && HTTP_VERBS.has(name)) {
         const args = node.descendantsOfType("value_arguments").find((a) => a?.parent?.parent?.id === node.id)?.namedChildren ?? [];
         const first = args[0]?.namedChildren[0];
         const ref = args.map((a) => a.namedChildren[0]).find((n) => n?.type === "callable_reference");

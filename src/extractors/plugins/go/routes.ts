@@ -3,6 +3,7 @@ import { buildAuth, type GuardAttr } from "../../shared/route-metadata.js";
 import { ROUTER_CALL, type RouterCall } from "../shared/router-functions.js";
 import { extractGoImports } from "./imports.js";
 import { isAuthGuard } from "../../shared/route-metadata.js";
+import { HTTP_VERBS } from "../../shared/http-verbs.js";
 
 /**
  * Go server routes across the ecosystem's router families:
@@ -61,7 +62,6 @@ const HTTP_VERBS_TITLE: Record<string, string> = {
   Get: "GET", Post: "POST", Put: "PUT", Patch: "PATCH",
   Delete: "DELETE", Options: "OPTIONS", Head: "HEAD",
 };
-const VERBS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]);
 
 /** `mux.HandleFunc(` / `mux.Handle(` — Go 1.22 pattern strings or gorilla/legacy path-first. */
 const HANDLE_RE = /(\w+|\))\.\s*Handle(?:Func)?\s*\(/;
@@ -825,7 +825,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
       if (path !== null && path.startsWith("/") && handlerCall) {
         const recv = chain[1]!;
         const methodsArg = /\.\s*Methods\s*\(([^)]*)\)/.exec(text)?.[1] ?? "";
-        const verbs = [...methodsArg.matchAll(/["'`](\w+)["'`]|\bhttp\.Method([A-Z][a-z]+)\b/g)].map((m) => (m[1] ?? m[2]!).toUpperCase()).filter((v) => VERBS.has(v));
+        const verbs = [...methodsArg.matchAll(/["'`](\w+)["'`]|\bhttp\.Method([A-Z][a-z]+)\b/g)].map((m) => (m[1] ?? m[2]!).toUpperCase()).filter((v) => HTTP_VERBS.has(v));
         const { handler, guards } = splitHandler(parseArgs(text, handlerCall.index + handlerCall[0].length - 1).args);
         const full = joinPrefix(prefixOf(recv), path);
         if (verbs.length > 0) for (const v of verbs) push(full, v, handler, lineNo, inheritedOf(recv), guards, recv);
@@ -839,7 +839,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
     if (verbsFirst) {
       const recv = verbsFirst[1]!;
       const { args } = parseArgs(line, verbsFirst.index! + verbsFirst[0].length - 2);
-      const verbs = (literal(args[0]) ?? "").split(",").map((v) => v.trim().toUpperCase()).filter((v) => VERBS.has(v));
+      const verbs = (literal(args[0]) ?? "").split(",").map((v) => v.trim().toUpperCase()).filter((v) => HTTP_VERBS.has(v));
       const path = literal(args[1]);
       if (verbs.length > 0 && path !== null && args.length >= 3) {
         const { handler, guards } = splitHandler(args.slice(2));
@@ -874,7 +874,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
       const path = literal(args[any ? 0 : 1]);
       if (path !== null && path.startsWith("/") && args.length >= (any ? 2 : 3)) {
         const { handler, guards } = splitHandler(args.slice(any ? 1 : 2), isEchoRouter(recv));
-        const verbs = any ? [] : [...(args[0] ?? "").matchAll(/["'`](\w+)["'`]|\bhttp\.Method([A-Z][a-z]+)\b/g)].map((m) => (m[1] ?? m[2]!).toUpperCase()).filter((v) => VERBS.has(v));
+        const verbs = any ? [] : [...(args[0] ?? "").matchAll(/["'`](\w+)["'`]|\bhttp\.Method([A-Z][a-z]+)\b/g)].map((m) => (m[1] ?? m[2]!).toUpperCase()).filter((v) => HTTP_VERBS.has(v));
         if (verbs.length > 0) for (const v of verbs) push(joinPrefix(prefixOf(recv), path), v, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
         else push(joinPrefix(prefixOf(recv), path), null, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
       }
@@ -905,7 +905,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
         const method = /^["'`]([A-Za-z]+)["'`]$/.exec(args[0] ?? "")?.[1]?.toUpperCase() ?? /^\w+\.(?:Method)?([A-Za-z]+)$/.exec(args[0] ?? "")?.[1]?.toUpperCase();
         const path = literal(args[1]);
         // An absolute path only: `registry.Add("GET", "key", fn)` on an Echo-only file is not a route.
-        if (args.length >= 3 && method && VERBS.has(method) && path !== null && path.startsWith("/")) {
+        if (args.length >= 3 && method && HTTP_VERBS.has(method) && path !== null && path.startsWith("/")) {
           const { handler, guards } = splitHandler(args.slice(2), true);
           push(joinPrefix(prefixOf(recv), path), method, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
         }
@@ -914,7 +914,7 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
         const args = callArgs(i, chiMethod.index! + chiMethod[0].length - 1);
         const method = literal(args[0])?.toUpperCase();
         const path = literal(args[1]);
-        if (args.length >= 3 && method && VERBS.has(method) && path !== null && path.startsWith("/")) {
+        if (args.length >= 3 && method && HTTP_VERBS.has(method) && path !== null && path.startsWith("/")) {
           const { handler, guards } = splitHandler(args.slice(2));
           push(joinPrefix(prefixOf(recv), path), method, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
         }
@@ -927,11 +927,11 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
         const go122 = first?.match(/^(?:([A-Z]+)\s+)?(?:[A-Za-z0-9.-]+(?::\d+)?)?(\/\S*)$/);
         // gin `Handle(method, path, h…)`: `"GET"`, `http.MethodGet`, `header.MethodPost`.
         const ginVerb = args.length >= 3 ? (/^["'`]([A-Z]+)["'`]$/.exec(args[0]!)?.[1] ?? /^\w+\.Method([A-Z][a-z]+)$/.exec(args[0]!)?.[1]?.toUpperCase()) : undefined;
-        const ginPath = ginVerb && VERBS.has(ginVerb) ? literal(args[1]) : null;
+        const ginPath = ginVerb && HTTP_VERBS.has(ginVerb) ? literal(args[1]) : null;
         if (ginPath !== null && ginPath.startsWith("/")) {
           const { handler, guards } = splitHandler(args.slice(2));
           push(joinPrefix(prefixOf(recv), ginPath), ginVerb!, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);
-        } else if (go122 && VERBS.has(go122[1]!)) {
+        } else if (go122 && HTTP_VERBS.has(go122[1]!)) {
           // Go 1.22 "VERB /path" pattern strings (absolute — no group composition).
           const { handler, guards } = splitHandler(args.slice(1));
           push(go122[2]!, go122[1]!, handler, lineNo, inheritedOf(recv), [...withGuards, ...guards], recv);

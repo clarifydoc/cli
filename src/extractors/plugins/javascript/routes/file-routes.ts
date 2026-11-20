@@ -1,5 +1,6 @@
 import type { FileAnalysis, RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import { escapeRegex } from "../../shared/path-utils.js";
+import { HTTP_VERBS } from "../../../shared/http-verbs.js";
 
 /**
  * Routes that a meta-framework derives from where a file sits rather than from
@@ -14,7 +15,6 @@ import { escapeRegex } from "../../shared/path-utils.js";
  * `file-based.ts`.
  */
 
-const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 
 function route(path: string, kind: "frontend" | "api", extra: Partial<RouteInfo> = {}): RouteInfo {
   return { path, httpMethod: null, kind, handler: null, calls: [], middleware: [], line: 1, ...extra };
@@ -47,8 +47,8 @@ export function routeFromSegments(dir: string): string {
 /** The exported HTTP-method handlers of a file (`export function GET`, `export const POST = …`). */
 function exportedMethods(analysis: FileAnalysis): string[] {
   const methods = new Set<string>();
-  for (const fn of analysis.functions) if (HTTP_METHODS.has(fn.name)) methods.add(fn.name);
-  for (const exp of analysis.exports) if (HTTP_METHODS.has(exp.name)) methods.add(exp.name);
+  for (const fn of analysis.functions) if (HTTP_VERBS.has(fn.name)) methods.add(fn.name);
+  for (const exp of analysis.exports) if (HTTP_VERBS.has(exp.name)) methods.add(exp.name);
   return [...methods];
 }
 

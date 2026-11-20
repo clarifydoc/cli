@@ -9,6 +9,7 @@ import { pythonWhereFields } from "./arg-origins.js";
 import { escapeRegex } from "../shared/path-utils.js";
 import { extractPythonHttpClientRegistrations, pythonClientKey } from "./http-clients.js";
 import { DAPR_TOPIC_RE, daprRow } from "../shared/dapr-pubsub.js";
+import { HTTP_VERBS_LOWER } from "../../shared/http-verbs.js";
 
 export class PythonDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["python"];
@@ -1171,7 +1172,6 @@ function queueName(raw: string): string | null {
 
 /** HTTP client modules whose verb functions are always outbound calls. */
 const PY_HTTP_MODULES = new Set(["requests", "httpx", "aiohttp", "grequests"]);
-const PY_HTTP_VERBS = new Set(["get", "post", "put", "patch", "delete", "head", "options"]);
 /** A client/session object (`session.get`, `self.client.post`) — an HTTP call only with a URL-shaped argument. */
 const PY_HTTP_RECEIVER_RE = /(^|_)(session|client|http)$/i;
 
@@ -1198,23 +1198,23 @@ function httpCall(fn: Node, call: Node): { name: string; target: string | null }
 
   if (obj.type === "identifier" && PY_HTTP_MODULES.has(recv)) {
     // Named by its verb, as a client receiver's call is: the route linker reads the method off the name.
-    if (PY_HTTP_VERBS.has(leaf)) return { name: leaf, target: args[0] ? pyStringValue(args[0], call) : null };
+    if (HTTP_VERBS_LOWER.has(leaf)) return { name: leaf, target: args[0] ? pyStringValue(args[0], call) : null };
     if (leaf === "request") {
       const method = pyStringLiteral(args[0]);
-      return method && PY_HTTP_VERBS.has(method.toLowerCase())
+      return method && HTTP_VERBS_LOWER.has(method.toLowerCase())
         ? { name: method.toLowerCase(), target: args[1] ? pyStringValue(args[1], call) : null }
         : null;
     }
     return null;
   }
-  if (PY_HTTP_VERBS.has(leaf) && PY_HTTP_RECEIVER_RE.test(recv)) {
+  if (HTTP_VERBS_LOWER.has(leaf) && PY_HTTP_RECEIVER_RE.test(recv)) {
     // A literal, or a local the function builds it in (`url = f"http://{BASE}/api/x"`).
     const target = args[0] ? pyStringValue(args[0], call) : null;
     if (target && (target.includes("/") || /^https?:/i.test(target))) return { name: leaf, target };
   }
   // A verb on a local the code made an HTTP client: `session = requests.Session()` — in this
   // function or one it is nested in — whatever the URL argument is.
-  if (PY_HTTP_VERBS.has(leaf) && obj.type === "identifier") {
+  if (HTTP_VERBS_LOWER.has(leaf) && obj.type === "identifier") {
     const made = boundValue(recv, call);
     const typed = made ? null : annotatedParam(recv, call);
     const ctor = made?.type === "call" ? made.childForFieldName("function")?.text ?? "" : "";
@@ -1342,7 +1342,7 @@ function urlopenCall(fn: Node, call: Node): { name: string; target: string | nul
   }
   const method = request !== call ? pyStringLiteral(keywordArg(request, "method") ?? undefined) : null;
   const hasBody = !!keywordArg(request, "data") || positional(request).length > 1;
-  const name = (method && PY_HTTP_VERBS.has(method.toLowerCase()) ? method : hasBody ? "post" : "get").toLowerCase();
+  const name = (method && HTTP_VERBS_LOWER.has(method.toLowerCase()) ? method : hasBody ? "post" : "get").toLowerCase();
   return { name, target: pyStringValue(arg, call) };
 }
 

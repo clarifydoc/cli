@@ -6,6 +6,7 @@ import { attachEctoSchema, attachPatternKeys, extractEctoRelations, extractElixi
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 import { isChannelModule, phoenixChannelBindings, phoenixChannelEvents } from "./channels.js";
 import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
+import { HTTP_VERBS_LOWER } from "../../shared/http-verbs.js";
 
 /** Last dotted segment of an Elixir module alias (`MyApp.Accounts.User` → `User`). */
 function lastSeg(mod: string): string {
@@ -241,7 +242,6 @@ function sqlStrings(lines: string[]): DataSourceInfo[] {
 // ─── Outgoing HTTP ───────────────────────────────────────────────────────────
 
 const HTTP_CALL_RE = /\b(Req|HTTPoison|HTTPotion|Tesla|Finch)\.(get|post|put|patch|delete|head|options|request|build)!?\s*\(\s*(.*)$/;
-const HTTP_VERBS = new Set(["get", "post", "put", "patch", "delete", "head", "options"]);
 
 /**
  * Requests through Req, HTTPoison, Tesla and Finch: `Req.post("https://…/#{id}/purge", opts)`,
@@ -277,20 +277,20 @@ export function httpCalls(lines: string[]): DataSourceInfo[] {
     const m = HTTP_CALL_RE.exec(lines[i]!);
     if (!m) continue;
     const [, lib, fn, rest] = m;
-    let verb: string | null = HTTP_VERBS.has(fn!) ? fn!.toUpperCase() : null;
+    let verb: string | null = HTTP_VERBS_LOWER.has(fn!) ? fn!.toUpperCase() : null;
     let urlExpr: string | null = rest!;
     if (fn === "build") {
       // `Finch.build(:post, url, headers, body)`; piped, the method is the subject.
       const args = rest!.split(",");
       const atom = /^\s*:(\w+)/.exec(args[0] ?? "");
-      if (atom && HTTP_VERBS.has(atom[1]!)) verb = atom[1]!.toUpperCase();
+      if (atom && HTTP_VERBS_LOWER.has(atom[1]!)) verb = atom[1]!.toUpperCase();
       urlExpr = args.length > 1 ? args.slice(1).join(",") : null;
     }
     // Keyword options name the URL and method: `Req.post(url: url)`, `Req.request(url: u, method: :get)`.
     const kwUrl = /\burl:\s*([^,)]+)/.exec(rest!);
     if (kwUrl) urlExpr = kwUrl[1]!;
     const kwMethod = /\bmethod:\s*:(\w+)/.exec(rest!);
-    if (kwMethod && HTTP_VERBS.has(kwMethod[1]!)) verb = kwMethod[1]!.toUpperCase();
+    if (kwMethod && HTTP_VERBS_LOWER.has(kwMethod[1]!)) verb = kwMethod[1]!.toUpperCase();
     const target = urlExpr ? urlOf(urlExpr, i) : null;
     out.push({ kind: "api-call", name: verb && target ? `${verb} ${target}` : `${lib}.${fn}`, target, calls: [], line: i + 1, column: m.index });
   }

@@ -12,6 +12,7 @@ import {
 } from "./spring.js";
 import { applyRouteMeta, type GuardAttr } from "../../../shared/route-metadata.js";
 import { guardsOn, routeParamsOf } from "./meta-annotations.js";
+import { HTTP_VERBS } from "../../../shared/http-verbs.js";
 
 /**
  * JAX-RS (Jersey / RESTEasy / Quarkus) and Micronaut inbound routes.
@@ -49,9 +50,6 @@ export const JAXRS_UNMOUNTED_FACT = "jaxrs:unmounted";
 /** `RouteInfo.prefixUnresolved` of a sub-resource's rows until a locator mounts them. */
 export const JAXRS_SUB_RESOURCE = "jaxrs:sub-resource";
 
-const JAXRS_VERBS: ReadonlySet<string> = new Set([
-  "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS",
-]);
 const MICRONAUT_VERBS: ReadonlySet<string> = new Set([
   "Get", "Post", "Put", "Delete", "Patch", "Head", "Options",
 ]);
@@ -194,7 +192,7 @@ function emitMethodRoutes(
     if (!name) continue;
 
     // JAX-RS: verb is a marker — an argument means Retrofit-style outbound.
-    if (JAXRS_VERBS.has(name) && !annotationArgsNode(ann)) {
+    if (HTTP_VERBS.has(name) && !annotationArgsNode(ann)) {
       verb = name;
       micronautLine = ann.startPosition.row + 1;
       continue;

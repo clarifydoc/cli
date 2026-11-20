@@ -1,6 +1,7 @@
 import type { Node } from "web-tree-sitter";
 import type { DataSourceInfo } from "../../../types/analysis.js";
 import { stripQuotes } from "../../shared/node-helpers.js";
+import { HTTP_VERBS_LOWER } from "../../shared/http-verbs.js";
 
 /**
  * Generated HTTP clients whose request shape no call site spells out.
@@ -24,7 +25,6 @@ import { stripQuotes } from "../../shared/node-helpers.js";
  */
 export const GENERATED_CLIENT_MARKER = "localVarRequestOptions";
 
-const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "head", "options"]);
 
 /**
  * Called on every `variable_declarator`. When it is the generator's
@@ -59,7 +59,7 @@ function methodOf(options: Node): string | null {
     const v = pair.childForFieldName("value");
     if (v?.type !== "string") return null;
     const m = stripQuotes(v.text).toLowerCase();
-    return HTTP_METHODS.has(m) ? m : null;
+    return HTTP_VERBS_LOWER.has(m) ? m : null;
   }
   return null;
 }

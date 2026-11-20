@@ -4,6 +4,7 @@ import { applyRouteMeta, boundParam, inferredParam, pathParamNames } from "../..
 import type { Form, SeqForm, StringForm, SymbolForm } from "./forms.js";
 import { isKeyword, isSymbol, mapGet, printForm, tryReadFirst, tryReadForms, walk } from "./forms.js";
 import { joinRootedPath } from "../../shared/route-paths.js";
+import { HTTP_VERBS_LOWER } from "../../shared/http-verbs.js";
 
 /**
  * Clojure web routes with their attribute layer, read from the form tree:
@@ -22,7 +23,6 @@ import { joinRootedPath } from "../../shared/route-paths.js";
  */
 
 const VERBS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "ANY"]);
-const REITIT_VERBS = new Set(["get", "post", "put", "patch", "delete", "head", "options"]);
 const AUTH_MW_RE = /(?:^|\/)wrap-[\w-]*(?:auth|session|token|jwt|login|secure|permission|role|admin|restrict|authoriz|csrf-check|identity)[\w-]*$/i;
 const BACKEND_RE = /(?:^|\/)(jws|jwe|jwt|session|token|basic|http-basic)(?:-backend)?$/;
 
@@ -369,7 +369,7 @@ export function extractClojureRoutes(lines: string[]): RouteInfo[] {
     const children = node.items.slice(1).filter((c): c is SeqForm => c.kind === "vector" && c.items[0]?.kind === "string" && c.items[0].value.startsWith("/"));
     if (data) {
       for (const [k, v] of data.entries) {
-        if (!isKeyword(k) || !REITIT_VERBS.has(k.name)) continue;
+        if (!isKeyword(k) || !HTTP_VERBS_LOWER.has(k.name)) continue;
         let handler: string | null = null;
         let verbMeta = { guards: [] as GuardAttr[], middleware: [] as string[], params: [] as RouteParamInfo[] };
         if (isSymbol(v)) handler = v.name === "handler" ? null : v.name;

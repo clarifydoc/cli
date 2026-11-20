@@ -4,6 +4,7 @@ import type { ProjectContext } from "../../../../types/project.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";
 import { literalString } from "../../../shared/node-helpers.js";
 import { joinRelPath, lambdaModuleHandler } from "../../shared/lambda-handlers.js";
+import { HTTP_VERBS } from "../../../shared/http-verbs.js";
 
 /**
  * AWS CDK stacks: the API Gateway routes they wire to Lambda functions.
@@ -42,7 +43,6 @@ export interface CdkRouteFact {
 }
 
 const FUNCTION_CTOR = /(?:^|\.)(Function|NodejsFunction|PythonFunction|SingletonFunction)$/;
-const VERBS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 
 const propOfRaw = (obj: Node | null | undefined, key: string): Node | null => {
   for (const p of obj?.namedChildren ?? []) {
@@ -209,7 +209,7 @@ export function collectCdkRoutes(root: Node, sourceText: string, facts: RouteFac
         const opts = args(n)[0];
         const path = str(propOf(opts, "path"));
         const target = integrationTarget(propOf(opts, "integration"));
-        const methods = (propOf(opts, "methods")?.namedChildren ?? []).map((m) => m.text.split(".").pop()!.toUpperCase()).filter((m) => VERBS.has(m) || m === "ANY");
+        const methods = (propOf(opts, "methods")?.namedChildren ?? []).map((m) => m.text.split(".").pop()!.toUpperCase()).filter((m) => HTTP_VERBS.has(m) || m === "ANY");
         if (path !== null) for (const m of methods.length ? methods : ["ANY"]) push(n.startPosition.row + 1, m === "ANY" ? null : m, path, target);
       }
     }
