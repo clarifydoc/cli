@@ -237,3 +237,43 @@ describe("C++ function-typed fields declared in a header", () => {
     expect(found.filter((l) => l.includes("c.on_start") || l.includes("c.on_count"))).toEqual([]);
   });
 });
+
+// A callback stored in a field named like an accessor, on a base declared in its own header; and a namesake class whose
+// member of that name is a method in another sub-project, which an invoke must never be taken from.
+describe("C++ callable fields: no name list, no namesake across sub-projects", () => {
+  const inProject = (a: FileAnalysis, projectId: string): FileAnalysis => ({ ...a, projectId });
+  const baseH = `#pragma once
+#include <functional>
+struct Base { std::function<void()> value; std::function<void()> run; };
+`;
+  const derivedH = `#pragma once
+#include "base.h"
+struct Derived : Base { int n; };
+`;
+  const wireCpp = `#include "derived.h"
+void go() {}
+void wire(Derived& d) { d.value = go; }
+`;
+  const useCpp = `#include "derived.h"
+void drive(Derived& d) { d.value(); }
+`;
+  const otherH = `#pragma once
+struct Derived { void value(); };
+`;
+  const otherCpp = `#include "derived.h"
+void Derived::value() {}
+void stop(Derived& d) { d.value(); }
+`;
+  const found = buildSymbolLinks([
+    inProject(read(baseH, "a/base.h"), "a"), inProject(read(derivedH, "a/derived.h"), "a"),
+    inProject(read(wireCpp, "a/wire.cpp"), "a"), inProject(read(useCpp, "a/use.cpp"), "a"),
+    inProject(read(otherH, "b/derived.h"), "b"), inProject(read(otherCpp, "b/derived.cpp"), "b"),
+  ]).map((l) => `${l.strategy} ${l.sourceSymbol} ${l.callName} -> ${l.targetSymbol}`);
+  it("runs a callback stored in a field named `value`, declared on a base", () => {
+    expect(found).toContain("value-flow drive d.value -> go");
+  });
+  it("keeps the method of the namesake class in the other sub-project linked, not taken as an invoke", () => {
+    expect(found.filter((l) => l.startsWith("value-flow stop"))).toEqual([]);
+    expect(found.some((l) => l.includes("stop d.value -> Derived.value"))).toBe(true);
+  });
+});

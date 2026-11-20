@@ -15,8 +15,7 @@
  * on to every cell, argument and invoke it feeds, so a catch-all holder never fabricates edges. A work budget
  * bounds the whole run; past it nothing is emitted.
  */
-import type { ClassInfo, Language, FileAnalysis, FunctionInfo, PropertyInfo, SymbolLink, ValueCell, ValueFlowFact } from "../types/analysis.js";
-import { receiverTypeName } from "../extractors/shared/type-parser.js";
+import type { ClassInfo, FileAnalysis, FunctionInfo, PropertyInfo, SymbolLink, ValueCell, ValueFlowFact } from "../types/analysis.js";
 import { resolveImportSource } from "./import-index.js";
 
 /** At most this many functions a cell may hold before it is poisoned. */
@@ -32,9 +31,15 @@ const BUDGET_PER_FACT = 200;
 const RECEIVER_NAMES = new Set(["this", "self"]);
 const CONSTRUCTOR_NAMES = ["constructor", "__init__", "__construct", "init", "new"];
 
-/** "Is `type`, written in `file`, a function type?" — answered by the linker through the file's own imports and scope. */
-export type FunctionTypeQuestion = (file: string, type: string) => boolean;
-const NO_FUNCTION_TYPES: FunctionTypeQuestion = () => false;
+/**
+ * The one question behind both conditional invokes, asked of the linker from the scope (`file`, `symbol`) that states
+ * the call: is a held value typed by `fnType` — a name the file cannot judge — a function type, or is `member` of
+ * `receiver` (a local, a parameter or `this`) a callable field of its class? The linker answers through its own
+ * receiver typing and class lookup, never a name pooled across sub-projects.
+ */
+export type CallableQuery = { file: string; symbol: string } & ({ fnType: string } | { receiver: string; member: string });
+export type CallableQuestion = (query: CallableQuery) => boolean;
+const NOTHING_CALLABLE: CallableQuestion = () => false;
 
 /** What the solver asks of the linker (callbacks, so this module imports nothing of it). */
 export interface ValueFlowHost {
@@ -53,8 +58,8 @@ export interface ValueFlowHost {
   importedBinding(file: string, name: string): { file: string; name: string; namespace: boolean } | null;
   /** The other files whose module-level names `file` sees by their bare names (a Go package: the files of its directory); omitted when the language has none. */
   sharedModuleFiles?(file: string): readonly string[];
-  /** Whether a type name (as written) read in `file` is a function type — an alias of one the file reaches, never a class of that name. */
-  isFunctionType?: FunctionTypeQuestion;
+  /** Whether a conditional invoke (`ifFnType`, `ifFnField`) runs a function: a type name that is an alias of a function type, a field of the receiver's class declared callable. */
+  isCallable?: CallableQuestion;
   /** A test file, or a test double's. */
   isTest(file: string): boolean;
   /** One line of progress, shown in verbose runs. */
@@ -82,88 +87,35 @@ function closureClassOf(analysis: FileAnalysis, fn: FunctionInfo): ClassInfo | n
 }
 
 /**
- * The facts a scope states: an `invoke` of a value typed by a name the file cannot judge (`ifFnType`) is kept only
- * when the host reads that name, as seen from this file, as a function type — never by a name pooled across files.
+ * The facts a scope states: a conditional `invoke` — a value typed by a name the file cannot judge (`ifFnType`), a call
+ * through a field another file's class may declare callable (`ifFnField`) — is kept only when the host says it runs a
+ * function.
  */
-function gated(facts: readonly ValueFlowFact[], analysis: FileAnalysis, isFunctionType: FunctionTypeQuestion): readonly ValueFlowFact[] {
-  if (!facts.some((f) => f.kind === "invoke" && f.ifFnType !== undefined)) return facts;
-  return facts.filter((f) => f.kind !== "invoke" || f.ifFnType === undefined || isFunctionType(analysis.filePath, f.ifFnType));
-}
-
-
-/** Callable property names per class, by language and simple class name (`FileAnalysis.classes[].properties[].callable`). */
-const callableFieldsCache = new WeakMap<readonly FileAnalysis[], Map<string, { members: Set<string>; extends: string[] }>>();
-
-/** A class or type written in a language's own syntax, as the simple class name the project declares it by. */
-const simpleName = (name: string, language: Language): string => receiverTypeName(name, language) ?? name;
-
-function callableFieldsOf(analyses: readonly FileAnalysis[]): Map<string, { members: Set<string>; extends: string[] }> {
-  const cached = callableFieldsCache.get(analyses);
-  if (cached) return cached;
-  let out = new Map<string, { members: Set<string>; extends: string[] }>();
-  let anyCallable = false;
-  for (const a of analyses) {
-    for (const c of a.classes) {
-      const callable = c.properties.filter((p) => p.callable);
-      if (callable.length === 0 && !c.extends) continue;
-      const key = `${a.language}\0${simpleName(c.name, a.language)}`;
-      let entry = out.get(key);
-      if (!entry) out.set(key, (entry = { members: new Set(), extends: [] }));
-      for (const p of callable) entry.members.add(p.name);
-      // A class's bases: a member it inherits from one is callable too.
-      if (c.extends) entry.extends.push(simpleName(c.extends, a.language));
-      anyCallable ||= callable.length > 0;
-    }
-  }
-  // No callable field anywhere: no class declares one, whatever its bases.
-  if (!anyCallable) out = new Map();
-  callableFieldsCache.set(analyses, out);
-  return out;
-}
-
-
-/**
- * `ifFnField` invokes keep only where the receiver's class (or a base, three hops) declares the member as a callable
- * property: a field of a header's class read in another file, never a method of that name nor a data field.
- */
-function gatedFields(facts: readonly ValueFlowFact[], scope: { analysis: FileAnalysis; fn: FunctionInfo | null; cls: ClassInfo | null }, analyses: readonly FileAnalysis[]): readonly ValueFlowFact[] {
-  if (!facts.some((f) => f.kind === "invoke" && f.ifFnField)) return facts;
-  const fields = callableFieldsOf(analyses);
-  const lang = scope.analysis.language;
-  const declares = (cls: string, member: string, hops = 0): boolean => {
-    const entry = fields.get(`${lang}\0${cls}`);
-    if (!entry) return false;
-    return entry.members.has(member) || (hops < 3 && entry.extends.some((b) => declares(b, member, hops + 1)));
-  };
+function gated(facts: readonly ValueFlowFact[], scope: { file: string; symbol: string }, isCallable: CallableQuestion): readonly ValueFlowFact[] {
+  if (!facts.some((f) => f.kind === "invoke" && (f.ifFnType !== undefined || f.ifFnField))) return facts;
   return facts.filter((f) => {
-    if (f.kind !== "invoke" || !f.ifFnField) return true;
-    const { name, member } = f.cell;
-    if (member === undefined) return false;
-    let type: string | null | undefined;
-    if (name === "this") type = scope.cls?.name;
-    else if (!/^\w+$/.test(name)) return false;
-    else type = scope.fn?.params.find((p) => p.name === name)?.type ?? scope.fn?.localTypes?.find((l) => l.name === name && l.type && !l.aliasOf)?.type;
-    if (!type) return false;
-    const cls = receiverTypeName(type, lang);
-    return cls !== null && declares(cls, member);
+    if (f.kind !== "invoke") return true;
+    if (f.ifFnType !== undefined) return isCallable({ ...scope, fnType: f.ifFnType });
+    if (!f.ifFnField) return true;
+    return f.cell.member !== undefined && isCallable({ ...scope, receiver: f.cell.name, member: f.cell.member });
   });
 }
 
-function* scopesOf(analysis: FileAnalysis, isFunctionType: FunctionTypeQuestion, analyses: readonly FileAnalysis[]): Generator<Scope> {
+function* scopesOf(analysis: FileAnalysis, isCallable: CallableQuestion): Generator<Scope> {
   const setup = analysis.functions.find((f) => f.name === "<setup>") ?? null;
   const moduleFacts = analysis.moduleValueFlow ?? [];
-  // Both conditional-invoke gates: a held function type (`ifFnType`), a callable field (`ifFnField`).
-  const gate = (facts: readonly ValueFlowFact[], fn: FunctionInfo | null, cls: ClassInfo | null): readonly ValueFlowFact[] =>
-    gatedFields(gated(facts, analysis, isFunctionType), { analysis, fn, cls }, analyses);
   for (const fn of analysis.functions) {
     const facts = fn === setup ? [...(fn.valueFlow ?? []), ...moduleFacts] : fn.valueFlow ?? [];
     const cls = closureClassOf(analysis, fn);
-    yield { file: analysis.filePath, symbol: fn.name, analysis, fn, cls, facts: gate(facts, fn, cls) };
+    yield { file: analysis.filePath, symbol: fn.name, analysis, fn, cls, facts: gated(facts, { file: analysis.filePath, symbol: fn.name }, isCallable) };
   }
   for (const cls of analysis.classes) {
-    for (const m of cls.methods) yield { file: analysis.filePath, symbol: `${cls.name}.${m.name}`, analysis, fn: m, cls, facts: gate(m.valueFlow ?? [], m, cls) };
+    for (const m of cls.methods) {
+      const symbol = `${cls.name}.${m.name}`;
+      yield { file: analysis.filePath, symbol, analysis, fn: m, cls, facts: gated(m.valueFlow ?? [], { file: analysis.filePath, symbol }, isCallable) };
+    }
   }
-  if (!setup && moduleFacts.length > 0) yield { file: analysis.filePath, symbol: "<setup>", analysis, fn: null, cls: null, facts: gate(moduleFacts, null, null) };
+  if (!setup && moduleFacts.length > 0) yield { file: analysis.filePath, symbol: "<setup>", analysis, fn: null, cls: null, facts: gated(moduleFacts, { file: analysis.filePath, symbol: "<setup>" }, isCallable) };
 }
 
 /**
@@ -173,7 +125,7 @@ function* scopesOf(analysis: FileAnalysis, isFunctionType: FunctionTypeQuestion,
  * nothing (`const f = debounce(g)`, `useCallback(…)`: a value the facts do not follow), keeps a link into its own
  * file only. A member no seed or copy writes anywhere (`this.model.apply()` on an object field) is left to the name tiers entirely.
  */
-export function valueFlowInvokeSites(analyses: readonly FileAnalysis[], isFunctionType: FunctionTypeQuestion = NO_FUNCTION_TYPES): Map<string, "suppress" | "same-file"> {
+export function valueFlowInvokeSites(analyses: readonly FileAnalysis[], isCallable: CallableQuestion = NOTHING_CALLABLE): Map<string, "suppress" | "same-file"> {
   const out = new Map<string, "suppress" | "same-file">();
   const writtenMembers = new Set<string>();
   // Only a seed or a copy says what a cell holds; a call's result (`debounce(load)`) is a value the facts do not follow.
@@ -182,7 +134,7 @@ export function valueFlowInvokeSites(analyses: readonly FileAnalysis[], isFuncti
   // statement writes `clubKeys.one` itself, never because another object anywhere has a member named `one`.
   // Keyed per writing file: another file's namesake object (`IFrameHelper` declared twice) is not this one.
   const writtenPairs = new Map<string, string[]>();
-  for (const a of analyses) for (const s of scopesOf(a, isFunctionType, analyses)) for (const f of s.facts) {
+  for (const a of analyses) for (const s of scopesOf(a, isCallable)) for (const f of s.facts) {
     const to = writes(f);
     if (to?.member === undefined) continue;
     writtenMembers.add(to.member);
@@ -210,12 +162,12 @@ export function valueFlowInvokeSites(analyses: readonly FileAnalysis[], isFuncti
       for (const n of Object.keys(i.aliases ?? {})) imported.add(n);
     }
     const moduleWritten = new Set<string>();
-    for (const s of scopesOf(a, isFunctionType, analyses)) for (const f of s.facts) {
+    for (const s of scopesOf(a, isCallable)) for (const f of s.facts) {
       const to = writes(f);
       if (!to) continue;
       if (to.module || s.fn === null || s.fn.name === "<setup>") moduleWritten.add(to.name);
     }
-    for (const s of scopesOf(a, isFunctionType, analyses)) {
+    for (const s of scopesOf(a, isCallable)) {
       let local: Set<string> | null = null;
       for (const f of s.facts) {
         // A name a sibling file's package variable may be: a function of that name keeps the name tiers.
@@ -260,10 +212,10 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
   const { analyses } = host;
   if (!hasValueFlowFacts(analyses)) return [];
 
-  const isFunctionType = host.isFunctionType ?? NO_FUNCTION_TYPES;
+  const isCallable = host.isCallable ?? NOTHING_CALLABLE;
   const scopes: Scope[] = [];
   let factCount = 0;
-  for (const a of analyses) for (const s of scopesOf(a, isFunctionType, analyses)) { scopes.push(s); factCount += s.facts.length; }
+  for (const a of analyses) for (const s of scopesOf(a, isCallable)) { scopes.push(s); factCount += s.facts.length; }
   const budget = BASE_BUDGET + factCount * BUDGET_PER_FACT;
 
   const analysisAt = new Map(analyses.map((a) => [a.filePath, a]));

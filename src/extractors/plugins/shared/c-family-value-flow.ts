@@ -26,8 +26,8 @@ const PRIMITIVES = new Set([
   "intptr_t", "uintptr_t", "int8_t", "int16_t", "int32_t", "int64_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t", "_Bool", "string", "FILE",
 ]);
 const FN_TYPE = /function|\(\s*[*^]|Callback|Handler|Callable|Delegate|Listener/;
-/** Member names that read as accessors or container operations, never a stored callback. */
-const ACCESSOR_NAME = /^(?:(?:is|has|get|set|to|can)[A-Z_]\w*|size|length|data|value|at|count|contains|begin|end|empty|clear|first|last|front|back|name|title|text|isEmpty|isNull|isValid)$/;
+/** A header stem or a class name as one comparable key: `Club_Squad`, `club-squad` and `ClubSquad` agree. */
+const stemKey = (name: string): string => name.toLowerCase().replace(/[^a-z\d]/g, "");
 const LITERALS = new Set(["NULL", "nullptr", "true", "false", "this", "TRUE", "FALSE", "nil"]);
 /** Words that make a type's name one a callable has (`handler_t`, `ClubCallback`, `sign_fn`). */
 const TYPE_WORDS = new Set([
@@ -391,6 +391,12 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
   for (const m of text.matchAll(/\busing\s+([A-Za-z_]\w*)\s*=\s*(?:std\s*::\s*function\b|[^;]*\(\s*[*^]\s*\))/g)) fpTypedefs.add(m[1]!);
   for (const m of text.matchAll(/\btypedef\s+std\s*::\s*function\b[^;]*?\b([A-Za-z_]\w*)\s*;/g)) fpTypedefs.add(m[1]!);
   const classes = analysis.classes;
+  /** The project headers the file includes by their stem (`#include "club/squad.h"` → `squad`), the way a class is usually named after its header. */
+  const headerStems = new Set<string>();
+  for (const line of lines) {
+    const m = /^\s*#\s*include\s*"([^"]+)"/.exec(line);
+    if (m) headerStems.add(stemKey(m[1]!.replace(/^.*\//, "").replace(/\.[^.]*$/, "")));
+  }
   // A C++ field typed by a function-pointer typedef or alias the file declares (`http_cb on_done;`) holds a function.
   if (cpp && fpTypedefs.size > 0) {
     for (const c of classes) for (const p of c.properties) if (!p.callable && p.type && fpTypedefs.has(p.type)) p.callable = true;
@@ -1005,9 +1011,11 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
     const info = s.declared.get(head) ?? s.params.get(head);
     const key = info ? typeKey(info.type) : null;
     if (!key || key.startsWith("std::") || kindOf(s, head) === "module") return null;
-    // Library receivers (a Qt value type written without arguments) and accessor names (`isEmpty`, `setGroup`, `size`) are no field
-    // a project stores a function into; stating them costs a fact per call for core to discard.
-    if (/^Q[A-Z]\w*$/.test(info!.type.replace(STORAGE, " ").replace(/[*&]/g, " ").trim()) || ACCESSOR_NAME.test(leaf)) return null;
+    // Stated fact: the receiver's class is one this file declares or one a project header it includes is named for.
+    // A library type (`QString`, a container) has neither, and a field call on it is no stored callback; core's
+    // gate answers the rest. A class a header declares under another name is missed, a recall cost, never a wrong link.
+    const typeName = key.replace(/<[\s\S]*$/, "").split("::").pop()!;
+    if (!classes.some((c) => c.name === typeName) && !headerStems.has(stemKey(typeName))) return null;
     return { name: head, member: leaf };
   };
 

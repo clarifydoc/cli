@@ -30,6 +30,7 @@ import { commonPrefixLength, extensionFamily, escapeRegex } from "../extractors/
 import { receiverTypeCandidates, receiverTypeName } from "../extractors/shared/type-parser.js";
 import { ELEMENT_HOP } from "../extractors/shared/collection-element.js";
 import { isTestFile } from "./test-file-detector.js";
+import type { CallableQuery } from "./value-flow.js";
 import { callSiteKey, hasValueFlowFacts, solveValueFlow, valueFlowInvokeSites } from "./value-flow.js";
 import { getLanguageForFile } from "../parsers/language-map.js";
 import { ALL_BUILTIN_MEMBERS, BUILTIN_MEMBERS_BY_LANGUAGE, declaresSchemaTypes, importsNameDirectories, isApiContractLanguage, manifestFor, packageEcosystemsFor, packageMatchingFor, pluginFor, testFilePatternsFor } from "../extractors/registry.js";
@@ -142,7 +143,7 @@ export function buildSymbolLinks(
     importedStemsCache: new Map(),
   };
   // After the context exists: the function-type question reads its import and scope resolution.
-  if (hasValueFlowFacts(analyses)) ctx.invokeSites = valueFlowInvokeSites(analyses, functionTypeQuestion(ctx));
+  if (hasValueFlowFacts(analyses)) ctx.invokeSites = valueFlowInvokeSites(analyses, callableQuestion(ctx));
   const interfaceImplMap = ctx.interfaceImplMap;
   const links: SymbolLink[] = [];
 
@@ -4645,9 +4646,40 @@ function valueFlowLinks(links: readonly SymbolLink[], ctx: LinkContext): SymbolL
       const slash = file.lastIndexOf("/");
       return packageFilesOf(ctx, slash < 0 ? "" : file.slice(0, slash), file);
     },
-    isFunctionType: functionTypeQuestion(ctx),
+    isCallable: callableQuestion(ctx),
     isTest: (file) => testFileAt(ctx, file),
   });
+}
+
+/**
+ * The one host question behind a conditional `invoke` (`CallableQuery`): a held value typed by a name the file cannot
+ * judge asks `functionTypeQuestion`; a call through a field another file's class may declare callable (`ifFnField`)
+ * is answered from the receiver as the linker types it (`receiverDeclaredType`; `this` is the class the scope is
+ * written in) and the class `locateClass` finds from the caller's file — own import and sub-project first — then its
+ * bases by the linker's own `parentClassOf`, three hops: a `PropertyInfo.callable` member of that class. A method
+ * of the name, a data field, and a namesake class of another sub-project never answer yes.
+ */
+function callableQuestion(ctx: LinkContext): (query: CallableQuery) => boolean {
+  const fnType = functionTypeQuestion(ctx);
+  return (q) => {
+    if ("fnType" in q) return fnType(q.file, q.fnType);
+    const analysis = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(q.file);
+    if (!analysis) return false;
+    const dot = q.symbol.indexOf(".");
+    const written = q.receiver === "this"
+      ? dot > 0 ? q.symbol.slice(0, dot) : findEnclosingCallable(analysis, q.symbol)?.enclosingClass
+      : /^\w+$/.test(q.receiver) ? receiverDeclaredType(analysis, q.symbol, q.receiver) : null;
+    const name = written ? receiverTypeName(written, analysis.language) : null;
+    let file = name ? locateClass(ctx, name, q.file, ctx.projectOf.get(q.file) ?? "root") : null;
+    let cls = name;
+    for (let hops = 0; file && cls && hops <= 3; hops++) {
+      if (ctx.classAt.get(memberKey(file, cls))?.properties.some((p) => p.name === q.member && p.callable)) return true;
+      const parent = parentClassOf(ctx, cls, file);
+      file = parent?.parentFile ?? null;
+      cls = parent?.parentClass ?? null;
+    }
+    return false;
+  };
 }
 
 /**
