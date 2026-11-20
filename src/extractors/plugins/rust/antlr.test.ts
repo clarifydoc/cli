@@ -3,6 +3,9 @@ import { readFileSync } from "fs";
 import { resolve } from "path";
 import { globSync } from "tinyglobby";
 import { readRust } from "./antlr.js";
+import { RustParser } from "../../../parsers/antlr/rust/RustParser.js";
+import { RustReadLexer } from "../../../parsers/antlr/rust/RustReadLexer.js";
+import { parseSll } from "../../../parsers/antlr/run.js";
 import { extractWithRegex } from "../../../core/regex-extractor.js";
 import "../../registry.js";
 
@@ -191,4 +194,28 @@ describe("Rust: ANTLR and the patterns agree on the fixtures", () => {
       expect(differences).toEqual(KNOWN[rel] ?? {});
     });
   }
+
+  it("reads a closure whose body looks like a pattern as a closure, calls included", () => {
+    const calls = (src: string) => readRust(src).functions[0]!.calls.map((c) => c.name);
+    expect(calls("fn f() { let x = a.map_or_else(|_| Value::Object(Map::new()), |d| d.data); }\n")).toEqual(
+      expect.arrayContaining(["Value.Object", "Map.new"]),
+    );
+    expect(calls("fn f() { let n = cars.iter().map(|c| wash(c)).count(); }\n")).toContain("wash");
+  });
+
+  // The reader's first pass tells a struct literal's `{` from a condition's block, so SLL prediction alone reads them.
+  it("reads struct literals, conditions and types in one SLL pass (the reader's lexer)", () => {
+    const sll = (src: string) =>
+      parseSll(src, (input) => new RustReadLexer(input), (tokens) => new RustParser(tokens), (parser) => parser.crate());
+    for (const src of [
+      "fn f() { Ok(Json(MatchReport { club })) }\n",
+      "fn f() { let r = [ Match { id: 1 }, Match { id: 2 } ]; let Match { id } = r[0]; }\n",
+      "fn f() { if a == Kind::Home { g() } else if let Match { id } = m { h(id) } while x { y() } match z { Car { w } => w, _ => 0 }; }\n",
+      "fn f() { for Match { id } in ms { g(id) } let c = |x| -> Car { Car { wheels: x } }; }\n",
+      "enum Event { Goal { player: u8 }, Card }\nimpl Club for Garage where T: Car { fn f() -> Pin<Box<dyn Future<Output = Car> + Send>> { Box::pin(g()) } }\n",
+      "fn f() -> impl Future<Output = Car> + Send { async { Car { wheels: 4 } } }\n",
+    ]) {
+      expect(sll(src), src).not.toBeNull();
+    }
+  });
 });

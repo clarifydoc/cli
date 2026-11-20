@@ -78,6 +78,35 @@ export function parseWithAntlr<P extends Parser, T extends ParserRuleContext>(
   }
 }
 
+/**
+ * Parses `source` once with SLL prediction and a parser that gives up at its first error, for a reader that has a
+ * hint-giving lexer the grammar needs no full-context prediction with: null when that fails, and the caller reads
+ * again with `parseWithAntlr` and the plain lexer, which is what decides every file the hints did not carry.
+ */
+export function parseSll<P extends Parser, T extends ParserRuleContext>(
+  source: string,
+  makeLexer: (input: CharStream) => Lexer,
+  makeParser: (tokens: CommonTokenStream) => P,
+  entry: (parser: P) => T,
+): AntlrParse<T> | null {
+  const lexer = makeLexer(CharStream.fromString(normalizeSource(source)));
+  const errors = new ErrorCounter();
+  lexer.removeErrorListeners();
+  lexer.addErrorListener(errors);
+  const parser = makeParser(new CommonTokenStream(lexer));
+  parser.removeErrorListeners();
+  parser.interpreter.predictionMode = PredictionMode.SLL;
+  parser.errorHandler = new BailErrorStrategy();
+  try {
+    const tree = entry(parser);
+    return errors.count === 0 ? { tree, errors: 0 } : null;
+  } catch {
+    return null;
+  } finally {
+    boundPredictionCache(parser);
+  }
+}
+
 /** DFA states one grammar's prediction cache may hold before it is emptied (see `boundPredictionCache`). */
 const MAX_DFA_STATES = 10_000;
 

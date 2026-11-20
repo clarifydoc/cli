@@ -1,6 +1,7 @@
-import { TerminalNode, Token, type ParserRuleContext, type ParseTree } from "antlr4ng";
+import { TerminalNode, Token, type CommonTokenStream, type ParserRuleContext, type ParseTree } from "antlr4ng";
 import type { ParsedFunctionSpan, ParsedStructure } from "../../../types/language-plugin.js";
 import { RustLexer } from "../../../parsers/antlr/rust/RustLexer.js";
+import { RustReadLexer } from "../../../parsers/antlr/rust/RustReadLexer.js";
 import {
   RustParser,
   BlockStepContext,
@@ -27,7 +28,7 @@ import {
   TokenTreeContext,
   TraitImplContext,
 } from "../../../parsers/antlr/rust/RustParser.js";
-import { normalizeSource, parseWithAntlr } from "../../../parsers/antlr/run.js";
+import { normalizeSource, parseSll, parseWithAntlr } from "../../../parsers/antlr/run.js";
 import { recordPatternCalls, type PatternCallName } from "../shared/antlr-calls.js";
 import type { ValueFlowFact } from "../../../types/analysis.js";
 import { rustValueFlow, type RustFlowHooks } from "./value-flow.js";
@@ -67,13 +68,20 @@ interface Source {
   module?: ValueFlowFact[];
 }
 
-function read(text: string, depth: number): ParsedStructure {
-  const { tree, errors } = parseWithAntlr(
-    text,
-    (input) => new RustLexer(input),
-    (tokens) => new RustParser(tokens),
-    (parser) => parser.crate(),
+/**
+ * A parse with the reader's lexer (struct-literal braces told apart) in SLL mode; the plain lexer's two-stage parse
+ * decides what that does not read.
+ */
+function parseRust<T extends ParserRuleContext>(text: string, entry: (parser: RustParser) => T): { tree: T; errors: number } {
+  const makeParser = (tokens: CommonTokenStream): RustParser => new RustParser(tokens);
+  return (
+    parseSll(text, (input) => new RustReadLexer(input), makeParser, entry) ??
+    parseWithAntlr(text, (input) => new RustLexer(input), makeParser, entry)
   );
+}
+
+function read(text: string, depth: number): ParsedStructure {
+  const { tree, errors } = parseRust(text, (parser) => parser.crate());
   const functions: ParsedFunctionSpan[] = [];
   const module: ValueFlowFact[] = [];
   walk(tree, [], functions, { text, depth, module });
@@ -207,10 +215,8 @@ function parseMacroArguments(group: DelimTokenTreeContext, source: Source): { tr
   const close = group.stop!;
   const padded = "\n".repeat(open.line - 1) + " ".repeat(open.column + 1) + source.text.slice(open.start + 1, close.stop);
   let complete = false;
-  const { tree, errors } = parseWithAntlr(
+  const { tree, errors } = parseRust(
     padded,
-    (input) => new RustLexer(input),
-    (tokens) => new RustParser(tokens),
     (parser) => {
       const params = parser.callParams();
       complete = parser.inputStream.LA(1) === Token.EOF;

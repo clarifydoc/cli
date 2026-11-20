@@ -691,8 +691,11 @@ structExpression
     : structExprStruct
     ;
 
+// `STRUCT_LBRACE` is the first pass's word that this `{` opens a struct literal: after a path, `{` also opens the
+// block of an `if` or `match`, and SLL prediction, which does not know the expression's context, could not tell the
+// two. A `{` it left alone still reads either way. [ClarifyDoc change]
 structExprStruct
-    : pathInExpression LCURLYBRACE innerAttribute* (structExprFields | structBase)? RCURLYBRACE
+    : pathInExpression (LCURLYBRACE | STRUCT_LBRACE) innerAttribute* (structExprFields | structBase)? RCURLYBRACE
     ;
 
 structExprFields
@@ -758,8 +761,11 @@ closureParameters
     : closureParam (COMMA closureParam)* COMMA?
     ;
 
+// A closure parameter is a pattern without a top-level `|`, as the Rust reference has it. With `pattern`, `|b| b` could
+// read the second `b` as an alternative of the first, as could every body that looks like a pattern (`|b| f(b)`), and SLL
+// prediction, which picks the first alternative of an ambiguity, failed on the file. [ClarifyDoc change]
 closureParam
-    : outerAttribute* pattern (COLON type_)?
+    : outerAttribute* patternNoTopAlt (COLON type_)?
     ;
 
 // 8.2.13
@@ -900,7 +906,7 @@ referencePattern
     ;
 
 structPattern
-    : pathInExpression LCURLYBRACE structPatternElements? RCURLYBRACE
+    : pathInExpression (LCURLYBRACE | STRUCT_LBRACE) structPatternElements? RCURLYBRACE
     ;
 
 structPatternElements
@@ -956,10 +962,18 @@ pathPattern
     ;
 
 // 10.1
+// `impl A + B` and `dyn A + B` come before the one-bound forms inside `typeNoBounds`, which read the same text up to
+// the `+`: where only a `typeNoBounds` may stand, `+` follows it (`F: Fn() -> impl A + Send`), so SLL prediction, which
+// takes the first alternative of an ambiguity, ended the type before it and failed at the `+`. [ClarifyDoc change]
 type_
-    : typeNoBounds
-    | implTraitType
+    : implTraitType
+    | dynTraitObjectType
+    | typeNoBounds
     | traitObjectType
+    ;
+
+dynTraitObjectType
+    : KW_DYN typeParamBounds
     ;
 
 typeNoBounds

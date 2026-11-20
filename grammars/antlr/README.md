@@ -75,6 +75,10 @@ per target at its `// Insert here @header` marker.
     `expression` without a block-like leftmost operand, and `statementsTail`/`matchArmBody` end at one `;`/`,`.
   - A block-like statement may go on with `.`/`?` steps, as rustc allows.
 
+  - A closure parameter is a `patternNoTopAlt` (as the Rust reference has it), so a body that looks like a pattern
+    (`|b| f(b)`) is a body; `impl A + B` / `dyn A + B` come before `typeNoBounds` in `type_`; a struct literal and a
+    struct pattern take `STRUCT_LBRACE` as well as `{` (the reader's lexer retypes it, see `src/parsers/AGENTS.md`).
+
   Upstream's parse ran at about 60 KB/s and failed on 5–30% of real files. Now SLL prediction succeeds nearly
   everywhere, and on nine real repositories only rustc's own error fixtures and unstable syntax fail.
 

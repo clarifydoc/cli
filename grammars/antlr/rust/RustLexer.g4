@@ -30,6 +30,12 @@ options
     superClass = RustLexerBase;
 }
 
+// The `{` of a struct literal, which the reader's first pass (`RustReadLexer`, plugins/rust/antlr.ts) retypes where
+// a path followed by `{` can only open one. Never matched by a rule. [ClarifyDoc addition]
+tokens {
+    STRUCT_LBRACE
+}
+
 // https://doc.rust-lang.org/reference/keywords.html strict
 KW_AS        : 'as';
 KW_BREAK     : 'break';

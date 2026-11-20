@@ -79,6 +79,8 @@ processes and comparing every file's reading. That independence is also what let
 10,000 DFA states (`boundPredictionCache`): every state keeps the ATN configuration set it was built from, the cache only grows,
 and a worker reading a thousand varied C files held 450 MB of it.
 
+Rust's SLL pass reads through `RustReadLexer` (`parseSll` in `run.ts`, tried before `parseWithAntlr`): from the tokens before it alone it retypes the `{` of a struct literal as `STRUCT_LBRACE`, which a path followed by `{` cannot be told from an `if`/`match` block without the expression's context — SLL has none, so a file with `Json(Club { id })` failed that pass and was read again in full-context mode, five times slower and, on a real repository, 60% of the parse time. A brace it leaves plain still parses (the grammar takes either token), and when the SLL pass fails the plain lexer's two-stage parse decides, so a wrong guess costs a second reading, never a different tree. Likewise a grammar fix beats a retype where one exists: an SLL failure on valid code is an ambiguity SLL resolves to its first alternative (closure parameters were `pattern`, so `|b| f(b)` read the body as an alternative of the parameter; `impl A + B` sat after `impl A` inside `typeNoBounds`) — find the decision by logging where the SLL pass fails on files full-context reads cleanly.
+
 A predicate at an alternative's left edge costs more than its own evaluation: every DFA state of a decision whose
 start reaches one carries semantic contexts, and antlr4ng's SLL conflict check copies the whole configuration set
 without them for each new state — on C++ that was most of a cold parse. Where the first pass can decide outright, it
