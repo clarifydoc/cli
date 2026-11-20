@@ -51,6 +51,21 @@ describe("symbolsInHunks + reverseSymbolReach", () => {
   });
 });
 
+describe("an edit between the imports", () => {
+  const club = {
+    functions: [{ name: "promote", line: 10, endLine: 20 }],
+    classes: [],
+    imports: [{ line: 1 }, { line: 2 }, { line: 15 }],
+  } as unknown as Parameters<typeof symbolsInHunks>[0] extends ReadonlyMap<string, infer V> ? V : never;
+  it("is an import edit only within the top-level import lines, never stretched by an import inside a function", () => {
+    expect(symbolsInHunks(new Map([["club.py", club]]), new Map([["club.py", [[2, 2]]]])).importOnly).toEqual(["club.py"]);
+    // Line 5 is a module-level constant: the function-local import on line 15 must not make it an import edit.
+    const found = symbolsInHunks(new Map([["club.py", club]]), new Map([["club.py", [[5, 5]]]]));
+    expect(found.importOnly).toEqual([]);
+    expect(found.moduleOnly).toEqual(["club.py"]);
+  });
+});
+
 describe("signatureChanges", () => {
   const fn = (name: string, line: number, params: Array<[string, string | null]>) =>
     ({ name, line, endLine: line + 3, params: params.map(([n, d]) => ({ name: n, type: null, defaultValue: d })) });

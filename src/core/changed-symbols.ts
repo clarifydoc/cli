@@ -158,7 +158,9 @@ export function symbolsInHunks(
         moduleLevel.add(file);
         // Edits inside the file's import block change what IT imports, not what it offers its importers —
         // unless the file declares nothing and is only a barrel of imports.
-        const lines = (a.imports ?? []).map((i) => i.line);
+        // Only top-level imports bound the block: an import inside a function or type body would stretch it
+        // over every module-level line above it (a constant edited there must keep its importers).
+        const lines = (a.imports ?? []).map((i) => i.line).filter((l) => !spans.some((sp) => sp.line < l && l <= sp.endLine) && !typeSpans.some((t) => t.line < l && l <= t.endLine));
         if ((a.functions.length || a.classes.length) && lines.length && s >= Math.min(...lines) && e <= Math.max(...lines)) {
           importOnly.add(file);
           if (a.reexports?.length) forwarded.set(file, a.reexports);
