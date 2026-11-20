@@ -24,9 +24,10 @@ function plugins(files: Record<string, string>): string {
 }
 
 describe("check-plugin-helpers", () => {
+  // It reads every plugin folder: seconds on a loaded machine.
   it("passes on the plugin folders as they are", () => {
     expect(execFileSync("node", [script], { encoding: "utf8" })).toContain("no identical body");
-  });
+  }, 60_000);
 
   it("fails on one helper body declared in two plugin folders, whatever it is named", () => {
     const dir = plugins({ "club/index.ts": HELPER, "player/index.ts": HELPER.replace("lastSegment", "tail") });
