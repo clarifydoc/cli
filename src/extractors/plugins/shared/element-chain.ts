@@ -167,7 +167,7 @@ function apply(state: ElementState, step: Step, rules: ChainRules): ElementState
     case "map":
       if (rules.values.has(name)) return { kind: "coll", elem: state.elem };
       if (rules.keys?.has(name) && state.key) return { kind: "coll", elem: state.key };
-      if (rules.entries?.has(name) && state.key) return { kind: "coll", elem: `Entry<${state.key}, ${state.elem}>` };
+      if (rules.entries?.has(name) && state.key) return { kind: "coll", elem: `Map.Entry<${state.key}, ${state.elem}>` };
       if (!step.call) return null;
       if (rules.mapValueOf.has(name)) return stateOfType(state.elem, rules);
       return null;

@@ -31,6 +31,9 @@ describe("an element taken out of a declared list or map, and a map entry's valu
       [`${PKG}/Player.java`]: "package com.example.league;\npublic class Player { public void promote() {} }\n",
       // A project class with its own `get(int)` keeps its declared return type.
       [`${PKG}/Roster.java`]: "package com.example.league;\npublic class Roster { public Player get(int i) { return null; } }\n",
+      // A project class named like a map entry is no entry.
+      [`${PKG}/Entry.java`]: "package com.example.league;\npublic class Entry<K, V> { public V getValue() { return null; } }\n",
+      [`${PKG}/Ledger.java`]: "package com.example.league;\npublic class Ledger { public java.util.List<Entry<Club, Player>> rows() { return null; } }\n",
       [`${PKG}/ClubRepo.java`]: `package com.example.league;
 import java.util.*;
 public class ClubRepo {
@@ -56,6 +59,7 @@ public class Season {
   public void entryTyped(Map<String, Club> m) { for (Map.Entry<String, Club> en : m.entrySet()) en.getValue().promote(); }
   public void entryField() { for (var en : byName.entrySet()) en.getValue().promote(); }
   public void entryKey(Map<Club, Player> m) { for (var en : m.entrySet()) { en.getKey().promote(); en.getValue().promote(); } }
+  public void bareEntry(Ledger l) { for (Entry<Club, Player> e : l.rows()) e.getValue().promote(); }
   public void entryTwice(Map<String, Club> m, Map<String, Player> p) {
     for (var en : m.entrySet()) en.getValue().promote();
     for (var en : p.entrySet()) en.getValue().promote();
@@ -119,6 +123,9 @@ class Use(val repo: Pitches, val settings: Settings, val byName: Map<String, Tur
     expect(targets(summary, "Season.entryField", "en.getValue().promote")).toEqual(["Club.promote"]);
     expect(targets(summary, "Season.entryKey", "en.getKey().promote")).toEqual(["Club.promote"]);
     expect(targets(summary, "Season.entryKey", "en.getValue().promote")).toEqual(["Player.promote"]);
+  });
+  it("types no bare Entry, which may be a project class", () => {
+    expect(targets(summary, "Season.bareEntry", "e.getValue().promote")).toEqual([]);
   });
   it("types no entry a name binds to two different maps", () => {
     expect(targets(summary, "Season.entryTwice", "en.getValue().promote")).toEqual([]);

@@ -58,7 +58,8 @@ function parseType(language: JkLang): ChainRules["parseType"] {
     if (g.name === "[]") return { kind: "coll", elem: g.args[0]! };
     if (collections.has(g.name) && g.args.length === 1) return { kind: "coll", elem: g.args[0]! };
     if (MAPS.has(g.name) && g.args.length === 2) return { kind: "map", elem: g.args[1]!, key: g.args[0]! };
-    if (g.name === "Entry" && g.args.length === 2) return { kind: "entry", elem: g.args[1]!, key: g.args[0]! };
+    // Only `Map.Entry` as written: a bare `Entry<K, V>` may be a project class.
+    if (g.name === "Entry" && g.args.length === 2 && /(?:^|\.)(?:Mutable)?Map\.(?:Mutable)?Entry\s*</.test(text.trim())) return { kind: "entry", elem: g.args[1]!, key: g.args[0]! };
     if ((language === "java" ? JAVA_OPTIONALS : KOTLIN_OPTIONALS).has(g.name) && g.args.length === 1) return { kind: "optional", elem: g.args[0]! };
     return null;
   };
