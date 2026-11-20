@@ -138,8 +138,8 @@ function* scopesOf(analysis: FileAnalysis, aliases: FnTypeAliases): Generator<Sc
   const setup = analysis.functions.find((f) => f.name === "<setup>") ?? null;
   const moduleFacts = analysis.moduleValueFlow ?? [];
   for (const fn of analysis.functions) {
-    const facts = fn === setup ? [...(fn.valueFlow ?? []), ...moduleFacts] : fn.valueFlow ?? [];
-    yield { file: analysis.filePath, symbol: fn.name, analysis, fn, cls: closureClassOf(analysis, fn), facts: gated(foldModuleCells(facts), analysis, aliases) };
+    const facts = fn === setup ? [...foldModuleCells(fn.valueFlow ?? []), ...foldModuleCells(moduleFacts)] : foldModuleCells(fn.valueFlow ?? []);
+    yield { file: analysis.filePath, symbol: fn.name, analysis, fn, cls: closureClassOf(analysis, fn), facts: gated(facts, analysis, aliases) };
   }
   for (const cls of analysis.classes) {
     for (const m of cls.methods) yield { file: analysis.filePath, symbol: `${cls.name}.${m.name}`, analysis, fn: m, cls, facts: gated(foldModuleCells(m.valueFlow ?? []), analysis, aliases) };
