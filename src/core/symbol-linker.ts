@@ -7421,6 +7421,19 @@ function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonl
 }
 
 /**
+ * Whether the project declares a class named like a wrapper where the declaring file could mean it: same language
+ * family (the manifest's `family`) and same sub-project. A namesake in another family or service shadows nothing.
+ */
+function wrapperShadowed(ctx: LinkContext, name: string, declFile: string): boolean {
+  const family = manifestFor((ctx.languageOf.get(declFile) ?? "") as Language)?.family;
+  const project = ctx.projectOf.get(declFile) ?? "root";
+  return (ctx.classFiles.get(name) ?? []).some((f) => {
+    const other = manifestFor((ctx.languageOf.get(f) ?? "") as Language)?.family;
+    return (family !== undefined ? other === family : ctx.languageOf.get(f) === ctx.languageOf.get(declFile)) && (ctx.projectOf.get(f) ?? "root") === project;
+  });
+}
+
+/**
  * The wrapper a declared type is, when the hop after it takes the value out: `Provider<Club>` before `.get()`
  * (`unwrapCalls`), `Lazy<Club>` before `.value`, `IOptions<Club>` before `.Value` (`unwrapMembers`) — the wrapper's
  * first type argument, as the next receiver. Never a wrapper name the project declares as its own class, and never a
@@ -7434,7 +7447,7 @@ function unwrappedDeclared(ctx: LinkContext, declared: { type: string; file: str
   const written = declared.type.trim();
   const open = written.indexOf("<");
   const head = open > 0 ? written.slice(0, open).trim().split(/\.|::/).pop() ?? "" : "";
-  if (!wrappers.includes(head) || !written.endsWith(">") || ctx.classFiles.has(head)) return null;
+  if (!wrappers.includes(head) || !written.endsWith(">") || wrapperShadowed(ctx, head, declared.file)) return null;
   return returnedPoint(ctx, awaitedType(written, wrappers), declared.file, { typeName: "", typeFile: null, consumer });
 }
 
@@ -8136,7 +8149,7 @@ function methodResult(ctx: LinkContext, point: InjectionPoint, method: string, a
     const written = instanceReturn(def)?.trim() ?? "";
     const open = written.indexOf("<");
     const head = open > 0 ? written.slice(0, open).trim().split(/\.|::/).pop() ?? "" : "";
-    if (!unwrap.includes(head) || !written.endsWith(">") || ctx.classFiles.has(head)) return null;
+    if (!unwrap.includes(head) || !written.endsWith(">") || wrapperShadowed(ctx, head, hit.file)) return null;
     return returnedPoint(ctx, awaitedType(written, unwrap), hit.file, point);
   }
   const next = returnedPoint(ctx, instanceReturn(def), hit.file, point, awaited) ?? statedResultPoint(ctx, hit.file, def, point.consumer, awaited, point);

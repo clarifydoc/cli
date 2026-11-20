@@ -147,3 +147,42 @@ describe("a project class named like a wrapper is never unwrapped", () => {
     expect(targets(summary, "Service.Run", "_repo.Value.Save")).not.toContain("ClubRepo.Save");
   });
 });
+
+describe("a namesake of a wrapper elsewhere does not stop unwrapping", () => {
+  let summary: ProjectAnalysis;
+  let done: () => Promise<void>;
+  beforeAll(async () => {
+    ({ summary, done } = await scan({
+      "web/package.json": '{"name":"web"}',
+      "web/src/provider.ts": "export class Provider<T> { get(): T { return null as any; } }\n",
+      "svc/pom.xml": "<project><modelVersion>4.0.0</modelVersion><groupId>x</groupId><artifactId>svc</artifactId><version>1</version></project>",
+      "svc/src/main/java/com/example/league/ClubRepo.java": "package com.example.league;\npublic class ClubRepo { public void save() {} }\n",
+      "svc/src/main/java/com/example/league/PlayerRepo.java": "package com.example.league;\npublic class PlayerRepo { public void save() {} }\n",
+      "svc/src/main/java/com/example/league/Service.java": `package com.example.league;
+import javax.inject.Provider;
+public class Service {
+  private Provider<ClubRepo> provider;
+  public void run() { provider.get().save(); }
+}
+`,
+      "pitch/build.gradle.kts": "plugins { kotlin(\"jvm\") }\n",
+      "pitch/src/main/kotlin/Pitches.kt": `package league
+class PitchRepo { fun mark() {} }
+class StandRepo { fun mark() {} }
+class Pitches {
+  val declared: Lazy<PitchRepo> = lazy { PitchRepo() }
+  fun run() { declared.value.mark() }
+}
+`,
+      "other/pom.xml": "<project><modelVersion>4.0.0</modelVersion><groupId>x</groupId><artifactId>other</artifactId><version>1</version></project>",
+      "other/src/main/java/Lazy.java": "public class Lazy<T> { public StandRepoLike value; }\nclass StandRepoLike {}\n",
+    }));
+  });
+  afterAll(async () => done());
+  it("a TypeScript Provider class does not stop Java's Provider.get()", () => {
+    expect(targets(summary, "Service.run", "provider.get().save")).toEqual(["ClubRepo.save"]);
+  });
+  it("a Java Lazy class in another sub-project does not stop Kotlin's Lazy.value", () => {
+    expect(targets(summary, "Pitches.run", "declared.value.mark")).toEqual(["PitchRepo.mark"]);
+  });
+});
