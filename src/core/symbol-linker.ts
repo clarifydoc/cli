@@ -1,5 +1,5 @@
 import { routeSymbolName } from "./route-symbol.js";
-import { isJoinableRoute, normalizeRoutePath, routeUrlNames } from "./route-linker.js";
+import { codeTwinsIndex, isJoinableRoute } from "./route-linker.js";
 import {
   relationForStrategy,
   type ClassInfo,
@@ -157,26 +157,20 @@ export function buildSymbolLinks(
     return specTestFiles.has(filePath);
   };
 
-  // `<METHOD> <normalized path>` of the production code API routes, counted, built on the first spec route that
-  // asks: a twin is one row (`pairContractTwins` pairs nothing for two).
-  let codeRouteKeys: Map<string, number> | null = null;
-  const routeKey = (r: KeyedRoute): string | null => {
-    const url = isJoinableRoute(r) ? routeUrlNames(r)[0] : undefined;
-    return url && r.httpMethod ? `${r.httpMethod.toUpperCase()} ${normalizeRoutePath(url)}` : null;
-  };
+  // The production code API routes a contract row can be paired with, built on the first spec route that asks:
+  // a twin is one row, by the very rule `pairContractTwins` pairs with (`codeTwinsIndex`: method, normalized path,
+  // the path's API version).
+  let codeTwins: ((contract: KeyedRoute) => KeyedRoute[]) | null = null;
   const codeServes = (route: KeyedRoute): boolean => {
-    if (!codeRouteKeys) {
-      codeRouteKeys = new Map();
+    if (!codeTwins) {
+      const code: RouteInfo[] = [];
       for (const a of analyses) {
         if (isApiContractLanguage(a.language) || isSpecJoinExcluded(a.filePath)) continue;
-        for (const r of a.routes) {
-          const k = r.kind === "api" ? routeKey(r) : null;
-          if (k) codeRouteKeys.set(k, (codeRouteKeys.get(k) ?? 0) + 1);
-        }
+        for (const r of a.routes) if (r.kind === "api" && isJoinableRoute(r)) code.push(r);
       }
+      codeTwins = codeTwinsIndex(code);
     }
-    const k = routeKey(route);
-    return !!k && codeRouteKeys.get(k) === 1;
+    return isJoinableRoute(route) && codeTwins(route).length === 1;
   };
 
   for (const analysis of analyses) {
@@ -2080,7 +2074,7 @@ function fieldHandlerLinks(analyses: readonly FileAnalysis[], ctx: LinkContext):
 }
 
 /** What a route's `<METHOD> <normalized path>` key is read from. */
-type KeyedRoute = Pick<RouteInfo, "httpMethod" | "path" | "aliases" | "pathUnresolved" | "mount" | "prefixUnresolved">;
+type KeyedRoute = Pick<RouteInfo, "httpMethod" | "path" | "aliases" | "pathUnresolved" | "mount" | "prefixUnresolved" | "versions">;
 
 /** Lookup tables built once per buildSymbolLinks run, shared by every call resolution. */
 interface LinkContext {

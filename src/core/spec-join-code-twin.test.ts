@@ -18,6 +18,10 @@ paths:
     get:
       operationId: playerList
       responses: {"200": {description: ok}}
+  /api/v1/seasons/{id}:
+    delete:
+      operationId: seasonDelete
+      responses: {"200": {description: ok}}
   /api/v1/matches/{id}:
     get:
       operationId: loadMatch
@@ -29,9 +33,14 @@ function destroyClub(req, res) { res.send("ok"); }
 app.delete("/api/v1/clubs/:id", destroyClub);
 function loadMatch(req, res) { res.send("ok"); }
 app.get("/api/v1/matches/:id", loadMatch);
+function dropSeason(req, res) { res.send("ok"); }
+function dropSeasonV2(req, res) { res.send("ok"); }
+app.delete("/api/v1/seasons/:id", dropSeason);
+app.delete("/api/v2/seasons/:id", dropSeasonV2);
 module.exports = app;
 `,
   "web/clubs.js": `export function deleteClubs(ids) { return ids.length; }
+export function deleteSeasons(ids) { return ids.length; }
 export function getPlayers() { return []; }
 `,
 };
@@ -52,6 +61,10 @@ describe("spec join beside a code route of the same method and path", () => {
 
   it("does not join the served contract row to a namesake client function", () => {
     expect(links.filter((l) => l.strategy === "spec-join" && l.sourceSymbol === "route:DELETE /api/v1/clubs/{id}")).toEqual([]);
+  });
+
+  it("counts twins as the row pairing does: the one serving the path's own API version (v1 beside v2)", () => {
+    expect(links.filter((l) => l.strategy === "spec-join" && l.sourceSymbol === "route:DELETE /api/v1/seasons/{id}")).toEqual([]);
   });
 
   it("still joins the operation's own id beside the code route", () => {
