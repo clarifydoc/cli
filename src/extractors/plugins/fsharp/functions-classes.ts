@@ -1,6 +1,7 @@
 import type { Node } from "web-tree-sitter";
 import { FunctionClassExtractor } from "../../functions-classes/base.js";
 import type { FunctionInfo, ClassInfo, PropertyInfo, Language } from "../../functions-classes/base.js";
+import { publicProperty } from "../shared/path-utils.js";
 import { extractCalls } from "../../shared/call-graph.js";
 import { attributesOf, bindingName, bodyOf, isFunctionDefn, MODULE_NODES, patternParams } from "./syntax.js";
 
@@ -163,6 +164,4 @@ function method(name: string, params: FunctionInfo["params"], body: Node | null,
   };
 }
 
-function prop(name: string, type: string | null): PropertyInfo {
-  return { name, type, visibility: "public", isStatic: false, isReadonly: true };
-}
+const prop = (name: string, type: string | null): PropertyInfo => publicProperty(name, type, true);

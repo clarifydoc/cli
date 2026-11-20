@@ -1,6 +1,7 @@
 import { readFileSync, existsSync, statSync } from "fs";
 import { listDirectory } from "./dir-listings.js";
 import { dirname, join, resolve } from "path";
+import { splitTopLevel as splitTopLevelWith } from "./split-top-level.js";
 import { escapeRegex } from "../plugins/shared/path-utils.js";
 
 /**
@@ -219,21 +220,7 @@ function valueAt(code: string, at: number): string | null {
 
 /** Split on top-level commas, outside brackets and strings. */
 function splitTopLevel(s: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i];
-    if (ch === "'" || ch === '"' || ch === "`") { i = skipString(s, i); continue; }
-    if (ch === "{" || ch === "[" || ch === "(") depth++;
-    else if (ch === "}" || ch === "]" || ch === ")") depth--;
-    else if (ch === "," && depth === 0) {
-      out.push(s.slice(start, i));
-      start = i + 1;
-    }
-  }
-  if (s.slice(start).trim()) out.push(s.slice(start));
-  return out;
+  return splitTopLevelWith(s, { escapes: "'\"`" });
 }
 
 /** Index of the quote closing the string opened at `i`. */

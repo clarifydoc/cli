@@ -5,7 +5,7 @@ import type {
   RouteInfo,
 } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
-import { stripAngleGroups } from "../shared/path-utils.js";
+import { publicProperty, stripAngleGroups } from "../shared/path-utils.js";
 
 /**
  * Prisma schema (`schema.prisma`) extraction. Prisma is its own file format —
@@ -496,9 +496,7 @@ function sliceBlockInner(blockLines: string[]): string[] {
   return innerText.split("\n");
 }
 
-function column(name: string, type: string | null): PropertyInfo {
-  return { name, type, visibility: "public", isStatic: false, isReadonly: false };
-}
+const column = (name: string, type: string | null): PropertyInfo => publicProperty(name, type);
 
 /** Build entity + enum ClassInfos from a Prisma schema. */
 export function extractPrismaModels(lines: string[]): ClassInfo[] {

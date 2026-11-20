@@ -1,5 +1,6 @@
 import type { PropertyInfo } from "../../../types/analysis.js";
 import type { RequestSchemaHooks, TypeShape } from "../../../types/language-plugin.js";
+import { dropDottedQualifier } from "../shared/path-utils.js";
 import { camelCase } from "../shared/inflection.js";
 export { camelCase };
 
@@ -65,7 +66,7 @@ function splitGeneric(type: string): { name: string; args: string[] } {
 
 /** Drop namespace qualification (`System.Collections.Generic.List` → `List`) on the outer name only. */
 function simpleName(name: string): string {
-  return name.replace(/^global::/, "").replace(/^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*\./, "");
+  return dropDottedQualifier(name.replace(/^global::/, ""));
 }
 
 /** First string argument of a decorator whose name matches: `JsonPropertyName("x")` → `x`. */

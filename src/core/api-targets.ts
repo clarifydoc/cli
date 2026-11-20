@@ -1,5 +1,6 @@
 import type { DataSourceInfo, FileAnalysis, Language, FunctionInfo, PathArgCall } from "../types/analysis.js";
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
+import { splitTopLevel } from "../extractors/shared/split-top-level.js";
 import { HTTP_VERBS } from "../extractors/shared/http-verbs.js";
 import type { ClassIndex, ClassRef, ImportIndex, ProjectContext } from "../types/project.js";
 import { buildModuleValueLookup } from "./module-values.js";
@@ -916,20 +917,7 @@ const THIS_CALL = /\$\{\s*this\.(?:constructor\.)?([\w$]+)\s*\(([^()]*)\)\s*\}|\
 
 /** Top-level comma split of an argument list (brackets and quotes respected). */
 function splitArgs(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let quote: string | null = null;
-  let start = 0;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i]!;
-    if (quote) { if (c === "\\") i++; else if (c === quote) quote = null; continue; }
-    if (c === "'" || c === '"' || c === "`") quote = c;
-    else if ("([{".includes(c)) depth++;
-    else if (")]}".includes(c)) depth--;
-    else if (c === "," && depth === 0) { out.push(text.slice(start, i)); start = i + 1; }
-  }
-  out.push(text.slice(start));
-  return out.filter((a) => a.trim() !== "");
+  return splitTopLevel(text, { escapes: "'\"`", dropBlank: true });
 }
 
 /**

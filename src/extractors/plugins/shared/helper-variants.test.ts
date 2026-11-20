@@ -4,7 +4,7 @@ import { middlewareGuardOf } from "../../shared/route-metadata.js";
 import { dropNestedFunctions, tidySetupCalls } from "./function-postprocess.js";
 import { lineAt, lineIndex, preparedLines } from "./text-scan.js";
 import { underscore } from "./inflection.js";
-import { escapeRegex } from "./path-utils.js";
+import { dropDottedQualifier, escapeRegex, publicProperty } from "./path-utils.js";
 import { hasDep } from "./project-info-queries.js";
 import type { CallInfo, FunctionInfo } from "../../../types/analysis.js";
 
@@ -141,5 +141,106 @@ describe("escapeRegex shared by the project-info queries", () => {
     const legacy = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     for (const s of ["", "a.b", "Club(Player)", "x*y+z?", "[a]{1}|^$\\"]) expect(escapeRegex(s)).toBe(legacy(s));
     expect(hasDep({ packageJson: { dependencies: { "club.js": "1" } } } as never, "club.js")).toBe(true);
+  });
+});
+
+describe("splitTopLevel options that replaced the last hand-written splitters", () => {
+  // bundler-aliases.splitTopLevel
+  const legacyAliases = (s: string): string[] => {
+    const skip = (t: string, i: number) => {
+      const q = t[i];
+      for (let j = i + 1; j < t.length; j++) {
+        if (t[j] === "\\") j++;
+        else if (t[j] === q) return j;
+      }
+      return t.length;
+    };
+    const out: string[] = [];
+    let depth = 0, start = 0;
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (ch === "'" || ch === '"' || ch === "`") { i = skip(s, i); continue; }
+      if (ch === "{" || ch === "[" || ch === "(") depth++;
+      else if (ch === "}" || ch === "]" || ch === ")") depth--;
+      else if (ch === "," && depth === 0) { out.push(s.slice(start, i)); start = i + 1; }
+    }
+    if (s.slice(start).trim()) out.push(s.slice(start));
+    return out;
+  };
+  // core/api-targets.splitArgs
+  const legacyArgs = (text: string): string[] => {
+    const out: string[] = [];
+    let depth = 0, start = 0;
+    let quote: string | null = null;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i]!;
+      if (quote) { if (c === "\\") i++; else if (c === quote) quote = null; continue; }
+      if (c === "'" || c === '"' || c === "`") quote = c;
+      else if ("([{".includes(c)) depth++;
+      else if (")]}".includes(c)) depth--;
+      else if (c === "," && depth === 0) { out.push(text.slice(start, i)); start = i + 1; }
+    }
+    out.push(text.slice(start));
+    return out.filter((a) => a.trim() !== "");
+  };
+  // shared/type-parser.splitTopLevel
+  const legacyTypes = (s: string, seps: readonly string[]): string[] => {
+    const out: string[] = [];
+    let depth = 0, start = 0;
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i]!;
+      if (c === "<" || c === "[" || c === "(" || c === "{") depth++;
+      else if (c === ">" || c === "]" || c === ")" || c === "}") depth--;
+      else if (depth === 0 && seps.includes(c)) { out.push(s.slice(start, i).trim()); start = i + 1; }
+    }
+    out.push(s.slice(start).trim());
+    return out.filter((x) => x.length > 0);
+  };
+  const inputs = [
+    "", " ", "a", "a,b", "a, b ,", ",a", "a,,b", "{ a: 1, b: [2, 3] }, c", "'x,y', \"p,q\", `r,s`", "f(a, b), g<A, B>", "'unterminated, a", "a, 'b\\', c', d",
+    "alias: { '@': path.resolve(__dirname, 'src'), x: [1, 2] }, y", ")a,b", "a)),b", "Map<string, List<Club>> | Car & Garage", "A | B & C", "A||B", " | A", "A |", "Club<Player, Match>[] | null",
+  ];
+  it("bundler-aliases: escapes in every quote, last blank piece dropped", () => {
+    for (const t of inputs) expect(splitTopLevel(t, { escapes: "'\"`" }), t).toEqual(legacyAliases(t));
+  });
+  it("api-targets: blank pieces dropped, pieces untrimmed", () => {
+    for (const t of inputs) expect(splitTopLevel(t, { escapes: "'\"`", dropBlank: true }), t).toEqual(legacyArgs(t));
+  });
+  it("type-parser: anyOf separators, angle brackets, no strings, trimmed, blanks dropped", () => {
+    const shared = (t: string, seps: readonly string[]) => splitTopLevel(t, { anyOf: seps.join(""), brackets: "()[]{}<>", quotes: "", trim: true, dropBlank: true });
+    for (const t of inputs) for (const seps of [["|", "&"], [","], ["|"], ["&"], ["+"]]) expect(shared(t, seps), `${t} ${seps}`).toEqual(legacyTypes(t, seps));
+  });
+});
+
+describe("dropDottedQualifier and the request-schema simpleName wrappers", () => {
+  const names = ["", "List", "typing.Optional", "System.Collections.Generic.List", "global::System.List", "Global.System.List", "in Club", "out Player", "a.b.", "9a.B", "Club.Player<Match.Result>", " x.Y", "A.b.C"];
+  const python = (n: string) => n.replace(/^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*\./, "");
+  it("is the python body", () => { for (const n of names) expect(dropDottedQualifier(n), n).toBe(python(n)); });
+  it("java-kotlin, vb and csharp compose it with their own prefix the way their bodies did", () => {
+    for (const n of names) {
+      expect(dropDottedQualifier(n).replace(/^(in|out)\s+/, ""), n).toBe(n.replace(/^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*\./, "").replace(/^(in|out)\s+/, ""));
+      expect(dropDottedQualifier(n.replace(/^Global\./i, "")), n).toBe(n.replace(/^Global\./i, "").replace(/^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*\./, ""));
+      expect(dropDottedQualifier(n.replace(/^global::/, "")), n).toBe(n.replace(/^global::/, "").replace(/^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*\./, ""));
+    }
+  });
+});
+
+describe("publicProperty (entity extractors' prop/column constructors)", () => {
+  it("builds the rows the six copies built", () => {
+    expect(publicProperty("id", "int")).toEqual({ name: "id", type: "int", visibility: "public", isStatic: false, isReadonly: false });
+    expect(publicProperty("name", null, true)).toEqual({ name: "name", type: null, visibility: "public", isStatic: false, isReadonly: true });
+  });
+});
+
+describe("lineIndex against the O(n) lineAt counters it replaced in templates, ERB, HEEx, JS events and C# aspire", () => {
+  const counted = (text: string, i: number) => { let n = 1; for (let k = 0; k < i && k < text.length; k++) if (text.charCodeAt(k) === 10) n++; return n; };
+  it("agrees at every offset, the end and past it", () => {
+    for (const text of samples) { const at = lineIndex(text); for (let i = 0; i <= text.length + 3; i++) expect(at(i), `${JSON.stringify(text)}@${i}`).toBe(counted(text, i)); }
+  });
+  it("matches the VB statement count (first + newlines before the offset + 1)", () => {
+    const code = "Add(A)\n  .B(C)\n  .D(E)";
+    const at = lineIndex(code);
+    const first = 7;
+    for (let i = 0; i <= code.length; i++) expect(first + at(i)).toBe(first + counted(code, i));
   });
 });

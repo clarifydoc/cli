@@ -9,7 +9,7 @@ import type {
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { pluralize } from "../shared/inflection.js";
 import { extractHtmlInteractiveElements } from "../html/index.js";
-import { lineAt } from "../shared/text-scan.js";
+import { lineIndex } from "../shared/text-scan.js";
 
 /**
  * Rails ERB views. The Ruby inside `<% %>` / `<%= %>` is what makes a view a
@@ -121,6 +121,7 @@ function isMailerView(view: { key: string } | null): boolean {
 }
 
 export function extractErbView(analysis: FileAnalysis, source: string): void {
+  const sourceLine = lineIndex(source);
   const filePath = analysis.filePath;
   const view = viewKey(filePath);
   const elements: InteractiveElementInfo[] = [];
@@ -148,7 +149,7 @@ export function extractErbView(analysis: FileAnalysis, source: string): void {
   while ((m = ERB_TAG_RE.exec(source)) !== null) {
     if (m[1] === "#") continue;
     const code = m[2]!.trim();
-    const line = lineAt(source, m.index);
+    const line = sourceLine(m.index);
     let h: RegExpExecArray | null;
     if ((h = /^render\s*\(?\s*(?:partial:\s*)?["']([\w/.-]+)["']/.exec(code))) {
       const name = h[1]!;
@@ -183,6 +184,7 @@ export function extractErbView(analysis: FileAnalysis, source: string): void {
 
   // The markup's own controls and inline handlers, every ERB tag blanked first.
   const markup = source.replace(ERB_TAG_RE, (t) => t.replace(/[^\n]/g, " "));
+  const markupLine = lineIndex(markup);
   for (const el of extractHtmlInteractiveElements(markup.split("\n"))) {
     if (el.element === "form" && el.handler === null) continue; // the form helpers above carry the request
     elements.push(el);
@@ -192,7 +194,7 @@ export function extractErbView(analysis: FileAnalysis, source: string): void {
     const action = /\baction\s*=\s*["'](\/[^"'?#]*)/i.exec(f[1]!)?.[1];
     if (!action) continue;
     const method = (/\bmethod\s*=\s*["'](\w+)/i.exec(f[1]!)?.[1] ?? "GET").toUpperCase();
-    element("form", "submit", { method, target: action }, lineAt(markup, f.index!), "form");
+    element("form", "submit", { method, target: action }, markupLine(f.index!), "form");
   }
   caption ??= /<h1\b[^>]*>([^<]+)<\/h1>/i.exec(markup)?.[1]?.trim() || null;
 

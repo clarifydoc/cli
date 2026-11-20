@@ -1,9 +1,21 @@
 /**
  * Path-matching helpers shared by core and the plugins (leaf module — no
- * imports). Home of the "pick the candidate whose path shares the longest
+ * runtime imports). Home of the "pick the candidate whose path shares the longest
  * prefix with a reference file" tie-break used wherever several same-named
  * artifacts (classes, views) exist across vendored copies or sibling webapps.
  */
+
+import type { PropertyInfo } from "../../../types/analysis.js";
+
+/** A dotted qualifier dropped from the front of a type name (`typing.Optional` → `Optional`, `System.Collections.List` → `List`): every leading `Name.` segment. */
+export function dropDottedQualifier(name: string): string {
+  return name.replace(/^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*\./, "");
+}
+
+/** A public property row; `readonly` for a record-style field (`isReadonly`), mutable by default. */
+export function publicProperty(name: string, type: string | null, readonly = false): PropertyInfo {
+  return { name, type, visibility: "public", isStatic: false, isReadonly: readonly };
+}
 
 export function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

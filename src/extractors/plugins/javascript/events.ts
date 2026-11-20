@@ -1,6 +1,6 @@
 import type { EventInfo, ParamInfo, Language } from "../../../types/analysis.js";
 import { escapeRegex } from "../shared/path-utils.js";
-import { lineStarts as lineIndex, lineOfOffset as lineOf } from "../shared/text-scan.js";
+import { lineIndex } from "../shared/text-scan.js";
 
 /**
  * Extract component events from Vue defineEmits declarations and emit() calls.
@@ -30,11 +30,11 @@ export function extractEvents(
 
   // A declared event sits where it is first emitted: the function around that line is what a parent's handler follows,
   // and every other function emitting it runs that handler too.
-  const lines = lineIndex(sourceText);
+  const lineOfSource = lineIndex(sourceText);
   const emittedAt = new Map<string, number[]>();
   const record = (name: string, offset: number) => {
     const at = emittedAt.get(name) ?? emittedAt.set(name, []).get(name)!;
-    const line = lineOf(lines, offset);
+    const line = lineOfSource(offset);
     if (at[at.length - 1] !== line) at.push(line);
   };
   for (const m of sourceText.matchAll(EMIT_CALL_RE)) record(m[1]!, m.index!);
@@ -82,6 +82,7 @@ function extractDefineEmitsCallSignatures(
   events: EventInfo[],
   seen: Set<string>,
 ): void {
+  const lineAt = lineIndex(source);
   // Match the defineEmits<{ ... }>() block
   const blockRe = /defineEmits\s*<\s*\{([\s\S]*?)\}\s*>/g;
   let blockMatch: RegExpExecArray | null;
@@ -97,7 +98,7 @@ function extractDefineEmitsCallSignatures(
 
     while ((sigMatch = sigRe.exec(block)) !== null) {
       const params = parseCallSignatureParams(sigMatch[2]);
-      const line = lineAt(source, blockStartOffset + sigMatch.index);
+      const line = lineAt(blockStartOffset + sigMatch.index);
       for (const m of sigMatch[1].matchAll(new RegExp(`['"]` + EVENT_NAME + `['"]`, "g"))) {
         const name = m[1]!;
         if (seen.has(name)) continue;
@@ -116,6 +117,7 @@ function extractDefineEmitsArray(
   events: EventInfo[],
   seen: Set<string>,
 ): void {
+  const lineAt = lineIndex(source);
   const arrRe = /defineEmits\s*\(\s*\[([\s\S]*?)\]\s*\)/g;
   let arrMatch: RegExpExecArray | null;
 
@@ -129,7 +131,7 @@ function extractDefineEmitsArray(
       if (seen.has(name)) continue;
       seen.add(name);
 
-      const line = lineAt(source, arrMatch.index);
+      const line = lineAt(arrMatch.index);
       events.push({ name, params: [], line });
     }
   }
@@ -143,6 +145,7 @@ function extractEmitCalls(
   events: EventInfo[],
   seen: Set<string>,
 ): void {
+  const lineAt = lineIndex(source);
   const callRe = new RegExp(EMIT_CALL_RE.source, "g");
   let callMatch: RegExpExecArray | null;
 
@@ -151,7 +154,7 @@ function extractEmitCalls(
     if (seen.has(name)) continue;
     seen.add(name);
 
-    const line = lineAt(source, callMatch.index);
+    const line = lineAt(callMatch.index);
     events.push({ name, params: [], line });
   }
 }
@@ -166,6 +169,7 @@ function extractEmitCalls(
 function extractAngularOutputs(source: string, events: EventInfo[], seen: Set<string>): Map<string, string> {
   const fields = new Map<string, string>();
   if (!/from\s+['"]@angular\/core['"]/.test(source)) return fields;
+  const lineAt = lineIndex(source);
   const re = /(?:@Output\(\s*(?:['"]([\w-]+)['"])?\s*\)\s*(?:(?:public|private|protected|readonly)\s+)*([A-Za-z_$][\w$]*)\s*(?:[!?]?\s*:[^=;\n]+)?=?|(?:(?:public|private|protected|readonly)\s+)*([A-Za-z_$][\w$]*)\s*=\s*(?:output|outputFromObservable)\s*(?:<[\s\S]{0,600}?>)?\s*\()/g;
   for (const m of source.matchAll(re)) {
     const field = m[2] ?? m[3]!;
@@ -173,7 +177,7 @@ function extractAngularOutputs(source: string, events: EventInfo[], seen: Set<st
     if (seen.has(name)) continue;
     seen.add(name);
     fields.set(name, field);
-    events.push({ name, params: [], line: lineAt(source, m.index!) });
+    events.push({ name, params: [], line: lineAt(m.index!) });
   }
   return fields;
 }
@@ -211,15 +215,6 @@ function parseCallSignatureParams(raw: string): ParamInfo[] {
   return params;
 }
 
-/** Get 1-based line number for a character offset */
-function lineAt(source: string, offset: number): number {
-  let line = 1;
-  for (let i = 0; i < offset && i < source.length; i++) {
-    if (source[i] === "\n") line++;
-  }
-  return line;
-}
-
 /**
  * The lines where a component emits an event it does not name by a literal (`$emit(btn.event)`,
  * `emit(item.event)`, `(childEvent) => $emit(childEvent)`) — after the constants a file binds to strings
@@ -229,8 +224,8 @@ export function dynamicEmitFacts(source: string): { lines: number[]; literals: s
   const text = emitConstants(source);
   const lines: number[] = [];
   if (/\bemit\s*\(/.test(text)) {
-    const starts = lineIndex(text);
-    for (const m of text.matchAll(/(?:\$emit|(?<![\w$.])emit)\s*\(\s*([A-Za-z_$][\w$]*(?:\.[\w$]+)*)\s*[,)]/g)) lines.push(lineOf(starts, m.index!));
+    const lineOf = lineIndex(text);
+    for (const m of text.matchAll(/(?:\$emit|(?<![\w$.])emit)\s*\(\s*([A-Za-z_$][\w$]*(?:\.[\w$]+)*)\s*[,)]/g)) lines.push(lineOf(m.index!));
   }
   const literals = [...new Set([...source.matchAll(/(?<![\w$])event\s*:\s*['"]([\w:-]+)['"]/g)].map((m) => m[1]!))];
   return { lines: [...new Set(lines)], literals };

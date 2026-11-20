@@ -1,5 +1,5 @@
 import type { InteractiveElementInfo, ScreenComponentInfo, SubComponentInfo } from "../../../types/analysis.js";
-import { lineAt } from "../shared/text-scan.js";
+import { lineIndex } from "../shared/text-scan.js";
 
 /**
  * HEEx / EEx markup — Phoenix templates (`.html.heex`) and LiveView `~H"""`
@@ -92,6 +92,7 @@ export function readHeex(text: string, firstLine = 1): HeexRead {
   const subComponents: SubComponentInfo[] = [];
   const components: ScreenComponentInfo[] = [];
   const offset = firstLine - 1;
+  const textLine = lineIndex(text);
   const component = (name: string, componentType: string, category: ScreenComponentInfo["category"], line: number, events: string[]): void => {
     components.push({ name, componentType, category, caption: null, position: null, align: null, visible: true, children: [], events, dataBindings: [], line });
   };
@@ -100,7 +101,7 @@ export function readHeex(text: string, firstLine = 1): HeexRead {
   while ((m = TAG_RE.exec(text)) !== null) {
     const tag = m[1]!;
     const attrs = m[2] ?? "";
-    const line = lineAt(text, m.index) + offset;
+    const line = textLine(m.index) + offset;
     const kind = elementKind(tag);
     let hadEvent = false;
     PHX_EVENT_RE.lastIndex = 0;

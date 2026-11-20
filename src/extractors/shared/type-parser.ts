@@ -1,4 +1,5 @@
 import type { Language, TypeReference, TypeUsageKind, Confidence } from "../../types/analysis.js";
+import { splitTopLevel as splitTopLevelWith } from "./split-top-level.js";
 import { isBuiltinType } from "./builtin-types.js";
 
 /** Context shared between every TypeReference emitted from the same site. */
@@ -456,20 +457,7 @@ function matchClose(s: string, openIdx: number, opener: string, closer: string):
  * `<>`, `[]`, `()` and `{}` so commas inside generics don't trigger.
  */
 function splitTopLevel(s: string, seps: readonly string[]): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i]!;
-    if (c === "<" || c === "[" || c === "(" || c === "{") depth++;
-    else if (c === ">" || c === "]" || c === ")" || c === "}") depth--;
-    else if (depth === 0 && seps.includes(c)) {
-      out.push(s.slice(start, i).trim());
-      start = i + 1;
-    }
-  }
-  out.push(s.slice(start).trim());
-  return out.filter((x) => x.length > 0);
+  return splitTopLevelWith(s, { anyOf: seps.join(""), brackets: "()[]{}<>", quotes: "", trim: true, dropBlank: true });
 }
 
 function bracketsBalanced(s: string): boolean {

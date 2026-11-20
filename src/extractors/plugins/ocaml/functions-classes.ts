@@ -1,6 +1,7 @@
 import type { Node } from "web-tree-sitter";
 import { FunctionClassExtractor } from "../../functions-classes/base.js";
 import type { FunctionInfo, ClassInfo, Language, PropertyInfo } from "../../functions-classes/base.js";
+import { publicProperty } from "../shared/path-utils.js";
 import { extractCalls } from "../../shared/call-graph.js";
 import { isFunctionBinding, stringValue } from "./syntax.js";
 
@@ -111,9 +112,7 @@ function moduleClass(name: string, body: Node, span: Node): ClassInfo {
   return cls;
 }
 
-function prop(name: string, type: string | null): PropertyInfo {
-  return { name, type, visibility: "public", isStatic: false, isReadonly: true };
-}
+const prop = (name: string, type: string | null): PropertyInfo => publicProperty(name, type, true);
 
 function field(node: Node): PropertyInfo {
   return prop(node.namedChildren.find((c) => c.type === "field_name")?.text ?? "", node.childForFieldName("type")?.text ?? null);

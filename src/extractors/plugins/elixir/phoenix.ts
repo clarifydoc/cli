@@ -1,5 +1,6 @@
 import type { ClassInfo, EntityRelation, FunctionInfo, ImportInfo, PropertyInfo, RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../types/analysis.js";
 import type { GuardAttr } from "../../shared/route-metadata.js";
+import { publicProperty } from "../shared/path-utils.js";
 import { applyRouteMeta } from "../../shared/route-metadata.js";
 
 /**
@@ -329,9 +330,7 @@ const ECTO_FIELD_RE = /^\s*field\s+:(\w+)\s*(?:,\s*(\{[^}]*\}|:\w+|[A-Z][\w.]*))
 const ECTO_ASSOC_RE = /^\s*(belongs_to|has_many|has_one|many_to_many)\s+:(\w+)\s*,\s*([A-Z][\w.]*)(.*)$/;
 const ECTO_EMBEDS_RE = /^\s*embeds_(one|many)\s+:(\w+)\s*,\s*([A-Z][\w.]*)/;
 
-function prop(name: string, type: string | null): PropertyInfo {
-  return { name, type, visibility: "public", isStatic: false, isReadonly: false };
-}
+const prop = (name: string, type: string | null): PropertyInfo => publicProperty(name, type);
 
 /** `field :name, :string` / `belongs_to :user, User` (→ `user_id`) / `embeds_many :items, Item` / `timestamps()`. */
 export function ectoProperty(line: string): PropertyInfo[] {

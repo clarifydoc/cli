@@ -1,6 +1,7 @@
 import type { ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { RequestSchemaHooks, TypeShape } from "../../../types/language-plugin.js";
 import { splitBracketedArgs } from "../shared/regex-base.js";
+import { dropDottedQualifier } from "../shared/path-utils.js";
 import { camelCase } from "../shared/inflection.js";
 export { camelCase };
 
@@ -165,7 +166,7 @@ function splitGeneric(type: string): { name: string; args: string[]; array: bool
 
 /** Drop namespace qualification on the outer name only (`System.Collections.Generic.List` → `List`). */
 function simpleName(name: string): string {
-  return name.replace(/^Global\./i, "").replace(/^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*\./, "");
+  return dropDottedQualifier(name.replace(/^Global\./i, ""));
 }
 
 export const vbRequestSchema: RequestSchemaHooks = {

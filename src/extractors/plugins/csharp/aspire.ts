@@ -1,4 +1,5 @@
 import type { DeployedResourceFact, DeployedServiceKind } from "../../../types/analysis.js";
+import { lineIndex } from "../shared/text-scan.js";
 import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 /**
@@ -56,8 +57,9 @@ export function extractAspireResources(sourceText: string): DeployedResourceFact
   const vars = new Map<string, string>();
   const edges: Array<{ from: string; to: string }> = [];
   let offset = 0;
+  const lineAt = lineIndex(text);
   for (const stmt of text.split(";")) {
-    const line = lineAt(text, offset + stmt.length - stmt.trimStart().length);
+    const line = lineAt(offset + stmt.length - stmt.trimStart().length);
     offset += stmt.length + 1;
     const head = /^\s*(?:(?:var|IResourceBuilder<[^>]*(?:<[^>]*>)?[^>]*>)\s+(\w+)\s*=\s*)?(\w+)\s*\./.exec(stmt);
     if (!head) continue;
@@ -139,8 +141,4 @@ function blankComments(s: string): string {
   return s.replace(/"(?:[^"\\\n]|\\.)*"|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (c) => (c.startsWith('"') ? c : c.replace(/[^\n]/g, " ")));
 }
 
-function lineAt(text: string, offset: number): number {
-  let n = 1;
-  for (let i = 0; i < offset && i < text.length; i++) if (text.charCodeAt(i) === 10) n++;
-  return n;
-}
+

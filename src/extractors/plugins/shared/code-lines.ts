@@ -34,7 +34,11 @@ export function window(lines: string[], i: number, span = 30): { raw: string; co
   return { raw: slice.join("\n"), code: slice.map(codeOf).join("\n") };
 }
 
-/** Split argument text at depth-0 commas, raw and code copies aligned. */
+/**
+ * Split argument text at depth-0 commas, raw and code copies aligned. Kept apart from `splitTopLevel` on purpose:
+ * it returns offsets into two aligned texts (the shared function cuts one string), counts `<>` as brackets with the
+ * depth clamped at zero, and reads no strings (the code copy has them blanked).
+ */
 export function splitArgs(code: string, raw: string): Array<{ code: string; raw: string }> {
   const out: Array<{ code: string; raw: string }> = [];
   let depth = 0;

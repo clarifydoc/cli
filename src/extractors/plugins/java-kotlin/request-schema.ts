@@ -1,5 +1,6 @@
 import type { PropertyInfo } from "../../../types/analysis.js";
 import type { RequestSchemaHooks, TypeShape } from "../../../types/language-plugin.js";
+import { dropDottedQualifier } from "../shared/path-utils.js";
 import { splitGeneric } from "../../shared/type-parser.js";
 
 /**
@@ -42,7 +43,7 @@ const MAP_GENERICS = new Set(["Map", "HashMap", "LinkedHashMap", "TreeMap", "Mut
 const WRAPPERS = new Set(["Optional", "Mono", "ResponseEntity", "HttpEntity", "Valid"]);
 
 function simpleName(name: string): string {
-  return name.replace(/^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*\./, "").replace(/^(in|out)\s+/, "");
+  return dropDottedQualifier(name).replace(/^(in|out)\s+/, "");
 }
 
 /** `JsonProperty("x")` / `JsonProperty(value = "x")` / `SerializedName("x")` / `SerialName("x")`. */

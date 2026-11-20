@@ -1,6 +1,6 @@
 import type { ImportInfo, Language } from "../../../types/analysis.js";
 import type { PreprocessOutcome } from "../../../types/language-plugin.js";
-import { lineAt } from "../shared/text-scan.js";
+import { lineIndex } from "../shared/text-scan.js";
 
 /**
  * tree-sitter-typescript 0.23 reads a call whose FIRST type argument is an
@@ -18,6 +18,7 @@ export function importTypeArgPreprocess(rawSource: string, language: Language): 
   if (!rawSource.includes("import") || !TRIGGER.test(rawSource)) return null;
   const out = rawSource.split("");
   const restored: Array<{ source: string; line: number }> = [];
+  const lineOf = lineIndex(rawSource);
   for (const m of rawSource.matchAll(OPENING)) {
     const open = m.index! + m[0].indexOf("<");
     const close = closingAngle(rawSource, open);
@@ -28,7 +29,7 @@ export function importTypeArgPreprocess(rawSource: string, language: Language): 
       // `import` is a keyword: a member access (`x.import(`) is not an import type.
       if (start > 0 && /[\w$.]/.test(rawSource[start - 1]!)) continue;
       for (let i = start; i < start + im[1]!.length; i++) out[i] = "_";
-      restored.push({ source: im[3]!, line: lineAt(rawSource, start) });
+      restored.push({ source: im[3]!, line: lineOf(start) });
     }
   }
   if (restored.length === 0) return null;

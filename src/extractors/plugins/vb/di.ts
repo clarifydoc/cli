@@ -1,6 +1,7 @@
 import type { DiBinding, FunctionInfo, ParamInfo } from "../../../types/analysis.js";
 import type { CallPattern } from "../shared/regex-base.js";
 import { isBuiltinType } from "../../shared/builtin-types.js";
+import { lineIndex } from "../shared/text-scan.js";
 import { readVbType } from "./request-schema.js";
 
 /**
@@ -86,13 +87,6 @@ export function vbLogicalLines(lines: readonly string[]): LogicalLine[] {
     out.push({ code, raw, first });
   }
   return out;
-}
-
-/** 0-based physical line of `offset` within a logical statement. */
-function lineAt(stmt: LogicalLine, offset: number): number {
-  let line = stmt.first;
-  for (let k = 0; k < offset && k < stmt.code.length; k++) if (stmt.code[k] === "\n") line++;
-  return line;
 }
 
 /** Index of the bracket closing the one at `open`, or -1. */
@@ -319,6 +313,7 @@ export function extractVbDiBindings(lines: string[], _filePath: string): DiBindi
     REGISTRATION_RE.lastIndex = 0;
     let m: RegExpExecArray | null;
     let consumedTo = -1;
+    const lineOf = lineIndex(stmt.code);
     while ((m = REGISTRATION_RE.exec(stmt.code)) !== null) {
       const nameAt = m.index + m[0].indexOf(m[1]!);
       if (nameAt < consumedTo) continue;
@@ -326,7 +321,7 @@ export function extractVbDiBindings(lines: string[], _filePath: string): DiBindi
       if (chain.length === 0) continue;
       const last = chain[chain.length - 1]!;
       consumedTo = last.at + last.name.length;
-      const line = lineAt(stmt, nameAt) + 1;
+      const line = stmt.first + lineOf(nameAt); // `first` is the statement's 0-based first line; `lineOf` is 1-based
       for (const b of bindingsOfChain(chain)) out.push({ ...b, line });
     }
   }

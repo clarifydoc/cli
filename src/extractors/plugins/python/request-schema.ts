@@ -1,5 +1,6 @@
 import type { ParamInfo, PropertyInfo, RouteInfo, RouteParamBinding } from "../../../types/analysis.js";
 import type { RequestSchemaHooks, TypeShape } from "../../../types/language-plugin.js";
+import { dropDottedQualifier } from "../shared/path-utils.js";
 import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 /**
@@ -53,7 +54,7 @@ export function splitPyTypeArgs(text: string, sep: "," | "|" = ","): string[] {
 
 /** Drop module qualification (`typing.Optional` → `Optional`, `datetime.datetime` → `datetime`). */
 function simpleName(name: string): string {
-  return name.replace(/^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*\./, "");
+  return dropDottedQualifier(name);
 }
 
 /** `Annotated[T, Query(...)]` → `T`; a forward reference `"User"` → `User`. */

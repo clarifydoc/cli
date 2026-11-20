@@ -1,5 +1,6 @@
 import type { ClassInfo, FileAnalysis, ImportInfo, PropertyInfo, SchemaOp } from "../../../types/analysis.js";
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
+import { publicProperty } from "../shared/path-utils.js";
 import { fkRelation, replaySchema } from "../shared/schema-replay.js";
 import { extractSqlClasses } from "../sql/index.js";
 import { schemaOpsOf } from "../sql/entities.js";
@@ -186,9 +187,7 @@ function sqlBlocks(lines: string[]): Array<{ lines: string[]; line: number }> {
   return out;
 }
 
-function columnProperty(name: string, type: string | null): PropertyInfo {
-  return { name, type, visibility: "public", isStatic: false, isReadonly: false };
-}
+const columnProperty = (name: string, type: string | null): PropertyInfo => publicProperty(name, type);
 
 /**
  * An include as an import: relative to the changelog (`./` added so the

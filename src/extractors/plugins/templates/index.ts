@@ -3,7 +3,7 @@ import { inlineScriptRequests } from "../shared/inline-script-requests.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractHtmlInteractiveElements, thymeleafUrl } from "../html/index.js";
 import { literalPath, handlerOf, materializeElementRequests } from "../shared/element-requests.js";
-import { lineAt } from "../shared/text-scan.js";
+import { lineIndex } from "../shared/text-scan.js";
 
 /**
  * Server templates — Handlebars, Liquid, Velocity, Razor — read by one
@@ -88,6 +88,7 @@ const attr = (attrs: string, name: string): string | undefined =>
 const viewController = (filePath: string): string | null => /(?:^|\/)Views\/([^/]+)\/[^/]+\.cshtml$/.exec(filePath)?.[1] ?? null;
 
 export function readTemplate(analysis: FileAnalysis, source: string, dialect: TemplateDialect): void {
+  const sourceLine = lineIndex(source);
   const filePath = analysis.filePath;
   const elements: InteractiveElementInfo[] = [];
   const subComponents: SubComponentInfo[] = [];
@@ -100,7 +101,7 @@ export function readTemplate(analysis: FileAnalysis, source: string, dialect: Te
   PARTIALS[dialect].lastIndex = 0;
   for (const m of source.matchAll(PARTIALS[dialect])) {
     const name = (m[1] ?? m[2] ?? m[3] ?? m[4])!;
-    const line = lineAt(source, m.index!);
+    const line = sourceLine(m.index!);
     // The include's own path (`user/auth/signin_inner`) is what finds the partial's file.
     subComponents.push({ name: name.split("/").pop()!.replace(/\.\w+$/, ""), importSource: name.includes("/") ? name : null, props: [], line });
     component(name, "partial", "container", line, []);
@@ -112,11 +113,12 @@ export function readTemplate(analysis: FileAnalysis, source: string, dialect: Te
   // EJS output tags inside an attribute read as template expressions, and a scriptlet's `%>` must not end the tag.
   const readable = dialect === "ejs" ? ejsExpressions(source) : source;
   const marked = named ? readable.replace(named, (_m, _q, name: string | undefined, _q2, name2: string | undefined) => ROUTE_MARK + (name ?? name2)!.replace(/:/g, "~")) : readable;
+  const markedLine = lineIndex(marked);
   const ctlOfView = dialect === "razor" ? viewController(filePath) : null;
   for (const t of marked.matchAll(/<(form|a|button)\b([^>]*)>/gi)) {
     const tag = t[1]!.toLowerCase();
     const attrs = t[2] ?? "";
-    const line = lineAt(marked, t.index!);
+    const line = markedLine(t.index!);
     const isForm = tag === "form";
     const method = ((attr(attrs, "method") ?? (isForm ? "post" : "get"))).toUpperCase();
     let target: string | null = null;
@@ -145,7 +147,7 @@ export function readTemplate(analysis: FileAnalysis, source: string, dialect: Te
       if (!path) continue;
       const target = namedTarget(path);
       const method = (attr(attrs, "data-method") ?? "").toUpperCase();
-      const line = lineAt(marked, d.index! + d[0].indexOf(a[0]));
+      const line = markedLine(d.index! + d[0].indexOf(a[0]));
       const handler = handlerOf(method || "REQUEST", target.replace(/^route:/, "/").replace(/:/g, "/"));
       const tag = d[1]!.toLowerCase();
       const element: InteractiveElementInfo["element"] = tag === "form" ? "form" : tag === "a" ? "link" : tag === "input" || tag === "select" || tag === "textarea" ? tag : "button";
@@ -159,7 +161,7 @@ export function readTemplate(analysis: FileAnalysis, source: string, dialect: Te
       if (!target) continue;
       const request = { method: h[2]!.toUpperCase(), target: namedTarget(target) };
       const handler = handlerOf(request.method, request.target.replace(/^route:/, "/").replace(/:/g, "/"));
-      elements.push({ element: "button", event: "click", handler, line: lineAt(marked, h.index!), request });
+      elements.push({ element: "button", event: "click", handler, line: markedLine(h.index!), request });
     }
   }
 

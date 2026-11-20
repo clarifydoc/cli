@@ -88,7 +88,11 @@ function withoutDefault(element: string): string {
   return (eq >= 0 ? element.slice(0, eq) : element).trim();
 }
 
-/** `body` (the text after a pattern's opening bracket) split at its top-level commas up to the matching close; null when unclosed. */
+/**
+ * `body` (the text after a pattern's opening bracket) split at its top-level commas up to the matching close; null when unclosed.
+ * Kept apart from `splitTopLevel` on purpose: an unterminated string or a missing close is `null` here (the whole
+ * pattern is then unread), where the shared function would run on to the end of the text and return the pieces.
+ */
 function splitTopLevel(body: string): string[] | null {
   const parts: string[] = [];
   let depth = 0;

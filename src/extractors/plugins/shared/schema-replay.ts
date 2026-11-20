@@ -1,4 +1,5 @@
 import type { ClassInfo, EntityRelation, FileAnalysis, PropertyInfo } from "../../../types/analysis.js";
+import { publicProperty } from "./path-utils.js";
 
 /**
  * A chain of schema migrations replayed into the schema it ends with, from each
@@ -96,6 +97,4 @@ export function replaySchema(chain: FileAnalysis[]): void {
   }
 }
 
-function column(name: string, type: string | null): PropertyInfo {
-  return { name, type, visibility: "public", isStatic: false, isReadonly: false };
-}
+const column = (name: string, type: string | null): PropertyInfo => publicProperty(name, type);
