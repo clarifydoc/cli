@@ -183,4 +183,42 @@ Car make(Car c, std::map<int, Car> m);
 `;
     expect(read(source)).toEqual({ errors: 0, functions: [["park", ["list"]], ["Garage::name", ["label"]]] });
   });
+
+  it("leaves macros, constructors, qualifiers and trailing forms to prediction", () => {
+    const source = `DECLARE_CLUB(Foo) { int x; }
+TEST_CASE(Fast) { run(1); }
+DECLARE_TABLE(Cars);
+class Club {
+ public:
+  Club(Player p);
+  Club(const Club&) = default;
+  Club() : id_(0), name_("x") { init(); }
+  ~Club();
+  virtual void play() = 0;
+  void kick() override;
+  void pass() const throw() { go(); }
+  bool operator()(int a) const { return a > 0; }
+  operator bool() const { return true; }
+  auto score() -> int { return 1; }
+  static Club make(int id) noexcept(true) { return Club(); }
+  Q_INVOKABLE void tick();
+  int goals GUARDED_BY(mu_);
+  size_t first, last;
+  Garage::Slot<int> s;
+};
+Club::~Club() { stop(); }
+Club::Club(Player p) : id_(p.id()) { }
+int Garage::size() const throw() { return n; }
+void Garage::park(Car c) EXCLUSIVE_LOCKS_REQUIRED(mu) { enter(c); }
+std::vector<Car> Garage::cars() && { return v; }
+template <class T> typename Garage<T>::template Slot<2> pick(T t) { return t.slot(); }
+Car::Wheel::Wheel() {}
+int x(3);
+Club f(1), g(2);
+namespace league { std::map<int, std::vector<Car>> table(); }
+`;
+    const parsed = readCpp(source);
+    expect(parsed.syntaxErrors).toBe(0);
+    expect(parsed.functions.map((f) => f.name)).toEqual(["DECLARE_CLUB", "TEST_CASE", "Club", "pass", "operator()", "operatorbool", "score", "make", "~Club", "Club", "size", "park", "cars", "pick", "Wheel"]);
+  });
 });

@@ -379,7 +379,7 @@ export abstract class CPP14ParserBase extends Parser {
     let i = this.following(this.lt(1).tokenIndex);
     if ((this.facts.angle[i] ?? -1) >= 0) i = this.following(this.facts.angle[i]!);
     if (this.typeAt(i) !== CPP14Lexer.Doublecolon) return 2;
-    return isName(this.typeAt(this.following(i))) ? 1 : 0;
+    return this.typeAt(this.following(i)) === CPP14Lexer.Identifier ? 1 : 0;
   }
 
   /**
