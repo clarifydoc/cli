@@ -2,7 +2,7 @@ import type { ClassInfo, DataSourceInfo, FileAnalysis, FunctionInfo, Language } 
 import type { ClassRef, ProjectContext } from "../types/project.js";
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
 import { pluginFor } from "../extractors/registry.js";
-import { awaitedType } from "./symbol-linker.js";
+import { awaitedType } from "../extractors/shared/awaited-type.js";
 
 type ApiCall = DataSourceInfo & { filePath: string };
 

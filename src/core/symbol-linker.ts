@@ -23,7 +23,7 @@ import {
 } from "../types/analysis.js";
 import { reactiveTriggerLinks } from "./reactive-triggers.js";
 import type { ImportResolveContext, LanguagePluginManifest, PackageRoot, RecordChoice, StructuralMatch, ValueOutHook } from "../types/language-plugin.js";
-import { awaitedType } from "../extractors/shared/value-out.js";
+import { awaitedType } from "../extractors/shared/awaited-type.js";
 import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scoring.js";
 import { isExternalImportSource, importResolveContext as buildImportResolveContext } from "./import-index.js";
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
@@ -8315,8 +8315,9 @@ function receiverChainOf(callName: string, language: string | undefined): ChainS
   const chain = receiverChain(callName);
   if (!chain?.some((seg) => seg.index)) return chain;
   const hook = valueOutOf(language);
-  if (!hook?.takes({ name: "", call: true, index: true })) return null;
-  return chain.map((seg) => (seg.index ? { ...seg, name: hook.index ?? "" } : seg));
+  if (hook?.index === undefined) return null;
+  const indexer = hook.index;
+  return chain.map((seg) => (seg.index ? { ...seg, name: indexer } : seg));
 }
 
 /** The `[…]` group opening at `open` — nested brackets balanced — as its inner text and the index past its `]`; null when none. */
@@ -8466,8 +8467,6 @@ function ownMethodResult(ctx: LinkContext, sourceFile: string, consumer: string,
   return returnedPoint(ctx, instanceReturn(def), sourceFile, { typeName: consumer, typeFile: null, consumer }, awaited)
     ?? statedResultPoint(ctx, sourceFile, def, consumer, awaited);
 }
-
-export { awaitedType };
 
 /**
  * An instance of the project class `written` (`new X(…)`, or — `bareCall` —
