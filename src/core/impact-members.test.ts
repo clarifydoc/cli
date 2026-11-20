@@ -87,3 +87,66 @@ describe("impact charges the files that name what changed", () => {
     expect([...added.files.keys()].sort()).toEqual(["src/build-a.ts", "src/build-b.ts"]);
   });
 });
+
+describe("impact keeps what a member rule cannot judge", () => {
+  const GARAGE = [
+    "function checkBay(bay: number): boolean {",
+    "  return bay > 0;",
+    "}",
+    "",
+    "export function park(bay: number): string {",
+    '  return checkBay(bay) ? "parked" : "full";',
+    "}",
+    "",
+  ].join("\n");
+  const BARREL = ['import { forward } from "./sink";', "", "export { forward };", "", "export function own(): number {", "  return 1;", "}", ""].join("\n");
+  const SHOWROOM = ["export interface Car {", "  plate: string;", "}", ""].join("\n");
+  const FILES2: Record<string, string> = {
+    "src/garage.ts": GARAGE,
+    "src/lot.ts": 'import { park } from "./garage";\nexport function arrive() {\n  return park(1);\n}\n',
+    "src/sink.ts": "export function forward(x: unknown) {\n  return JSON.stringify(x);\n}\n",
+    "src/sink2.ts": "export function forward(x: unknown) {\n  return String(x);\n}\n",
+    "src/barrel.ts": BARREL,
+    "src/uses-barrel.ts": 'import { forward } from "./barrel";\nexport function send() {\n  return forward(1);\n}\n',
+    "src/showroom.ts": SHOWROOM,
+    "src/holds-car.ts": 'import { Car } from "./showroom";\nexport const demo: Car = { plate: "A-1" };\n',
+    "src/returns-car.ts": 'import { Car } from "./showroom";\nexport function pick(): Car {\n  return { plate: "B-2" };\n}\n',
+  };
+  let dir: string;
+  let root: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-members2-"));
+    root = join(dir, "app");
+    await mkdir(join(root, "src"), { recursive: true });
+    for (const [f, text] of Object.entries(FILES2)) await writeFile(join(root, f), text);
+    await analyze({ projectRoot: root, outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 60_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+  const run = (file: string, content: string) => impactOfContents(summary, join(dir, "out"), root, new Map([[file, content]]));
+
+  it("a helper removed with only the edited function calling it breaks nothing", async () => {
+    const r = await run("src/garage.ts", GARAGE.replace("checkBay(bay) ?", "bay > 0 ?").replace(/function checkBay[\s\S]*?\n}\n\n/, ""));
+    expect(r.symbolImpact?.signatureChanges?.filter((c) => c.breaking)).toEqual([]);
+    expect(r.risk.reasons.join("\n")).not.toContain("breaks the callers");
+    expect(r.dependents).toEqual(["src/lot.ts"]);
+  });
+
+  it("a helper removed while another function that stays still calls it is breaking", async () => {
+    const r = await run("src/garage.ts", GARAGE.replace(/function checkBay[\s\S]*?\n}\n\n/, ""));
+    expect(r.symbolImpact?.signatureChanges?.filter((c) => c.breaking).map((c) => c.symbol)).toEqual(["checkBay"]);
+  });
+
+  it("an import edited in a file that re-exports it keeps the importers of the file", async () => {
+    const r = await run("src/barrel.ts", BARREL.replace('"./sink"', '"./sink2"'));
+    expect(r.dependents).toContain("src/uses-barrel.ts");
+  });
+
+  it("a required member added to an interface charges a file that holds or returns a value of the type", async () => {
+    const r = await run("src/showroom.ts", SHOWROOM.replace("  plate: string;\n", "  plate: string;\n  colour: string;\n"));
+    expect(r.dependents).toEqual(["src/holds-car.ts", "src/returns-car.ts"]);
+  });
+});

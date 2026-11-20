@@ -1695,14 +1695,14 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_blast_radius",
     title: "Blast radius of a change",
-    description: "Use for what breaks if a file changes: verdict and reasons, dependents (ranked by use), exports in use, screens, routes, entities and queues reached, reading cost. `members` (`Class.method`, `function`, `Type`) narrows dependents to the files naming them. No `path`: the riskiest files.",
+    description: "Use for what breaks if a file changes: verdict and reasons, dependents, exports in use, screens, routes, entities and queues reached, reading cost. `members` narrows dependents to files naming them. No `path`: the riskiest files.",
     inputSchema: {
       type: "object",
       properties: {
         path: { type: "string" },
         limit: { type: "number" },
-        members: { type: "array", items: { type: "string" }, description: "What you change in the file: `Class.method`, a function or a type." },
-        adding: { type: "boolean", description: "The members are new (an interface member, say): charge what implements, extends or builds the type." },
+        members: { type: "array", items: { type: "string" }, description: "What you change: `Class.method`, function or type." },
+        adding: { type: "boolean", description: "The members are new: charge what implements, extends or builds the type." },
       },
       additionalProperties: false,
     },
