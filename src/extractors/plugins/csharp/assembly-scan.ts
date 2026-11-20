@@ -1,5 +1,6 @@
 import type { ClassInfo, FileAnalysis, FunctionInfo, Language, RouteFact, SymbolLink } from "../../../types/analysis.js";
 import type { DispatchResolver } from "../../dispatch/base.js";
+import { blankCComments } from "../shared/text-scan.js";
 
 /**
  * Handlers a framework registers by SCANNING an assembly. Nothing calls them:
@@ -66,10 +67,6 @@ export interface AssemblyScanFact {
   namespaceOnly: boolean;
 }
 
-/** Blank `//` and block comments, keeping offsets and lines. */
-function blankComments(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (m) => m.replace(/[^\n]/g, " "));
-}
 
 /** The text of the balanced `(…)` that starts at or after `from`, or "" when none. */
 function balancedArgs(text: string, from: number): string {
@@ -90,7 +87,7 @@ function balancedArgs(text: string, from: number): string {
 /** Facts for every assembly-scanning registration the file makes (`routeFacts`). */
 export function collectAssemblyScans(sourceText: string, facts: RouteFact[]): void {
   if (!/AddMediatR|AddMediator|AddConsumers|EndpointConfiguration/.test(sourceText)) return;
-  const text = blankComments(sourceText);
+  const text = blankCComments(sourceText);
   for (const fam of FAMILIES) {
     for (const m of text.matchAll(fam.call)) {
       const start = m.index! + m[0].length;

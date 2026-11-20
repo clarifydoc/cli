@@ -1,5 +1,6 @@
 import type { CallInfo, ClassInfo, DataSourceInfo, FunctionInfo, ParamInfo } from "../../../types/analysis.js";
 import { extractClassesWithSpec, type RegexLangSpec } from "../shared/regex-base.js";
+import { tidySetupCalls } from "../shared/function-postprocess.js";
 
 /**
  * AppleScript regex spec (`.applescript` source; a compiled `.scpt` is
@@ -151,6 +152,5 @@ export const applescriptSpec: RegexLangSpec = {
 };
 
 export function tidySetup(fns: FunctionInfo[]): void {
-  const setup = fns.find((f) => f.name === "<setup>");
-  if (setup) setup.calls = dropKeywordCalls(setup.calls);
+  tidySetupCalls(fns, dropKeywordCalls);
 }

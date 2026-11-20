@@ -1,6 +1,7 @@
 import type { FileAnalysis, RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import { escapeRegex } from "../../shared/path-utils.js";
 import { HTTP_VERBS } from "../../../shared/http-verbs.js";
+import { lineAt as offsetLine } from "../../shared/text-scan.js";
 
 /**
  * Routes that a meta-framework derives from where a file sits rather than from
@@ -327,7 +328,7 @@ function astroRedirects(source: string): Pick<RouteInfo, "redirectTo" | "leadsTo
  */
 function objectEntries(text: string, open: number): Array<{ key: string; from: number; to: number }> {
   const out: Array<{ key: string; from: number; to: number }> = [];
-  const lineAt = (i: number) => text.slice(0, i).split("\n").length;
+  const lineAt = (i: number): number => offsetLine(text, i);
   let depth = 0;
   let start = open + 1;
   const flush = (end: number) => {
@@ -499,7 +500,7 @@ export function inferReactRouterConfig(relativePath: string, sourceText: string,
   if (!frameworkIds.includes("react-router-framework")) return none;
   if (!/^(?:app|src)\/routes\.(?:ts|js|mts|mjs)$/.test(relativePath.replace(/\\/g, "/"))) return none;
   const flatRoutes = /\bflatRoutes\s*\(/.test(sourceText);
-  const lineAt = (i: number) => sourceText.slice(0, i).split("\n").length;
+  const lineAt = (i: number): number => offsetLine(sourceText, i);
   const join = (base: string, p: string) => (p.startsWith("/") ? p : `${base.replace(/\/$/, "")}/${p}`).replace(/\/+/g, "/") || "/";
   const routes: RouteInfo[] = [];
 

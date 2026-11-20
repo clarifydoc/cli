@@ -1,6 +1,6 @@
 import type { ParamInfo, PropertyInfo, RouteParamInfo } from "../../../types/analysis.js";
 import type { RequestSchemaHooks, TypeShape } from "../../../types/language-plugin.js";
-import type { GuardAttr } from "../../shared/route-metadata.js";
+import { middlewareGuardOf, type GuardAttr } from "../../shared/route-metadata.js";
 import { splitGeneric } from "../../shared/type-parser.js";
 
 /**
@@ -141,10 +141,5 @@ const SCHEME_RE = /jwt|basic|bearer|token|session/i;
 
 /** One `addMiddleware(...)` argument → what it contributes to the route, or null for plain middleware. */
 export function middlewareGuard(expr: string): GuardAttr | null {
-  const text = expr.replace(/\s+/g, " ").trim();
-  if (!AUTH_MIDDLEWARE_RE.test(text)) return null;
-  const name = text.replace(/\(.*$/s, "");
-  return SCHEME_RE.test(name)
-    ? { text, anonymous: false, policies: [], roles: [], schemes: [name] }
-    : { text, anonymous: false, policies: [name], roles: [], schemes: [] };
+  return middlewareGuardOf(expr, AUTH_MIDDLEWARE_RE, SCHEME_RE);
 }

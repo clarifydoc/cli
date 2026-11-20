@@ -15,6 +15,8 @@ export interface SplitTopLevelOptions {
   dropBlank?: boolean;
   /** A closer with nothing open leaves the depth at zero instead of going negative. */
   clamp?: boolean;
+  /** A line comment's opener (`//`): the rest of its line counts for nothing, a separator or bracket in it included. */
+  lineComment?: string;
   /** A closer with nothing open ends the list (a call's arguments inside a longer line). */
   stopAtCloser?: boolean;
 }
@@ -44,7 +46,10 @@ export function splitTopLevel(text: string, o: SplitTopLevelOptions = {}): strin
       continue;
     }
     if (quotes.includes(ch)) quote = ch;
-    else if (openers.has(ch)) depth++;
+    else if (o.lineComment && text.startsWith(o.lineComment, i)) {
+      const nl = text.indexOf("\n", i);
+      i = nl < 0 ? text.length : nl;
+    } else if (openers.has(ch)) depth++;
     else if (closers.has(ch)) {
       if (depth === 0 && o.stopAtCloser) {
         pieces.push(text.slice(start, i));

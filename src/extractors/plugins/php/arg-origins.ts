@@ -199,7 +199,8 @@ function stepFilters(call: Node): Array<[string, Node]> {
       return out;
     }
   }
-  // Dynamic `whereSlug($slug)`.
+  // Dynamic `whereSlug($slug)`. Laravel spells the column with one regex, so a run of capitals stays one word
+  // (`whereHTTPServer` → `httpserver`); the shared `underscore` would split it, hence no import.
   const dynamic = /^where([A-Z]\w*)$/.exec(verb);
   if (dynamic && args.length === 1 && args[0] && !BUILDER_WHERES.test(dynamic[1]!)) {
     return [[dynamic[1]!.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase(), args[0]]];

@@ -1,6 +1,7 @@
 import type { DataSourceInfo, ImportInfo, RouteInfo } from "../../../types/analysis.js";
 import { extractCallsFromBody, extractClassesWithSpec, findEndLine, type CallPattern, type RegexLangSpec } from "../shared/regex-base.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
+import { dropNestedFunctions } from "../shared/function-postprocess.js";
 
 /**
  * CoffeeScript regex spec (no grammar on npm). Indentation delimits blocks;
@@ -308,18 +309,6 @@ function functionSpans(lines: string[]): Array<[number, number]> {
 }
 
 /**
- * A function value declared INSIDE another function — a callback in an
- * options object (`success: => …`), a local helper — is part of its
- * enclosing function, not a function or method of the file. Judged against
- * every declaration in the file: by the time top-level functions are
- * post-processed, the class methods enclosing a callback are gone from them.
- */
-function dropNested<T extends { line: number; endLine: number }>(lines: string[], fns: T[]): T[] {
-  const spans = functionSpans(lines);
-  return fns.filter((fn) => !spans.some(([start, end]) => start < fn.line && end >= fn.endLine));
-}
-
-/**
  * What is not code, blanked before extraction (line structure kept): `###`
  * block comments, and the INSIDE of every `"""` / `'''` heredoc and `///`
  * heregex — prose there ("Unable to find the file") would otherwise read as
@@ -457,10 +446,10 @@ export const coffeeSpec: RegexLangSpec = {
   // top-level function list.
   extractClasses: (lines) => {
     const classes = extractClassesWithSpec(lines, coffeeSpec);
-    for (const cls of classes) cls.methods = dropNested(lines, cls.methods);
+    for (const cls of classes) cls.methods = dropNestedFunctions(cls.methods, functionSpans(lines));
     return classes;
   },
-  postProcessFunctions: (lines, fns) => dropNested(lines, fns),
+  postProcessFunctions: (lines, fns) => dropNestedFunctions(fns, functionSpans(lines)),
   extractRoutes: (lines) => coffeeRoutes(lines),
   extractDataSources: (lines) => coffeeDataSources(lines),
 };

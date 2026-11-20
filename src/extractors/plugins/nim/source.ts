@@ -1,3 +1,4 @@
+import { lineEnd } from "../shared/text-scan.js";
 /**
  * Nim source preparation. The spec reads lines, so what is not code is
  * blanked before extraction, line structure kept:
@@ -207,9 +208,3 @@ function headEnd(lines: string[], i: number): number {
   return i;
 }
 
-/** Index of the line terminator (`\n` or a lone `\r`) at or after `from`, or -1. */
-function lineEnd(source: string, from: number): number {
-  EOL.lastIndex = from;
-  return EOL.exec(source)?.index ?? -1;
-}
-const EOL = /[\r\n]/g;

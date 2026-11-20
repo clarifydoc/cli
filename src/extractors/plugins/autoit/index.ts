@@ -1,6 +1,7 @@
 import type { CallInfo, DataSourceInfo, FunctionInfo, ParamInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
+import { tidySetupCalls } from "../shared/function-postprocess.js";
 
 /**
  * AutoIt regex spec. `Func Name($a, $b = 1)` … `EndFunc` (any letter case),
@@ -91,6 +92,5 @@ export const autoitSpec: RegexLangSpec = {
 
 /** The `<setup>` calls go through the same keyword filter (the regex engine builds them). */
 export function tidySetup(fns: FunctionInfo[]): void {
-  const setup = fns.find((f) => f.name === "<setup>");
-  if (setup) setup.calls = dropKeywordCalls(setup.calls);
+  tidySetupCalls(fns, dropKeywordCalls);
 }

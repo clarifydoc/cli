@@ -1,5 +1,6 @@
 import type { RouteInfo } from "../../../../types/analysis.js";
 import { NAV_BY_ACTION, NAV_BY_ID } from "../../shared/android-nav-graph.js";
+import { lineAt as offsetLine } from "../../shared/text-scan.js";
 
 /**
  * Android navigation by class: the screens a file opens.
@@ -21,7 +22,7 @@ export function extractAndroidNavigation(sourceText: string): RouteInfo[] {
   if (!/\bIntent\s*\(|beginTransaction\s*\(|\.navigate\s*\(/.test(sourceText)) return [];
   const out: RouteInfo[] = [];
   const seen = new Set<string>();
-  const lineAt = (i: number) => sourceText.slice(0, i).split("\n").length;
+  const lineAt = (i: number): number => offsetLine(sourceText, i);
   const push = (cls: string, at: number) => {
     if (seen.has(cls)) return;
     seen.add(cls);

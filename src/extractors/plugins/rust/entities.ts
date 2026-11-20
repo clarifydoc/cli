@@ -1,4 +1,5 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
+import { underscore } from "../shared/inflection.js";
 import type { FileAnalysis, ClassInfo, EntityRelation, Language, PropertyInfo } from "../../../types/analysis.js";
 
 /**
@@ -691,11 +692,7 @@ export class RustEntityExtractor extends EntityExtractor {
 
   /** CamelCase / PascalCase → snake_case. */
   private snake(s: string): string {
-    return (s ?? "")
-      .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
-      .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
-      .replace(/[\s-]+/g, "_")
-      .toLowerCase();
+    return underscore(s ?? "").replace(/[\s-]+/g, "_");
   }
 
   private upperFirst(s: string): string {

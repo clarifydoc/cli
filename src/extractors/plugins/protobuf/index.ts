@@ -1,5 +1,6 @@
 import type { ClassInfo, PropertyInfo, RouteInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
+import { blankCComments, preparedLines } from "../shared/text-scan.js";
 
 /**
  * Protocol Buffers service contracts (`.proto`):
@@ -23,34 +24,8 @@ import type { RegexLangSpec } from "../shared/regex-base.js";
  * over the wire, not what is stored.
  */
 
-/** Comments blanked, newlines kept, so offsets still give line numbers. */
-function blankComments(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (m) => m.replace(/[^\n]/g, " "));
-}
 
-const CACHE = new WeakMap<string[], { text: string; lineAt: (offset: number) => number }>();
-
-function prepared(lines: string[]): { text: string; lineAt: (offset: number) => number } {
-  let p = CACHE.get(lines);
-  if (!p) {
-    const text = blankComments(lines.join("\n"));
-    const starts = [0];
-    for (let i = 0; i < text.length; i++) if (text[i] === "\n") starts.push(i + 1);
-    const lineAt = (offset: number): number => {
-      let lo = 0;
-      let hi = starts.length - 1;
-      while (lo < hi) {
-        const mid = (lo + hi + 1) >> 1;
-        if (starts[mid]! <= offset) lo = mid;
-        else hi = mid - 1;
-      }
-      return lo + 1;
-    };
-    p = { text, lineAt };
-    CACHE.set(lines, p);
-  }
-  return p;
-}
+const prepared = preparedLines(blankCComments);
 
 /** The offset of the `}` closing the block whose `{` is at `open`, or -1. */
 function blockEnd(text: string, open: number): number {

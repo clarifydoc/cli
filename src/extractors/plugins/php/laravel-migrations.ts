@@ -251,7 +251,10 @@ export function reconcileLaravelMigrations(analyses: FileAnalysis[]): void {
   }
 }
 
-/** `MatchReport` → `match_report`. */
+/**
+ * `MatchReport` → `match_report`. Laravel's own approximation, kept apart from `underscore` on purpose: a run of capitals
+ * stays one word (`HTTPServer` → `httpserver`), where the shared helper splits it (`http_server`).
+ */
 function snake(name: string): string {
   return name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
 }

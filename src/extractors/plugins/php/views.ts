@@ -2,6 +2,7 @@ import type { FileAnalysis, FunctionInfo, ScreenComponentInfo, ScreenInfo, SubCo
 import { extractHtmlInteractiveElements } from "../html/index.js";
 import { keepSourceColumns, materializeElementRequests } from "../shared/element-requests.js";
 import { SELF_ADDRESS, bindPageScreen, declareSelfPostHandler, hasPageMarkup, resolveMarkupTargets, servedScriptPath, resolvePageTarget } from "./plain-pages.js";
+import { lineAt as offsetLine } from "../shared/text-scan.js";
 
 /**
  * Plain-PHP view templates — CodeIgniter's `application/views/**.php` (CI4
@@ -189,7 +190,7 @@ function scriptTarget(url: string, concatenated: boolean, pagePath?: string): st
 /** The api-calls in the inline `<script>` blocks of `markup`, with each block's line span. */
 function scriptCalls(markup: string, pagePath?: string, source?: string): Array<{ start: number; end: number; calls: ScriptCall[] }> {
   const blocks: Array<{ start: number; end: number; calls: ScriptCall[] }> = [];
-  const lineAt = (i: number): number => markup.slice(0, i).split("\n").length;
+  const lineAt = (i: number): number => offsetLine(markup, i);
   const columnOf = (i: number) => {
     const c = columnAt(i);
     return c === undefined ? {} : { column: c };

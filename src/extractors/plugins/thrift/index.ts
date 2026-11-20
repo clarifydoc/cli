@@ -1,6 +1,7 @@
 import type { ClassInfo, FileAnalysis, PropertyInfo, RouteFact, RouteInfo } from "../../../types/analysis.js";
 import type { RouteResolver } from "../../route-resolvers/base.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
+import { preparedLines } from "../shared/text-scan.js";
 
 /**
  * Apache Thrift service contracts (`.thrift`):
@@ -38,29 +39,7 @@ function blankComments(text: string): string {
   );
 }
 
-const CACHE = new WeakMap<string[], { text: string; lineAt: (offset: number) => number }>();
-
-function prepared(lines: string[]): { text: string; lineAt: (offset: number) => number } {
-  let p = CACHE.get(lines);
-  if (!p) {
-    const text = blankComments(lines.join("\n"));
-    const starts = [0];
-    for (let i = 0; i < text.length; i++) if (text[i] === "\n") starts.push(i + 1);
-    const lineAt = (offset: number): number => {
-      let lo = 0;
-      let hi = starts.length - 1;
-      while (lo < hi) {
-        const mid = (lo + hi + 1) >> 1;
-        if (starts[mid]! <= offset) lo = mid;
-        else hi = mid - 1;
-      }
-      return lo + 1;
-    };
-    p = { text, lineAt };
-    CACHE.set(lines, p);
-  }
-  return p;
-}
+const prepared = preparedLines(blankComments);
 
 /** The offset of the closing bracket matching the opener at `open`, or -1. */
 function matching(text: string, open: number, o: string, c: string): number {

@@ -2,6 +2,7 @@ import type { ClassInfo, FunctionInfo, ImportInfo, ParamInfo, PropertyInfo } fro
 import { extractCallsFromBody, extractClassesWithSpec, findEndLine, splitBracketedArgs, type CallPattern, type RegexLangSpec } from "../shared/regex-base.js";
 import { extractDRoutes } from "./routes.js";
 import { extractDDataSources } from "./data-sources.js";
+import { dropNestedFunctions } from "../shared/function-postprocess.js";
 
 /**
  * D regex spec (no grammar on npm that loads in web-tree-sitter 0.27). Braces
@@ -143,12 +144,6 @@ function functionSpans(lines: string[]): Array<[number, number]> {
   return spans;
 }
 
-/** A function declared INSIDE another (a nested helper, a delegate body) belongs to the enclosing one. */
-function dropNested<T extends { line: number; endLine: number }>(lines: string[], fns: T[]): T[] {
-  const spans = functionSpans(lines);
-  return fns.filter((fn) => !spans.some(([start, end]) => start < fn.line && end >= fn.endLine));
-}
-
 /**
  * Protection of each declaration line: D members are public unless a
  * `private`/`protected`/`package` attribute says otherwise — on the line, as
@@ -197,7 +192,7 @@ function refine(lines: string[], fns: FunctionInfo[], classes: ClassInfo[]): voi
   for (const cls of classes) {
     attach(cls);
     const nested = classes.filter((c) => c !== cls && c.line > cls.line && c.endLine <= cls.endLine);
-    cls.methods = dropNested(lines, cls.methods).filter((m) => !nested.some((c) => m.line > c.line && m.line <= c.endLine));
+    cls.methods = dropNestedFunctions(cls.methods, functionSpans(lines)).filter((m) => !nested.some((c) => m.line > c.line && m.line <= c.endLine));
     for (const m of cls.methods) {
       attach(m);
       m.params = dParams(lines, m.line - 1, m.name);
@@ -321,7 +316,7 @@ export const dSpec: RegexLangSpec = {
   },
   postProcessFunctions: (lines, fns) => {
     // A top-level `this(…)` is a module constructor (`static this()`): no function of its own.
-    const kept = dropNested(lines, fns.filter((f) => f.name !== "this"));
+    const kept = dropNestedFunctions(fns.filter((f) => f.name !== "this"), functionSpans(lines));
     refine(lines, kept, []);
     return [...kept, ...unittestBlocks(lines)];
   },

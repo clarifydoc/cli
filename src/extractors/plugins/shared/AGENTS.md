@@ -81,10 +81,10 @@ If a pattern is used by multiple plugins but not all, it probably belongs here w
 
 A helper two plugins spell the same way lives here once; a plugin never imports another plugin.
 
-- [text-scan.ts](text-scan.ts) — plain text: `lineAt` and `lineStarts`/`lineOfOffset` (offset → 1-based line), `matchingParen`, `balancedArgs`, `callArgsAt`, `wrapsWhole`, `splitTopLevelCommas`.
+- [text-scan.ts](text-scan.ts) — plain text: `lineAt` (one lookup), `lineIndex`/`lineStarts`/`lineOfOffset` (many; a plugin never declares its own offset → line counter or inline `slice(0, i).split("\n")`), `preparedLines(blank)` (a plugin's cached comment-blanked text + line lookup), `lineEnd`, `blankCComments`, `matchingParen`, `balancedArgs`, `callArgsAt`, `wrapsWhole`, `splitTopLevelCommas`.
 - [code-lines.ts](code-lines.ts) — one line of a brace language read as code: `codeOf` (strings and the `//` comment blanked at the same columns), `closeOf`, `window`, `splitArgs` (raw and code copies aligned), `statementsOf`, `statementsWithLine`, `continuedBelow`. The line-based DI readers (Dart, Scala, Swift) use them.
 - [ts-nodes.ts](ts-nodes.ts) — `namedChildren` / `descendants` over a tree-sitter node, for the grammar-backed readers of regex languages; `idStep` is in [callee-names.ts](callee-names.ts).
 - [inflection.ts](inflection.ts) also holds `camelCase` (the JSON name .NET serializers give a property: C#, VB); `splitGeneric` is in `../../shared/type-parser.ts`, `isAuthGuard` in `../../shared/route-metadata.ts`, `unwrapParenthesized` in `../../shared/node-helpers.ts`.
 
 Before moving a copy here, compare what the body READS as well as its text: two `scanTags` with the same body read different tag regexes (one admits `:` in a tag name), so they are not the same function.
-
+- [function-postprocess.ts](function-postprocess.ts) — `dropNestedFunctions` (a function declared inside another belongs to it) and `tidySetupCalls` for the regex script plugins. `extractors/shared/route-metadata.ts` `middlewareGuardOf(expr, authRe, schemeRe)` is the shared middleware → guard rule; each framework states its two regexes. A helper that is a framework's own spelling stays in its plugin with a comment saying so (Laravel's `snake` keeps `HTTPServer` one word, unlike `inflection.ts` `underscore`).

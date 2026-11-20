@@ -1,5 +1,6 @@
 import type { DiBinding } from "../../../types/analysis.js";
 import { GO_TYPE_KEYWORDS, goResultTextAt, goResultTypes, goSimpleTypeName, matchingClose, splitGoTopLevel, stripGoComment } from "./syntax.js";
+import { lineIndex } from "../shared/text-scan.js";
 
 /**
  * Container registrations that bind an interface to an implementation, in
@@ -73,22 +74,6 @@ export function extractGoDiBindings(lines: string[]): DiBinding[] {
     }
   }
   return out;
-}
-
-/** Offset in `code` → 1-based line. */
-function lineIndex(code: string): (offset: number) => number {
-  const starts = [0];
-  for (let i = 0; i < code.length; i++) if (code[i] === "\n") starts.push(i + 1);
-  return (offset) => {
-    let lo = 0;
-    let hi = starts.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (starts[mid]! <= offset) lo = mid;
-      else hi = mid - 1;
-    }
-    return lo + 1;
-  };
 }
 
 /** What a provider expression builds — see {@link extractGoDiBindings}. */

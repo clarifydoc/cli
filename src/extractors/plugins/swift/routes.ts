@@ -1,5 +1,5 @@
 import type { RouteInfo, RouteParamInfo } from "../../../types/analysis.js";
-import { applyRouteMeta, inferredParam, pathParamNames, type GuardAttr } from "../../shared/route-metadata.js";
+import { applyRouteMeta, middlewareGuardOf, inferredParam, pathParamNames, type GuardAttr } from "../../shared/route-metadata.js";
 import { splitBracketedArgs } from "../shared/regex-base.js";
 import { extractSwiftRequestAccess } from "./request-schema.js";
 import { balancedArgs } from "../shared/text-scan.js";
@@ -65,12 +65,7 @@ const joinPath = (prefix: string, segments: string[]): string => joinRootedPath(
 
 /** One middleware expression → what it contributes to the route. */
 export function middlewareGuard(expr: string): GuardAttr | null {
-  const text = expr.replace(/\s+/g, " ").trim();
-  if (!AUTH_MIDDLEWARE_RE.test(text)) return null;
-  const name = text.replace(/\(.*$/s, "");
-  return SCHEME_RE.test(name)
-    ? { text, anonymous: false, policies: [], roles: [], schemes: [name] }
-    : { text, anonymous: false, policies: [name], roles: [], schemes: [] };
+  return middlewareGuardOf(expr, AUTH_MIDDLEWARE_RE, SCHEME_RE);
 }
 
 /**

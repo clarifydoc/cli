@@ -1,15 +1,13 @@
 import type { ProjectInfo } from "../../../types/plugin.js";
+import { escapeRegex } from "./path-utils.js";
 
 /**
  * Predicate helpers over `ProjectInfo` for plugin framework rules
  * (`LanguagePluginMeta.frameworkRules`). Each queries one manifest ecosystem;
- * a rule composes them into a framework detection. Leaf module — types only —
- * so plugin metas can import it without touching core or the registry.
+ * a rule composes them into a framework detection. Leaf module — types and the
+ * import-free `path-utils` — so plugin metas can import it without touching core
+ * or the registry.
  */
-
-export function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 /** npm: `dependencies` / `devDependencies` in package.json. */
 export function hasDep(info: ProjectInfo, name: string): boolean {

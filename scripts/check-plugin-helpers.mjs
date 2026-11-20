@@ -6,12 +6,14 @@
 // (a function ends at the next `}` in column 0; a `//` inside a literal reads as a comment): it catches copies,
 // it does not prove two helpers different. A body left on purpose goes in
 // scripts/plugin-helpers-allow.json as { "bodyHash": "reason" } (the failing run prints the hash).
+// MIN_BODY=<n> in the environment changes the floor for a one-off look (80 flags short wrappers and one-line
+// constants over each plugin's own spec as well); the committed floor stays 120 so a short wrapper is no failure.
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const MIN_BODY = 120;
+const MIN_BODY = Number(process.env.MIN_BODY ?? 120);
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const pluginsDir = process.argv[2] ?? join(root, "src", "extractors", "plugins");
 const allowPath = process.argv[3] ?? join(root, "scripts", "plugin-helpers-allow.json");

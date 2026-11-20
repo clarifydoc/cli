@@ -1,3 +1,4 @@
+import { lineEnd } from "../shared/text-scan.js";
 /**
  * V source preparation.
  *
@@ -149,9 +150,3 @@ export function vSqlLines(lines: string[]): string[] {
   return out;
 }
 
-/** Index of the line terminator (`\n` or a lone `\r`) at or after `from`, or -1. */
-function lineEnd(source: string, from: number): number {
-  EOL.lastIndex = from;
-  return EOL.exec(source)?.index ?? -1;
-}
-const EOL = /[\r\n]/g;

@@ -1,5 +1,7 @@
 import type { CallInfo, RouteFact, RouteInfo } from "../../../types/analysis.js";
 import type { ClosureCalls } from "./routes.js";
+import { splitTopLevel } from "../../shared/split-top-level.js";
+import { lineIndex } from "../shared/text-scan.js";
 
 /**
  * Huma (github.com/danielgtaylor/huma) operations as routes.
@@ -261,43 +263,6 @@ function skipString(text: string, start: number): number {
 }
 
 function splitTop(body: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < body.length; i++) {
-    const ch = body[i]!;
-    if (ch === '"' || ch === "'" || ch === "`") {
-      i = skipString(body, i);
-      continue;
-    }
-    if (ch === "/" && body[i + 1] === "/") {
-      const nl = body.indexOf("\n", i);
-      i = nl < 0 ? body.length : nl;
-      continue;
-    }
-    if (ch === "(" || ch === "{" || ch === "[") depth++;
-    else if (ch === ")" || ch === "}" || ch === "]") depth--;
-    else if (ch === "," && depth === 0) {
-      out.push(body.slice(start, i));
-      start = i + 1;
-    }
-  }
-  const tail = body.slice(start);
-  if (tail.trim()) out.push(tail);
-  return out.map((s) => s.trim()).filter(Boolean);
+  return splitTopLevel(body, { quotes: "\"'`", escapes: "\"'", lineComment: "//", trim: true, dropBlank: true });
 }
 
-function lineIndex(text: string): (offset: number) => number {
-  const starts = [0];
-  for (let i = 0; i < text.length; i++) if (text[i] === "\n") starts.push(i + 1);
-  return (offset) => {
-    let lo = 0;
-    let hi = starts.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (starts[mid]! <= offset) lo = mid;
-      else hi = mid - 1;
-    }
-    return lo + 1;
-  };
-}

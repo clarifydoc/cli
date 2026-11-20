@@ -1,4 +1,5 @@
 import type { CallBaseRef, HttpClientRegistration } from "../../../types/analysis.js";
+import { lineAt } from "../shared/text-scan.js";
 
 /**
  * REST client proxies declared in Spring XML — the way classic Spring
@@ -37,7 +38,6 @@ function isAddress(value: string): boolean {
 }
 
 const FQN = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/;
-const lineAt = (source: string, index: number) => source.slice(0, index).split("\n").length;
 
 export function extractSpringClientProxies(lines: string[]): HttpClientRegistration[] {
   // Comments blanked (lines kept) and the prefix the document binds to Spring's beans namespace dropped

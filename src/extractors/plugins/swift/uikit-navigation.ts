@@ -1,5 +1,6 @@
 import type { RouteInfo } from "../../../types/analysis.js";
 import { NAV_BY_SEGUE, NAV_BY_STORYBOARD_ID } from "../shared/storyboard.js";
+import { lineAt as offsetLine } from "../shared/text-scan.js";
 
 /**
  * UIKit navigation by class: the view controllers a file opens.
@@ -20,7 +21,7 @@ export function extractUIKitNavigation(lines: string[]): RouteInfo[] {
   if (!/\bimport\s+UIKit\b/.test(text)) return [];
   const out: RouteInfo[] = [];
   const seen = new Set<string>();
-  const lineAt = (i: number) => text.slice(0, i).split("\n").length;
+  const lineAt = (i: number): number => offsetLine(text, i);
   const push = (cls: string, at: number) => {
     if (seen.has(cls)) return;
     seen.add(cls);

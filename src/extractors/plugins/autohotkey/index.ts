@@ -1,6 +1,7 @@
 import type { CallInfo, ClassInfo, DataSourceInfo, FunctionInfo, ParamInfo } from "../../../types/analysis.js";
 import { extractCallsFromBody, extractClassesWithSpec, findEndLine, type CallPattern, type RegexLangSpec } from "../shared/regex-base.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
+import { tidySetupCalls } from "../shared/function-postprocess.js";
 
 /**
  * AutoHotkey regex spec (v1 and v2). A definition and a call look alike —
@@ -160,8 +161,7 @@ export const autohotkeySpec: RegexLangSpec = {
 
 /** The `<setup>` calls go through the same keyword filter (the regex engine builds them). */
 export function tidySetup(fns: FunctionInfo[]): void {
-  const setup = fns.find((f) => f.name === "<setup>");
-  if (setup) setup.calls = dropKeywordCalls(setup.calls);
+  tidySetupCalls(fns, dropKeywordCalls);
 }
 
 /** The source with its block comments (opened by a slash-star at a line's start) blanked. Null when there are none. */

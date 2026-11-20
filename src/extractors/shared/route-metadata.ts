@@ -192,3 +192,16 @@ export function withInheritedGuards(route: RouteInfo, guards: readonly GuardAttr
 export function isAuthGuard(g: GuardAttr): boolean {
   return (g.policies?.length ?? 0) + (g.roles?.length ?? 0) + (g.schemes?.length ?? 0) > 0;
 }
+
+/**
+ * One middleware expression as a guard, or null for plain middleware: `authRe` says the expression checks the caller,
+ * `schemeRe` that its name is an authentication scheme rather than a policy. Each framework states its own two words.
+ */
+export function middlewareGuardOf(expr: string, authRe: RegExp, schemeRe: RegExp): GuardAttr | null {
+  const text = expr.replace(/\s+/g, " ").trim();
+  if (!authRe.test(text)) return null;
+  const name = text.replace(/\(.*$/s, "");
+  return schemeRe.test(name)
+    ? { text, anonymous: false, policies: [], roles: [], schemes: [name] }
+    : { text, anonymous: false, policies: [name], roles: [], schemes: [] };
+}

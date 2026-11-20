@@ -1,4 +1,5 @@
 import type { RouteInfo } from "../../../types/analysis.js";
+import { lineAt } from "../shared/text-scan.js";
 
 /**
  * SwiftUI navigation: the views a view opens, as frontend routes named by
@@ -46,7 +47,6 @@ function firstView(code: string): string | null {
   return null;
 }
 
-const lineAt = (text: string, offset: number): number => text.slice(0, offset).split("\n").length;
 
 export function extractSwiftUINavigation(lines: string[]): RouteInfo[] {
   const text = lines.join("\n").replace(/\/\/[^\n]*/g, (m) => " ".repeat(m.length));

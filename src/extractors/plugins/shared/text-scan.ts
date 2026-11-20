@@ -97,3 +97,38 @@ export function wrapsWhole(t: string): boolean {
   }
   return true;
 }
+
+/** `offset → 1-based line` for one text, by binary search over its line starts (many lookups in one text). */
+export function lineIndex(text: string): (offset: number) => number {
+  const starts = lineStarts(text);
+  return (offset) => lineOfOffset(starts, offset);
+}
+
+/**
+ * A per-plugin cache of "the file's lines joined and comment-blanked, with an offset → line lookup", keyed by the
+ * lines array a plugin is handed: `const prepared = preparedLines(blankComments)`.
+ */
+export function preparedLines(blank: (text: string) => string): (lines: string[]) => { text: string; lineAt: (offset: number) => number } {
+  const cache = new WeakMap<string[], { text: string; lineAt: (offset: number) => number }>();
+  return (lines) => {
+    let p = cache.get(lines);
+    if (!p) {
+      const text = blank(lines.join("\n"));
+      p = { text, lineAt: lineIndex(text) };
+      cache.set(lines, p);
+    }
+    return p;
+  };
+}
+
+/** Index of the line terminator (`\n` or a lone `\r`) at or after `from`, or -1. */
+export function lineEnd(source: string, from: number): number {
+  EOL.lastIndex = from;
+  return EOL.exec(source)?.index ?? -1;
+}
+const EOL = /[\r\n]/g;
+
+/** `/* … *\/` and `//` comments blanked to spaces, newlines kept, so offsets and line numbers still hold. Strings are not read. */
+export function blankCComments(text: string): string {
+  return text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (m) => m.replace(/[^\n]/g, " "));
+}
