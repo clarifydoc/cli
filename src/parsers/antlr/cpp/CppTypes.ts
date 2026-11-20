@@ -259,6 +259,30 @@ function hideTypeMacroArguments(all: Token[]): void {
       while (type(j) === CPP14Lexer.Const || type(j) === CPP14Lexer.Volatile || type(j) === CPP14Lexer.Typename_) j--;
       hide = type(j) === CPP14Lexer.Assign && type(j - 1) === CPP14Lexer.Identifier && type(j - 2) === CPP14Lexer.Using;
     }
+    // `typedef typename BIND_(Sel, Type) TestClass;`: a macro standing for the type after `typename`, which no scope
+    // follows — `typename` and the arguments leave, so the macro's name is the type.
+    if (!hide && prev === CPP14Lexer.Typename_ && type(i - 2) !== CPP14Lexer.Doublecolon && after === CPP14Lexer.Identifier) {
+      (tokens[i - 1] as { channel: number }).channel = Token.HIDDEN_CHANNEL;
+      hide = true;
+    }
+    // `: a_(x), SUPPRESS_WARNINGS_(4355) b_(this), SUPPRESS_END_() c_(y)`: a macro between two member initializers,
+    // with no comma of its own, is no initializer — the whole call leaves.
+    if (!hide && prev === CPP14Lexer.Comma && after === CPP14Lexer.Identifier && (type(close[i + 1]! + 2) === CPP14Lexer.LeftParen || type(close[i + 1]! + 2) === CPP14Lexer.LeftBrace)) {
+      let j = i - 2;
+      // Back over the initializers before the comma to the `:` that opens the list, to see that it is a constructor's.
+      for (let depth = 0; j >= 0; j--) {
+        const t = type(j);
+        if (t === CPP14Lexer.RightParen || t === CPP14Lexer.RightBrace) depth++;
+        else if (t === CPP14Lexer.LeftParen || t === CPP14Lexer.LeftBrace) {
+          if (depth === 0) break;
+          depth--;
+        } else if (depth === 0 && (t === CPP14Lexer.Semi || t === CPP14Lexer.Colon)) break;
+      }
+      if (j >= 0 && type(j) === CPP14Lexer.Colon && type(j - 1) === CPP14Lexer.RightParen) {
+        (tokens[i] as { channel: number }).channel = Token.HIDDEN_CHANNEL;
+        hide = true;
+      }
+    }
     if (!hide) continue;
     for (let k = i + 1; k <= close[i + 1]!; k++) (tokens[k] as { channel: number }).channel = Token.HIDDEN_CHANNEL;
   }
@@ -520,7 +544,7 @@ export function readTypes(stream: CommonTokenStream): CppTokenFacts {
       const t = type(j);
       if (t === CPP14Lexer.Question) conditional = true;
       else if (t === CPP14Lexer.StringLiteral && type(j + 1) === CPP14Lexer.Colon) asmOperands = true;
-      if (NON_EXPRESSION.has(t) || (POINTER.has(t) && (type(j + 1) === CPP14Lexer.RightParen || type(j + 1) === CPP14Lexer.Comma))) {
+      if (NON_EXPRESSION.has(t) || t === CPP14Lexer.Return || (POINTER.has(t) && (type(j + 1) === CPP14Lexer.RightParen || type(j + 1) === CPP14Lexer.Comma))) {
         macroCall[i] = 1;
         break;
       }

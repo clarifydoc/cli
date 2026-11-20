@@ -88,6 +88,7 @@ retypes the tokens instead (`cpp/CppTypes.ts`: `TemplateLess`/`TemplateGreater`,
 types the lexer grammar declares and never matches) and the grammar reads them syntactically. The widest decisions
 (C++'s statement, declaration and member) are settled from tokens before prediction runs (`CPP14ParserBase.prepare`
 wraps `adaptivePredict`; the alternatives are found by the sub-rule each reaches in the ATN, never by number).
+A macro no grammar rule reads can leave the default channel instead (`hideTypeMacroArguments`): a call's arguments where only a type or scope goes (`typename BIND_(Sel, T) Name` also drops the `typename`, the macro's name being the type), and a whole suppression macro standing between two member initializers with no comma (`a_(x), WARNINGS_PUSH_(4355) b_(y)`, only inside a constructor's `:` list); a macro whose arguments hold a `return` is a statement macro (`MacroName`).
 Full-context prediction only runs on a file SLL already failed (a valid file never reaches it), and every file the reader
 refuses pays for it twice (the conditionals as written, then first branches), so the decisions it spent its time on are
 settled too: a qualified name's scope (`std::vector<Club>`: the optional scope of a simple type and each turn of its loop),

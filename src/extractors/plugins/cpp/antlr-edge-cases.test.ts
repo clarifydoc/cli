@@ -222,3 +222,45 @@ namespace league { std::map<int, std::vector<Car>> table(); }
     expect(parsed.functions.map((f) => f.name)).toEqual(["DECLARE_CLUB", "TEST_CASE", "Club", "pass", "operator()", "operatorbool", "score", "make", "~Club", "Club", "size", "park", "cars", "pick", "Wheel"]);
   });
 });
+
+describe("C++ edge cases: test-framework macros", () => {
+  it("reads a macro standing for the type after typename, and keeps a scoped typename's reading", () => {
+    const source = `template <class T> struct Lineup {
+  static void run() {
+    typedef typename FIELD_OF_(Squad, T) Slot;
+    typedef typename T::Slot Real;
+    Slot s;
+    s.kick();
+  }
+};
+`;
+    expect(read(source)).toEqual({ errors: 0, functions: [["Lineup::run", ["s.kick"]]] });
+  });
+
+  it("reads a statement macro whose argument is a return", () => {
+    const source = `std::string Club::name() {
+#if HAS_NAMES
+  SUPPRESS_UNREACHABLE_BELOW_(
+      return lookup<Club>());
+#endif
+  return "none";
+}
+`;
+    expect(read(source).errors).toBe(0);
+  });
+
+  it("reads suppression macros between member initializers, and refuses one outside a constructor's list", () => {
+    const source = `Match::Match(Club* home)
+    : home_(home),
+      WARNINGS_PUSH_(4355 /* this in initializer */)
+          away_reporter_(this),
+      WARNINGS_POP_() home_reporter_(home),
+      score_(0) {
+  start();
+}
+`;
+    expect(read(source)).toEqual({ errors: 0, functions: [["Match::Match", ["home_", "away_reporter_", "home_reporter_", "score_", "start"]]] });
+    // A comma-led macro with no constructor list before it is not hidden.
+    expect(read("void f() { g(a, WARNINGS_PUSH_(1) b(2)); }\n").errors).toBeGreaterThan(0);
+  });
+});
