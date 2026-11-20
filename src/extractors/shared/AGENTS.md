@@ -57,6 +57,7 @@ language-specific comes from each plugin's `meta.calls`
 - Package-qualified imports (`com.example.api.service.UserService`)
 - Dotted module paths (`services.user_service`)
 - Last-segment file basename matching
+- A path written with its extension (`#include "league/club.h"`, `include 'inc/header.php'`) from no directory the importer or the root spells: the one file whose path ENDS with it, extension included (`uniquePathEnding`) — never the `club.c` that shares the header's stem; two files spelling it alike stay unresolved
 - Skips known external packages (prefixes contributed by plugin metas via `registry.ts`)
 
 ## node-helpers.ts — tree-sitter AST utilities

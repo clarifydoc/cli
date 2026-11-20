@@ -449,6 +449,10 @@ function resolveTargetUncached(importSource: string, sourceFile: string, filePat
     const beside = filePathMap.get(posix.normalize(posix.join(posix.dirname(sourceFile), importSource)));
     if (beside) return beside;
     if (importSource.includes("/") && !importSource.startsWith("../")) {
+      // The extension is part of the name: `league/club.h` is the header, not the `club.c` that shares its stem.
+      const written = uniquePathEnding(posix.normalize(importSource), filePathMap);
+      if (written) return written;
+      if (written === null) return null;
       const hit = uniqueSuffixMatch(posix.normalize(importSource).slice(0, -ext.length), filePathMap);
       if (hit) return hit;
     }
@@ -613,6 +617,22 @@ function uniqueSuffixMatch(suffix: string, filePathMap: Map<string, string>): st
   for (const file of [...(getBasenameCandidates(filePathMap).get(base) ?? []), ...(getBasenameCandidates(filePathMap).get("mod") ?? [])]) {
     const stripped = file.replace(requireRegistered(stripSourceExtensionReSlot), "").toLowerCase();
     if (stripped.endsWith(`/${lower}`) || stripped === lower || stripped.endsWith(`/${lower}/mod`)) hits.add(file);
+  }
+  if (hits.size === 1) return [...hits][0]!;
+  return hits.size > 1 ? null : undefined;
+}
+
+/**
+ * The one file whose path is `name` or ends with `/<name>`, the extension as written: `null` when several do,
+ * `undefined` when none does.
+ */
+function uniquePathEnding(name: string, filePathMap: Map<string, string>): string | null | undefined {
+  const lower = name.toLowerCase();
+  const base = lower.slice(lower.lastIndexOf("/") + 1).replace(requireRegistered(stripSourceExtensionReSlot), "");
+  const hits = new Set<string>();
+  for (const file of getBasenameCandidates(filePathMap).get(base) ?? []) {
+    const path = file.toLowerCase();
+    if (path === lower || path.endsWith(`/${lower}`)) hits.add(file);
   }
   if (hits.size === 1) return [...hits][0]!;
   return hits.size > 1 ? null : undefined;

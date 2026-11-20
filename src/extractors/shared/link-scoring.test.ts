@@ -200,6 +200,25 @@ describe("resolveTarget — a file path written without ./", () => {
   });
 });
 
+describe("resolveTarget — an include written with its extension", () => {
+  const map = buildFilePathMap([
+    { filePath: "src/app/main.c", language: "c" },
+    { filePath: "src/league/club.h", language: "c" },
+    { filePath: "src/league/club.c", language: "c" },
+    { filePath: "vendor/league/match.h", language: "c" },
+    { filePath: "src/league/match.h", language: "c" },
+    { filePath: "src/league/match.c", language: "c" },
+  ] as any);
+
+  it("names the header, never the body file of the same stem", () => {
+    expect(resolveTarget("league/club.h", "src/app/main.c", map)).toBe("src/league/club.h");
+  });
+
+  it("still refuses a header two directories spell the same way", () => {
+    expect(resolveTarget("league/match.h", "src/app/main.c", map)).toBeNull();
+  });
+});
+
 describe("buildFilePathMap — platform files", () => {
   const map = buildFilePathMap([
     { filePath: "src/Button.ios.tsx", language: "typescript" },
