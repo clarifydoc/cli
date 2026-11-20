@@ -1,4 +1,5 @@
 import { routeSymbolName } from "./route-symbol.js";
+import { normalizeRoutePath, routeUrlNames } from "./route-linker.js";
 import {
   relationForStrategy,
   type ClassInfo,
@@ -154,6 +155,16 @@ export function buildSymbolLinks(
       analyses.filter((a) => isTestFile(a.filePath, a.language)).map((a) => a.filePath),
     );
     return specTestFiles.has(filePath);
+  };
+
+  // `<METHOD> <normalized path>` of every code API route, built on the first spec route that asks.
+  let codeRouteKeys: Set<string> | null = null;
+  const routeKey = (r: Pick<RouteInfo, "httpMethod" | "path" | "aliases" | "pathUnresolved" | "mount" | "prefixUnresolved">): string =>
+    `${(r.httpMethod ?? "").toUpperCase()} ${normalizeRoutePath(routeUrlNames(r)[0] ?? r.path)}`;
+  const codeServes = (route: Parameters<typeof routeKey>[0]): boolean => {
+    codeRouteKeys ??= new Set(analyses.filter((a) => !isApiContractLanguage(a.language))
+      .flatMap((a) => a.routes.filter((r) => r.kind === "api" && r.httpMethod).map(routeKey)));
+    return !!route.httpMethod && codeRouteKeys.has(routeKey(route));
   };
 
   for (const analysis of analyses) {
@@ -422,7 +433,10 @@ export function buildSymbolLinks(
       // API surface but contains no code, so there is no same-repo handler
       // symbol. Join by the spec operationId (route.handler) when present, else
       // derive a handler name from the path — unique-or-nothing, no guessing.
-      if (route.kind === "api" && isSpecFile) {
+      // A code route serving the same method and path is the implementation — the pairing of the two rows
+      // (`pairContractTwins`) says so, and a function that merely shares a name derived from the path
+      // (a client's `deleteClubs`) is no better answer than the handler.
+      if (route.kind === "api" && isSpecFile && !codeServes(route)) {
         const specLink = specRouteHandlerLink(route, sourceFile, sourceSymbol, ctx, isSpecJoinExcluded);
         if (specLink) links.push(specLink);
       }
