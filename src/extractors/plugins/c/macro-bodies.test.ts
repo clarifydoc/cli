@@ -87,5 +87,8 @@ describe("macroBodyCalls", () => {
     expect(macroBodyCalls("M", ["c"], ["int f(c)"])).toEqual([]);
     expect(macroBodyCalls("M", ["c"], ["if (c) return run(c);"])).toEqual(["run"]);
     expect(macroBodyCalls("M", ["c"], ["M(c)"])).toEqual([]);
+    expect(macroBodyCalls("M", ["c"], ["((c) ? club_a(c) : club_b(c))"])).toEqual(["club_a", "club_b"]);
+    expect(macroBodyCalls("M", ["c"], ["do club_run(c); while (0)"])).toEqual(["club_run"]);
+    expect(macroBodyCalls("M", ["c"], ['club_log(c, "/*"); club_flush(c)'])).toEqual(["club_log", "club_flush"]);
   });
 });

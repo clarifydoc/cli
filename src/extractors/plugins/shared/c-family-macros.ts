@@ -18,11 +18,10 @@ const MAX_BODY_CALLS = 16;
  * `body` is the definition's text after its head, one entry per physical line.
  */
 export function macroBodyCalls(name: string, params: readonly string[], body: readonly string[]): string[] {
-  let text = body.map((l) => l.replace(/\\\s*$/, " ")).join(" ");
+  let text = blankStringLiterals(body.map((l) => l.replace(/\\\s*$/, " ")).join(" "), ["//"]);
   text = text.replace(/\/\*.*?\*\//g, " ");
   const cut = text.indexOf("/*");
   if (cut >= 0) text = text.slice(0, cut);
-  text = blankStringLiterals(text, ["//"]);
   if (text.includes("#")) return [];
   const out: string[] = [];
   const formal = new Set(params.map((p) => p.replace(/\.\.\./, "").trim()));
@@ -33,7 +32,7 @@ export function macroBodyCalls(name: string, params: readonly string[], body: re
     const before = text.slice(0, m.index).trimEnd();
     const last = before.at(-1);
     // A member, a scoped name, or a name that follows a type or another name (a declaration).
-    if (last === "." || last === ">" && before.at(-2) === "-" || last === ":" || last === "~" || (last !== undefined && /[\w*&]/.test(last) && /[A-Za-z_]\w*$/.test(before) && !/\b(return|else|case)$/.test(before))) continue;
+    if (last === "." || last === ">" && before.at(-2) === "-" || before.endsWith("::") || last === "~" || (last !== undefined && /[\w*&]/.test(last) && /[A-Za-z_]\w*$/.test(before) && !/\b(return|else|case|do|goto|throw|co_await|co_return|co_yield)$/.test(before))) continue;
     out.push(id);
     if (out.length >= MAX_BODY_CALLS) break;
   }
