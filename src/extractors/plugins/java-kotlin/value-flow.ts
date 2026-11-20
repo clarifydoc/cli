@@ -68,20 +68,21 @@ const LIBRARY_HEADS = new Set(["log", "logger", "LOG", "LOGGER", "System", "Math
 
 const norm = (text: string): string => text.replace(/\s+/g, "");
 
-/** Packages whose wildcard import brings the JDK functional interfaces into scope. */
-const FN_PACKAGES = new Set(["java.util.function", "java.util", "java.util.concurrent"]);
 /** Functional interfaces a file names without an import: `java.lang`'s (and Kotlin's `Comparator` alias). */
 const FN_DEFAULT_IMPORTED = new Set(["Runnable", "Comparator"]);
 
 /**
- * Whether a bare functional-interface name is the platform's in this file. `Consumer` needs an import (or a wildcard
- * one of the JDK package); a file that has none names a project class of that name in its own package, which is no
- * function type. Without a file context (`lib` null) the name decides, as before.
+ * Whether a bare functional-interface name is the platform's in this file. `Consumer` needs an import or a wildcard
+ * one, so a file with neither, or one that imports a project class of that name, or declares it, names a project
+ * class (no function type). Any wildcard import from a library path may bring the platform's in: it stays a function,
+ * as does a name when there is no file context (`lib` null).
  */
 function namesPlatformInterface(lib: LibraryContext | null | undefined, simple: string): boolean {
   if (!lib || FN_DEFAULT_IMPORTED.has(simple)) return true;
   if (lib.declared.has(simple)) return false;
-  return lib.imports.some((i) => !i.static && (i.star ? FN_PACKAGES.has(i.path) : i.name === simple && externalPath(lib, i.path)));
+  const explicit = lib.imports.find((i) => !i.static && !i.star && i.name === simple);
+  if (explicit) return externalPath(lib, explicit.path);
+  return lib.imports.some((i) => !i.static && i.star && externalPath(lib, i.path));
 }
 
 /**
