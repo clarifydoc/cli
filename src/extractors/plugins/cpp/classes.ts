@@ -251,14 +251,37 @@ function untypeTemplateParameters(classes: readonly ClassInfo[], fns: readonly F
   const declaresClass = (name: string): boolean => classes.some((c) => c.name === name);
   const all = [...new Set([...fns, ...classes.flatMap((c) => c.methods)])].sort((a, b) => a.line - b.line);
   const bodies = [...classes].sort((a, b) => a.line - b.line);
-  // Nothing but the declaration's own words stands between a head and what it binds: no `;`, `{` or `}`.
+  // Nothing but the declaration's own words stands between a head and what it binds: no `;`, `{` or `}`. The
+  // words are read in order and the reading stops at the first of those, or at a `//`, whose comment runs to the
+  // end of what is read (the words are joined by spaces, so it hides every line after it).
   const bound = (head: TemplateHead, line: number, stop: RegExp): boolean => {
-    let text = head.endLine === line ? "" : head.rest + " ";
-    for (let k = head.endLine; k < line - 1; k++) text += lines[k]! + " ";
+    const clean = (words: string): boolean | null => {
+      const comment = words.indexOf("//");
+      if (/[;{}]/.test(comment < 0 ? words : words.slice(0, comment))) return false;
+      return comment < 0 ? null : true;
+    };
     const at = head.endLine === line ? head.rest : lines[line - 1] ?? "";
+    if (head.endLine !== line) {
+      const first = clean(head.rest + " ");
+      if (first !== null) return first;
+      for (let k = head.endLine; k < line - 1; k++) {
+        const verdict = clean(lines[k]! + " ");
+        if (verdict !== null) return verdict;
+      }
+    }
     const cut = at.search(stop);
-    text += cut < 0 ? at : at.slice(0, cut);
-    return !/[;{}]/.test(text.replace(/\/\/.*$/gm, ""));
+    return clean(cut < 0 ? at : at.slice(0, cut)) !== false;
+  };
+  // The first class at or after `line`, by the line each starts on.
+  const firstBodyFrom = (line: number): number => {
+    let low = 0;
+    let high = bodies.length;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (bodies[mid]!.line < line) low = mid + 1;
+      else high = mid;
+    }
+    return low;
   };
   // What the head's names type becomes untyped, and the call on it an unknown type's: the linker's unique-name guess
   // must not pick the namesake class's member either.
@@ -284,7 +307,11 @@ function untypeTemplateParameters(classes: readonly ClassInfo[], fns: readonly F
     if (untyped.size > (fn.untypedLocals?.length ?? 0)) fn.untypedLocals = [...untyped];
   };
   for (const head of heads) {
-    const owner = bodies.find((c) => c.line >= head.endLine && /\b(?:class|struct)\b/.test(lines[c.line - 1] ?? "") && bound(head, c.line, /\b(?:class|struct)\b/));
+    let owner: ClassInfo | undefined;
+    for (let b = firstBodyFrom(head.endLine); b < bodies.length && !owner; b++) {
+      const c = bodies[b]!;
+      if (/\b(?:class|struct)\b/.test(lines[c.line - 1] ?? "") && bound(head, c.line, /\b(?:class|struct)\b/)) owner = c;
+    }
     if (owner) {
       const bodyText = lines.slice(owner.line - 1, owner.endLine).join("\n");
       const dependent = dependentTypes(bodyText, head.names, owner.name);
