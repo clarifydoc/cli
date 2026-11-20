@@ -77,4 +77,17 @@ export default router;`,
 app.use('/api', routes);`,
     })).toEqual(["GET /api/clubs", "GET /login", "POST /api/clubs/:id/join"]);
   });
+
+  it("leaves a chain handed to another call alone, and prefixes a cross-file router mounted under a local one", async () => {
+    expect(await composed({
+      "routes/clubs.ts": CLUBS,
+      "routes/players.ts": PLAYERS,
+      "main.ts": `import clubs from './routes/clubs';
+import players from './routes/players';
+app.use('/api', Router().use(clubs));
+const league = Router();
+league.use('/squad', players);
+app.use('/league', league);`,
+    })).toEqual(["GET /clubs", "GET /league/squad/players", "POST /clubs/:id/join"]);
+  });
 });

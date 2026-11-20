@@ -335,7 +335,12 @@ function routerChainReceiver(call: Node): string | null | undefined {
     else break;
   }
   const declared = top.parent?.type === "variable_declarator" && top.parent.childForFieldName("value")?.id === top.id ? top.parent.childForFieldName("name") : null;
-  return declared?.type === "identifier" ? declared.text.toLowerCase() : null;
+  if (declared?.type === "identifier") return declared.text.toLowerCase();
+  // The module's own router: `export default Router().use(clubs)` / `module.exports = Router().use(clubs)`. Anywhere else
+  // (an argument, a return) the chain is somebody else's router, and says nothing about this file's.
+  const owner = top.parent;
+  const exported = owner?.type === "export_statement" || (owner?.type === "assignment_expression" && /^module\.exports$/.test(owner.childForFieldName("left")?.text ?? ""));
+  return exported ? null : undefined;
 }
 
 function walkForRoutes(node: Node, routes: RouteInfo[]) {

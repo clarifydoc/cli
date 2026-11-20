@@ -7,12 +7,13 @@ import { joinRoutePath } from "../../shared/route-paths.js";
 const SETTINGS_PREFIX = /^mount:([A-Za-z_]\w*)\.([A-Za-z_]\w*)$/;
 
 /** `settings = AppSettings()`, `settings = get_settings()`: the entry of the function (or module) holding the line that binds the name. */
-function localOf(a: FileAnalysis, line: number, head: string): { type: string; from?: string } | null {
+function localOf(a: FileAnalysis, line: number, head: string): { type: string; from?: string } | null | "ambiguous" {
   const fns = (a.functions ?? []).filter((f) => f.name !== "<setup>" && line >= f.line && line <= f.endLine);
   fns.sort((x, y) => y.line - x.line);
   const owner: FunctionInfo | undefined = fns[0] ?? (a.functions ?? []).find((f) => f.name === "<setup>");
   const entries = (owner?.localTypes ?? []).filter((l) => l.name === head);
-  if (entries.length !== 1) return null; // no scope on localTypes: several entries may be separate declarations
+  if (entries.length === 0) return null;
+  if (entries.length > 1) return "ambiguous"; // no scope on localTypes: several entries may be separate declarations
   const e = entries[0]!;
   return { type: e.type, ...(e.from ? { from: e.from } : {}) };
 }
@@ -73,11 +74,13 @@ export const fastapiSettingsPrefix: RouteResolver = {
         if (!m) return r;
         let holder: FileAnalysis | undefined = a;
         let local = localOf(a, r.line, m[1]!);
+        if (local === "ambiguous") return r;
         if (!local) {
           // `from app.core.config import settings`: the instance is built in the module it is imported from.
           const src = ctx.importIndex.localFor(a.filePath, m[1]!);
           holder = src ? ctx.fileOf(src) : undefined;
           local = holder ? localOf(holder, 0, m[1]!) : null;
+          if (local === "ambiguous") return r;
         }
         const ref = holder && local ? settingsClass(holder, local, ctx) : null;
         const value = ref ? classValue(ref, m[2]!, ctx) : undefined;

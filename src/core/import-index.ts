@@ -371,6 +371,12 @@ export function importResolveContext(analyses: readonly FileAnalysis[], knownFil
   };
 }
 
+/** The name an import binds `spec` from (`from pkg import items as legacy` → `items`); a default import's local name stays. */
+function exportedName(imp: { aliases?: Record<string, string> }, spec: string): string {
+  const exported = imp.aliases?.[spec];
+  return exported && exported !== "default" ? exported : spec;
+}
+
 /**
  * Index every file's imports so later passes can answer "what does this local
  * name refer to" without re-reading the import lists.
@@ -414,7 +420,7 @@ export function buildImportIndex(analyses: FileAnalysis[], subProjects?: readonl
       for (const spec of imp.specifiers) {
         if (lm.has(spec)) continue;
         // An aliased name (`from app.api import items as legacy`) names the module it was exported as.
-        const resolved = ownResolver ? ownResolver(a.filePath, imp.source, imp.aliases?.[spec] ?? spec, resolveCtx) : resolveImportSource(a.filePath, imp.source, knownFiles, spec);
+        const resolved = ownResolver ? ownResolver(a.filePath, imp.source, exportedName(imp, spec), resolveCtx) : resolveImportSource(a.filePath, imp.source, knownFiles, spec);
         if (resolved) lm.set(spec, resolved);
       }
     }
