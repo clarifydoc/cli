@@ -88,6 +88,13 @@ retypes the tokens instead (`cpp/CppTypes.ts`: `TemplateLess`/`TemplateGreater`,
 types the lexer grammar declares and never matches) and the grammar reads them syntactically. The widest decisions
 (C++'s statement, declaration and member) are settled from tokens before prediction runs (`CPP14ParserBase.prepare`
 wraps `adaptivePredict`; the alternatives are found by the sub-rule each reaches in the ATN, never by number).
+Full-context prediction only runs on a file SLL already failed (a valid file never reaches it), and every file the reader
+refuses pays for it twice (the conditionals as written, then first branches), so the decisions it spent its time on are
+settled too: a qualified name's scope (`std::vector<Club>`: the optional scope of a simple type and each turn of its loop),
+whether a declaration starts with specifiers, and a definition's `(…)` followed by a body or `;`. A settled decision must
+agree with what prediction picks: a lookahead that sees past the predicate decides some cases (`size_t i, j;` is not two
+types), so the specifier LOOP is not settled; each rule is gated by the corpus' per-file readings, byte-identical.
+To find the next one, log `execATNWithFullContext` per decision (rule, line, tokens consumed) on the refused files.
 A lexer predicate is worse still: it turns off the lexer's DFA, and a predicate re-reading text from each token's
 start makes lexing quadratic (C++ raw strings took minutes on a large file). What only a predicate could lex is
 rewritten by the reader before lexing instead, lines and columns kept (`plugins/cpp/antlr.ts` blanks raw strings).
