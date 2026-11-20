@@ -264,6 +264,8 @@ describe("Dart value flow through a typedef'd function type", () => {
       "lib/types.dart": `typedef ClubTask = void Function(Club club);
 class Club {}
 class Squad {}
+typedef Tasks = List<void Function()>;
+typedef Club Maker(int id);
 `,
       "lib/actions.dart": `void saveClub(Club c) {}
 void loadClub(Club c) {}
@@ -291,7 +293,16 @@ class Lookalike {
     onSave(c);
   }
 }
+class Table {
+  Table(this.onSave);
+  final Tasks onSave;
+  void fire(Club c) {
+    onSave(c);
+  }
+}
 void assemble() {
+  final t = Table([saveClub]);
+  t.fire(Club());
   final e = Editor(onSave: saveClub, onLoad: localOne);
   e.onRetire = retireClub;
   e.fire(Club());
@@ -301,6 +312,6 @@ void assemble() {
     expect(found).toContain("Editor.fire: onSave -> lib/actions.dart::saveClub");
     expect(found).toContain("Editor.fire: onLoad -> lib/editor.dart::localOne");
     expect(found).toContain("Editor.fire: onRetire.call -> lib/actions.dart::retireClub");
-    expect(found.filter((l) => l.startsWith("Lookalike.fire:"))).toEqual([]);
+    expect(found.filter((l) => l.startsWith("Lookalike.fire:") || l.startsWith("Table.fire:"))).toEqual([]);
   });
 });

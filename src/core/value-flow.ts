@@ -74,37 +74,49 @@ function closureClassOf(analysis: FileAnalysis, fn: FunctionInfo): ClassInfo | n
   return fn.enclosingClass ? analysis.classes.find((c) => c.name === fn.enclosingClass) ?? null : null;
 }
 
-/** The names each language's files declare as function types (`FileAnalysis.functionTypeAliases`). */
-type FnTypeAliases = ReadonlyMap<string, ReadonlySet<string>>;
+/**
+ * The function-type names (`FileAnalysis.functionTypeAliases`) per language, and the class names each sub-project
+ * declares: a held value typed by a name the file's own sub-project declares as a class is that class, never the alias.
+ */
+interface FnTypeAliases { names: ReadonlyMap<string, ReadonlySet<string>>; classes: ReadonlySet<string> }
+
+const aliasesCache = new WeakMap<readonly FileAnalysis[], FnTypeAliases>();
 
 function functionTypeAliasesOf(analyses: readonly FileAnalysis[]): FnTypeAliases {
-  const out = new Map<string, Set<string>>();
+  const cached = aliasesCache.get(analyses);
+  if (cached) return cached;
+  const names = new Map<string, Set<string>>();
+  const classes = new Set<string>();
   for (const a of analyses) {
     if (!a.functionTypeAliases?.length) continue;
-    const set = out.get(a.language) ?? out.set(a.language, new Set()).get(a.language)!;
+    const set = names.get(a.language) ?? names.set(a.language, new Set()).get(a.language)!;
     for (const n of a.functionTypeAliases) set.add(n);
   }
+  if (names.size > 0) for (const a of analyses) if (names.has(a.language)) for (const c of a.classes) classes.add(`${a.language}\0${a.projectId ?? ""}\0${c.name}`);
+  const out = { names, classes };
+  aliasesCache.set(analyses, out);
   return out;
 }
 
 /** The facts a scope states: an `invoke` of a value typed by a name no file of the language reads as a function type states nothing. */
-function gated(facts: readonly ValueFlowFact[], language: string, aliases: FnTypeAliases): readonly ValueFlowFact[] {
+function gated(facts: readonly ValueFlowFact[], analysis: FileAnalysis, aliases: FnTypeAliases): readonly ValueFlowFact[] {
   if (!facts.some((f) => f.kind === "invoke" && f.ifFnType !== undefined)) return facts;
-  return facts.filter((f) => f.kind !== "invoke" || f.ifFnType === undefined || aliases.get(language)?.has(f.ifFnType));
+  const lang = analysis.language;
+  return facts.filter((f) => f.kind !== "invoke" || f.ifFnType === undefined
+    || (aliases.names.get(lang)?.has(f.ifFnType) === true && !aliases.classes.has(`${lang}\0${analysis.projectId ?? ""}\0${f.ifFnType}`)));
 }
 
 function* scopesOf(analysis: FileAnalysis, aliases: FnTypeAliases): Generator<Scope> {
   const setup = analysis.functions.find((f) => f.name === "<setup>") ?? null;
   const moduleFacts = analysis.moduleValueFlow ?? [];
-  const lang = analysis.language;
   for (const fn of analysis.functions) {
     const facts = fn === setup ? [...(fn.valueFlow ?? []), ...moduleFacts] : fn.valueFlow ?? [];
-    yield { file: analysis.filePath, symbol: fn.name, analysis, fn, cls: closureClassOf(analysis, fn), facts: gated(facts, lang, aliases) };
+    yield { file: analysis.filePath, symbol: fn.name, analysis, fn, cls: closureClassOf(analysis, fn), facts: gated(facts, analysis, aliases) };
   }
   for (const cls of analysis.classes) {
-    for (const m of cls.methods) yield { file: analysis.filePath, symbol: `${cls.name}.${m.name}`, analysis, fn: m, cls, facts: gated(m.valueFlow ?? [], lang, aliases) };
+    for (const m of cls.methods) yield { file: analysis.filePath, symbol: `${cls.name}.${m.name}`, analysis, fn: m, cls, facts: gated(m.valueFlow ?? [], analysis, aliases) };
   }
-  if (!setup && moduleFacts.length > 0) yield { file: analysis.filePath, symbol: "<setup>", analysis, fn: null, cls: null, facts: gated(moduleFacts, lang, aliases) };
+  if (!setup && moduleFacts.length > 0) yield { file: analysis.filePath, symbol: "<setup>", analysis, fn: null, cls: null, facts: gated(moduleFacts, analysis, aliases) };
 }
 
 /**

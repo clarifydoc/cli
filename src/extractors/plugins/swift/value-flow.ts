@@ -113,7 +113,7 @@ export function fileScopeOf(root: TSNode, src: string): FileScope {
   const stack = [root];
   while (stack.length) {
     const n = stack.pop()!;
-    if (n.type === "typealias_declaration" && n.text.includes("->")) {
+    if (n.type === "typealias_declaration" && namedChildren(n).some((c) => c.type === "function_type")) {
       const id = namedChildren(n).find((c) => c.type === "type_identifier");
       if (id) functionAliases.push(id.text);
     }

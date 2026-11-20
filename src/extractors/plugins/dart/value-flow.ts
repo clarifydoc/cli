@@ -31,7 +31,6 @@ export interface ClassScope {
 type Kind = "fn" | "coll" | "other" | "may" | "call" | "named" | `named:${string}`;
 
 /** A declared type nothing in the file says is a function; `named:T` keeps T for the project to judge (a function-type alias of another file). */
-const isNamed = (k: Kind | undefined): boolean => k === "named" || (k?.startsWith("named:") ?? false);
 const namedType = (k: Kind | undefined): string | undefined => (k?.startsWith("named:") ? k.slice(6) : undefined);
 
 const PRIMITIVES = /^(?:int|double|num|String|bool|BigInt|DateTime|Duration|Uri|Object|void|BuildContext|Widget|Key|Color|Text|Icon|Future|Stream|Iterable|List|Map|Set|Type|RegExp|Offset|Size|Rect|Locale|TextStyle|EdgeInsets|Navigator|Exception|Error)\b/;
@@ -753,6 +752,19 @@ export function moduleFacts(root: TSNode, file: FileScope, calls: CallRefs): Val
   return reader.facts;
 }
 
+/** The name a typedef declares when it is a function type — `typedef Task = void Function(Club)` or the old `typedef void Task(Club c);` — never `typedef Tasks = List<void Function()>`. */
+function functionTypedefName(text: string): string | null {
+  const flat = text.replace(/;\s*$/, "");
+  const modern = /^typedef\s+(\w+)\s*(?:<[^=]*>)?\s*=\s*([\s\S]*)$/.exec(flat);
+  if (modern) {
+    let rhs = modern[2]!;
+    for (let prev = ""; prev !== rhs;) { prev = rhs; rhs = rhs.replace(/<[^<>]*>/g, ""); }
+    return /\bFunction\b\s*\??\s*\(/.test(rhs) && !/^(?:List|Map|Set|Iterable)\b/.test(rhs.trim()) ? modern[1]! : null;
+  }
+  const legacy = /^typedef\s+[^=(]*?\b(\w+)\s*(?:<[^=(]*>)?\s*\(/.exec(flat);
+  return legacy ? legacy[1]! : null;
+}
+
 /** The file-level names: classes, typedefs and top-level variables with what their declarations say. */
 export function fileScopeOf(root: TSNode, src: string): FileScope {
   const classes = new Map<string, ClassScope>();
@@ -765,7 +777,8 @@ export function fileScopeOf(root: TSNode, src: string): FileScope {
     if (n.type === "type_alias") {
       const id = namedChildren(n).find((c) => c.type === "type_identifier");
       if (id) typedefs.add(id.text);
-      if (id && (/\bFunction\b/.test(n.text) || (!n.text.includes("=") && n.text.includes("(")))) functionTypedefs.push(id.text);
+      const fnName = functionTypedefName(n.text);
+      if (fnName) functionTypedefs.push(fnName);
     }
     if (n.type === "class_definition" || n.type === "mixin_declaration") {
       const id = n.childForFieldName("name") ?? namedChildren(n).find((c) => c.type === "identifier");
