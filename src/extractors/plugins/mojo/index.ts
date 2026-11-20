@@ -1,5 +1,5 @@
 import type { ClassInfo, DataSourceInfo, FunctionInfo, ParamInfo, PropertyInfo, RouteInfo } from "../../../types/analysis.js";
-import { extractClassesWithSpec, splitTopLevel, type RegexLangSpec } from "../shared/regex-base.js";
+import { extractClassesWithSpec, splitBracketedArgs, type RegexLangSpec } from "../shared/regex-base.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
 
 /**
@@ -109,7 +109,7 @@ export const mojoSpec: RegexLangSpec = {
       pattern: /^\s*struct\s+([A-Za-z_]\w*)/,
       getExtends: () => null,
       // `struct Order(Copyable, Movable):` — the parentheses list its traits.
-      getImplements: (line) => splitTopLevel(/^\s*struct\s+\w+(?:\[[^\]]*\])?\s*\(([^)]*)\)/.exec(line)?.[1] ?? "").map((s) => s.trim()).filter(Boolean),
+      getImplements: (line) => splitBracketedArgs(/^\s*struct\s+\w+(?:\[[^\]]*\])?\s*\(([^)]*)\)/.exec(line)?.[1] ?? "").map((s) => s.trim()).filter(Boolean),
     },
     { pattern: /^\s*trait\s+([A-Za-z_]\w*)/, kind: "interface", getExtends: () => null },
     { pattern: /^\s*class\s+([A-Za-z_]\w*)/, getExtends: (line) => /\(\s*([\w.]+)/.exec(line)?.[1] ?? null },

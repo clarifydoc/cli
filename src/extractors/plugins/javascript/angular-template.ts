@@ -21,6 +21,7 @@ import {
   resolveInteractiveElementKind,
   type TemplateDialect,
 } from "../../../parsers/template-tree.js";
+import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 /** Angular template dialect for the shared HTML tokenizer. */
 const ANGULAR_DIALECT: TemplateDialect = {
@@ -177,7 +178,7 @@ export function routerLinkTarget(attrs: string): string | null {
   if (plain) return plain[1]!.startsWith("/") ? plain[1]!.split(/[?#]/)[0]!.replace(/\{\{[^}]*\}\}/g, "{}") : null;
   const bound = /\[routerLink\]\s*=\s*"([^"]*)"/.exec(attrs)?.[1]?.trim();
   if (!bound) return null;
-  const items = bound.startsWith("[") ? splitTopLevel(bound.slice(1, bound.lastIndexOf("]"))) : [bound];
+  const items = bound.startsWith("[") ? splitAngularList(bound.slice(1, bound.lastIndexOf("]"))) : [bound];
   const segments: string[] = [];
   for (const [i, item] of items.entries()) {
     const lit = /^'([^']*)'$|^`([^`$]*)`$/.exec(item.trim());
@@ -190,27 +191,8 @@ export function routerLinkTarget(attrs: string): string | null {
 }
 
 /** `a, f(b, c), 'd'` → its top-level comma-separated items. */
-function splitTopLevel(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let quote: string | null = null;
-  let start = 0;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i]!;
-    if (quote) {
-      if (c === quote) quote = null;
-      continue;
-    }
-    if (c === "'" || c === "`") quote = c;
-    else if (c === "(" || c === "[" || c === "{") depth++;
-    else if (c === ")" || c === "]" || c === "}") depth--;
-    else if (c === "," && depth === 0) {
-      out.push(text.slice(start, i));
-      start = i + 1;
-    }
-  }
-  if (text.slice(start).trim()) out.push(text.slice(start));
-  return out.map((t) => t.trim()).filter(Boolean);
+function splitAngularList(text: string): string[] {
+  return splitTopLevelWith(text, { quotes: "'`", trim: true, dropBlank: true });
 }
 
 /** A callee chain written at the top level of a statement, `this.` included: `onChange(`, `downloads.resumeQueue(`. */

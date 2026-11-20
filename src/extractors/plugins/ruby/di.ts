@@ -1,6 +1,6 @@
 import type { CallInfo, ClassInfo, DiBinding, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { CallPattern } from "../shared/regex-base.js";
-import { blankStringLiterals, splitTopLevel } from "../shared/regex-base.js";
+import { blankStringLiterals, splitBracketedArgs } from "../shared/regex-base.js";
 import { rubyBodyEnd } from "./blocks.js";
 import { escapeRegex } from "../shared/path-utils.js";
 import { matchingParen } from "../shared/text-scan.js";
@@ -53,9 +53,9 @@ export function rubyTypeText(raw: string): string | null {
   const nilable = /^T\.nilable\(\s*([\s\S]+)\s*\)$/.exec(t);
   if (nilable) return `${rubyTypeText(nilable[1]!)} | nil`;
   const any = /^T\.any\(\s*([\s\S]+)\s*\)$/.exec(t);
-  if (any) return splitTopLevel(any[1]!).map((p) => rubyTypeText(p) ?? p.trim()).join(" | ");
+  if (any) return splitBracketedArgs(any[1]!).map((p) => rubyTypeText(p) ?? p.trim()).join(" | ");
   // YARD lists alternatives with commas: `[UserRepo, nil]`.
-  const parts = splitTopLevel(t).map((p) => p.trim()).filter(Boolean);
+  const parts = splitBracketedArgs(t).map((p) => p.trim()).filter(Boolean);
   if (parts.length > 1) t = parts.join(" | ");
   // YARD duck types (`#find`) and literals name no class.
   if (/(?:^|\|\s*)#/.test(t)) return null;
@@ -122,7 +122,7 @@ export function declaredParamTypes(lines: readonly string[], defIdx: number): Ma
   if (sigText) {
     const at = sigText.search(/\bparams\s*\(/);
     const body = at >= 0 ? balanced(sigText, sigText.indexOf("(", at)) : null;
-    for (const part of body !== null ? splitTopLevel(body) : []) {
+    for (const part of body !== null ? splitBracketedArgs(body) : []) {
       const m = /^\s*([a-z_]\w*):\s*([\s\S]+?)\s*$/.exec(part);
       const type = m ? rubyTypeText(m[2]!) : null;
       if (m && type) out.set(m[1]!, type);
@@ -253,7 +253,7 @@ function valueFact(rhs: string, scope: (name: string) => Fact): Fact {
   if (key) return { type: "", qualifier: key };
   const tlet = /^T\.let\(\s*([\s\S]+)\)$/.exec(t);
   if (tlet) {
-    const parts = splitTopLevel(tlet[1]!);
+    const parts = splitBracketedArgs(tlet[1]!);
     const type = parts.length === 2 ? rubyTypeText(parts[1]!) : null;
     return type ? { type } : UNKNOWN;
   }
@@ -527,7 +527,7 @@ export function collectIvarProperties(lines: readonly string[], cls: ClassInfo, 
       const multi = IVAR_MULTI_RE.exec(code);
       if (multi) {
         const names = multi[1]!.split(",").map((n) => n.trim().slice(1));
-        const values = splitTopLevel(rhsOf(raw, code, code.indexOf(multi[1]!) + multi[1]!.length));
+        const values = splitBracketedArgs(rhsOf(raw, code, code.indexOf(multi[1]!) + multi[1]!.length));
         names.forEach((n, k) => table.assign(n, values.length === names.length ? statedFact(valueFact(values[k]!, scope)) : UNKNOWN));
         continue;
       }
@@ -737,7 +737,7 @@ export function autoInjectProperties(lines: readonly string[], cls: ClassInfo, c
     for (let k = i + 1; balanced(text, 0) === null && k < Math.min(lines.length, i + 30); k++) text += " " + lines[k]!.trim();
     const args = balanced(text, 0);
     if (args === null) continue;
-    for (const arg of splitTopLevel(args)) {
+    for (const arg of splitBracketedArgs(args)) {
       // `repo: "repos.user"` / `:repo => "repos.user"` / `"repo" => "repos.user"` name the reader.
       const alias = /^\s*(?:([a-z_]\w*):|:([a-z_]\w*)\s*=>|(["'])([a-z_]\w*)\3\s*=>)\s*(["'])([^"'\s]+)\5\s*$/.exec(arg);
       let reader: string | null;

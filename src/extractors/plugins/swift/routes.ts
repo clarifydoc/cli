@@ -1,6 +1,6 @@
 import type { RouteInfo, RouteParamInfo } from "../../../types/analysis.js";
 import { applyRouteMeta, inferredParam, pathParamNames, type GuardAttr } from "../../shared/route-metadata.js";
-import { splitTopLevel } from "../shared/regex-base.js";
+import { splitBracketedArgs } from "../shared/regex-base.js";
 import { extractSwiftRequestAccess } from "./request-schema.js";
 import { balancedArgs } from "../shared/text-scan.js";
 import { joinRootedPath } from "../../shared/route-paths.js";
@@ -87,7 +87,7 @@ function readGroupChain(text: string, start: number, base: Group): { group: Grou
     const call = balancedArgs(text, open);
     if (!call) break;
     const segments: string[] = [];
-    for (const arg of splitTopLevel(call.args)) {
+    for (const arg of splitBracketedArgs(call.args)) {
       const trimmed = arg.trim();
       if (!trimmed) continue;
       if (trimmed.startsWith('"')) {

@@ -1,7 +1,7 @@
 import type { ClassInfo, EntityRelation, PropertyInfo, RouteInfo, RouteParamInfo } from "../../../types/analysis.js";
 import { splitLines } from "../../shared/source-lines.js";
 import { applyRouteMeta, type GuardAttr } from "../../shared/route-metadata.js";
-import { splitTopLevel } from "./regex-base.js";
+import { splitBracketedArgs } from "./regex-base.js";
 
 /**
  * GraphQL SDL — the schema grammar, shared by the GraphQL plugin (schema
@@ -104,7 +104,7 @@ function parseDirectives(text: string): string[] {
 /** `id: ID!, filter: UserFilter = {}` → [{ id, ID! }, { filter, UserFilter }]. */
 function parseArgs(text: string): GqlArg[] {
   const out: GqlArg[] = [];
-  for (const part of splitTopLevel(text)) {
+  for (const part of splitBracketedArgs(text)) {
     const m = /^\s*([A-Za-z_]\w*)\s*:\s*([^=@]+)/.exec(part);
     if (m) out.push({ name: m[1]!, type: m[2]!.trim() });
   }
@@ -209,7 +209,7 @@ export function guardOfDirective(directive: string): GuardAttr | null {
   if (!args.trim()) return { text, policies: [name] };
   const roles: string[] = [];
   const policies: string[] = [];
-  for (const arg of splitTopLevel(args)) {
+  for (const arg of splitBracketedArgs(args)) {
     const kv = /^\s*([A-Za-z_]\w*)\s*:\s*(.*)$/s.exec(arg);
     if (!kv) continue;
     const values = argValues(kv[2]!);

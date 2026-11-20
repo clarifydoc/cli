@@ -1,5 +1,6 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
-import { attributeRepositoryAccesses, splitTypeArgs, type RepositoryAccessKnobs } from "../shared/repository-access.js";
+import { attributeRepositoryAccesses, type RepositoryAccessKnobs } from "../shared/repository-access.js";
+import { splitTypeArgs } from "../shared/element-chain.js";
 import { alembicSchemaOf } from "./alembic-schema.js";
 import { fkRelation, replaySchema } from "../shared/schema-replay.js";
 import type { ClassInfo, EntityRelation, FileAnalysis, FunctionInfo, Language, PropertyInfo } from "../../../types/analysis.js";

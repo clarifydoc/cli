@@ -1,5 +1,5 @@
 import type { ClassInfo, FunctionInfo, ImportInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
-import { findEndLine, splitTopLevel, type CallPattern, type RegexLangSpec } from "../shared/regex-base.js";
+import { findEndLine, splitBracketedArgs, type CallPattern, type RegexLangSpec } from "../shared/regex-base.js";
 import { extractVRoutes } from "./routes.js";
 import { extractVDataSources } from "./data-sources.js";
 
@@ -74,7 +74,7 @@ function vParams(lines: string[], i: number, name: string): ParamInfo[] {
   }
   const params: ParamInfo[] = [];
   const pending: ParamInfo[] = [];
-  for (const part of splitTopLevel(text)) {
+  for (const part of splitBracketedArgs(text)) {
     const p = parseVParam(part);
     if (p) {
       for (const q of pending) q.type = p.type;

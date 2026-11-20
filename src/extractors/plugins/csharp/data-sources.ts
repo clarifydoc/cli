@@ -9,6 +9,7 @@ import { csharpResponseReads } from "./response-reads.js";
 import { csharpJsonBody } from "./request-body.js";
 import { escapeRegex } from "../shared/path-utils.js";
 import { REFIT_GATE, refitInterfaceCalls } from "./refit.js";
+import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 /**
  * C# data-source extractor — surfaces Entity Framework, Dapper, NHibernate,
@@ -1792,26 +1793,7 @@ const COMBINE_CALL_RE = /^(?:[\w.]+\.)?Combine(?:Uri|Url)\w*\s*\([\s\S]*\)$/;
 
 /** Arguments of a call's text, split at top-level commas (parentheses and strings kept whole). */
 function splitTopLevelArgs(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let cur = "";
-  let quote: string | null = null;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i]!;
-    if (quote) {
-      cur += c;
-      if (c === "\\") { cur += text[++i] ?? ""; continue; }
-      if (c === quote) quote = null;
-      continue;
-    }
-    if (c === '"' || c === "'") quote = c;
-    else if (c === "(" || c === "{" || c === "[") depth++;
-    else if (c === ")" || c === "}" || c === "]") depth--;
-    if (c === "," && depth === 0) { out.push(cur.trim()); cur = ""; continue; }
-    cur += c;
-  }
-  if (cur.trim()) out.push(cur.trim());
-  return out;
+  return splitTopLevelWith(text, { quotes: "\"'", escapes: "\"'", trim: true });
 }
 
 /** The method, constructor or accessor a node sits in. */

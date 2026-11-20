@@ -1,6 +1,6 @@
 import type { ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { RequestSchemaHooks, TypeShape } from "../../../types/language-plugin.js";
-import { splitTopLevel } from "../shared/regex-base.js";
+import { splitBracketedArgs } from "../shared/regex-base.js";
 import { camelCase } from "../shared/inflection.js";
 export { camelCase };
 
@@ -21,7 +21,7 @@ export { camelCase };
  * reader splits it here before matching names.
  */
 export function splitVbAttributes(text: string): string[] {
-  return splitTopLevel(text.replace(/^\s*<|>\s*_?\s*$/g, ""))
+  return splitBracketedArgs(text.replace(/^\s*<|>\s*_?\s*$/g, ""))
     .map((a) => a.replace(/\s+/g, " ").trim())
     .filter((a) => a.length > 0);
 }
@@ -43,7 +43,7 @@ function vbAttributeArgs(attr: string): string {
 /** Named arguments (`Roles:="Admin"`, `Deprecated:=True`) as name → value with string quotes removed. */
 export function vbNamedArgs(attr: string): Map<string, string> {
   const out = new Map<string, string>();
-  for (const arg of splitTopLevel(vbAttributeArgs(attr))) {
+  for (const arg of splitBracketedArgs(vbAttributeArgs(attr))) {
     const m = arg.trim().match(/^(\w+)\s*:=\s*(.+)$/s);
     if (!m) continue;
     const value = m[2]!.trim();
@@ -55,7 +55,7 @@ export function vbNamedArgs(attr: string): Map<string, string> {
 
 /** First positional argument of an attribute as text (string unquoted, number verbatim), or null. */
 export function vbPositionalArg(attr: string): string | null {
-  for (const arg of splitTopLevel(vbAttributeArgs(attr))) {
+  for (const arg of splitBracketedArgs(vbAttributeArgs(attr))) {
     const value = arg.trim();
     if (!value || /^\w+\s*:=/.test(value)) continue;
     const str = value.match(/^"(.*)"$/s);
@@ -160,7 +160,7 @@ function splitGeneric(type: string): { name: string; args: string[]; array: bool
   if (/\(\s*\)$/.test(t)) return { name: t.replace(/\(\s*\)$/, "").trim(), args: [], array: true };
   const m = t.match(/^([\w.]+)\s*\(\s*Of\s+(.*)\)$/is);
   if (!m) return { name: t, args: [], array: false };
-  return { name: m[1]!, args: splitTopLevel(m[2]!).map((a) => a.trim()), array: false };
+  return { name: m[1]!, args: splitBracketedArgs(m[2]!).map((a) => a.trim()), array: false };
 }
 
 /** Drop namespace qualification on the outer name only (`System.Collections.Generic.List` → `List`). */

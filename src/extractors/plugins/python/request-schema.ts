@@ -43,11 +43,11 @@ const INJECTED_TYPES = new Set([
 export function splitGeneric(type: string): { name: string; args: string[] } {
   const lb = type.indexOf("[");
   if (lb < 0 || !type.endsWith("]")) return { name: type, args: [] };
-  return { name: type.slice(0, lb).trim(), args: splitTopLevel(type.slice(lb + 1, -1)) };
+  return { name: type.slice(0, lb).trim(), args: splitPyTypeArgs(type.slice(lb + 1, -1)) };
 }
 
 /** Split on commas (or `|` when `sep` says so) that are outside brackets/parens/braces/quotes. */
-export function splitTopLevel(text: string, sep: "," | "|" = ","): string[] {
+export function splitPyTypeArgs(text: string, sep: "," | "|" = ","): string[] {
   return splitTopLevelWith(text, { sep, quotes: "'\"", escapes: "'\"", trim: true, dropBlank: true });
 }
 
@@ -68,7 +68,7 @@ function unwrapAnnotated(type: string): string {
 /** `Optional[T]` / `T | None` / `Union[T, None]` → `{ type: T, nullable: true }`. */
 export function unwrapNullable(type: string): { type: string; nullable: boolean } {
   const t = unwrapAnnotated(type);
-  const union = splitTopLevel(t, "|");
+  const union = splitPyTypeArgs(t, "|");
   if (union.length > 1) {
     const rest = union.filter((u) => u !== "None");
     if (rest.length < union.length) return { type: rest.length === 1 ? rest[0]! : rest.join(" | "), nullable: true };

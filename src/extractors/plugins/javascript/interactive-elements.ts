@@ -2,6 +2,7 @@ import { templateScopes, WHOLE_SLOT_PROPS, type TemplateScope } from "./template
 import { escapeRegex } from "../shared/path-utils.js";
 import type { Node, Tree } from "web-tree-sitter";
 import type { FunctionPropBinding, InteractiveElementInfo, Language, SlotFunction } from "../../../types/analysis.js";
+import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 /** HTML tags that map to interactive element types */
 export const INTERACTIVE_TAGS: Record<string, InteractiveElementInfo["element"]> = {
@@ -293,7 +294,7 @@ export function extractVueInteractiveElements(
 function arrayArrows(value: string): Map<string, string[]> {
   const out = new Map<string, string[]>();
   if (!value.endsWith("]") || (!value.includes("=>") && !value.includes("function"))) return out;
-  for (const element of splitTopLevel(value.slice(1, -1))) {
+  for (const element of splitLiteralItems(value.slice(1, -1))) {
     for (const [key, arrow] of objectArrows(element.trim())) out.set(key, [...(out.get(key) ?? []), arrow]);
   }
   return out;
@@ -376,7 +377,7 @@ export function literalCallbacksOf(source: string, script: string, depth = 0): R
   const body = balanced(script, open, "[", "]");
   if (body === null) return undefined;
   const out: Record<string, string[]> = {};
-  for (const element of splitTopLevel(body)) {
+  for (const element of splitLiteralItems(body)) {
     const obj = element.trim();
     // `[...baseActions, { run: purge }]`: the kit takes on the callbacks of the literal array spread into it (the name is another single declaration).
     const spread = /^\.\.\.\s*([A-Za-z_$][\w$]*|this\.[A-Za-z_$][\w$]*)$/.exec(obj)?.[1];
@@ -389,7 +390,7 @@ export function literalCallbacksOf(source: string, script: string, depth = 0): R
       continue;
     }
     if (!obj.startsWith("{") || !obj.endsWith("}")) continue;
-    for (const entry of splitTopLevel(obj.slice(1, -1))) {
+    for (const entry of splitLiteralItems(obj.slice(1, -1))) {
       const m = /^\s*['"]?([A-Za-z_$][\w$]*)['"]?\s*(?::\s*(?:this\.)?([A-Za-z_$][\w$]*)(?:\.bind\(this\))?)?\s*$/.exec(entry);
       // `run: () => sellPlayer()`: a function of its own (`heldFunction`), `<items[].run@<line>>` — any line.
       const written = m ? null : /^\s*['"]?([A-Za-z_$][\w$]*)['"]?\s*:\s*([\s\S]+)$/.exec(entry);
@@ -417,10 +418,10 @@ export function inlineCallbacksOf(source: string): Record<string, string[]> | un
   const text = source.trim();
   if (!text.startsWith("[") || !text.endsWith("]")) return undefined;
   const out: Record<string, string[]> = {};
-  for (const element of splitTopLevel(text.slice(1, -1))) {
+  for (const element of splitLiteralItems(text.slice(1, -1))) {
     const obj = element.trim();
     if (!obj.startsWith("{") || !obj.endsWith("}")) continue;
-    for (const entry of splitTopLevel(obj.slice(1, -1))) {
+    for (const entry of splitLiteralItems(obj.slice(1, -1))) {
       const m = /^\s*['"]?([A-Za-z_$][\w$]*)['"]?\s*:\s*([\s\S]+?)\s*$/.exec(entry);
       if (!m) continue;
       const names = INLINE_FUNCTION.test(m[2]!)
@@ -461,26 +462,8 @@ function balanced(text: string, open: number, left: string, right: string): stri
 }
 
 /** `text` split at its top-level commas (outside brackets and strings). */
-function splitTopLevel(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let quote: string | null = null;
-  let from = 0;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i]!;
-    if (quote) {
-      if (c === "\\") i++;
-      else if (c === quote) quote = null;
-    } else if (c === "'" || c === '"' || c === "`") quote = c;
-    else if (c === "(" || c === "[" || c === "{") depth++;
-    else if (c === ")" || c === "]" || c === "}") depth--;
-    else if (c === "," && depth === 0) {
-      out.push(text.slice(from, i));
-      from = i + 1;
-    }
-  }
-  out.push(text.slice(from));
-  return out.filter((e) => e.trim());
+function splitLiteralItems(text: string): string[] {
+  return splitTopLevelWith(text, { escapes: "\"'`", dropBlank: true });
 }
 
 /**

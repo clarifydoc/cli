@@ -1,7 +1,7 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { DiBinding, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import { callChainText } from "../../shared/call-graph.js";
-import { splitTopLevel } from "./request-schema.js";
+import { splitPyTypeArgs } from "./request-schema.js";
 
 /**
  * Dependency injection as Python code spells it — the facts the symbol linker
@@ -76,7 +76,7 @@ export function collectionElement(type: string | null | undefined): { element: s
   if (!t || t.includes("|")) return null;
   const m = /^(list|List|Sequence|MutableSequence|Iterable|Iterator|Collection|Set|set|FrozenSet|frozenset|AbstractSet|MutableSet|Deque|deque|Tuple|tuple|Generator|dict|Dict|Mapping|MutableMapping|DefaultDict|defaultdict|OrderedDict)\[(.+)\]$/.exec(t);
   if (!m) return null;
-  const args = splitTopLevel(m[2]!).map((a) => a.trim().replace(/^(['"])(.*)\1$/, "$2"));
+  const args = splitPyTypeArgs(m[2]!).map((a) => a.trim().replace(/^(['"])(.*)\1$/, "$2"));
   const kind = m[1]!;
   const isMap = /^(?:dict|Dict|Mapping|MutableMapping|DefaultDict|defaultdict|OrderedDict)$/.test(kind);
   let element: string | undefined;
@@ -113,12 +113,12 @@ export function rowShape(type: string | null | undefined): RowShape | null {
   const seq = /^(?:list|List|Sequence|MutableSequence|Iterable|Iterator|Collection|set|Set|FrozenSet|frozenset|Deque|deque)\[(.+)\]$/.exec(t);
   if (seq) {
     const row = /^(?:tuple|Tuple)\[(.+)\]$/.exec(seq[1]!.trim());
-    const args = row ? splitTopLevel(row[1]!).map((a) => a.trim()) : [];
+    const args = row ? splitPyTypeArgs(row[1]!).map((a) => a.trim()) : [];
     return args.length >= 2 && !args.includes("...") ? { rows: args.map(rowClass) } : null;
   }
   const map = /^(?:dict|Dict|Mapping|MutableMapping|OrderedDict|DefaultDict|defaultdict)\[(.+)\]$/.exec(t);
   if (map) {
-    const args = splitTopLevel(map[1]!).map((a) => a.trim());
+    const args = splitPyTypeArgs(map[1]!).map((a) => a.trim());
     return args.length === 2 ? { kv: [rowClass(args[0]!), rowClass(args[1]!)] } : null;
   }
   return null;
@@ -179,7 +179,7 @@ function providerToken(path: string): string | null {
 /** `Annotated[T, meta...]` (bare or `typing.`-qualified) → its members, or null. */
 function annotatedMembers(typeText: string): string[] | null {
   const m = /^(?:typing(?:_extensions)?\.)?Annotated\s*\[([\s\S]*)\]$/.exec(typeText.trim());
-  return m ? splitTopLevel(m[1]!) : null;
+  return m ? splitPyTypeArgs(m[1]!) : null;
 }
 
 /** The injection token carried in an `Annotated[...]` annotation's metadata. */
@@ -1365,7 +1365,7 @@ export function fillParamTypesFromComments(fnNode: Node, body: Node | null, para
     if (c.type !== "comment") continue;
     const m = /^#\s*type:\s*\((.*)\)\s*->/.exec(c.text);
     if (!m) continue;
-    const types = splitTopLevel(m[1]!).filter((t) => !t.startsWith("*"));
+    const types = splitPyTypeArgs(m[1]!).filter((t) => !t.startsWith("*"));
     if (types.length === 1 && types[0] === "...") break;
     // PEP 484: the comment lists every parameter but `self`/`cls` and splats,
     // exactly the ones `pythonParams` keeps.

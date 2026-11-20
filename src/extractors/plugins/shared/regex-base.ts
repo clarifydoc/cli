@@ -1042,7 +1042,7 @@ export function extractParamsFromDeclaration(
   if (!closed || !text.trim()) return [];
 
   const result: ParamInfo[] = [];
-  const pieces = splitTopLevel(text);
+  const pieces = splitBracketedArgs(text);
   for (const p of groups ? pieces.flatMap(ungroupParams) : pieces) {
     const param = parseParam(p);
     if (param && param.name && param.name.length > 0) result.push(param);
@@ -1056,11 +1056,11 @@ function ungroupParams(piece: string): string[] {
   const open = t[0];
   if (open !== "{" && open !== "[") return [piece];
   const close = open === "{" ? "}" : "]";
-  return t.endsWith(close) ? splitTopLevel(t.slice(1, -1)) : [piece];
+  return t.endsWith(close) ? splitBracketedArgs(t.slice(1, -1)) : [piece];
 }
 
 /** Split on commas outside `()`, `[]`, `<>`, `{}` and quotes. */
-export function splitTopLevel(text: string): string[] {
+export function splitBracketedArgs(text: string): string[] {
   return splitTopLevelWith(text, { brackets: "()[]<>{}", quotes: "\"'", clamp: true });
 }
 

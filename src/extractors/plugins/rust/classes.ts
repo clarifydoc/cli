@@ -1,6 +1,6 @@
 import { addRustElementTypes, type RustTypeEnv } from "./element-types.js";
 import type { ClassInfo, FunctionInfo } from "../../../types/analysis.js";
-import { blockEndLine, extractClassesWithSpec, headerLineMethods, splitTopLevel, type RegexLangSpec } from "../shared/regex-base.js";
+import { blockEndLine, extractClassesWithSpec, headerLineMethods, splitBracketedArgs, type RegexLangSpec } from "../shared/regex-base.js";
 
 /**
  * Rust types as the linker needs them. Methods live in `impl` blocks apart
@@ -209,7 +209,7 @@ function parseImplHead(head: string): ImplHead | null {
     self = rest.slice(forAt + 3).trim();
     if (trait.startsWith("!")) trait = null; // negative impl: implements nothing
   }
-  const params = new Set(splitTopLevel(generics).map((g) => g.trim().split(/[\s:=]/)[0]!).filter(Boolean));
+  const params = new Set(splitBracketedArgs(generics).map((g) => g.trim().split(/[\s:=]/)[0]!).filter(Boolean));
   const name = selfTypeName(self);
   if (!name || params.has(name)) return null; // blanket impl over a type parameter
   return { type: name, trait: trait || null, bounds: genericBounds(`<${generics}> where ${where}`) };
@@ -258,7 +258,7 @@ function genericBounds(head: string): Map<string, string> {
   if (open >= 0 && (whereAt < 0 || open < whereAt)) {
     const close = closeAngle(head, open);
     if (close > open) {
-      for (const g of splitTopLevel(head.slice(open + 1, close))) {
+      for (const g of splitBracketedArgs(head.slice(open + 1, close))) {
         const m = /^\s*([A-Za-z_]\w*)\s*:(?!:)\s*(.+)$/s.exec(g);
         if (m && !/^\s*const\b/.test(g)) add(m[1]!, m[2]!);
         else if (/^\s*[A-Z]\w*\s*$/.test(g)) add(g.trim(), "");
@@ -266,7 +266,7 @@ function genericBounds(head: string): Map<string, string> {
     }
   }
   if (whereAt >= 0) {
-    for (const clause of splitTopLevel(head.slice(whereAt + 5))) {
+    for (const clause of splitBracketedArgs(head.slice(whereAt + 5))) {
       const m = /^\s*([A-Za-z_]\w*)\s*:(?!:)\s*(.+)$/s.exec(clause);
       if (m) add(m[1]!, m[2]!);
     }
@@ -342,7 +342,7 @@ function readInlineFields(line: string, cls: ClassInfo, spec: RegexLangSpec): vo
   const open = line.indexOf("{");
   const close = line.lastIndexOf("}");
   if (open < 0 || close <= open) return;
-  for (const part of splitTopLevel(line.slice(open + 1, close))) {
+  for (const part of splitBracketedArgs(line.slice(open + 1, close))) {
     for (const pp of spec.propertyPatterns ?? []) {
       const text = ` ${part.trim()}`;
       const m = text.match(pp.pattern);
@@ -358,7 +358,7 @@ function derivedTraits(decorators: readonly string[]): string[] {
   for (const d of decorators) {
     const m = /^derive\s*\(([\s\S]*)\)\s*$/.exec(d.trim());
     if (!m) continue;
-    for (const part of splitTopLevel(m[1]!)) {
+    for (const part of splitBracketedArgs(m[1]!)) {
       const name = part.trim().split("::").pop()?.trim();
       if (name && /^[A-Za-z_]\w*$/.test(name)) out.push(name);
     }

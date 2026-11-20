@@ -13,7 +13,7 @@ import { rubyModelFinders } from "./autoload.js";
 import type { CallInfo, RouteInfo, RouteFact, ClassInfo, FunctionInfo, DataSourceInfo, HttpClientRegistration, CallBaseRef } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { joinConstantClassHeaders } from "./constant-class-headers.js";
-import { extractCallsFromBody, extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
+import { extractCallsFromBody, extractClassesWithSpec, splitBracketedArgs } from "../shared/regex-base.js";
 import { escapeRegex } from "../shared/path-utils.js";
 import { addRubyWhereFields, withRubyArgOrigins, withRubyArgOriginsInClasses } from "./arg-origins.js";
 import type { GuardAttr } from "../../shared/route-metadata.js";
@@ -496,7 +496,7 @@ function addParenlessParams(lines: readonly string[], fn: FunctionInfo): void {
   const name = fn.name.replace(/^self\./, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const m = new RegExp(`\\bdef\\s+(?:(?:self|[A-Z]\\w*)\\.)?${name}[ \\t]+(?![=(;#])([^;#]+)`).exec(decl);
   if (!m) return;
-  for (const p of splitTopLevel(m[1]!.trim())) {
+  for (const p of splitBracketedArgs(m[1]!.trim())) {
     const param = parseRubyParam(p);
     if (param?.name && /^[*&]{0,2}[a-z_]\w*:?$|^\.\.\.$/.test(param.name)) fn.params.push(param);
   }

@@ -28,6 +28,8 @@
  * A spec that names no project file is simply dropped by the resolver.
  */
 
+import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
+
 // The type argument may hold an arrow type or a nested generic: `<{ default: () => ReactNode }>`, `<Record<string, M>>`.
 const GLOB_CALL_RE = /import\.meta\.glob(?:Eager)?\s*(?:<(?:=>|[^<>]|<[^<>]*>)*>)?\s*\(\s*(\[[^\]]*\]|(["'`])[^"'`\n]*\2)/g;
 const REQUIRE_CONTEXT_RE = /require\.context\(\s*(["'`])([^"'`\n]+)\1\s*(?:,\s*(true|false))?/g;
@@ -172,19 +174,7 @@ function computedLoadGlobs(sourceText: string): string[] {
 
 /** An argument list split at its top-level commas. */
 function splitArgs(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let cur = "";
-  let quote = "";
-  for (const c of text) {
-    if (quote) { cur += c; if (c === quote) quote = ""; continue; }
-    if (c === "`" || c === '"' || c === "'") { quote = c; cur += c; continue; }
-    if (c === "(" || c === "[" || c === "{") depth++;
-    else if (c === ")" || c === "]" || c === "}") depth--;
-    if (c === "," && depth === 0) { out.push(cur); cur = ""; } else cur += c;
-  }
-  if (cur.trim()) out.push(cur);
-  return out;
+  return splitTopLevelWith(text);
 }
 
 export function extractPathReferences(sourceText: string): string[] {

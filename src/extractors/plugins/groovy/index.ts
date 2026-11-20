@@ -1,5 +1,5 @@
 import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
-import { extractClassesWithSpec, findEndLine, splitTopLevel, type CallPattern, type RegexLangSpec } from "../shared/regex-base.js";
+import { extractClassesWithSpec, findEndLine, splitBracketedArgs, type CallPattern, type RegexLangSpec } from "../shared/regex-base.js";
 import { extractGroovyRoutes } from "./routes.js";
 import { extractGroovyDataSources } from "./data-sources.js";
 
@@ -78,7 +78,7 @@ function buildField(m: RegExpMatchArray): PropertyInfo | null {
 function heritage(header: string): { base: string | null; interfaces: string[] } {
   const base = header.match(/\bextends\s+([\w.]+)/)?.[1]?.split(".").pop() ?? null;
   const impl = header.match(/\bimplements\s+(.+?)\s*(?:\{|$)/)?.[1];
-  const interfaces = impl ? splitTopLevel(impl).map((s) => s.trim().replace(/<.*$/, "").split(".").pop()!).filter(Boolean) : [];
+  const interfaces = impl ? splitBracketedArgs(impl).map((s) => s.trim().replace(/<.*$/, "").split(".").pop()!).filter(Boolean) : [];
   return { base, interfaces };
 }
 

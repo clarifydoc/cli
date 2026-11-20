@@ -167,7 +167,7 @@ function urlOfLocal(lines: string[], i: number, name: string | undefined): strin
     const literal = /^"([^"]+)"(?:\.to_(?:string|owned)\(\))?$/.exec(rhs);
     if (literal) return literal[1]!;
     const fmt = /^format!\s*\(\s*"([^"]*)"\s*,?(.*)\)$/s.exec(rhs);
-    return fmt ? renderFormat(fmt[1]!, splitTopLevel(fmt[2]!)) : null;
+    return fmt ? renderFormat(fmt[1]!, splitRustArgs(fmt[2]!)) : null;
   }
   return null;
 }
@@ -195,7 +195,7 @@ function urlOfHelperCall(lines: string[], line: string, verbAt: number): string 
     else if (rest[k] === ")" && --depth === 0) end = k;
   }
   if (end < 0) return null;
-  const args = splitTopLevel(rest.slice(0, end)).map((a) => a.trim().replace(/^&\s*(?:mut\s+)?/, ""));
+  const args = splitRustArgs(rest.slice(0, end)).map((a) => a.trim().replace(/^&\s*(?:mut\s+)?/, ""));
   const name = callee;
   let text = joinedText.get(lines);
   if (text === undefined) joinedText.set(lines, (text = lines.join("\n")));
@@ -214,7 +214,7 @@ function urlOfHelperCall(lines: string[], line: string, verbAt: number): string 
   const paramsEnd = closingAt(text, head.index + head[0].length - 1);
   const bodyStart = paramsEnd < 0 ? -1 : /^[^{;]*\{/.exec(text.slice(paramsEnd + 1))?.[0].length ?? -1;
   if (bodyStart < 0) return null;
-  const params = splitTopLevel(text.slice(head.index + head[0].length, paramsEnd)).map((p) => p.trim().split(":")[0]!.trim().replace(/^mut\s+/, "")).filter((p) => p && p !== "self" && !/^&?\s*(?:mut\s+)?self$/.test(p));
+  const params = splitRustArgs(text.slice(head.index + head[0].length, paramsEnd)).map((p) => p.trim().split(":")[0]!.trim().replace(/^mut\s+/, "")).filter((p) => p && p !== "self" && !/^&?\s*(?:mut\s+)?self$/.test(p));
   if (params.length !== args.length) return null;
   // The body: exactly one `format!(…)`, as the tail expression or a `return`.
   const open = paramsEnd + bodyStart;
@@ -223,7 +223,7 @@ function urlOfHelperCall(lines: string[], line: string, verbAt: number): string 
   const body = text.slice(open + 1, close);
   const fmt = /^\s*(?:return\s+)?format!\s*\(\s*"([^"]*)"\s*,?([\s\S]*)\)\s*;?\s*$/.exec(body);
   if (!fmt) return null;
-  const rendered = renderFormat(fmt[1]!, splitTopLevel(fmt[2]!));
+  const rendered = renderFormat(fmt[1]!, splitRustArgs(fmt[2]!));
   if (rendered === null) return null;
   return rendered.replace(/\$\{([A-Za-z_]\w*)\}/g, (hole, v: string) => {
     const at = params.indexOf(v);
@@ -260,7 +260,7 @@ export function renderFormat(template: string, args: string[]): string | null {
 }
 
 /** Arguments split at top-level commas. */
-export function splitTopLevel(text: string): string[] {
+export function splitRustArgs(text: string): string[] {
   return splitTopLevelWith(text, { quotes: "\"" });
 }
 

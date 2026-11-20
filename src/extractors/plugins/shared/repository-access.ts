@@ -380,19 +380,3 @@ function chainSegments(text: string | undefined): string[] | null {
   out.push(name);
   return out;
 }
-
-/** Top-level type arguments of `<…>` / `[…]` text: `A, Dict[str, B]` → `["A", "Dict[str, B]"]`. */
-export function splitTypeArgs(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i]!;
-    if (c === "<" || c === "[" || c === "(") depth++;
-    else if (c === ">" || c === "]" || c === ")") depth--;
-    else if (c === "," && depth === 0) { out.push(text.slice(start, i).trim()); start = i + 1; }
-  }
-  const last = text.slice(start).trim();
-  if (last) out.push(last);
-  return out;
-}

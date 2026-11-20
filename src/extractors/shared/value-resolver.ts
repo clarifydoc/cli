@@ -27,7 +27,6 @@
 
 import type { Confidence } from "../../types/analysis.js";
 import { BEST_RANK } from "./confidence.js";
-import { splitTopLevel as splitTopLevelWith } from "./split-top-level.js";
 
 /**
  * A captured value expression. `lit` carries already-unquoted content for a
@@ -204,16 +203,6 @@ export function foldValue(expr: ValueExpr, scope: Scope, opts: FoldOptions = {})
   };
 
   return { text: go(expr, 0), confidence, hadHole };
-}
-
-/**
- * Split `text` on a top-level occurrence of `sep`, respecting quote/backtick
- * spans and bracket nesting so a separator inside a string literal or a nested
- * group doesn't split it. Shared by the URL-builder call-site splitter and the
- * Ruby concat capture (previously three near-identical copies).
- */
-export function splitTopLevel(text: string, sep: string): string[] {
-  return splitTopLevelWith(text, { sep });
 }
 
 /** Strip one layer of matching quotes/backticks from a literal's text. */

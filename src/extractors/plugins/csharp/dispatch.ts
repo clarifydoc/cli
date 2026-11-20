@@ -6,6 +6,7 @@ import type {
   SymbolLink,
 } from "../../../types/analysis.js";
 import type { DispatchResolver } from "../../dispatch/base.js";
+import { splitTypeArgs } from "../shared/element-chain.js";
 
 /**
  * MediatR (CQRS) dispatch resolver for C#.
@@ -195,23 +196,6 @@ function baseClass(
     ...found[0]!,
     subst: (inner) => new Map(params.map((p, i) => [p, inner.get(args[i]!) ?? args[i]!] as [string, string])),
   };
-}
-
-/** `A, IEnumerable<B, C>, D` → its three top-level arguments. */
-function splitTypeArgs(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let cur = "";
-  for (const ch of text) {
-    if (ch === "<" || ch === "(" || ch === "[") depth++;
-    else if (ch === ">" || ch === ")" || ch === "]") depth--;
-    if (ch === "," && depth === 0) {
-      out.push(cur.trim());
-      cur = "";
-    } else cur += ch;
-  }
-  if (cur.trim()) out.push(cur.trim());
-  return out;
 }
 
 /** Emit links for one callable, if it dispatches through a mediator. */

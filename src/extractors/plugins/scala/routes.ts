@@ -1,6 +1,6 @@
 import type { RouteInfo, RouteParamInfo } from "../../../types/analysis.js";
 import { applyRouteMeta, inferredParam } from "../../shared/route-metadata.js";
-import { splitTopLevel } from "../shared/regex-base.js";
+import { splitBracketedArgs } from "../shared/regex-base.js";
 
 /**
  * Play's `conf/routes` file — the one place a Play application declares its
@@ -49,7 +49,7 @@ function handlerName(raw: string): string {
 function parseParams(text: string | undefined, path: string): RouteParamInfo[] {
   if (!text || !text.trim()) return [];
   const out: RouteParamInfo[] = [];
-  for (const piece of splitTopLevel(text)) {
+  for (const piece of splitBracketedArgs(text)) {
     // `name: Type`, `name: Type ?= default`, `name: Type = fixed`, bare `name`.
     const m = piece.trim().match(/^([A-Za-z_]\w*)\s*(?::\s*([^=?]+?))?\s*(?:(?:\?=|=).*)?$/);
     if (!m) continue;

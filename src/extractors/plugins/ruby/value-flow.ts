@@ -1,7 +1,8 @@
 import type { ClassInfo, FunctionInfo, ValueCell, ValueFlowFact } from "../../../types/analysis.js";
 import { liveValueFlow } from "../shared/value-flow-live.js";
-import { splitTopLevel } from "../shared/regex-base.js";
+import { splitBracketedArgs } from "../shared/regex-base.js";
 import { rubyBlockEndsOf } from "./blocks.js";
+import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 /**
  * Ruby value-flow facts (see `ValueFlowFact`) read from a method's code lines (strings kept, comments and
@@ -302,7 +303,7 @@ class Reader {
     const literal = v.startsWith("{") && v.endsWith("}") ? "hash" : v.startsWith("[") && v.endsWith("]") ? "array" : null;
     if (literal) {
       if (depth > 2) return;
-      for (const item of splitTopLevel(v.slice(1, -1))) {
+      for (const item of splitBracketedArgs(v.slice(1, -1))) {
         const text = item.trim();
         let key: string | undefined;
         let element = text;
@@ -342,7 +343,7 @@ class Reader {
   }
 
   private argFacts(argsText: string, call: string, line: number): void {
-    splitTopLevel(argsText).forEach((raw, index) => {
+    splitBracketedArgs(argsText).forEach((raw, index) => {
       const text = raw.trim();
       // A block argument (`&m`) binds the callee's `&blk` formal, which a written index cannot name: not stated.
       if (text === "" || text.startsWith("*") || text.startsWith("&") || /=>/.test(text) || /^["'][^"']*["']:\s/.test(text)) return;
@@ -438,21 +439,7 @@ class Reader {
 
 /** Split on a separator outside brackets and quotes. */
 function splitTop(text: string, sep: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let quote: string | null = null;
-  let cur = "";
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (quote) { cur += ch; if (ch === quote) quote = null; continue; }
-    if (ch === '"' || ch === "'") quote = ch;
-    else if ("([{".includes(ch)) depth++;
-    else if (")]}".includes(ch)) depth = Math.max(0, depth - 1);
-    if (depth === 0 && text.startsWith(sep, i)) { out.push(cur); cur = ""; i += sep.length - 1; continue; }
-    cur += ch;
-  }
-  out.push(cur);
-  return out.map((p) => p.trim()).filter(Boolean);
+  return splitTopLevelWith(text, { sep, quotes: "\"'", clamp: true, trim: true, dropBlank: true });
 }
 
 /** `lhs = rhs` / `lhs ||= rhs` at the statement's top level (not `==`, `=~`, `=>`, a keyword argument). */

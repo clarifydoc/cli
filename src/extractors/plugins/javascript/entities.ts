@@ -2,6 +2,7 @@ import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } 
 import { readSupabaseTables } from "./supabase-types.js";
 import type { ClassInfo, EntityRelation, Language, PropertyInfo } from "../../../types/analysis.js";
 import { escapeRegex } from "../shared/path-utils.js";
+import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 /**
  * Decorator name → cardinality map for TypeORM / MikroORM relation decorators.
@@ -113,7 +114,7 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
       const block = this.balancedBlock(text, m.index! + m[0].length - 1);
       const properties: PropertyInfo[] = [];
       const targets = new Set<string>();
-      for (const field of splitTopLevel(block.slice(1, -1))) {
+      for (const field of splitObjectMembers(block.slice(1, -1))) {
         const f = /^\s*["']?([A-Za-z_$][\w$]*)["']?\s*:\s*([\s\S]+)$/.exec(field);
         if (!f) continue;
         const validator = f[2]!.trim();
@@ -439,40 +440,7 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
    * two parts rather than tripping on the comma inside the object.
    */
   private splitTopLevelArgs(args: string): string[] {
-    const parts: string[] = [];
-    let depth = 0;
-    let quote = "";
-    let buf = "";
-    for (let i = 0; i < args.length; i++) {
-      const ch = args[i];
-      if (quote) {
-        buf += ch;
-        if (ch === "\\") {
-          if (i + 1 < args.length) {
-            buf += args[i + 1];
-            i++;
-          }
-          continue;
-        }
-        if (ch === quote) quote = "";
-        continue;
-      }
-      if (ch === '"' || ch === "'" || ch === "`") {
-        quote = ch;
-        buf += ch;
-        continue;
-      }
-      if (ch === "(" || ch === "[" || ch === "{") depth++;
-      else if (ch === ")" || ch === "]" || ch === "}") depth--;
-      if (ch === "," && depth === 0) {
-        parts.push(buf);
-        buf = "";
-        continue;
-      }
-      buf += ch;
-    }
-    if (buf.trim()) parts.push(buf);
-    return parts;
+    return splitTopLevelWith(args, { escapes: "\"'`" });
   }
 
   /**
@@ -927,7 +895,7 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
       const block = this.balancedBlock(stmt.text, stmt.text.indexOf("{", m.index + m[0].length - 1));
       const properties: PropertyInfo[] = [];
       const targets = new Set<string>();
-      for (const field of splitTopLevel(block.slice(1, -1))) {
+      for (const field of splitObjectMembers(block.slice(1, -1))) {
         const f = /^\s*["']?([A-Za-z_$][\w$]*)["']?\s*:\s*([A-Za-z_$][\w$]*)\s*\(/.exec(field);
         if (!f) continue;
         const prop = this.column(f[1]!, f[2]!);
@@ -1014,28 +982,8 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
 }
 
 /** Split an object literal's interior on its top-level commas (brackets and strings respected). */
-function splitTopLevel(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let quote: string | null = null;
-  let start = 0;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i]!;
-    if (quote) {
-      if (c === "\\") i++;
-      else if (c === quote) quote = null;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === "`") quote = c;
-    else if (c === "(" || c === "[" || c === "{") depth++;
-    else if (c === ")" || c === "]" || c === "}") depth--;
-    else if (c === "," && depth === 0) {
-      out.push(text.slice(start, i));
-      start = i + 1;
-    }
-  }
-  if (text.slice(start).trim()) out.push(text.slice(start));
-  return out;
+function splitObjectMembers(text: string): string[] {
+  return splitTopLevelWith(text, { escapes: "\"'`" });
 }
 
 /** Sequelize's `{ tableName: "app_users" }` option (`define(…, {…}, { tableName })`, `init({…}, { sequelize, tableName })`). */

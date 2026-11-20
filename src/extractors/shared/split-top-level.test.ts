@@ -213,6 +213,152 @@ const legacy: Record<string, (text: string, sep?: string) => string[]> = {
     out.push(text.slice(start));
     return out;
   },
+  rubyArgs(text) {
+    const out: string[] = [];
+    let depth = 0, cur = "";
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i]!;
+      if (ch === '"' || ch === "'") {
+        let j = i + 1;
+        while (j < text.length && text[j] !== ch) j += text[j] === "\\" ? 2 : 1;
+        cur += text.slice(i, j + 1);
+        i = j;
+        continue;
+      }
+      if ("([{".includes(ch)) depth++;
+      if (")]}".includes(ch)) depth--;
+      if (ch === "," && depth === 0) { out.push(cur.trim()); cur = ""; } else cur += ch;
+    }
+    if (cur.trim()) out.push(cur.trim());
+    return out;
+  },
+  rubyTop(text, sep = ",") {
+    const out: string[] = [];
+    let depth = 0, quote: string | null = null, cur = "";
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i]!;
+      if (quote) { cur += ch; if (ch === quote) quote = null; continue; }
+      if (ch === '"' || ch === "'") quote = ch;
+      else if ("([{".includes(ch)) depth++;
+      else if (")]}".includes(ch)) depth = Math.max(0, depth - 1);
+      if (depth === 0 && text.startsWith(sep, i)) { out.push(cur); cur = ""; i += sep.length - 1; continue; }
+      cur += ch;
+    }
+    out.push(cur);
+    return out.map((p) => p.trim()).filter(Boolean);
+  },
+  rustTypes(text) {
+    const at = (rest: string): number => {
+      let depth = 0;
+      for (let i = 0; i < rest.length; i++) {
+        const c = rest[i]!;
+        if (c === "<" || c === "(" || c === "[") depth++;
+        else if (c === ">" || c === ")" || c === "]") depth--;
+        else if (c === "," && depth === 0) return i;
+      }
+      return -1;
+    };
+    const out: string[] = [];
+    let rest = text;
+    for (let k = at(rest); k >= 0; k = at(rest)) { out.push(rest.slice(0, k).trim()); rest = rest.slice(k + 1); }
+    if (rest.trim()) out.push(rest.trim());
+    return out;
+  },
+  csharpArgs(text) {
+    const out: string[] = [];
+    let depth = 0, cur = "", quote: string | null = null;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i]!;
+      if (quote) {
+        cur += c;
+        if (c === "\\") { cur += text[++i] ?? ""; continue; }
+        if (c === quote) quote = null;
+        continue;
+      }
+      if (c === '"' || c === "'") quote = c;
+      else if (c === "(" || c === "{" || c === "[") depth++;
+      else if (c === ")" || c === "}" || c === "]") depth--;
+      if (c === "," && depth === 0) { out.push(cur.trim()); cur = ""; continue; }
+      cur += c;
+    }
+    if (cur.trim()) out.push(cur.trim());
+    return out;
+  },
+  angular(text) {
+    const out: string[] = [];
+    let depth = 0, quote: string | null = null, start = 0;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i]!;
+      if (quote) { if (c === quote) quote = null; continue; }
+      if (c === "'" || c === "`") quote = c;
+      else if (c === "(" || c === "[" || c === "{") depth++;
+      else if (c === ")" || c === "]" || c === "}") depth--;
+      else if (c === "," && depth === 0) { out.push(text.slice(start, i)); start = i + 1; }
+    }
+    if (text.slice(start).trim()) out.push(text.slice(start));
+    return out.map((t) => t.trim()).filter(Boolean);
+  },
+  jsObject(text) {
+    const out: string[] = [];
+    let depth = 0, quote: string | null = null, start = 0;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i]!;
+      if (quote) { if (c === "\\") i++; else if (c === quote) quote = null; continue; }
+      if (c === '"' || c === "'" || c === "`") quote = c;
+      else if (c === "(" || c === "[" || c === "{") depth++;
+      else if (c === ")" || c === "]" || c === "}") depth--;
+      else if (c === "," && depth === 0) { out.push(text.slice(start, i)); start = i + 1; }
+    }
+    if (text.slice(start).trim()) out.push(text.slice(start));
+    return out;
+  },
+  jsArgs(args) {
+    const parts: string[] = [];
+    let depth = 0, quote = "", buf = "";
+    for (let i = 0; i < args.length; i++) {
+      const ch = args[i]!;
+      if (quote) {
+        buf += ch;
+        if (ch === "\\") { if (i + 1 < args.length) { buf += args[i + 1]; i++; } continue; }
+        if (ch === quote) quote = "";
+        continue;
+      }
+      if (ch === '"' || ch === "'" || ch === "`") { quote = ch; buf += ch; continue; }
+      if (ch === "(" || ch === "[" || ch === "{") depth++;
+      else if (ch === ")" || ch === "]" || ch === "}") depth--;
+      if (ch === "," && depth === 0) { parts.push(buf); buf = ""; continue; }
+      buf += ch;
+    }
+    if (buf.trim()) parts.push(buf);
+    return parts;
+  },
+  jsItems(text) {
+    const out: string[] = [];
+    let depth = 0, quote: string | null = null, from = 0;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i]!;
+      if (quote) { if (c === "\\") i++; else if (c === quote) quote = null; }
+      else if (c === "'" || c === '"' || c === "`") quote = c;
+      else if (c === "(" || c === "[" || c === "{") depth++;
+      else if (c === ")" || c === "]" || c === "}") depth--;
+      else if (c === "," && depth === 0) { out.push(text.slice(from, i)); from = i + 1; }
+    }
+    out.push(text.slice(from));
+    return out.filter((e) => e.trim());
+  },
+  pathArgs(text) {
+    const out: string[] = [];
+    let depth = 0, cur = "", quote = "";
+    for (const c of text) {
+      if (quote) { cur += c; if (c === quote) quote = ""; continue; }
+      if (c === "`" || c === '"' || c === "'") { quote = c; cur += c; continue; }
+      if (c === "(" || c === "[" || c === "{") depth++;
+      else if (c === ")" || c === "]" || c === "}") depth--;
+      if (c === "," && depth === 0) { out.push(cur); cur = ""; } else cur += c;
+    }
+    if (cur.trim()) out.push(cur);
+    return out;
+  },
   swift(text, sep = ",") {
     const out: string[] = [];
     let depth = 0, start = 0;
@@ -244,6 +390,16 @@ const spellings: Record<string, { opts: SplitTopLevelOptions; sep?: string; blan
   csharpBare: { opts: { brackets: "<>()[]", quotes: "", tail: "empty" } },
   aspire: { opts: { brackets: "()<>[]{}", quotes: '"', escapes: '"', trim: true, tail: "keep" }, blankInput: true },
   angles: { opts: { brackets: "<>()", quotes: "", tail: "keep" } },
+  rubyArgs: { opts: { quotes: "\"'", escapes: "\"'", trim: true } },
+  rubyTopOr: { opts: { quotes: "\"'", clamp: true, trim: true, dropBlank: true }, sep: "||" },
+  rubyTopSemi: { opts: { quotes: "\"'", clamp: true, trim: true, dropBlank: true }, sep: ";" },
+  rustTypes: { opts: { brackets: "<>()[]", quotes: "", trim: true } },
+  csharpArgs: { opts: { quotes: "\"'", escapes: "\"'", trim: true } },
+  angular: { opts: { quotes: "'`", trim: true, dropBlank: true } },
+  jsObject: { opts: { escapes: "\"'`" } },
+  jsArgs: { opts: { escapes: "\"'`" } },
+  jsItems: { opts: { escapes: "\"'`", dropBlank: true } },
+  pathArgs: { opts: {} },
   swift: { opts: { brackets: "<>[]()", quotes: "", trim: true, tail: "keep" } },
 };
 
@@ -283,7 +439,7 @@ describe("splitTopLevel options reproduce each plugin's own split", () => {
         // a backslash before a closing quote differs only for readers without escapes, which the spelling table already separates
         // a caller whose legacy reader answered [] for a blank input guards the call itself
         const got = blankInput && !text.trim() ? [] : splitTopLevel(text, options);
-        expect(got, JSON.stringify(text)).toEqual(legacy[name]!(text, wantSep));
+        expect(got, JSON.stringify(text)).toEqual((legacy[name] ?? legacy[name.replace(/(Or|Semi)$/, "")]!)(text, wantSep));
       }
     });
   }
@@ -303,5 +459,58 @@ describe("splitTopLevel", () => {
   });
   it("stops at a closer nothing opened", () => {
     expect(splitTopLevel("a, b), c", { stopAtCloser: true })).toEqual(["a", " b"]);
+  });
+});
+
+describe("splitTopLevel with a separator of several characters", () => {
+  it("splits at `||` outside brackets and quotes", () => {
+    expect(splitTopLevel("a || f(b || c) || 'd || e'", { sep: "||", trim: true })).toEqual(["a", "f(b || c)", "'d || e'"]);
+  });
+  it("never splits on an empty separator", () => {
+    expect(splitTopLevel("a,b", { sep: "" })).toEqual(["a,b"]);
+  });
+});
+
+describe("splitTypeArgs (element-chain) equals the copies it replaced on type texts", () => {
+  const copies = {
+    repository(text: string): string[] {
+      const out: string[] = [];
+      let depth = 0, start = 0;
+      for (let i = 0; i < text.length; i++) {
+        const c = text[i]!;
+        if (c === "<" || c === "[" || c === "(") depth++;
+        else if (c === ">" || c === "]" || c === ")") depth--;
+        else if (c === "," && depth === 0) { out.push(text.slice(start, i).trim()); start = i + 1; }
+      }
+      const last = text.slice(start).trim();
+      if (last) out.push(last);
+      return out;
+    },
+    dispatch(text: string): string[] {
+      const out: string[] = [];
+      let depth = 0, cur = "";
+      for (const ch of text) {
+        if (ch === "<" || ch === "(" || ch === "[") depth++;
+        else if (ch === ">" || ch === ")" || ch === "]") depth--;
+        if (ch === "," && depth === 0) { out.push(cur.trim()); cur = ""; } else cur += ch;
+      }
+      if (cur.trim()) out.push(cur.trim());
+      return out;
+    },
+  };
+  const realistic = [
+    "", "A", "A, B", "String, Map<A, B>", "A, IEnumerable<B, C>, D", "Dict[str, B], int", "Club,Player", "Func<Club, Task<Player>>, (int, int)",
+    "List<Map<String, List<Club>>>, X", "A, B, ", "A, B,", "T1, T2, T3",
+  ];
+  for (const [name, copy] of Object.entries(copies)) {
+    it(name, async () => {
+      const { splitTypeArgs } = await import("../plugins/shared/element-chain.js");
+      for (const t of realistic) expect(splitTypeArgs(t), t).toEqual(copy(t));
+    });
+  }
+  it("differs only on an empty middle argument, which a type text never has", async () => {
+    const { splitTypeArgs } = await import("../plugins/shared/element-chain.js");
+    expect(splitTypeArgs("A,,B")).toEqual(["A", "B"]);
+    expect(copies.repository("A,,B")).toEqual(["A", "", "B"]);
   });
 });

@@ -1,5 +1,5 @@
 export interface SplitTopLevelOptions {
-  /** The separator character (default `,`). */
+  /** The separator (default `,`); more than one character is matched as a string (`||`). */
   sep?: string;
   /** Bracket pairs as one string of opener+closer pairs, e.g. `()[]{}` (the default) or `()[]{}<>`. */
   brackets?: string;
@@ -52,8 +52,9 @@ export function splitTopLevel(text: string, o: SplitTopLevelOptions = {}): strin
         break;
       }
       depth = o.clamp ? Math.max(0, depth - 1) : depth - 1;
-    } else if (ch === sep && depth === 0) {
+    } else if (depth === 0 && (sep.length === 1 ? ch === sep : sep !== "" && text.startsWith(sep, i))) {
       pieces.push(text.slice(start, i));
+      i += sep.length - 1;
       start = i + 1;
     }
   }

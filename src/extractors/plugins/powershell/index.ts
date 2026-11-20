@@ -1,5 +1,5 @@
 import type { ClassInfo, FunctionInfo, ImportInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
-import { extractClassesWithSpec, splitTopLevel, type CallPattern, type RegexLangSpec } from "../shared/regex-base.js";
+import { extractClassesWithSpec, splitBracketedArgs, type CallPattern, type RegexLangSpec } from "../shared/regex-base.js";
 import { extractPowerShellRoutes } from "./routes.js";
 import { extractPowerShellDataSources } from "./data-sources.js";
 
@@ -113,7 +113,7 @@ function paramBlock(lines: string[], fn: FunctionInfo): ParamInfo[] | null {
     for (let k = start; k < line.length; k++) {
       const c = line[k]!;
       if (c === "(") { depth++; if (depth === 1) continue; }
-      if (c === ")") { depth--; if (depth === 0) return splitTopLevel(text).map(parsePowerShellParam).filter((p): p is ParamInfo => p !== null); }
+      if (c === ")") { depth--; if (depth === 0) return splitBracketedArgs(text).map(parsePowerShellParam).filter((p): p is ParamInfo => p !== null); }
       if (depth >= 1) text += c;
     }
     text += " ";

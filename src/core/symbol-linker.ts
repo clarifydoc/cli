@@ -35,7 +35,7 @@ import { ALL_BUILTIN_MEMBERS, BUILTIN_MEMBERS_BY_LANGUAGE, declaresSchemaTypes, 
 import { buildImportDirectoryResolver, packageRootLookup, packageRootsOf, type ImportDirectoryResolver } from "./import-directories.js";
 import { SELF_HEADS, bareSupertypeName, declaredSupertypes, isConstructor, sameTypeSpace } from "./typed-receivers.js";
 import { byOrdinal, byOrdinalKey } from "./ordinal.js";
-import { splitTopLevel } from "../extractors/shared/value-resolver.js";
+import { splitTopLevel } from "../extractors/shared/split-top-level.js";
 import { bestOverload, type TypeHierarchy } from "./overload-args.js";
 import { markOverloadLink } from "./symbol-dedup.js";
 import { buildTypeAliasIndex, followTypeAlias, type TypeAliasIndex } from "./type-aliases.js";
@@ -7647,7 +7647,7 @@ function passThroughResult(
       })();
   if (def?.passesThrough === undefined && def?.passesElement === undefined) return null;
   // A returned name that is a class is already a type: the plain return-type rule decides.
-  const args = splitTopLevel(head.args, ",");
+  const args = splitTopLevel(head.args, { sep: "," });
   const arg = args[def.passesThrough ?? def.passesElement!]?.trim();
   if (def.passesThrough === undefined) {
     // `first(clubs)` with `first<T>(items: T[]): T`: the element of the collection the argument is declared as.

@@ -104,7 +104,7 @@ function closeAt(text: string, open: number): number {
 }
 
 /** Text split at its top-level commas, quotes and brackets honoured. */
-export function splitTopLevel(text: string): string[] {
+export function splitGoArgs(text: string): string[] {
   return splitTopLevelWith(text, { quotes: "\"`", escapes: "\"", trim: true });
 }
 
@@ -122,7 +122,7 @@ function unwrap(expr: string): { expr: string; transform?: string } {
   const openAt = expr.indexOf("(", m[1]!.length);
   const close = closeAt(expr, openAt);
   if (close !== expr.length - 1) return { expr };
-  const args = splitTopLevel(expr.slice(openAt + 1, close));
+  const args = splitGoArgs(expr.slice(openAt + 1, close));
   return args[0] ? { expr: args[0], transform: m[1]! } : { expr };
 }
 
@@ -229,7 +229,7 @@ function scopesOf(lines: readonly string[]): Scope[] {
 function inlineBindings(paramText: string): Scope["bound"] | undefined {
   if (!/\bstruct\s*\{/.test(paramText)) return undefined;
   let out: Scope["bound"] | undefined;
-  for (const part of splitTopLevel(paramText)) {
+  for (const part of splitGoArgs(paramText)) {
     const m = /^([A-Za-z_]\w*)\s+\*?struct\s*\{([\s\S]*)\}$/.exec(part.trim());
     if (!m) continue;
     const fields = new Map<string, Origin>();
@@ -256,7 +256,7 @@ function callArgsAt(lines: readonly string[], line0: number, name: string, end: 
     const open = m.index! + m[0].length - 1;
     const close = closeAt(text, open);
     if (close < 0) return null;
-    return splitTopLevel(text.slice(open + 1, close));
+    return splitGoArgs(text.slice(open + 1, close));
   }
   return null;
 }
@@ -393,7 +393,7 @@ function conditionPairs(expr: string, scope: Scope, line0: number | undefined, d
     const open = e.indexOf("{");
     if (!whole(open)) return null;
     const body = e.slice(open + 1, -1);
-    return COND_MAP.test(e) ? pairsOf(body, true) : splitTopLevel(body).flatMap((a) => conditionPairs(a, scope, line0, depth + 1) ?? []);
+    return COND_MAP.test(e) ? pairsOf(body, true) : splitGoArgs(body).flatMap((a) => conditionPairs(a, scope, line0, depth + 1) ?? []);
   }
   const like = COND_LIKE.exec(e);
   if (like) return [[like[1]!.replace(/`/g, ""), like[2]!]];
@@ -401,7 +401,7 @@ function conditionPairs(expr: string, scope: Scope, line0: number | undefined, d
   if (call) {
     const open = call[0].length - 1;
     if (!whole(open)) return null;
-    const args = splitTopLevel(e.slice(open + 1, -1));
+    const args = splitGoArgs(e.slice(open + 1, -1));
     if (call[1] === "builder.In" || call[1] === "builder.NotIn") {
       const col = STRING_LIT.exec(args[0] ?? "");
       return col && args[1] ? [[(col[1] ?? col[2] ?? "").replace(/`/g, ""), args[1]]] : null;
@@ -488,7 +488,7 @@ function statementAt(lines: readonly string[], line0: number, scope: Scope): str
 /** `builder.Eq{"id": x, "repo_id": y}` / `&Label{RepoID: x}` pairs → field and value text. */
 function pairsOf(body: string, quotedKeys: boolean, owner?: string): Array<[string, string, string?]> {
   const out: Array<[string, string, string?]> = [];
-  for (const part of splitTopLevel(body)) {
+  for (const part of splitGoArgs(body)) {
     const m = quotedKeys ? /^"([\w.`"]+)"\s*:\s*([\s\S]+)$/.exec(part) : /^([A-Z]\w*)\s*:\s*([\s\S]+)$/.exec(part);
     if (m) out.push(owner ? [m[1]!.replace(/[`"]/g, ""), m[2]!.trim(), owner] : [m[1]!.replace(/[`"]/g, ""), m[2]!.trim()]);
   }
@@ -507,7 +507,7 @@ function filtersOf(stmt: string, verb: string, scope: Scope, line0: number, xorm
     const open = m.index! + m[0].length - 1;
     const close = closeAt(stmt, open);
     if (close < 0) continue;
-    const args = splitTopLevel(stmt.slice(open + 1, close));
+    const args = splitGoArgs(stmt.slice(open + 1, close));
     const lit = STRING_LIT.exec(args[0] ?? "");
     if (!lit) {
       // A condition value: built in place or before the statement, or handed in (`Where(cond)`).
@@ -539,7 +539,7 @@ function filtersOf(stmt: string, verb: string, scope: Scope, line0: number, xorm
     const open = m.index! + m[0].length - 1;
     const close = closeAt(stmt, open);
     if (close < 0) continue;
-    const args = splitTopLevel(stmt.slice(open + 1, close));
+    const args = splitGoArgs(stmt.slice(open + 1, close));
     if (/^(?:First|Take|Last|Find)$/.test(verb) && args.length === 2 && /^&/.test(args[0]!) && !STRING_LIT.test(args[1]!) && !xorm) out.push(["id", args[1]!]);
     // xorm: the bean a read or a delete is handed is a condition on its set fields — `Find`'s second argument.
     const bean = !xorm || /\bNoAutoCondition\s*\(/.test(stmt) ? undefined : /^(?:Get|Exist|Count|Delete)$/.test(verb) ? args[0] : /^(?:Find|FindAndCount|Iterate)$/.test(verb) ? args[1] : undefined;

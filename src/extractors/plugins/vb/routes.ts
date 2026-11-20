@@ -1,6 +1,6 @@
 import type { ClassInfo, FunctionInfo, RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../types/analysis.js";
 import { applyRouteMeta, boundParam, inferredParam, splitList, type GuardAttr } from "../../shared/route-metadata.js";
-import { attributeLinesAbove, splitTopLevel, type RegexLangSpec } from "../shared/regex-base.js";
+import { attributeLinesAbove, splitBracketedArgs, type RegexLangSpec } from "../shared/regex-base.js";
 import { isSimpleType, readVbType, splitVbAttributes, UNBOUND_TYPES, vbAttributeName, vbNamedArgs, vbPositionalArg } from "./request-schema.js";
 
 /**
@@ -144,7 +144,7 @@ function declaredParams(lines: string[], lineIdx: number, name: string): { attrs
   if (!closed) return [];
 
   const out: { attrs: string[]; name: string; type: string | null }[] = [];
-  for (const piece of splitTopLevel(text)) {
+  for (const piece of splitBracketedArgs(text)) {
     let param = piece.trim();
     const attrs: string[] = [];
     let a: RegExpMatchArray | null;

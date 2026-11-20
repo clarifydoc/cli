@@ -1,5 +1,6 @@
 import type { CallInfo, FunctionInfo } from "../../../types/analysis.js";
 import { blankStringLiterals } from "../shared/regex-base.js";
+import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 /**
  * Types a Rust body states without declaring them: the element a `for` loop or an iterator closure hands out
@@ -52,14 +53,7 @@ function topLevel(text: string, char: string): number {
 }
 
 function splitTop(text: string): string[] {
-  const out: string[] = [];
-  let rest = text;
-  for (let at = topLevel(rest, ","); at >= 0; at = topLevel(rest, ",")) {
-    out.push(rest.slice(0, at).trim());
-    rest = rest.slice(at + 1);
-  }
-  if (rest.trim()) out.push(rest.trim());
-  return out;
+  return splitTopLevelWith(text, { brackets: "<>()[]", quotes: "", trim: true });
 }
 
 const SMART = new Set(["Arc", "Rc", "Box", "Cow"]);

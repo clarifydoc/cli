@@ -28,7 +28,8 @@ import type { DataSourceInfo, FileAnalysis, FunctionInfo, ParamInfo } from "../.
 import type { ClassRef, ProjectContext } from "../../../types/project.js";
 // The quote/bracket-aware splitter and unquoter are shared with the symbolic
 // value resolver (one copy instead of the three that used to exist).
-import { splitTopLevel, unquote } from "../../shared/value-resolver.js";
+import { splitTopLevel } from "../../shared/split-top-level.js";
+import { unquote } from "../../shared/value-resolver.js";
 import { patternPaths } from "./destructured-params.js";
 import { escapeRegex } from "../shared/path-utils.js";
 import { buildWrapperIndex } from "../../../core/wrapper-index.js";
@@ -52,7 +53,7 @@ type ApiCall = DataSourceInfo & { filePath: string };
  * in instead (e.g. a version arg).
  */
 function argLiteral(raw: string): string | null {
-  const parts = splitTopLevel(raw, "+");
+  const parts = splitTopLevel(raw, { sep: "+" });
   if (parts.length === 1) {
     const t = parts[0]!.trim();
     if (t.startsWith("'") || t.startsWith('"') || t.startsWith("`")) return unquote(t);
@@ -114,7 +115,7 @@ const KEY_PARAM = /^(?:id|uuid|guid|slug)$|(?:Id|_id|Uuid|Slug)$/;
 function objectArgument(arg: string): Map<string, string> | null {
   if (!arg.startsWith("{") || !arg.endsWith("}")) return null;
   const out = new Map<string, string>();
-  for (const part of splitTopLevel(arg.slice(1, -1), ",")) {
+  for (const part of splitTopLevel(arg.slice(1, -1), { sep: "," })) {
     const m = /^\s*['"]?([A-Za-z_$][\w$]*)['"]?\s*:\s*([\s\S]+?)\s*$/.exec(part);
     if (m) out.set(m[1]!, m[2]!);
   }
@@ -352,7 +353,7 @@ const GETTER_READ_RE = /\$\{\s*this\s*\.\s*([A-Za-z_$][\w$]*)\s*\}/g;
 const DESCRIPTOR_READ_RE = new RegExp(`${RECEIVER}([A-Za-z_$][\\w$]*)\\s*\\(${ARG}\\)\\s*\\.\\s*([A-Za-z_$][\\w$]*)(?:\\s*\\(${ARG}\\))?`, "g");
 
 /** Split a call's argument text into its arguments. */
-const argsOf = (text: string): string[] => splitTopLevel(text, ",").map((a) => a.trim()).filter((a) => a.length > 0);
+const argsOf = (text: string): string[] => splitTopLevel(text, { sep: "," }).map((a) => a.trim()).filter((a) => a.length > 0);
 
 /** A descriptor read in `text` the lookup resolves, spanning the `${…}` around it when it fills one. */
 function descriptorRead(text: string, lookup: HelperLookup, site: CallSite): HelperOccurrence | null {

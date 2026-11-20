@@ -1,5 +1,5 @@
 import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo, RouteInfo } from "../../../types/analysis.js";
-import { extractCallsFromBody, extractClassesWithSpec, splitTopLevel, type RegexLangSpec } from "../shared/regex-base.js";
+import { extractCallsFromBody, extractClassesWithSpec, splitBracketedArgs, type RegexLangSpec } from "../shared/regex-base.js";
 import { extractHaxeDataSources } from "./data-sources.js";
 
 /**
@@ -155,7 +155,7 @@ export const haxeSpec: RegexLangSpec = {
       if (/\btypedef\b/.test(lines[cls.line - 1] ?? "") && cls.properties.length === 0) {
         const body = lines.slice(cls.line - 1, cls.endLine).join(" ");
         const inner = /=\s*\{(.*)\}/.exec(body)?.[1] ?? "";
-        for (const f of splitTopLevel(inner.replace(/;/g, ","))) {
+        for (const f of splitBracketedArgs(inner.replace(/;/g, ","))) {
           const p = /^\s*(?:var\s+|final\s+)?\??([A-Za-z_]\w*)\s*:\s*(.+?)\s*$/.exec(f);
           if (p) cls.properties.push({ name: p[1]!, type: p[2]!, visibility: "public", isStatic: false, isReadonly: false });
         }

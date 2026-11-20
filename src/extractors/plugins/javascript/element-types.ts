@@ -1,5 +1,5 @@
 import { namesReceiverType } from "./di.js";
-import { splitTopLevel } from "./request-schema.js";
+import { splitTsTypeList } from "./request-schema.js";
 
 /**
  * The element a TypeScript collection type states, for the variable a loop or a callback binds from it:
@@ -23,7 +23,7 @@ export function collectionElement(type: string | null | undefined): { element: s
     else {
       const kv = /^(?:Map|ReadonlyMap|WeakMap)\s*<\s*(.+)\s*>$/.exec(t);
       if (kv) {
-        const args = splitTopLevel(kv[1]!, ",");
+        const args = splitTsTypeList(kv[1]!, ",");
         if (args.length === 2) {
           element = args[1]!;
           map = true;

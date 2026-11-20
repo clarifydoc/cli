@@ -1,5 +1,5 @@
 import type { ClassInfo, FunctionInfo, ImportInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
-import { extractCallsFromBody, extractClassesWithSpec, inlineBodyColumn, splitTopLevel, type CallPattern, type RegexLangSpec } from "../shared/regex-base.js";
+import { extractCallsFromBody, extractClassesWithSpec, inlineBodyColumn, splitBracketedArgs, type CallPattern, type RegexLangSpec } from "../shared/regex-base.js";
 import { nimBlockEnd } from "./source.js";
 import { extractNimRoutes } from "./routes.js";
 import { extractNimDataSources } from "./data-sources.js";
@@ -93,7 +93,7 @@ export function parseNimParams(text: string): ParamInfo[] {
   const out: ParamInfo[] = [];
   for (const group of text.split(/;/)) {
     const pending: ParamInfo[] = [];
-    for (const raw of splitTopLevel(group)) {
+    for (const raw of splitBracketedArgs(group)) {
       const part = raw.trim();
       if (!part) continue;
       const m = /^([A-Za-z_]\w*)\s*(?::\s*([^=]+?))?\s*(?:=\s*(.+))?$/s.exec(part);
@@ -223,7 +223,7 @@ function objectFields(lines: string[], cls: ClassInfo): PropertyInfo[] {
 /** Module paths of one import list: `os, std/[strutils, json], ./db`. */
 function modulePaths(list: string): string[] {
   const out: string[] = [];
-  for (const raw of splitTopLevel(list.replace(/#.*$/gm, ""))) {
+  for (const raw of splitBracketedArgs(list.replace(/#.*$/gm, ""))) {
     const item = raw.trim().replace(/\s+as\s+\w+$/, "").replace(/\s+except\s+.*$/s, "").replace(/\s+/g, "");
     const group = /^(.*?)\[(.*)\]$/s.exec(item);
     if (group) {

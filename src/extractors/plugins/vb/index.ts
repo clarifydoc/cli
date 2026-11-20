@@ -1,5 +1,5 @@
 import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
-import { extractClassesWithSpec, splitTopLevel, type CallPattern, type RegexLangSpec } from "../shared/regex-base.js";
+import { extractClassesWithSpec, splitBracketedArgs, type CallPattern, type RegexLangSpec } from "../shared/regex-base.js";
 import { extractWinFormsScreens } from "./winforms-screens.js";
 import { extractVbDataSources } from "./data-sources.js";
 import { extractVbRoutes } from "./routes.js";
@@ -300,7 +300,7 @@ function headerClauses(code: string): { inherits: string[]; implements: string[]
     if (stmt === "") continue;
     const m = stmt.match(/^(Inherits|Implements) (.+)$/i);
     if (!m) return null;
-    const names = splitTopLevel(m[2]!).map((n) => n.trim()).filter(Boolean);
+    const names = splitBracketedArgs(m[2]!).map((n) => n.trim()).filter(Boolean);
     (m[1]!.toLowerCase() === "inherits" ? out.inherits : out.implements).push(...names);
   }
   return out;

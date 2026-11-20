@@ -1,6 +1,6 @@
 import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { CallPattern, RegexLangSpec } from "../shared/regex-base.js";
-import { extractClassesWithSpec, splitTopLevel } from "../shared/regex-base.js";
+import { extractClassesWithSpec, splitBracketedArgs } from "../shared/regex-base.js";
 import { extractPlayRoutes, isPlayRoutesFile } from "./routes.js";
 import { JAXRS_SCALA_GATE_RE, extractScalaJaxrsRoutes } from "./jaxrs.js";
 import { extractScalaRequestAccess } from "./request-schema.js";
@@ -120,7 +120,7 @@ function primaryConstructor(
   const params: ParamInfo[] = [];
   let hidden = false;
   for (const list of constructorParamLists(lines, startIdx, name)) {
-    for (const piece of splitTopLevel(list)) {
+    for (const piece of splitBracketedArgs(list)) {
       let param = piece.trim();
       if (!param) continue;
       const decorators: string[] = [];

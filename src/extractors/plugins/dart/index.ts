@@ -11,7 +11,7 @@ import type {
 import type { HttpClientRegistration, InteractiveElementInfo, PropertyInfo, RouteFact, ScreenInfo, UiComponentInfo } from "../../../types/analysis.js";
 import type { CallPattern, RegexLangSpec } from "../shared/regex-base.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
-import { extractCallsFromBody, extractClassesWithSpec, extractParamsFromDeclaration, splitTopLevel } from "../shared/regex-base.js";
+import { extractCallsFromBody, extractClassesWithSpec, extractParamsFromDeclaration, splitBracketedArgs } from "../shared/regex-base.js";
 import { escapeRegex } from "../shared/path-utils.js";
 import { applyRouteMeta, type GuardAttr } from "../../shared/route-metadata.js";
 import { extractDartRequestAccess, middlewareGuard } from "./request-schema.js";
@@ -479,7 +479,7 @@ function extractPipelines(lines: string[]): Pipeline[] {
         for (const id of call.args.matchAll(/[A-Za-z_$]\w*/g)) pipeline.targets.add(id[0]);
         continue;
       }
-      for (const arg of splitTopLevel(call.args)) {
+      for (const arg of splitBracketedArgs(call.args)) {
         const expr = arg.trim();
         if (!expr) continue;
         const guard = middlewareGuard(expr);

@@ -6,6 +6,8 @@
  * declared type the plugin already knows. A step it does not know ends the walk: nothing is guessed.
  */
 
+import { splitTopLevel } from "../../shared/split-top-level.js";
+
 /** What an expression is, as far as the source states it. */
 export type ElementState =
   | { kind: "coll"; elem: string }
@@ -232,20 +234,7 @@ export function valueOfChain(
 
 /** Split a type-argument list at its depth-0 commas (`String, Map<A, B>` → two). */
 export function splitTypeArgs(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (ch === "<" || ch === "(" || ch === "[") depth++;
-    else if (ch === ">" || ch === ")" || ch === "]") depth--;
-    else if (ch === "," && depth === 0) {
-      out.push(text.slice(start, i).trim());
-      start = i + 1;
-    }
-  }
-  out.push(text.slice(start).trim());
-  return out.filter((a) => a !== "");
+  return splitTopLevel(text, { brackets: "<>()[]", quotes: "", trim: true, dropBlank: true });
 }
 
 /**

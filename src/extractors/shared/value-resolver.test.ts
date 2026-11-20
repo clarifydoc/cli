@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
 import {
   foldValue,
-  splitTopLevel,
   toAppRelativeUrl,
   unquote,
   type Scope,
   type ValueExpr,
 } from "./value-resolver.js";
+import { splitTopLevel } from "./split-top-level.js";
 
 const lit = (value: string): ValueExpr => ({ kind: "lit", value });
 const concat = (...parts: ValueExpr[]): ValueExpr => ({ kind: "concat", parts });
@@ -106,7 +106,7 @@ describe("foldValue", () => {
 
 describe("splitTopLevel", () => {
   it("splits an arg list without breaking on separators inside strings/parens", () => {
-    expect(splitTopLevel("'a, b', foo(x, y), 'v4'", ",")).toEqual([
+    expect(splitTopLevel("'a, b', foo(x, y), 'v4'", { sep: "," })).toEqual([
       "'a, b'",
       " foo(x, y)",
       " 'v4'",
@@ -114,7 +114,7 @@ describe("splitTopLevel", () => {
   });
 
   it("splits a concat on top-level + only", () => {
-    expect(splitTopLevel("'trainings/' + x.externalId", "+")).toEqual([
+    expect(splitTopLevel("'trainings/' + x.externalId", { sep: "+" })).toEqual([
       "'trainings/' ",
       " x.externalId",
     ]);

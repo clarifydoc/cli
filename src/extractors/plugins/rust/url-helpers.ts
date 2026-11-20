@@ -1,5 +1,5 @@
 import type { FileAnalysis } from "../../../types/analysis.js";
-import { closingAt, splitTopLevel } from "./data-sources.js";
+import { closingAt, splitRustArgs } from "./data-sources.js";
 
 /**
  * A URL helper — `fn club_url(id: u32) -> String { format!("/api/v1/clubs/{}", id) }` — states the URL its call
@@ -24,7 +24,7 @@ export function addRustUrlTemplates(analysis: FileAnalysis, lines: readonly stri
     if (bodyEnd < 0 || text.slice(bodyEnd + 1).trim()) continue;
     const fmt = /^\s*(?:return\s+)?format!\s*\(\s*"((?:[^"\\]|\\.)*)"\s*,?([\s\S]*)\)\s*;?\s*$/.exec(text.slice(bodyStart + 1, bodyEnd));
     if (!fmt) continue;
-    const template = templateOf(fmt[1]!, splitTopLevel(fmt[2]!).map((a) => a.trim().replace(/^&\s*(?:mut\s+)?/, "")), new Set(params));
+    const template = templateOf(fmt[1]!, splitRustArgs(fmt[2]!).map((a) => a.trim().replace(/^&\s*(?:mut\s+)?/, "")), new Set(params));
     if (template) fn.urlTemplate = template;
   }
 }

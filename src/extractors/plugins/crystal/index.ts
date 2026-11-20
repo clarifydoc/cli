@@ -1,5 +1,5 @@
 import type { ClassInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
-import { extractClassesWithSpec, findEndLine, splitTopLevel, type RegexLangSpec } from "../shared/regex-base.js";
+import { extractClassesWithSpec, findEndLine, splitBracketedArgs, type RegexLangSpec } from "../shared/regex-base.js";
 import { extractCrystalDataSources } from "./data-sources.js";
 import { crystalRouteBlocks, extractCrystalRoutes } from "./routes.js";
 import { CRYSTAL_CALL_PATTERNS, extractCrystalLocalTypes } from "./calls.js";
@@ -93,7 +93,7 @@ function records(lines: string[]): ClassInfo[] {
     const m = /^\s*record\s+([A-Z]\w*)\s*(?:,\s*(.*?))?\s*(do)?\s*$/.exec(lines[i]!);
     if (!m) continue;
     const end = m[3] ? findEndLine(lines, i, "indent") : i + 1;
-    const properties = splitTopLevel(m[2] ?? "")
+    const properties = splitBracketedArgs(m[2] ?? "")
       .map((f) => parseCrystalParam(f))
       .filter((p): p is ParamInfo => p !== null)
       .map((p) => prop(p.name, p.type, true));

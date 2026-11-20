@@ -1,5 +1,5 @@
 import type { CallInfo, ClassInfo, FunctionInfo } from "../../../types/analysis.js";
-import { splitTopLevel } from "../shared/regex-base.js";
+import { splitBracketedArgs } from "../shared/regex-base.js";
 
 /**
  * Members a class gets from a macro rather than a `def`: the readers and writers of `attr_*` and
@@ -17,7 +17,7 @@ const NAME = String.raw`[A-Za-z_]\w*[?!]?`;
 /** The names a macro's symbol/string arguments list: `:a, :b`, `"a"`, `%i[a b]`. */
 function listedNames(args: string): string[] {
   const out: string[] = [];
-  for (const part of splitTopLevel(args)) {
+  for (const part of splitBracketedArgs(args)) {
     const t = part.trim();
     const sym = /^:(?:"([^"]+)"|'([^']+)'|([A-Za-z_]\w*[?!]?))$/.exec(t) ?? /^["']([^"']+)["']$/.exec(t);
     if (sym) {
@@ -139,7 +139,7 @@ export function addMacroMembers(lines: readonly string[], cls: ClassInfo, classe
     }
 
     if (/^def_(?:instance_)?delegators?$/.test(macro)) {
-      const parts = splitTopLevel(args).map((p) => p.trim());
+      const parts = splitBracketedArgs(args).map((p) => p.trim());
       const targetName = /^(?::|["'])?(@?[a-z_]\w*)["']?$/.exec(parts[0] ?? "")?.[1];
       if (!targetName) continue;
       const ivar = targetName.startsWith("@");

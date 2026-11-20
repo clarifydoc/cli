@@ -43,11 +43,11 @@ const SERVICE_TYPES = /^(?:express\.)?(?:Request|Response|NextFunction|FastifyRe
 export function splitGeneric(type: string): { name: string; args: string[] } {
   const lt = type.indexOf("<");
   if (lt < 0 || !type.endsWith(">")) return { name: type, args: [] };
-  return { name: type.slice(0, lt), args: splitTopLevel(type.slice(lt + 1, -1), ",") };
+  return { name: type.slice(0, lt), args: splitTsTypeList(type.slice(lt + 1, -1), ",") };
 }
 
 /** Split on a separator at nesting depth 0 (respecting `<>`, `()`, `[]`, `{}` and quotes). */
-export function splitTopLevel(text: string, sep: string): string[] {
+export function splitTsTypeList(text: string, sep: string): string[] {
   return splitTopLevelWith(text, { sep, brackets: "<>()[]{}", quotes: "'\"`", trim: true, dropBlank: true });
 }
 
@@ -89,7 +89,7 @@ function describeType(type: string): TypeShape {
   // `T[]` — the suffix binds tighter than `|`, so `(A | B)[]` reaches here whole.
   if (t.endsWith("[]")) return { kind: "array", element: t.slice(0, -2).trim() };
   // `'a' | 'b'` — an enum of strings; a union of anything else has no single shape.
-  const members = splitTopLevel(t, "|");
+  const members = splitTsTypeList(t, "|");
   if (members.length > 1) {
     const literals = members.map((m) => m.match(STRING_LITERAL)?.[2]);
     if (literals.every((l): l is string => typeof l === "string")) {
@@ -124,7 +124,7 @@ export const javascriptRequestSchema: RequestSchemaHooks = {
   unwrapNullable(type) {
     let t = unparen(type);
     if (t.endsWith("?")) t = t.slice(0, -1).trim();
-    const members = splitTopLevel(t, "|");
+    const members = splitTsTypeList(t, "|");
     const kept = members.filter((m) => m !== "null" && m !== "undefined");
     if (kept.length === members.length) return { type: t, nullable: false };
     // `null` alone stays `null` (an "any" for describeType) rather than "".

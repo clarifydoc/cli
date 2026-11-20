@@ -1,5 +1,5 @@
 import type { RouteInfo } from "../../../types/analysis.js";
-import { extractCallsFromBody, splitTopLevel, type CallPattern } from "../shared/regex-base.js";
+import { extractCallsFromBody, splitBracketedArgs, type CallPattern } from "../shared/regex-base.js";
 import { nimBlockEnd } from "./source.js";
 
 /**
@@ -138,7 +138,7 @@ function prologueRoutes(lines: string[]): RouteInfo[] {
     if (/^\s*#/.test(line)) return;
     for (const m of line.matchAll(PROLOGUE_CALL)) {
       // `("/x", handler, @[HttpGet, HttpPost], middlewares = @[auth()], name = "x")`
-      const [pathArg, handlerArg, ...more] = splitTopLevel(callArguments(lines, i, m.index! + m[0].length));
+      const [pathArg, handlerArg, ...more] = splitBracketedArgs(callArguments(lines, i, m.index! + m[0].length));
       const path = /^\s*(?:re)?"([^"]*)"\s*$/.exec(pathArg ?? "")?.[1];
       const handler = /^\s*([A-Za-z_][\w.]*)\s*$/.exec(handlerArg ?? "")?.[1];
       if (path === undefined || !handler) continue;

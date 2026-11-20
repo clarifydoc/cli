@@ -1,4 +1,5 @@
 import type { CallArgOrigin, ClassInfo, DataSourceInfo, FunctionInfo } from "../../../types/analysis.js";
+import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 type Origin = CallArgOrigin["origin"];
 
@@ -39,28 +40,8 @@ const IDENT = /^[a-z_]\w*$/;
 const stripComment = (line: string): string => line.replace(/(^|\s)#(?![{]).*$/, "$1");
 
 /** Text split at its top-level commas, quotes and brackets honoured. */
-function splitTopLevel(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let cur = "";
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (ch === '"' || ch === "'") {
-      let j = i + 1;
-      while (j < text.length && text[j] !== ch) j += text[j] === "\\" ? 2 : 1;
-      cur += text.slice(i, j + 1);
-      i = j;
-      continue;
-    }
-    if ("([{".includes(ch)) depth++;
-    if (")]}".includes(ch)) depth--;
-    if (ch === "," && depth === 0) {
-      out.push(cur.trim());
-      cur = "";
-    } else cur += ch;
-  }
-  if (cur.trim()) out.push(cur.trim());
-  return out;
+function splitRubyArgs(text: string): string[] {
+  return splitTopLevelWith(text, { quotes: "\"'", escapes: "\"'", trim: true });
 }
 
 /** The index of the bracket closing the one at `open` (strings skipped), or -1. */
@@ -131,11 +112,11 @@ function argsAfter(text: string, at: number): string[] | null {
   const rest = text.slice(at);
   if (rest.startsWith("(")) {
     const close = closeAt(text, at);
-    return close < 0 ? null : splitTopLevel(text.slice(at + 1, close));
+    return close < 0 ? null : splitRubyArgs(text.slice(at + 1, close));
   }
   // A parenthesis-less call: the rest of the statement, up to a block or a modifier.
   const bare = /^ +(?!do\b|if\b|unless\b|\{|=|\?|:|\.|\|\||&&|and\b|or\b)([^\n]+?)(?:\s+(?:do|if|unless)\b.*)?$/.exec(rest);
-  return bare ? splitTopLevel(bare[1]!) : null;
+  return bare ? splitRubyArgs(bare[1]!) : null;
 }
 
 /** The call named `name` on 1-based `line`: its argument texts. */
@@ -208,7 +189,7 @@ function filtersOf(method: string, args: readonly string[]): Array<[string, stri
     return cols.flatMap((col, k): Array<[string, string]> => (args[k + 1] ? [[col, args[k + 1]!]] : []));
   }
   // `where(slug: v)` or `where({ slug: v })`.
-  const inner = args.length === 1 && /^\{[\s\S]*\}$/.test(args[0]!) ? splitTopLevel(args[0]!.slice(1, -1)) : args;
+  const inner = args.length === 1 && /^\{[\s\S]*\}$/.test(args[0]!) ? splitRubyArgs(args[0]!.slice(1, -1)) : args;
   return hashPairs(inner);
 }
 

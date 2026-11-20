@@ -1,5 +1,5 @@
 import type { ClassInfo, FunctionInfo, RouteInfo } from "../../../types/analysis.js";
-import { extractCallsFromBody, splitTopLevel, type CallPattern } from "../shared/regex-base.js";
+import { extractCallsFromBody, splitBracketedArgs, type CallPattern } from "../shared/regex-base.js";
 
 /**
  * vibe.d routes, two ways:
@@ -64,7 +64,7 @@ function routerRoutes(lines: string[], callPatterns: CallPattern[]): RouteInfo[]
       if (!chained && (!receiver || !routers.has(receiver))) continue;
       if (chained && !routers.has(/^\s*([A-Za-z_]\w*)/.exec(line)?.[1] ?? "") && !routers.has(chainRoot(i) ?? "")) continue;
       const open = m.index! + m[0].length;
-      const args = splitTopLevel(callArguments(lines, i, open));
+      const args = splitBracketedArgs(callArguments(lines, i, open));
       const verb = m[2]!;
       let method = VERBS[verb] ?? null;
       if (verb === "match") {
@@ -193,7 +193,7 @@ function interfaceRoutes(lines: string[], classes: ClassInfo[]): RouteInfo[] {
   const registered = (fn: string): Array<{ cls: string; prefix: string }> => {
     const out: Array<{ cls: string; prefix: string }> = [];
     for (const m of text.matchAll(new RegExp(String.raw`\b${fn}\s*(?:!\s*\w+\s*)?\(`, "g"))) {
-      const args = splitTopLevel(callArgumentsOf(text, m.index! + m[0].length));
+      const args = splitBracketedArgs(callArgumentsOf(text, m.index! + m[0].length));
       const target = args.map((a) => /^\s*new\s+([A-Za-z_]\w*)/.exec(a)?.[1] ?? boundTo.get(a.trim())).find((c) => c && byName.has(c));
       const prefix = args.map((a) => /^\s*"(\/[^"]*)"\s*$/.exec(a)?.[1]).find((p) => p !== undefined) ?? "";
       if (target) out.push({ cls: target, prefix });

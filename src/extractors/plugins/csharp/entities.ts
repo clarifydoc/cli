@@ -1,5 +1,6 @@
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
-import { attributeRepositoryAccesses, splitTypeArgs, type RepositoryAccessKnobs } from "../shared/repository-access.js";
+import { attributeRepositoryAccesses, type RepositoryAccessKnobs } from "../shared/repository-access.js";
+import { splitTypeArgs } from "../shared/element-chain.js";
 import { extensionFamily } from "../shared/path-utils.js";
 import type { CallInfo, ClassInfo, EntityRelation, FileAnalysis, Language, PropertyInfo, SchemaOp } from "../../../types/analysis.js";
 import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
@@ -750,7 +751,7 @@ export class CSharpEntityExtractor extends EntityExtractor {
     if (!paramList) return [];
 
     const out: Member[] = [];
-    for (const part of splitTopLevel(paramList, ",")) {
+    for (const part of splitCsharpList(paramList, ",")) {
       const p = part.trim();
       if (!p) continue;
       // `Type Name` or `Type Name = default` — strip any default value.
@@ -1324,7 +1325,7 @@ function lowerFirst(s: string): string {
 }
 
 /** Split `s` on top-level `sep`, ignoring separators inside <>/()/[] / strings. */
-function splitTopLevel(s: string, sep: string): string[] {
+function splitCsharpList(s: string, sep: string): string[] {
   return splitTopLevelWith(s, { sep, brackets: "<>()[]{}", quotes: "\"'", escapes: "\"'" });
 }
 

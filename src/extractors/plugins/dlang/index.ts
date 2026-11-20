@@ -1,5 +1,5 @@
 import type { ClassInfo, FunctionInfo, ImportInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
-import { extractCallsFromBody, extractClassesWithSpec, findEndLine, splitTopLevel, type CallPattern, type RegexLangSpec } from "../shared/regex-base.js";
+import { extractCallsFromBody, extractClassesWithSpec, findEndLine, splitBracketedArgs, type CallPattern, type RegexLangSpec } from "../shared/regex-base.js";
 import { extractDRoutes } from "./routes.js";
 import { extractDDataSources } from "./data-sources.js";
 
@@ -51,7 +51,7 @@ const ENUM = new RegExp(String.raw`^\s*(?:(?:${STORAGE})\s+)*enum\s+([A-Za-z_]\w
 function heritage(line: string): { base: string | null; interfaces: string[] } {
   const m = /\b(?:class|interface|struct)\s+\w+\s*(?:\([^()]*\)\s*)?:\s*([^{]+)/.exec(line);
   if (!m) return { base: null, interfaces: [] };
-  const bases = splitTopLevel(m[1]!.replace(/\bif\s*\(.*$/, "")).map((s) => s.trim().replace(/!.*$/, "").split(".").pop()!).filter(Boolean);
+  const bases = splitBracketedArgs(m[1]!.replace(/\bif\s*\(.*$/, "")).map((s) => s.trim().replace(/!.*$/, "").split(".").pop()!).filter(Boolean);
   if (/\binterface\b/.test(line)) return { base: bases[0] ?? null, interfaces: bases.slice(1) };
   if (bases.length > 0 && /^I[A-Z]/.test(bases[0]!)) return { base: null, interfaces: bases };
   return { base: bases[0] ?? null, interfaces: bases.slice(1) };
@@ -110,7 +110,7 @@ function dParams(lines: string[], i: number, name: string): ParamInfo[] {
     k = again ? j + 1 + again[0].length - 1 : -1;
   }
   const runtime = groups.length === 2 ? groups[1]! : groups[0] ?? "";
-  return splitTopLevel(runtime).map(parseDParam).filter((p): p is ParamInfo => p !== null);
+  return splitBracketedArgs(runtime).map(parseDParam).filter((p): p is ParamInfo => p !== null);
 }
 
 /** The declared return type: whatever precedes the name after attributes and storage classes. */
@@ -233,7 +233,7 @@ function dFields(lines: string[], cls: ClassInfo, protection: Map<number, string
       const m = FIELD.exec(line);
       if (m && !/^(?:return|alias|enum|import|goto|throw|delete)$/.test(m[2]!)) {
         const mods = m[1] ?? "";
-        for (const part of splitTopLevel(m[3]!)) {
+        for (const part of splitBracketedArgs(m[3]!)) {
           const name = /^\s*([A-Za-z_]\w*)/.exec(part)?.[1];
           if (!name) continue;
           const vis = protection.get(i + 1) ?? "public";
@@ -277,9 +277,9 @@ export function dImports(lines: string[]): ImportInfo[] {
     while (!text.includes(";") && j + 1 < lines.length && j < i + 20) text += " " + lines[++j];
     text = text.slice(0, text.indexOf(";") >= 0 ? text.indexOf(";") : undefined).replace(/\/\/.*$/gm, "");
     const colon = text.indexOf(":");
-    const modules = splitTopLevel(colon >= 0 ? text.slice(0, colon) : text).map((s) => s.trim()).filter(Boolean);
+    const modules = splitBracketedArgs(colon >= 0 ? text.slice(0, colon) : text).map((s) => s.trim()).filter(Boolean);
     const selected = colon >= 0
-      ? splitTopLevel(text.slice(colon + 1)).map((s) => s.trim().replace(/^\w+\s*=\s*/, "")).filter((s) => /^[A-Za-z_]\w*$/.test(s))
+      ? splitBracketedArgs(text.slice(colon + 1)).map((s) => s.trim().replace(/^\w+\s*=\s*/, "")).filter((s) => /^[A-Za-z_]\w*$/.test(s))
       : [];
     modules.forEach((mod, k) => {
       const alias = /^([A-Za-z_]\w*)\s*=\s*([\w.]+)$/.exec(mod);

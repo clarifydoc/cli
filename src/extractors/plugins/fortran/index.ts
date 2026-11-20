@@ -1,5 +1,5 @@
 import type { CallInfo, ClassInfo, FunctionInfo, ImportInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
-import { blankStringLiterals, splitTopLevel, type RegexLangSpec } from "../shared/regex-base.js";
+import { blankStringLiterals, splitBracketedArgs, type RegexLangSpec } from "../shared/regex-base.js";
 
 /**
  * Fortran regex spec (FORTRAN 77 fixed form through Fortran 2018 free form;
@@ -214,7 +214,7 @@ function declare(text: string, d: Declarations): void {
   const lower = text.toLowerCase();
   if (/^\s*use\b/.test(lower)) { d.usesModules = true; return; }
   if (/^\s*include\b/.test(lower)) { d.includes = true; return; }
-  const list = (s: string) => splitTopLevel(s).map((e) => e.trim()).filter(Boolean);
+  const list = (s: string) => splitBracketedArgs(s).map((e) => e.trim()).filter(Boolean);
   const nameOf = (e: string) => /^([a-z]\w*)/i.exec(e)?.[1]?.toLowerCase();
   let m = /^\s*(external|intrinsic)\s*(?:::)?\s*(.*)$/i.exec(text);
   if (m) {
@@ -320,7 +320,7 @@ function unitCalls(lines: string[], f: Frame, provable: (name: string) => boolea
 
 /** `(a, b, n)` with what the unit declares of each. */
 function unitParams(f: Frame, d: Declarations): ParamInfo[] {
-  return splitTopLevel(f.args ?? "")
+  return splitBracketedArgs(f.args ?? "")
     .map((a) => a.trim())
     .filter((a) => /^[A-Za-z]\w*$/.test(a) || a === "*")
     .map((name) => ({ name, type: d.types.get(name.toLowerCase()) ?? null, defaultValue: null }));
@@ -440,7 +440,7 @@ function derivedType(lines: string[], f: Frame): ClassInfo {
     name: f.name,
     extends: /\bextends\s*\(\s*(\w+)\s*\)/i.exec(attrs)?.[1] ?? null,
     implements: [],
-    decorators: splitTopLevel(attrs).map((a) => a.trim().toLowerCase().replace(/\s+/g, "")).filter(Boolean),
+    decorators: splitBracketedArgs(attrs).map((a) => a.trim().toLowerCase().replace(/\s+/g, "")).filter(Boolean),
     methods: [],
     properties: [],
     isExported: !/\bprivate\b/i.test(attrs),
@@ -456,7 +456,7 @@ function derivedType(lines: string[], f: Frame): ClassInfo {
       // :: get => get_int, get_real` binds ONE name to the procedures after `=>`.
       const b = /^\s*(procedure|generic)\b(?:\s*\([^)]*\))?\s*(?:,\s*[^:]*)?::\s*(.*)$/i.exec(text);
       if (!b) continue;
-      const entries = b[1]!.toLowerCase() === "generic" ? [b[2]!.replace(/=>.*$/s, "")] : splitTopLevel(b[2]!);
+      const entries = b[1]!.toLowerCase() === "generic" ? [b[2]!.replace(/=>.*$/s, "")] : splitBracketedArgs(b[2]!);
       for (const part of entries) {
         const name = /^\s*([A-Za-z]\w*)/.exec(part)?.[1];
         if (!name || /^(?:operator|assignment)$/i.test(name)) continue;
@@ -468,7 +468,7 @@ function derivedType(lines: string[], f: Frame): ClassInfo {
       new RegExp(String.raw`^\s*(${TYPESPEC})\s+()([a-z]\w*.*)$`, "i").exec(text);
     if (!m) continue;
     const componentAttrs = (m[2] ?? "").toLowerCase();
-    for (const e of splitTopLevel(m[3]!)) {
+    for (const e of splitBracketedArgs(m[3]!)) {
       const name = /^\s*([A-Za-z]\w*)/.exec(e)?.[1];
       if (!name) continue;
       const priv = /\bprivate\b/.test(componentAttrs) || (defaultPrivate && !/\bpublic\b/.test(componentAttrs));
@@ -496,7 +496,7 @@ export function fortranImports(lines: string[], rawLines: string[]): ImportInfo[
     const text = unlabeled(line);
     const use = /^\s*use\b(?:\s*,\s*(?:non_)?intrinsic)?\s*(?:::)?\s*([A-Za-z]\w*)\s*(?:,\s*only\s*:\s*(.*))?/i.exec(text);
     if (use) {
-      const specifiers = splitTopLevel(use[2] ?? "")
+      const specifiers = splitBracketedArgs(use[2] ?? "")
         .map((s) => /^\s*([A-Za-z]\w*)/.exec(s)?.[1])
         .filter((s): s is string => !!s && !/^(?:operator|assignment)$/i.test(s));
       out.push({ source: use[1]!, specifiers, isDefault: false, isNamespace: specifiers.length === 0, isType: false, line: i + 1 });

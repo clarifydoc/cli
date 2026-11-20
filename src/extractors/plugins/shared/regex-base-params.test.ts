@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractParamsFromDeclaration, splitTopLevel, attributeLinesAbove, extractFunctionsWithSpec, extractClassesWithSpec } from "./regex-base.js";
+import { extractParamsFromDeclaration, splitBracketedArgs, attributeLinesAbove, extractFunctionsWithSpec, extractClassesWithSpec } from "./regex-base.js";
 import type { RegexLangSpec } from "./regex-base.js";
 
 describe("regex-path parameter lists", () => {
@@ -20,8 +20,8 @@ describe("regex-path parameter lists", () => {
     expect(params.map((p) => p.name)).toEqual(["State(repo): State<AppState>", "Json(payload): Json<CreatePlayer>", "q: HashMap<String, String>"]);
   });
 
-  it("splitTopLevel ignores commas inside brackets and quotes", () => {
-    expect(splitTopLevel('a, Map<K, V> b, f(x, y), "c,d"')).toEqual(["a", " Map<K, V> b", " f(x, y)", ' "c,d"']);
+  it("splitBracketedArgs ignores commas inside brackets and quotes", () => {
+    expect(splitBracketedArgs('a, Map<K, V> b, f(x, y), "c,d"')).toEqual(["a", " Map<K, V> b", " f(x, y)", ' "c,d"']);
   });
 });
 
