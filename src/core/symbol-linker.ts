@@ -601,10 +601,14 @@ export function buildSymbolLinks(
       const existing = deduped[existingIdx]!;
       const existingRank = existing.confidence ? CONFIDENCE_RANK[existing.confidence] : 0;
       const newRank = link.confidence ? CONFIDENCE_RANK[link.confidence] : 0;
-      const winner = newRank > existingRank ? link : existing;
+      // On a tie, a line that spells the call beats a macro use whose body makes it (`viaMacro`).
+      const spelledWins = newRank === existingRank && !!existing.viaMacro !== !!link.viaMacro;
+      const winner = spelledWins ? (link.viaMacro ? existing : link) : newRank > existingRank ? link : existing;
       // One link per caller and name: it stands at the earliest line either record gave it,
-      // whichever record (two passes list one name in no fixed order) wins on confidence.
-      const earliest = Math.min(existing.sourceLine, link.sourceLine);
+      // whichever record (two passes list one name in no fixed order) wins on confidence —
+      // never at a line of the other kind (a macro use does not spell the call, a spelled call is no macro use).
+      const sameKind = !!existing.viaMacro === !!link.viaMacro;
+      const earliest = sameKind ? Math.min(existing.sourceLine, link.sourceLine) : winner.sourceLine;
       deduped[existingIdx] = Number.isFinite(earliest) && winner.sourceLine !== earliest ? { ...winner, sourceLine: earliest } : winner;
     }
   }

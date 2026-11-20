@@ -134,8 +134,8 @@ export function markOverloadLink(link: SymbolLink): void {
 /**
  * Collapse duplicate symbol links: the same caller, target symbol and
  * (normalized) call name keep one edge (one per overload reached). The higher-confidence duplicate wins;
- * on a tie the earliest source line does, so the report points at the first
- * occurrence.
+ * on a tie a row whose line spells the call beats one a macro's body makes (`viaMacro`), then the earliest
+ * source line does, so the report points at the first occurrence.
  *
  * @param links - Links in discovery order
  * @returns A new array; the survivors keep their first-seen position
@@ -189,9 +189,10 @@ function dedupInto(result: SymbolLink[], seen: Map<string, number>, links: reado
     let kept = existing;
     if (newRank > existingRank) {
       kept = link;
-    } else if (newRank === existingRank && link.sourceLine < existing.sourceLine) {
-      // Tiebreak: keep the earliest source line so the report points at the
-      // first occurrence rather than a later duplicate.
+    } else if (newRank === existingRank && (!existing.viaMacro === !link.viaMacro ? link.sourceLine < existing.sourceLine : !link.viaMacro)) {
+      // Tiebreak: a line that spells the call beats a macro use whose body makes it (rename plans and caret facts
+      // read the row's line as the call's site), then the earliest source line, so the report points at the first
+      // occurrence rather than a later duplicate.
       kept = link;
     }
     // The edge returns to the binding sites of both, and to any entry when either states none.

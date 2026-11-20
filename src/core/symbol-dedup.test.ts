@@ -78,3 +78,33 @@ describe("dedupSymbolLinksAppend", () => {
     expect(dedupSymbolLinksAppend(grown, extra)).toEqual(dedupSymbolLinks([...grown, ...extra]));
   });
 });
+
+describe("dedupSymbolLinks — a call a macro's body makes", () => {
+  const call = (sourceLine: number, viaMacro?: string): SymbolLink =>
+    ({
+      sourceFile: "league.c",
+      sourceSymbol: "promote",
+      sourceLine,
+      callName: "club_save",
+      targetFile: "club.c",
+      targetSymbol: "club_save",
+      targetLine: 2,
+      confidence: "INFERRED",
+      ...(viaMacro ? { viaMacro } : {}),
+    } as SymbolLink);
+
+  it("keeps the call the line spells over an earlier macro use reaching the same function", () => {
+    // `SAVE_CLUB(1);` on line 3 expands to `club_save(1)`, then `club_save(2);` on line 4.
+    expect(dedupSymbolLinks([call(3, "SAVE_CLUB"), call(4)])).toEqual([call(4)]);
+    expect(dedupSymbolLinks([call(4), call(3, "SAVE_CLUB")])).toEqual([call(4)]);
+  });
+
+  it("keeps the earliest macro use when no line spells the call", () => {
+    expect(dedupSymbolLinks([call(8, "SAVE_CLUB"), call(3, "SAVE_ALL")])).toEqual([call(3, "SAVE_ALL")]);
+  });
+
+  it("keeps a macro row of higher confidence", () => {
+    const ambiguous = { ...call(4), confidence: "AMBIGUOUS" } as SymbolLink;
+    expect(dedupSymbolLinks([ambiguous, call(3, "SAVE_CLUB")])).toEqual([call(3, "SAVE_CLUB")]);
+  });
+});

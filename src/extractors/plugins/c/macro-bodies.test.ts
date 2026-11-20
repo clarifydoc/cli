@@ -54,6 +54,15 @@ describe.each([["c", "c"], ["cpp", "cpp"]])("a macro body's calls (%s)", (_name,
     expect(got.filter((r) => r[0] === 6 && r[3])).toEqual([]);
   });
 
+  it("yields the one link per target to a line that spells the call, at that line", () => {
+    const spelled = `#include "store.h"\nvoid promote(int x) {\n    SAVE_CLUB(x);\n    club_store_save(x);\n}\nvoid relegate(int x) {\n    club_store_save(x);\n    SAVE_CLUB(x);\n}\n`;
+    const got = links([readAs(storeH, "src/store.h"), readAs(storeC, `src/store.${ext}`), readAs(spelled, `src/league.${ext}`)], `src/league.${ext}`);
+    expect(got.filter((r) => r[1] === "club_store_save")).toEqual([
+      [4, "club_store_save", `src/store.${ext}`, null],
+      [7, "club_store_save", `src/store.${ext}`, null],
+    ]);
+  });
+
   it("is INFERRED and marked, so a rename plan refuses it", () => {
     const all = buildSymbolLinks([readAs(storeH, "src/store.h"), readAs(storeC, `src/store.${ext}`), readAs(user, `src/league.${ext}`)]);
     const body = all.find((l) => l.viaMacro === "SAVE_CLUB" && l.sourceLine === 3);
