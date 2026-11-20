@@ -15,6 +15,7 @@ import type { ClassInfo, DataSourceInfo, FileAnalysis, FunctionInfo, ProjectAnal
  *
  *     def <name>                       a function, method (`Club.save`) or class defined on the line
  *     call [-> <file>::<symbol>]       a call the span names; with a target, the symbol link it resolved to
+ *     call -> unresolved               a call the span names that must stay unlinked (a namesake decoy is no target)
  *     route [<METHOD>] <path>          a route registered on the line
  *     api-call [<METHOD>] <url> [-> <METHOD> <routePath>]
  *                                      a request the line makes; with `->`, the route it joined
@@ -212,6 +213,10 @@ function judge(a: CaretAssertion, facts: CaretFact[], sourceLine: string): Caret
       if (cand.length === 0) return fail(here.length ? `no call on line ${a.line} is named by the span "${spanText}"` : noFact);
       if (a.text === "") return ok;
       const want = a.text.replace(/^->\s*/, "");
+      if (want === "unresolved") {
+        const linked = cand.filter((f) => f.detail?.target !== undefined);
+        return linked.length === 0 ? ok : fail(`a call in the span resolved to ${linked.map((f) => f.detail?.target).join(", ")}`, linked);
+      }
       return cand.some((f) => f.detail?.target === want) ? ok : fail(`no call in the span resolves to ${want}`, cand);
     }
     case "route": {

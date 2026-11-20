@@ -113,4 +113,15 @@ describe("caret assertions, end to end", () => {
     expect(again.results.filter((r) => r.status !== "passed")).toEqual([]);
     expect(checkCaretAssertions(again.analysis, new Map())).toEqual([]);
   });
+
+  it("judges `call -> unresolved` by the absence of a link", async () => {
+    const files = {
+      "package.json": JSON.stringify({ name: "league" }),
+      "repo.js": lines("function listClubs() {}", "module.exports = { listClubs };"),
+      "season.js": lines("const repo = require('./repo');", "function a() {", "  return repo.listClubs();", "  //          ^^^^^^^^^ call -> unresolved", "}"),
+    };
+    const run = await runCarets(files);
+    expect(run.results.map((r) => r.status)).toEqual(["failed"]);
+    expect(run.results[0]!.message).toContain("resolved to repo.js::listClubs");
+  });
 });
