@@ -7516,7 +7516,13 @@ function wrappedHead(
     const locals = callable?.localTypes?.filter((l) => nameKey(analysis.language, l.name) === key) ?? [];
     if (locals.length > 0) {
       // One declaration with a written type: a name several blocks declare, or one a call initializes, decides nothing.
-      if (locals.length > 1 || !locals[0]!.type || locals[0]!.from || locals[0]!.qualifier) return null;
+      if (locals.length > 1 || locals[0]!.qualifier) return null;
+      if (locals[0]!.from) {
+        // `var c = repo.find(1); c.get().save()`: the call the local is initialized from DECLARES the wrapper.
+        const declared = wrapperFromInitializer(ctx, analysis, sourceFile, sourceSymbol, consumer, locals[0]!);
+        return declared ? unwrappedDeclared(ctx, declared, hop, consumer) : null;
+      }
+      if (!locals[0]!.type) return null;
       type = locals[0]!.type;
     } else {
       const param = callable?.params.find((p) => nameKey(analysis.language, p.name) === key);
@@ -7530,6 +7536,25 @@ function wrappedHead(
   if (!consumer || !ctx.classAt.has(memberKey(sourceFile, consumer))) return null;
   const field = fieldDeclaredType(ctx, { typeName: consumer, typeFile: sourceFile }, name);
   return field ? unwrappedDeclared(ctx, field, hop, consumer) : null;
+}
+
+/**
+ * The type, as written, a single call initializer declares (`repo.find()` → `Optional<Club>`): read off the
+ * declaration of the call's last segment. Only a plain call — not a tuple, loop, member read, awaited or iterator
+ * initializer, which state other things.
+ */
+function wrapperFromInitializer(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceFile: string,
+  sourceSymbol: string,
+  consumer: string,
+  local: NonNullable<FunctionInfo["localTypes"]>[number],
+): { type: string; file: string } | null {
+  if (!local.from || local.type || local.awaited || local.destructured || local.member || local.element || local.iterator || local.fromIndex !== undefined || local.choice !== undefined) return null;
+  const chain = receiverChain(`${local.from}.x`, manifestFor(analysis.language as Language)?.indexerMethod);
+  if (!chain || chain.length === 0 || chain.length > MAX_RECEIVER_CHAIN + 1 || !chain[chain.length - 1]!.call) return null;
+  return chainDeclaredType(ctx, analysis, sourceFile, sourceSymbol, consumer, chain, 0);
 }
 
 /**
@@ -7832,6 +7857,9 @@ function initializerPoint(
     // `club.staff().coach`): the declared type of that field or method, read off the declaration.
     const chain = receiverChain(`${local.from}.x`, manifestFor(analysis.language as Language)?.indexerMethod);
     if (!chain || chain.length < 2 || chain.length > MAX_RECEIVER_CHAIN + 1) return null;
+    // `var s = _options.Value`: the read takes the value out of the wrapper the head declares, as the same hop in a chain.
+    const hop = chain[chain.length - 1]!;
+    if (!hop.call && unwrapListFor(analysis.language, hop)) return chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, chain, depth + 1, false);
     const declared = chainDeclaredType(ctx, analysis, sourceFile, sourceSymbol, consumer, chain, depth);
     if (!declared) return null;
     return returnedPoint(ctx, declared.type, declared.file, { typeName: "", typeFile: null, consumer }, local.awaited === true);

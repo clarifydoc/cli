@@ -186,3 +186,82 @@ class Pitches {
     expect(targets(summary, "Pitches.run", "declared.value.mark")).toEqual(["PitchRepo.mark"]);
   });
 });
+
+describe("a local holding a wrapper's content, then the call on it", () => {
+  let summary: ProjectAnalysis;
+  let done: () => Promise<void>;
+  beforeAll(async () => {
+    ({ summary, done } = await scan({
+      "java/Repos.java": `package com.example.league;
+import java.util.Optional;
+public class Club { public void promote() {} }
+class Player { public void promote() {} }
+class Box<T> { public T get() { return null; } }
+public class ClubRepo {
+  public Optional<Club> find(int id) { return null; }
+  public Box<Club> boxed(int id) { return null; }
+  public Player own(int id) { return null; }
+}
+`,
+      "java/Service.java": `package com.example.league;
+public class Service {
+  private ClubRepo repo;
+  public void viaVar() { var c = repo.find(1); c.get().promote(); }
+  public void viaBox() { var b = repo.boxed(1); b.get().promote(); }
+  public void viaOwn() { var p = repo.own(1); p.promote(); }
+}
+`,
+      "cs/Types.cs": `using System;
+using Microsoft.Extensions.Options;
+namespace League {
+  public class ClubRepo { public void Save() {} }
+  public class PlayerRepo { public void Save() {} }
+  public class ClubSettings { public void Reload() {} }
+  public class PlayerSettings { public void Reload() {} }
+  public class Box<T> { public T Value { get; } }
+  public class Holder { public PlayerRepo Value { get; } }
+}
+`,
+      "cs/Service.cs": `using System;
+using Microsoft.Extensions.Options;
+namespace League {
+  public class Service {
+    private readonly Lazy<ClubRepo> _repo;
+    private readonly IOptions<ClubSettings> _options;
+    private readonly Box<ClubRepo> _box;
+    private readonly Holder _holder;
+    public void Options() { var s = _options.Value; s.Reload(); }
+    public void Lazily() { var r = this._repo.Value; r.Save(); }
+    public void Param(IOptions<ClubSettings> o) { var s = o.Value; s.Reload(); }
+    public void Generic() { var b = _box.Value; b.Save(); }
+    public void Own() { var h = _holder.Value; h.Save(); }
+    public void Twice() { var s = _options.Value; s = _options.Value; s.Reload(); }
+  }
+}
+`,
+      "alt/pom.xml": "<project><modelVersion>4.0.0</modelVersion><groupId>x</groupId><artifactId>alt</artifactId><version>1</version></project>",
+      "alt/src/main/java/Optional.java": "public class Optional<T> { public PlayerOther get() { return null; } }\nclass PlayerOther { public void promote() {} }\n",
+    }));
+  });
+  afterAll(async () => done());
+
+  it("Java: var c = repo.find(); c.get() takes the Optional's content", () => {
+    expect(targets(summary, "Service.viaVar", "c.get().promote")).toEqual(["Club.promote"]);
+  });
+  it("Java: a project generic and a project return class are not unwrapped", () => {
+    expect(targets(summary, "Service.viaBox", "b.get().promote")).not.toContain("Club.promote");
+    expect(targets(summary, "Service.viaOwn", "p.promote")).toEqual(["Player.promote"]);
+  });
+  it("C#: var s = _options.Value (field, this.field, parameter) is the wrapped class", () => {
+    expect(targets(summary, "Service.Options", "s.Reload")).toEqual(["ClubSettings.Reload"]);
+    expect(targets(summary, "Service.Lazily", "r.Save")).toEqual(["ClubRepo.Save"]);
+    expect(targets(summary, "Service.Param", "s.Reload")).toEqual(["ClubSettings.Reload"]);
+  });
+  it("C#: an unlisted generic's Value and a project class's Value are not unwrapped", () => {
+    expect(targets(summary, "Service.Generic", "b.Save")).not.toContain("ClubRepo.Save");
+    expect(targets(summary, "Service.Own", "h.Save")).not.toContain("ClubRepo.Save");
+  });
+  it("C#: a name read twice from the wrapper stays typed (both reads agree)", () => {
+    expect(targets(summary, "Service.Twice", "s.Reload")).toEqual(["ClubSettings.Reload"]);
+  });
+});
