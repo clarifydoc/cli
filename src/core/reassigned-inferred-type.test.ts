@@ -30,6 +30,7 @@ describe("PHP local typed by an assignment and assigned from a call elsewhere", 
         "function guardYoda($g, $x) { $c = $g->first(); if ($c === null) { $c = new Club(); } return $c->save(); }",
         "function guardIsNull($g, $x) { $c = $g->first(); if (is_null($c)) { $c = new Club(); } return $c->save(); }",
         "function guardEmpty($g, $x) { $c = $g->first(); if (empty($c)) { $c = new Club(); } return $c->save(); }",
+        "function guardIsset($g, $x) { $c = $g->first(); if (!isset($c)) { $c = new Club(); } return $c->save(); }",
         "function guardOther($g, $x) { $c = $g->first(); if (!$x) { $c = new Club(); } return $c->save(); }",
         "function written($x) { /** @var Club $c */ $c = ext(); return $c->save(); }",
         "function writtenThenNew($x) { /** @var Club $c */ if ($x) { $c = new Club(); } else { $c = ext(); } return $c->save(); }",
@@ -48,7 +49,7 @@ describe("PHP local typed by an assignment and assigned from a call elsewhere", 
   it("keeps the type when the other assignment types the same class", async () => expect(await links("sameType")).toEqual(["Club.save:INFERRED"]));
   it("leaves it untyped when the other assignment is another class, without inventing a fan-out", async () => expect(await links("otherType")).toEqual([]));
   it("keeps the type of a find-or-create default, every spelling of the null check", async () => {
-    for (const fn of ["guardNull", "guardBang", "guardYoda", "guardIsNull", "guardEmpty"]) expect(await links(fn)).toEqual(["Club.save:INFERRED"]);
+    for (const fn of ["guardNull", "guardBang", "guardYoda", "guardIsNull", "guardEmpty", "guardIsset"]) expect(await links(fn)).toEqual(["Club.save:INFERRED"]);
   });
   it("still untypes when the guard tests another variable", async () => expect(await links("guardOther")).toEqual([]));
   it("keeps a written docblock type", async () => {

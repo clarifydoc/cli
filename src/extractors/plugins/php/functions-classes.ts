@@ -816,7 +816,7 @@ function extractLocalTypes(
   const guardDefaults = new Set<string>();
   const testsNull = (cond: string, name: string): boolean => {
     const v = "\\$" + name + "\\b";
-    return new RegExp(`^\\(?\\s*(?:!\\s*${v}|(?:null\\s*===?\\s*${v}|${v}\\s*===?\\s*null)|(?:is_null|empty)\\s*\\(\\s*${v}\\s*\\))\\s*\\)?$`, "i").test(cond.trim());
+    return new RegExp(`^\\(?\\s*(?:!\\s*(?:isset\\s*\\(\\s*${v}\\s*\\)|${v})|(?:null\\s*===?\\s*${v}|${v}\\s*===?\\s*null)|(?:is_null|empty)\\s*\\(\\s*${v}\\s*\\))\\s*\\)?$`, "i").test(cond.trim());
   };
   const noteFrom = (name: string, from: string, choice?: number): void => {
     const calls = fromCalls.get(name) ?? new Map<string, number | undefined>();
