@@ -6,14 +6,15 @@
 // (a function ends at the next `}` in column 0; a `//` inside a literal reads as a comment): it catches copies,
 // it does not prove two helpers different. A body left on purpose goes in
 // scripts/plugin-helpers-allow.json as { "bodyHash": "reason" } (the failing run prints the hash).
-// MIN_BODY=<n> in the environment changes the floor for a one-off look (80 flags short wrappers and one-line
-// constants over each plugin's own spec as well); the committed floor stays 120 so a short wrapper is no failure.
+// A one-line wrapper of a shared function (`function splitX(t) { return splitTopLevel(t, { … }); }`: the whole
+// body is one `return call(…);`) is exempt at any floor: it states a plugin's spelling, the body lives in the shared
+// function. MIN_BODY=<n> in the environment changes the floor (the committed one is 80).
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const MIN_BODY = Number(process.env.MIN_BODY ?? 120);
+const MIN_BODY = Number(process.env.MIN_BODY ?? 80);
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const pluginsDir = process.argv[2] ?? join(root, "src", "extractors", "plugins");
 const allowPath = process.argv[3] ?? join(root, "scripts", "plugin-helpers-allow.json");
@@ -39,6 +40,12 @@ function declarations(text) {
   return out;
 }
 
+/** The declaration's whole body is one `return call(…);`. */
+function isCallWrapper(body) {
+  const m = /\)\s*(?::\s*[^{]*?)?\s*\{\s*return\s+([\s\S]*?);?\s*\}\s*$/.exec(body.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1"));
+  return !!m && /^[\w$.]+\(/.test(m[1]) && !m[1].includes(";");
+}
+
 function normalize(body) {
   return body.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1").replace(/\s+/g, "");
 }
@@ -48,6 +55,7 @@ function findDuplicates(files) {
   for (const { path, text } of files) {
     const folder = relative(pluginsDir, path).split(sep)[0];
     for (const d of declarations(text)) {
+      if (isCallWrapper(d.body)) continue;
       const norm = normalize(d.body);
       if (norm.length < MIN_BODY) continue;
       const hash = createHash("sha256").update(norm).digest("hex").slice(0, 12);
