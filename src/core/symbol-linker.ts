@@ -4664,7 +4664,11 @@ function valueFlowLinks(links: readonly SymbolLink[], ctx: LinkContext): SymbolL
     classAt: (file, name) => ctx.classAt.get(memberKey(file, name)),
     importedBinding(file, name) {
       const analysis = analysisAt.get(file);
-      const imp = analysis?.imports.find((i) => !i.isType && !i.executes && (i.specifiers.includes(name) || i.aliases?.[name] !== undefined));
+      const shares = !!analysis && importsShareScope(analysis.language);
+      // Where an include puts a header in scope without naming anything (`importsShareScope`), the stem a plugin states for
+      // `#include "club_ops.h"` is the file's name, not a binding: it must not hide a struct `club_ops` the header declares.
+      const imp = analysis?.imports.find((i) => !i.isType && !i.executes && (i.aliases?.[name] !== undefined
+        || (i.specifiers.includes(name) && !(shares && /\.\w+$/.test(i.source) && i.source.replace(/^.*[\\/]/, "").replace(/\.\w+$/, "") === name))));
       if (!analysis || !imp) return null;
       const files = importFiles(ctx, imp, file);
       if (files.length !== 1) return null;
