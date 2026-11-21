@@ -28,11 +28,14 @@ const advisories: Record<string, unknown> = {
   "GO-2026-0006": {
     summary: "Team sheet parser", affected: [{ package: { name: "gopkg.in/sheet.v3", ecosystem: "Go" }, ecosystem_specific: { imports: [{ path: "gopkg.in/sheet.v3", symbols: ["Load"] }] } }],
   },
+  "GO-2026-0007": {
+    summary: "Bench cracks", affected: [{ package: { name: "example.com/benchkit", ecosystem: "Go" }, ecosystem_specific: { imports: [{ path: "example.com/benchkit", symbols: ["Sit"] }] } }],
+  },
   "GHSA-pkg-only": { summary: "Package level only", affected: [{ package: { name: "example.com/paintkit", ecosystem: "Go" } }] },
 };
 const byPackage: Record<string, string> = {
   "example.com/garagekit": "GO-2026-0001", "example.com/tyrekit": "GO-2026-0002", "example.com/radiokit": "GO-2026-0003", "example.com/paintkit": "GHSA-pkg-only",
-  "example.com/flagkit": "GO-2026-0004", "example.com/pitkit": "GO-2026-0005", "gopkg.in/sheet.v3": "GO-2026-0006",
+  "example.com/flagkit": "GO-2026-0004", "example.com/pitkit": "GO-2026-0005", "gopkg.in/sheet.v3": "GO-2026-0006", "example.com/benchkit": "GO-2026-0007",
 };
 const fakeFetch = (async (url: string, init?: { body?: string }) => {
   if (url.endsWith("/v1/querybatch")) {
@@ -149,5 +152,57 @@ func main() {
     expect(adv("example.com/radiokit")?.reach).toEqual({ status: "not-judged" });
     // No function data: the advisory stays package-level.
     expect(adv("example.com/paintkit")?.reach).toBeUndefined();
+  }, 60000);
+
+  it("roots a route registered inside main at its handler, never at main or a same-named function beside it", async () => {
+    const root = mkdtempSync(join(tmpdir(), "clarifydoc-vuln-"));
+    const out = mkdtempSync(join(tmpdir(), "clarifydoc-vuln-out-"));
+    dirs.push(root, out);
+    writeFileSync(join(root, "go.mod"), `module example.com/league
+
+go 1.21
+
+require (
+	example.com/benchkit v1.0.0
+	github.com/gin-gonic/gin v1.9.1
+)
+`);
+    mkdirSync(join(root, "clubs"));
+    writeFileSync(join(root, "clubs", "handler.go"), `package clubs
+
+import "github.com/gin-gonic/gin"
+
+type Handler struct{}
+
+func (h *Handler) List(c *gin.Context) {
+	c.JSON(200, "clubs")
+}
+`);
+    // main registers the route and also runs a start-up call of the vulnerable function; a same-named free
+    // function beside it (never routed) calls it too.
+    writeFileSync(join(root, "main.go"), `package main
+
+import (
+	"example.com/benchkit"
+	"example.com/league/clubs"
+	"github.com/gin-gonic/gin"
+)
+
+func List() { benchkit.Sit() }
+
+func main() {
+	benchkit.Sit()
+	r := gin.Default()
+	h := &clubs.Handler{}
+	r.GET("/clubs", h.List)
+	r.Run()
+}
+`);
+    await analyze({ projectRoot: root, outputDir: out, lsp: false, gitHistory: false, stableOutput: true, osv: true, osvFetch: fakeFetch });
+    const summary = (await loadReportSummary(out)) as unknown as { externalPackages: Array<{ name: string; advisories?: Array<{ reach?: { status: string; calls?: Array<{ caller: string; from?: string }> } }> }> };
+    const reach = summary.externalPackages.find((p) => p.name === "example.com/benchkit")?.advisories?.[0]?.reach;
+    expect(reach?.status).toBe("called");
+    expect(reach?.calls?.map((c) => c.caller).sort()).toEqual(["List", "main"]);
+    expect(reach?.calls?.some((c) => c.from)).toBe(false);
   }, 60000);
 });

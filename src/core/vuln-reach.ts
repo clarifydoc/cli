@@ -1,7 +1,7 @@
 import type { EntryPointInfo, ExternalPackage, FileAnalysis, RouteInfo, SymbolLink, VulnerableReach } from "../types/analysis.js";
 import { buildSymbolAdjacency, edgeKey, keyOf } from "./symbol-graph.js";
 import { inlineRouteDefinitions } from "./route-symbol.js";
-import { spansOf, uniqueSymbolByLeaf, type SymbolSpan } from "./api-route-symbol-links.js";
+import { byName, routeHandlerKey, spansOf, uniqueSymbolByLeaf, type SymbolSpan } from "./api-route-symbol-links.js";
 import { isTestFile } from "./test-file-detector.js";
 import { packageMatchingFor } from "../extractors/registry.js";
 
@@ -59,9 +59,26 @@ export function attachVulnerableReach(
   // Where a walk may stop: a route's handler (or its inline body), an entry point's handler.
   const roots = new Map<string, Root>();
   for (const r of routes) {
-    if (r.kind !== "api" || !r.handler) continue;
-    const key = resolveHandler(r.filePath, r.handler);
-    if (key && !roots.has(key)) roots.set(key, { label: `${r.httpMethod ?? "ANY"} ${r.path}`.trim() });
+    if (r.kind !== "api") continue;
+    // The data-flow pass's rule: the function the route is declared on, never the one that only registers it.
+    const a = analysisOf.get(r.filePath);
+    const spans = a ? spansFor(a) : [];
+    let key = routeHandlerKey(r, spans, byLeaf);
+    // A route registered inside another function (`r.GET("/clubs", h.List)` in `main`) has no symbol link here to
+    // name its handler, so the handler's own name finds it: written exactly in this file, else the project's one
+    // function of that leaf name — never a namesake the receiver does not state (`h.List` is no free `List`).
+    if (!key && r.handler) {
+      const local = byName(spans, r.handler);
+      key = local.length ? keyOf(r.filePath, local[0]!.symbol) : byLeaf(r.handler.split(".").pop()!);
+    }
+    const label = `${r.httpMethod ?? "ANY"} ${r.path}`.trim();
+    if (key && !roots.has(key)) roots.set(key, { label });
+    // A call every request makes: the middleware the route names (its own and what its router mounts).
+    const names = [...(r.middlewareCalls ?? []), ...(r.inheritedMiddleware ?? []).flatMap((m) => m.calls)].filter((n) => n !== r.handler);
+    for (const name of names) {
+      const mw = resolveHandler(r.filePath, name);
+      if (mw && !roots.has(mw)) roots.set(mw, { label });
+    }
   }
   const inlineByFile = new Map<string, Array<{ symbol: string; line: number; endLine: number; label: string }>>();
   const routeAt = new Map(routes.map((r) => [`${r.filePath}\0${r.line}`, r] as const));

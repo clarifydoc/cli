@@ -12,7 +12,7 @@ import type { EntryPointInfo,
   SymbolReachSummary,
 } from "../types/analysis.js";
 import { buildSymbolAdjacency, edgeKey, fileOf, keyOf, nodeKey, stateNode, strongerFirst, usageGate } from "./symbol-graph.js";
-import { byName, declaredOn, innermostAt, spansOf, uniqueSymbolByLeaf, type SymbolSpan } from "./api-route-symbol-links.js";
+import { byName, innermostAt, routeHandlerKey, spansOf, uniqueSymbolByLeaf, type SymbolSpan } from "./api-route-symbol-links.js";
 import { byOrdinal } from "./ordinal.js";
 
 /**
@@ -626,21 +626,8 @@ export function computeDataFlows(
       // route. The function around its line registers it (a `main` that also
       // runs migrations and crons) and is no part of a request.
       key = null;
-    } else if (!route.handler && (route.calls?.length ?? 0) > 0) {
-      // A route carrying its own body's calls (an inline closure among several
-      // a registrar declares) reaches what those calls reach, or nothing: the
-      // function around its line is the registrar, not its handler.
-      key = null;
     } else {
-      const at = innermostAt(spans, route.line);
-      if (at) {
-        // Never the function registering the route: only the one it is declared on.
-        key = declaredOn(at, route.handler, route.line) ? keyOf(route.filePath, at.symbol) : null;
-      } else if (route.handler) {
-        const local = byName(spans, route.handler);
-        if (local.length >= 1) key = keyOf(route.filePath, local[0]!.symbol);
-        else key = globalLookup(route.handler);
-      }
+      key = routeHandlerKey(route, spans, globalLookup);
     }
     const r = key ? reachByKey.get(key) : undefined;
     const mwReach = mwOnly && key !== synthetic ? reachByKey.get(synthetic) : undefined;

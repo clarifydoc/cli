@@ -115,6 +115,30 @@ export function byName(spans: SymbolSpan[], name: string): SymbolSpan[] {
 }
 
 /**
+ * The symbol key of the function a route runs, read from the route and its file alone: the function the route is
+ * declared ON (`innermostAt` + `declaredOn` — never the one that only registers it, a `main` calling
+ * `r.GET("/clubs", h.List)`), else the handler name in the declaring file, else the project's one function of that
+ * leaf name. A route carrying its own inline body's calls and no handler runs that body, so no function. Shared by
+ * the data-flow pass and the vulnerable-reach pass, which must agree on which function a route runs.
+ *
+ * @param route - A route row with its declaring file
+ * @param spans - Spans of the route's file, from `spansOf`
+ * @param globalLookup - `uniqueSymbolByLeaf` over the project
+ */
+export function routeHandlerKey(
+  route: { filePath: string; line: number; handler?: string | null; calls?: readonly unknown[] },
+  spans: SymbolSpan[],
+  globalLookup: (leaf: string) => string | null,
+): string | null {
+  if (!route.handler && (route.calls?.length ?? 0) > 0) return null;
+  const at = innermostAt(spans, route.line);
+  if (at) return declaredOn(at, route.handler, route.line) ? keyOf(route.filePath, at.symbol) : null;
+  if (!route.handler) return null;
+  const local = byName(spans, route.handler);
+  return local.length >= 1 ? keyOf(route.filePath, local[0]!.symbol) : globalLookup(route.handler);
+}
+
+/**
  * Turn every unambiguous api↔route link into a `SymbolLink` from the function
  * making the call to the handler serving the route (see the module comment).
  *
