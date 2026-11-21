@@ -17,8 +17,8 @@ import { inferFileBasedRoute } from "./file-routes.js";
  *    → ssg), `generateStaticParams` → ssg. A `'use client'` component is no page mode; a page without
  *    config says nothing (the framework decides by what the page reads at run time).
  *  - SvelteKit: `export const ssr | csr | prerender` of `+page(.server).ts` and of the `+layout(.server).ts`
- *    files above it (the page's own wins) — `prerender = true` → ssg, `ssr = false` → csr, `ssr = true` →
- *    ssr; only a literal counts.
+ *    files above it (the page's own wins) — `ssr = false` → csr, else `prerender = true` → ssg, `ssr = true`
+ *    → ssr, each option inherited on its own; only a literal counts.
  *  - Nuxt: `routeRules` of `nuxt.config` (and a page's own `defineRouteRules`) — `prerender` → ssg,
  *    `isr` / `swr` → isr, `ssr: false` → csr, `ssr: true` → ssr — and the config's top-level `ssr: false`
  *    for every page without a rule of its own.
@@ -53,10 +53,29 @@ interface NuxtRule {
   isr?: boolean;
 }
 
-/** Comments blanked to spaces (offsets kept); a `//` after `:` is a URL, not a comment. */
+/** Comments blanked to spaces (offsets and line breaks kept); string literals are skipped, so a `//` in a URL or a `/*` in a glob is no comment. */
 function blankComments(text: string): string {
-  const blank = (m: string) => m.replace(/[^\n]/g, " ");
-  return text.replace(/\/\*[\s\S]*?\*\/|(^|[^:"'`\\])\/\/[^\n]*/g, (m, lead: string | undefined) => (lead === undefined ? blank(m) : lead + blank(m.slice(lead.length))));
+  let out = "";
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === '"' || ch === "'" || ch === "`") {
+      let j = i + 1;
+      for (; j < text.length && text[j] !== ch; j++) if (text[j] === "\\") j++;
+      out += text.slice(i, j + 1);
+      i = j;
+    } else if (ch === "/" && text[i + 1] === "/") {
+      const end = text.indexOf("\n", i);
+      const stop = end < 0 ? text.length : end;
+      out += " ".repeat(stop - i);
+      i = stop - 1;
+    } else if (ch === "/" && text[i + 1] === "*") {
+      const end = text.indexOf("*/", i + 2);
+      const stop = end < 0 ? text.length : end + 2;
+      out += text.slice(i, stop).replace(/[^\n]/g, " ");
+      i = stop - 1;
+    } else out += ch;
+  }
+  return out;
 }
 
 /** Index of the bracket closing the one at `open`, strings skipped. */
@@ -120,8 +139,13 @@ function nextPagesMode(text: string): RenderMode | null {
   if (exportsName(text, "getStaticProps")) {
     // `revalidate` in what getStaticProps returns (a number or a variable), not elsewhere in the file.
     const decl = /\bexport\s+(?:async\s+)?(?:function\s+getStaticProps\b|(?:const|let|var)\s+getStaticProps\b)/.exec(text);
-    const rest = decl ? text.slice(decl.index) : text;
-    return /\brevalidate\s*:\s*(?!false\b)[\w$.]/.test(rest) ? "isr" : "ssg";
+    // Up to the next top-level export: a helper further down is not what getStaticProps returns.
+    const from = decl ? decl.index + decl[0].length : 0;
+    const next = text.slice(from).search(/^export\b/m);
+    const rest = text.slice(from, next < 0 ? text.length : from + next);
+    const rev = /\brevalidate\s*:\s*([\w$.]+)/.exec(rest)?.[1];
+    if (rev === "0") return null;
+    return rev && rev !== "false" ? "isr" : "ssg";
   }
   return forwardsUnknownExports(text) ? null : "csr";
 }
@@ -139,10 +163,13 @@ function nextSegmentConfig(text: string): RenderOptions {
 
 /** The mode a Next app-router config states, or null. */
 function nextAppMode(o: RenderOptions): RenderMode | null {
-  if (o.dynamic === "force-dynamic" || o.revalidate === 0) return "ssr";
-  const isStatic = o.dynamic === "force-static" || o.dynamic === "error" || o.staticParams === true || o.revalidate === false;
-  if (typeof o.revalidate === "number" && o.revalidate > 0) return "isr";
-  return isStatic ? "ssg" : null;
+  if (o.dynamic === "force-dynamic") return "ssr";
+  const timed = typeof o.revalidate === "number" && o.revalidate > 0;
+  // A static page that also revalidates is incremental; `revalidate = 0` makes a page that states no static mode dynamic.
+  if (o.dynamic === "force-static" || o.dynamic === "error" || o.staticParams === true) return timed ? "isr" : o.revalidate === 0 && o.dynamic === undefined ? "ssr" : "ssg";
+  if (timed) return "isr";
+  if (o.revalidate === 0) return "ssr";
+  return o.revalidate === false ? "ssg" : null;
 }
 
 // ---- SvelteKit -----------------------------------------------------------------------------------------
@@ -159,8 +186,9 @@ function svelteOptions(text: string): RenderOptions {
 
 /** The mode of merged SvelteKit options, or null. */
 function svelteMode(o: RenderOptions): RenderMode | null {
-  if (o.prerender === true) return "ssg";
+  // A page that does not render on the server is a shell the browser fills, prerendered or not.
   if (o.ssr === false) return "csr";
+  if (o.prerender === true) return "ssg";
   if (o.ssr === true) return "ssr";
   return null;
 }
@@ -268,13 +296,15 @@ export function inferRenderModeFacts(relativePath: string, sourceText: string, r
         if (Object.keys(opts).length > 0) data = { fw: "next-app", role: app[1] as "page" | "layout", opts };
       }
     }
-  } else if (frameworkIds.includes("sveltekit")) {
+  }
+  if (!data && frameworkIds.includes("sveltekit")) {
     const m = SVELTE_OPTION_FILE.exec(rel);
     if (m) {
       const opts = svelteOptions(blankComments(sourceText));
       if (Object.keys(opts).length > 0) data = { fw: "sveltekit", role: m[1] as "page" | "layout", opts };
     }
-  } else if (frameworkIds.includes("nuxt")) {
+  }
+  if (!data && frameworkIds.includes("nuxt")) {
     if (NUXT_CONFIG.test(rel)) data = nuxtConfigFact(blankComments(sourceText));
     else if (inferFileBasedRoute(rel, ["nuxt"])?.kind === "frontend") {
       const mode = nuxtPageMode(blankComments(rawSource));

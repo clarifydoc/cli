@@ -45,6 +45,8 @@ const FILES: Record<string, string> = {
   "kit/src/routes/marketing/+page.svelte": "<h1>About</h1>\n",
   "kit/src/routes/plain/+page.svelte": "<h1>Plain</h1>\n",
   "kit/src/routes/plain/+page.ts": "export const ssr = true\nexport const prerender = false\n",
+  "kit/src/routes/(app)/archive/+page.svelte": "<h1>Archive</h1>\n",
+  "kit/src/routes/(app)/archive/+page.ts": "export const prerender = true\n",
   "kit/src/lib/options.ts": "export const prerender = true\nexport const ssr = false\n",
   // Nuxt
   "nuxt/package.json": JSON.stringify({ name: "club-nuxt", dependencies: { nuxt: "3.10.0" } }),
@@ -125,7 +127,9 @@ describe("page rendering mode", () => {
     const m = modes("kit/");
     expect(m["/"]).toBe("csr");
     expect(m["/table"]).toBe("ssr");
-    expect(m["/marketing"]).toBe("ssg");
+    // A layout's prerender does not make a page the root layout keeps off the server anything but a shell.
+    expect(m["/marketing"]).toBe("csr");
+    expect(m["/archive"]).toBe("ssg");
     expect(m["/plain"]).toBe("ssr");
   });
 
