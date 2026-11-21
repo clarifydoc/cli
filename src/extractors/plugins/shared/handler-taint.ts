@@ -89,6 +89,12 @@ export interface TaintSpec {
   sourceReads?: RegExp;
   /** Further condition shapes that check a value, beside the shared ones (Ruby `start_with?`, Go `strings.HasPrefix`). */
   guard?: RegExp;
+  /**
+   * The names a statement fills from the request without an assignment: `c.ShouldBindJSON(&req)` binds the body into
+   * `req` (a name, or `req.Field` for each field of a struct the file declares that can hold text). Read in source
+   * order like an assignment; `fn` is the function being followed.
+   */
+  binds?(node: Node, fn: Node): string[] | null;
 }
 
 type Step = { line: number; note: string };
@@ -381,6 +387,11 @@ function taintFunction(fn: Node, params: ReadonlyMap<string, Taint | null>, ctx:
     }
     // Nested handlers are their own.
     if (node.id !== fn.id && spec.functionTypes.has(node.type) && spec.handler(node)) return;
+    const bound = spec.binds?.(node, fn);
+    if (bound?.length) {
+      const line = node.startPosition.row + 1;
+      for (const n of bound) tainted.set(n, { line, path: [{ line, note: `request body bound into ${n}` }] });
+    }
     if (spec.ifTypes.has(node.type)) {
       const cond = spec.conditionText?.(node) ?? (spec.condition ? spec.condition(node) : node.childForFieldName("condition"))?.text ?? "";
       if (GUARD_RE.test(cond) || spec.guard?.test(cond)) {

@@ -168,4 +168,83 @@ import "github.com/gin-gonic/gin"
 func ListPlayers(c *gin.Context) { db.Query("SELECT " + c.Query("a")
 `)).toEqual([]);
   });
+  it("follows a request body bound into a struct, by the fields that can hold text", async () => {
+    const src = `package club
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"github.com/labstack/echo/v4"
+)
+
+type TransferRequest struct {
+	Name   string \`json:"name"\`
+	Price  int    \`json:"price"\`
+	Active bool
+}
+
+func Transfer(c *gin.Context) {
+	var req TransferRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		return
+	}
+	db.Exec(fmt.Sprintf("UPDATE players SET club = '%s' WHERE id = 1", req.Name))
+	db.Exec(fmt.Sprintf("UPDATE players SET price = %d", req.Price))
+}
+
+func Sign(c echo.Context) error {
+	req := new(TransferRequest)
+	if err := c.Bind(req); err != nil {
+		return err
+	}
+	db.Query("SELECT * FROM players WHERE name = '" + req.Name + "'")
+	return nil
+}
+
+func Decode(w http.ResponseWriter, r *http.Request) {
+	var body OtherRequest
+	json.NewDecoder(r.Body).Decode(&body)
+	db.Exec("DELETE FROM clubs WHERE name = '" + body.Name + "'")
+}
+
+func Bound(c *gin.Context) {
+	var req TransferRequest
+	c.ShouldBindJSON(&req)
+	db.Exec("DELETE FROM clubs WHERE id = ?", req.Name)
+	if !isValidName(req.Name) {
+		return
+	}
+	db.Exec("DELETE FROM clubs WHERE name = '" + req.Name + "'")
+}
+`;
+    expect(await findings(src)).toEqual(["23 sql-injection", "32 sql-injection", "39 sql-injection"]);
+  });
+
+  it("does not follow a struct bound outside a handler, or one a decoy context binds", async () => {
+    expect(await findings(`package club
+
+import "github.com/gin-gonic/gin"
+
+type Request struct{ Name string }
+
+func Plain(db *sql.DB, req Request) {
+	db.Exec("DELETE FROM clubs WHERE name = '" + req.Name + "'")
+}
+
+func Decoy(c *gin.Context, parser Parser) {
+	var req Request
+	parser.ShouldBindJSON(&req)
+	db.Exec("DELETE FROM clubs WHERE name = '" + req.Name + "'")
+}
+
+func Inert(c *gin.Context) {
+	var req struct{ N int }
+	c.ShouldBindJSON(&req)
+	db.Exec(fmt.Sprintf("LIMIT %d", req.N))
+}
+`)).toEqual([]);
+  });
 });

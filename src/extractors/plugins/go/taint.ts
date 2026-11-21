@@ -51,6 +51,65 @@ function identifiersOf(list: Node | null): string[] {
   return list.namedChildren.filter((c) => c.type === "identifier" && c.text !== "_").map((c) => c.text);
 }
 
+/** Field types that cannot carry an injection payload: numbers, booleans, times, identifiers. */
+const INERT_FIELD = /^(?:\*|\[\])*(?:u?int(?:8|16|32|64)?|float(?:32|64)|bool|time\.(?:Time|Duration)|uuid\.UUID|decimal\.Decimal)$/;
+
+/** The identifier a bind call fills: `&req`, `req` (a pointer the handler made). */
+function boundTarget(arg: Node | undefined): string | null {
+  if (!arg) return null;
+  if (arg.type === "unary_expression" && arg.childForFieldName("operator")?.text === "&") {
+    const operand = arg.childForFieldName("operand");
+    return operand?.type === "identifier" ? operand.text : null;
+  }
+  return arg.type === "identifier" ? arg.text : null;
+}
+
+/** The struct type a local was declared with in `fn` (`var req T`, `req := T{}`, `&T{}`, `new(T)`), or null. */
+function localStructType(fn: Node, name: string): string | null {
+  let found: string | null = null;
+  const typeOf = (n: Node | null): string | null => {
+    if (!n) return null;
+    if (n.type === "type_identifier") return n.text;
+    if (n.type === "struct_type") return `struct@${n.id}`;
+    if (n.type === "unary_expression") return typeOf(n.childForFieldName("operand"));
+    if (n.type === "composite_literal") return typeOf(n.childForFieldName("type"));
+    if (n.type === "call_expression" && n.childForFieldName("function")?.text === "new") return typeOf(n.childForFieldName("arguments")?.namedChildren[0] ?? null);
+    return null;
+  };
+  const visit = (n: Node): void => {
+    if (n.type === "var_spec" && n.childrenForFieldName("name").some((id) => id.text === name)) found = typeOf(n.childForFieldName("type")) ?? typeOf(n.childForFieldName("value")?.namedChildren[0] ?? null);
+    else if (n.type === "short_var_declaration" && n.childForFieldName("left")?.text === name) found = typeOf(n.childForFieldName("right")?.namedChildren[0] ?? null);
+    for (const c of n.namedChildren) visit(c);
+  };
+  visit(fn);
+  return found;
+}
+
+/**
+ * The `req.Field` names of a struct the file declares whose type can hold text, or null when the struct is not in this
+ * file or embeds another type (the whole variable then stands for it).
+ */
+function textFields(root: Node, typeName: string, variable: string): string[] | null {
+  let body: Node | null = null;
+  const visit = (n: Node): void => {
+    if (n.type === "type_spec" && n.childForFieldName("name")?.text === typeName) body = n.childForFieldName("type");
+    // An anonymous struct (`var req struct{ N int }`), keyed by its node.
+    else if (n.type === "struct_type" && typeName === `struct@${n.id}`) body = n;
+    for (const c of n.namedChildren) visit(c);
+  };
+  visit(root);
+  const struct = body as Node | null;
+  if (struct?.type !== "struct_type") return null;
+  const out: string[] = [];
+  for (const field of struct.descendantsOfType("field_declaration")) {
+    const names = field.childrenForFieldName("name");
+    if (names.length === 0) return null;
+    if (INERT_FIELD.test((field.childForFieldName("type")?.text ?? "").replace(/\s+/g, ""))) continue;
+    for (const id of names) out.push(`${variable}.${id.text}`);
+  }
+  return out;
+}
+
 function buildSpec(names: readonly string[]): TaintSpec {
   const recv = names.length ? `(?:${names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})` : "(?!)";
   // Request input read from a context or request parameter, or through the router libraries' own accessors.
@@ -91,6 +150,21 @@ function buildSpec(names: readonly string[]): TaintSpec {
       if (!callee) return null;
       const args = (node.childForFieldName("arguments")?.namedChildren ?? []).filter((a) => a.type !== "comment");
       return { callee: callee.replace(/\s+/g, ""), args };
+    },
+    // A body bound into a struct: Gin `c.ShouldBindJSON(&req)`, Echo `c.Bind(&req)`, Fiber `c.BodyParser(&req)`,
+    // `json.NewDecoder(r.Body).Decode(&req)`. The struct's text fields are request input from there on.
+    binds(node, fn) {
+      if (node.type !== "call_expression") return null;
+      const callee = (node.childForFieldName("function")?.text ?? "").replace(/\s+/g, "");
+      const args = node.childForFieldName("arguments")?.namedChildren ?? [];
+      const viaContext = names.length > 0 && new RegExp(`^${recv}\\.(?:ShouldBind\\w*|Bind\\w*|MustBindWith|BodyParser|QueryParser|ParamsParser|ReqHeaderParser)$`).test(callee);
+      const viaDecoder = names.length > 0 && new RegExp(`^(?:json|jsoniter)\\.NewDecoder\\(${recv}\\.(?:Body|Request\\(\\)\\.Body)\\)\\.Decode$`).test(callee);
+      if (!viaContext && !viaDecoder) return null;
+      const target = boundTarget(args[0]);
+      if (!target) return null;
+      const type = localStructType(fn, target);
+      const fields = type ? textFields(node.tree.rootNode, type, target) : null;
+      return fields ?? [target];
     },
     sanitizer: SANITIZER,
     fileNameSanitizers: [{ call: /^\s*(?:filepath|path)\.Base\s*\(/ }],
