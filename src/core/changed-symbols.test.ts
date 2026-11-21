@@ -366,6 +366,8 @@ describe("boundReaders", () => {
         "pkg/__init__.py": { imports: [imp("pkg.settings", ["SEASON_LIMIT"])], exports: [{ name: "SEASON_LIMIT", kind: "re-export", line: 1 }] },
         "app/user.py": { imports: [imp("pkg", ["SEASON_LIMIT"])] },
         "app/decoy.py": { imports: [imp("pkg", ["table"])] },
+        "pkg/aliased.py": { imports: [imp("pkg.settings", ["cfg"], { isNamespace: true })] },
+        "pkg/by_inheritance.py": { imports: [imp("os", [])] },
       });
       const graph = {
         "pkg/named.py": ["pkg/settings.py"],
@@ -376,10 +378,21 @@ describe("boundReaders", () => {
         "pkg/__init__.py": ["pkg/settings.py"],
         "app/user.py": ["pkg/__init__.py"],
         "app/decoy.py": ["pkg/__init__.py"],
+        "pkg/aliased.py": ["pkg/settings.py"],
+        "pkg/by_inheritance.py": ["pkg/settings.py"],
       };
       const out = await boundReaders(dir, { componentGraph: graph }, new Map([["pkg/settings.py", ["SEASON_LIMIT"]]]));
-      // The two-hop reader (through the package's re-export) is charged; the decoys are not.
-      expect(out["pkg/settings.py"]).toEqual(["app/user.py", "pkg/__init__.py", "pkg/named.py", "pkg/star.py", "pkg/whole.py"]);
+      // The two-hop reader (through the package's re-export) is charged; importers of other names of the module are not.
+      expect(out["pkg/settings.py"]).toEqual([
+        "app/decoy.py", // reaches the package file, whose own name no import row spells: kept
+        "app/user.py",
+        "pkg/__init__.py",
+        "pkg/aliased.py", // `import pkg.settings as cfg`: the module whole
+        "pkg/by_inheritance.py", // an edge no import row spells: nothing says it does not read the name
+        "pkg/named.py",
+        "pkg/star.py",
+        "pkg/whole.py",
+      ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

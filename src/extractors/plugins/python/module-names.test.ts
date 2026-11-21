@@ -31,13 +31,23 @@ describe("module-level names and the lines each owns", () => {
     ]);
   });
 
+  it("a comment trailing the statement above stays with it", async () => {
+    const tree = await parseSource(["A = 1  # note", "B = 2", ""].join("\n"), "python" as never, "x.py");
+    expect(extractPythonModuleNames(tree!)).toEqual([
+      { name: "A", line: 1, endLine: 1 },
+      { name: "B", line: 2, endLine: 3 },
+    ]);
+  });
+
   it("TypeScript: const/let/var, exported or destructured, own their lines; a function declaration binds none", async () => {
-    const src = ["import { x } from './x';", "", "export const LIMIT = 5;", "", "const { a, b: c } = cfg;", "function f() {}", "let late: number;"].join("\n");
+    const src = ["import { x } from './x';", "", "export const LIMIT = 5;", "", "const { a, b: c, d = 1, e: f = DEFAULT } = cfg;", "function g() {}", "let late: number;"].join("\n");
     const tree = await parseSource(src, "typescript" as never, "x.ts");
     expect(extractJsModuleNames(tree!)).toEqual([
       { name: "LIMIT", line: 3, endLine: 4 },
       { name: "a", line: 5, endLine: 5 },
       { name: "c", line: 5, endLine: 5 },
+      { name: "d", line: 5, endLine: 5 },
+      { name: "f", line: 5, endLine: 5 },
       { name: "late", line: 7, endLine: 7 },
     ]);
   });

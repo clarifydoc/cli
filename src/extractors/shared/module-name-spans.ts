@@ -1,6 +1,12 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { ModuleNameSpan } from "../../types/analysis.js";
 
+/** Whether the comment at `index` starts on the row the statement before it ends on. */
+function trailing(tops: Node[], index: number): boolean {
+  const before = tops[index - 1];
+  return !!before && before.endPosition.row === tops[index]!.startPosition.row;
+}
+
 /**
  * The names a module binds at its top level, each with the lines it owns (`FileAnalysis.moduleNames`): the statement,
  * the comments written directly above it, and the blank or loose-comment lines below it up to the next statement's own
@@ -16,7 +22,8 @@ export function moduleNameSpans(tree: Tree, namesOf: (top: Node) => string[]): M
   tops.forEach((n, i) => {
     if (isComment(n)) return;
     let start = n.startPosition.row;
-    for (let j = i - 1; j >= 0 && isComment(tops[j]!) && tops[j]!.endPosition.row + 1 >= start; j--) start = tops[j]!.startPosition.row;
+    // A comment trailing the statement above on its own last line belongs to that statement.
+    for (let j = i - 1; j >= 0 && isComment(tops[j]!) && tops[j]!.endPosition.row + 1 >= start && !trailing(tops, j); j--) start = tops[j]!.startPosition.row;
     groupStart.set(i, start);
   });
   const out: ModuleNameSpan[] = [];

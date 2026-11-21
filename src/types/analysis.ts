@@ -747,8 +747,8 @@ export interface FileAnalysis {
    */
   moduleBindings?: ModuleBindingInfo[];
   /**
-   * The names the module binds at its top level to a value (Python `SCHEDULER_DB = "…"`, `router = APIRouter(…)`; JS/TS
-   * `export const LIMIT = 5`), each with the 1-based lines it owns: the statement, the comments written directly above it
+   * The names the module binds at its top level to a value (Python `MAX_SQUAD = 25`, `garage = Garage(…)`; JS/TS
+   * `export const MAX_SQUAD = 25`), each with the 1-based lines it owns: the statement, the comments written directly above it
    * and the blank lines below it up to the next statement. What an edit to such a line changes is that name — the
    * impact pass charges the files that import it, not every importer. Omitted when the file binds none.
    */

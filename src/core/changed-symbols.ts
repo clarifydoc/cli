@@ -644,29 +644,29 @@ export async function symbolsOfChange(
   };
 }
 
-/** The last name of an import source or a file path, without extension (`pkg.settings` / `./settings.ts` → `settings`; `pkg/__init__.py` → `pkg`). */
-function moduleStem(path: string): string {
-  const parts = path.replace(/\.(?:[cm]?[jt]sx?|py)$/, "").split(/[./\\]+/).filter(Boolean);
-  const last = parts.pop() ?? "";
-  return last === "__init__" || last === "index" ? (parts.pop() ?? last) : last;
-}
+/** The words a module path or import source is written with, split at dots and slashes (`pkg.settings`, `./settings.js` → `pkg`, `settings`, `js`). */
+const pathWords = (path: string): string[] => path.split(/[./\\]+/).filter(Boolean);
 
 /**
- * Whether a file's imports can read one of `names` from the module at `target`: a row that lists a name, a row that
- * takes the whole module (a namespace, a default, a bare `import m`, `from p import module`, a star) and spells the
- * module's own name, or a star import. Which row reaches `target` is not resolved here, so any row naming the
- * name counts — never fewer files than the ones that import it.
+ * Whether a file's imports can read one of `names` from the module at `target`: a row that lists a name, a star
+ * import, or a row that takes the whole module (a namespace, a default, a bare `import m`, `from p import module`)
+ * and spells its name. Which row reaches `target` is not resolved, so any row naming the name counts — never fewer
+ * files than the ones that import it. A file with no row that even spells the module's name (an edge no import states)
+ * is kept: nothing says it does not read the name.
  */
 function mayRead(imports: readonly ImportInfo[], target: string, names: ReadonlySet<string>): boolean {
-  const stem = moduleStem(target);
-  return imports.some((i) => {
-    if (i.executes) return false;
+  const stem = pathWords(target.split("/").pop() ?? target)[0] ?? "";
+  let relates = false;
+  for (const i of imports) {
+    if (i.executes) continue;
     const listed = [...i.specifiers, ...Object.values(i.aliases ?? {})];
-    if (listed.some((n) => names.has(n))) return true;
-    if (i.specifiers.includes("*")) return true;
-    const whole = i.isNamespace || i.isDefault || i.specifiers.length === 0 || i.specifiers.includes(stem);
-    return whole && (i.specifiers.includes(stem) || moduleStem(i.source) === stem);
-  });
+    if (listed.some((n) => names.has(n)) || i.specifiers.includes("*")) return true;
+    const spelled = i.specifiers.includes(stem) || pathWords(i.source).includes(stem);
+    if (!spelled) continue;
+    relates = true;
+    if (i.isNamespace || i.isDefault || i.specifiers.length === 0 || i.specifiers.includes(stem)) return true;
+  }
+  return !relates;
 }
 
 /**
@@ -704,14 +704,13 @@ export async function boundReaders(analysisDir: string, summary: Pick<ProjectAna
           if (a && !mayRead(a.imports ?? [], hop.file, hop.names)) continue;
           seen.add(importer);
           readers.add(importer);
-          // A file that hands the names on — a re-export or export of one, a star re-export, a package `__init__` or an
-          // `index` — offers them to its own importers (under the name it gives them).
+          // A file that hands the names on — a re-export or export of one, a star re-export — offers them to its own importers (under the name it gives them).
           const handed = new Set<string>();
           for (const e of a?.exports ?? []) {
             if (e.name === "*") for (const n of hop.names) handed.add(n);
             else if (hop.names.has(e.name) || (e.sourceName && hop.names.has(e.sourceName))) handed.add(e.name), e.sourceName && handed.add(e.sourceName);
           }
-          if (!a || /(?:^|\/)(?:__init__\.py|index\.[cm]?[jt]sx?)$/.test(importer)) for (const n of hop.names) handed.add(n);
+          if (!a) for (const n of hop.names) handed.add(n);
           if (handed.size) next.push({ file: importer, names: handed });
         }
       }
