@@ -1678,6 +1678,20 @@ export interface FunctionInfo {
    * it stays empty for every other member read; core's blocking-in-async rule judges the receiver's type.
    */
   propertyReads?: Array<{ name: string; line: number }>;
+  /**
+   * Assignments to a member of an object, as written (`this.status = …`, `club.status += 1`, `this.club.status++`, a bare
+   * `status = …` naming a field of the own class): `receiver` is `this`, `this.<field>`, a parameter or local name, or ""
+   * for the bare spelling; `member` the field. Stated only where the receiver is `this`, a bare field or a name the
+   * function declares (a parameter or a local), and never from a constructor — a constructor initializes, it does not
+   * change. Core resolves the receiver's class (`ProjectAnalysis.fieldWrites`). Absent when the function writes none.
+   */
+  fieldWrites?: Array<{ member: string; receiver: string; line: number }>;
+  /**
+   * The exception types the function throws: `throw new Overdrawn(…)` (the type as written, qualifier kept) and what its
+   * signature declares (Java `throws`, Kotlin `@Throws`; `declared`). A rethrow of a variable and a thrown call result
+   * state nothing. Core resolves the types to project classes (`ProjectAnalysis.thrownTypes`). Absent when it throws none.
+   */
+  throws?: Array<{ type: string; line: number; declared?: true }>;
   line: number;
   endLine: number;
   /** The first sentence of its doc comment or docstring, capped (core/doc-comments.ts). Absent when it has none. */
@@ -5620,6 +5634,10 @@ export interface ProjectAnalysis {
    * a `variable` block. Only keys something reads; names, never values.
    */
   configKeys?: ConfigKeyUse[];
+  /** Field assignments with the class they write, from `FunctionInfo.fieldWrites` (`core/member-effects.ts`). Absent when none resolves. */
+  fieldWrites?: FieldWriteRow[];
+  /** Exception types functions throw, from `FunctionInfo.throws`, with the project class each names when it is one (`core/member-effects.ts`). */
+  thrownTypes?: ThrownTypeRow[];
   /**
    * Non-code files (a config file) the code opens by a literal path, with the files that do
    * (`core/config-files.ts`): the path resolved beside the reader, else at its sub-project root, else at
@@ -6031,6 +6049,31 @@ export interface ConfigFileUse {
 }
 
 /** A configuration key a file sets and the code that reads it (`ProjectAnalysis.configKeys`). */
+/** One assignment to `<class>.<member>`: the function that makes it and where. `via` is the receiver's spelling class. */
+export interface FieldWriteRow {
+  /** The class whose field is written (the one declaring it when an own or base class does; else the receiver's class). */
+  class: string;
+  classFile: string;
+  member: string;
+  /** The writing function, `Class.method` or a free function's name. */
+  function: string;
+  file: string;
+  line: number;
+  /** `this`: through the own instance or a bare field; `typed`: through a parameter, a local or a field of a declared class. */
+  via: "this" | "typed";
+}
+
+/** One thrown exception type of a function. `classFile` is set when the type is a class of the project. */
+export interface ThrownTypeRow {
+  type: string;
+  function: string;
+  file: string;
+  line: number;
+  /** The signature declares it (Java `throws`, Kotlin `@Throws`) rather than a `throw` statement. */
+  declared?: true;
+  classFile?: string;
+}
+
 export interface ConfigKeyUse {
   key: string;
   /** Project-relative posix path of the config file setting it, and its line. */

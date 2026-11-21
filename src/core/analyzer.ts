@@ -89,6 +89,7 @@ import { buildSymbolLinks } from "./symbol-linker.js";
 import { collectForeignBindingRules, foreignBindingLinks, withForeignBindingLinks } from "./foreign-bindings.js";
 import { placeNamespacedParts } from "./class-namespaces.js";
 import { enrichGraphFromInheritance } from "./inheritance-edges.js";
+import { joinMemberEffects } from "./member-effects.js";
 import { applyHttpClientBases } from "./http-client-bases.js";
 import { aggregateComplexity } from "./complexity-analyzer.js";
 import { detectPatterns, type FileStructure } from "./pattern-detector.js";
@@ -1865,6 +1866,9 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Configuration keys the project's config files set, with the code that reads each.
   const configKeys = joinConfigKeys(allAnalyses, allAnalyses.some((a) => a.configKeyReads?.length || a.dataSources.some((d) => d.configRead)) ? await readConfigKeys(projectRoot, subProjects) : [], (f) => !isUnauthored(f), (f, l) => isTestFile(f, l));
 
+  // Field assignments and thrown exception types, resolved to the classes they name.
+  const memberEffects = joinMemberEffects(allAnalyses, (f) => !isUnauthored(f) && !isTestFile(f));
+
   // Non-code files the code opens by a literal path.
   const configFiles = await joinConfigFiles(allAnalyses, subProjects, (f) => !isUnauthored(f), (f, l) => isTestFile(f, l), diskFileExists(projectRoot));
 
@@ -2730,6 +2734,8 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
     deployment,
     ...(envVars.length > 0 ? { envVars } : {}),
     ...(configKeys.length > 0 ? { configKeys } : {}),
+    ...(memberEffects.fieldWrites.length > 0 ? { fieldWrites: memberEffects.fieldWrites } : {}),
+    ...(memberEffects.thrownTypes.length > 0 ? { thrownTypes: memberEffects.thrownTypes } : {}),
     ...(configFiles.length > 0 ? { configFiles } : {}),
     ...(ciDeploys.length > 0 ? { ciDeploys } : {}),
   };

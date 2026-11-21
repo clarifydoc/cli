@@ -206,6 +206,8 @@ export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {
   ciDeploys: "optional",
   configKeys: "optional",
   configFiles: "optional",
+  fieldWrites: "optional",
+  thrownTypes: "optional",
 };
 
 /**

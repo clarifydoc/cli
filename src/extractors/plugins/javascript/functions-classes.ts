@@ -13,6 +13,7 @@ import { callChainText, extractCalls } from "../../shared/call-graph.js";
 import { testCaseFunctions } from "./test-cases.js";
 import { heldFunctionNodes } from "./held-functions.js";
 import { fieldValueFlow, valueFlowOf } from "./value-flow.js";
+import { memberEffectsOf } from "./member-effects.js";
 import { contractHandlerObjects } from "./contract-handlers.js";
 import { foldValue, type ValueExpr } from "../../shared/value-resolver.js";
 import { astToValueExpr } from "./value-capture.js";
@@ -127,6 +128,11 @@ function moduleTypedNames(root: Node): Set<string> {
     }
   }
   return out;
+}
+
+/** The locals whose type the body states (`FunctionInfo.localTypes` entries with a `type`). */
+function typedLocalNames(localTypes: readonly LocalType[] | undefined): string[] {
+  return (localTypes ?? []).filter((l) => l.type).map((l) => l.name);
 }
 
 /**
@@ -2612,6 +2618,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const responses = responsesOf(params, body);
     const { calls, localTypes, returnedSpreads, returnedMembers, returnedFrom, valueFlow } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx, params);
     const derivedLocals = composableLocals(node, returnedMembers);
+    const effects = memberEffectsOf(body, params, typedLocalNames(localTypes));
     return {
       name,
       params,
@@ -2624,6 +2631,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       endLine: node.endPosition.row + 1,
       ...(localTypes ? { localTypes } : {}),
       ...(valueFlow ? { valueFlow } : {}),
+      ...(effects ?? {}),
       ...(returnedSpreads ? { returnedSpreads } : {}),
       ...(returnedMembers ? { returnedMembers } : {}),
       ...(derivedLocals ? { derivedLocals } : {}),
@@ -2681,6 +2689,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const responses = responsesOf(params, body);
     const { calls, localTypes, returnedSpreads, returnedMembers, returnedFrom, valueFlow } = finishBody(extractCalls(body, "typescript", skip), body, paramNames, this.ctx, params, skip);
     const derivedLocals = composableLocals(funcNode, returnedMembers);
+    const effects = memberEffectsOf(body, params, typedLocalNames(localTypes), { skip });
     return {
       name,
       params,
@@ -2693,6 +2702,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       endLine: funcNode.endPosition.row + 1,
       ...(localTypes ? { localTypes } : {}),
       ...(valueFlow ? { valueFlow } : {}),
+      ...(effects ?? {}),
       ...(returnedSpreads ? { returnedSpreads } : {}),
       ...(returnedMembers ? { returnedMembers } : {}),
       ...(derivedLocals ? { derivedLocals } : {}),
@@ -3230,6 +3240,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           const segment = templates.length === 0 && params.length === 0 && RESOURCE_METHOD.test(methodName) ? returnedSegment(methodBody) : null;
           if (segment) templates.push(segment);
           const { calls, localTypes, returnedSpreads, returnedFrom, valueFlow } = finishBody(extractCalls(methodBody, "typescript"), methodBody, paramNames, this.ctx, params);
+          const effects = memberEffectsOf(methodBody, params, typedLocalNames(localTypes), { initializer: methodName === "constructor" });
           methods.push({
             name: methodName,
             params,
@@ -3243,6 +3254,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
             ...(member.children.some((c) => c.type === "static") ? { isStatic: true as const } : {}),
             ...(localTypes ? { localTypes } : {}),
             ...(valueFlow ? { valueFlow } : {}),
+            ...(effects ?? {}),
             ...(returnedSpreads ? { returnedSpreads } : {}),
             ...(returnedFrom && !returnType ? { returnedFrom } : {}),
             ...urlTemplateRecord(templates, stripped),

@@ -1,4 +1,5 @@
 import { constantString } from "./constant-expr.js";
+import { jvmMemberEffects } from "./member-effects.js";
 import type { ModuleBindingInfo } from "../../../types/analysis.js";
 import type { Node } from "web-tree-sitter";
 import { FunctionClassExtractor } from "../../functions-classes/base.js";
@@ -655,10 +656,12 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     if (language === "kotlin") calls.push(...kotlinInvokeCalls(node, params, localTypes, calls));
     typeVariableArgs(calls, params, body, language);
     const valueFlow = methodValueFlow(language, params, body, calls, this.classFlow, returnType, this.library);
+    const effects = jvmMemberEffects(node, body, language, params, localTypes.filter((l) => l.type).map((l) => l.name));
     return {
       name,
       params,
       returnType,
+      ...(effects ?? {}),
       ...(valueFlow.length > 0 ? { valueFlow } : {}),
       isAsync,
       isExported,
