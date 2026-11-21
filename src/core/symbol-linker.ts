@@ -9325,7 +9325,7 @@ function nestedClassByPath(classes: readonly ClassInfo[], written: string): stri
 
 /** The name `file` declares the class at path `written` under (`Club` for `League::Club` in `module League`), else `written`. */
 function declaredTypeName(ctx: LinkContext, file: string, written: string): string {
-  if (written.includes(".") && manifestFor((ctx.languageOf.get(file) ?? "") as Language)?.ownerPathTypes) return ownerPathType(ctx, written, file, undefined)?.typeName ?? written;
+  if (written.includes(".") && /^[A-Z]/.test(written) && manifestFor((ctx.languageOf.get(file) ?? "") as Language)?.ownerPathTypes) return ownerPathType(ctx, written, file, undefined)?.typeName ?? written;
   if (!written.includes("::") || ctx.classAt.has(memberKey(file, written))) return written;
   // `LeagueCore::Valve` where the file declares `Valve` in namespace `LeagueCore`: the class as declared.
   const path = written.replace(/^::/, "");
@@ -9564,7 +9564,7 @@ function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, pro
 }
 
 function typeFileForUncached(ctx: LinkContext, typeName: string, sourceFile: string, projectId: string): string | null {
-  if (typeName.includes(".") && manifestFor((ctx.languageOf.get(sourceFile) ?? "") as Language)?.ownerPathTypes) return ownerPathType(ctx, typeName, sourceFile, projectId)?.typeFile ?? null;
+  if (typeName.includes(".") && /^[A-Z]/.test(typeName) && manifestFor((ctx.languageOf.get(sourceFile) ?? "") as Language)?.ownerPathTypes) return ownerPathType(ctx, typeName, sourceFile, projectId)?.typeFile ?? null;
   const named = typeFileByImportedNamespace(ctx, typeName, sourceFile);
   if (named !== undefined) return named;
   const file = typeFileForInner(ctx, typeName, sourceFile, projectId);
