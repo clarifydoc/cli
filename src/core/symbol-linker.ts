@@ -28,7 +28,7 @@ import { resolveTarget, buildFilePathMap } from "../extractors/shared/link-scori
 import { isExternalImportSource, importResolveContext as buildImportResolveContext } from "./import-index.js";
 import { BEST_RANK as CONFIDENCE_RANK } from "../extractors/shared/confidence.js";
 import { commonPrefixLength, extensionFamily, escapeRegex } from "../extractors/plugins/shared/path-utils.js";
-import { receiverTypeCandidates, receiverTypeName } from "../extractors/shared/type-parser.js";
+import { receiverTypeCandidates, receiverTypeName, ownerTypePath } from "../extractors/shared/type-parser.js";
 import { ELEMENT_HOP } from "../extractors/shared/collection-element.js";
 import { isTestFile } from "./test-file-detector.js";
 import type { CallableMemberQuestion, CallableQuestions, FunctionTypeQuestion } from "./value-flow.js";
@@ -3972,14 +3972,18 @@ function buildMemberTypes(
         // Swift `@Injected(\.repo) var repo`) has no declared type — its
         // registration decides everything.
         if (!typeName && !qualifier) return;
+        // `Right.Builder` (`ownerPathTypes`): the class nested in `Right`'s file, or none — never a namesake's.
+        const owned = typeName?.includes(".") && manifestFor(a.language)?.ownerPathTypes
+          ? ownerPathIn(typeName, { fileOf: (n) => fileOf(n, a.filePath), filesNamed: (n) => inSpace(classToFiles.get(n) ?? [], a.filePath), classesOf: (f) => analysisOf.get(f)?.classes })
+          : undefined;
         // `League::Club` where constants are looked up lexically: the class at that path (as declared), or none.
         const path = typeName?.includes("::") ? lexicalPathIn(lexicalEnv(), typeName, declaredIn, a.projectId) : undefined;
-        const inPackage = path === undefined && typeName && importDirectory && type
+        const inPackage = path === undefined && owned === undefined && typeName && importDirectory && type
           ? packageQualifiedType(importDirectory, importer, type, typeName, (dir) => (filesInDir ??= filesByDirectory(analyses)).get(dir) ?? [], (f) => declAt.has(memberKey(f, typeName)))
           : undefined;
         const point: InjectionPoint = {
-          typeName: path ? path.typeName : typeName ?? "",
-          typeFile: path !== undefined ? path?.typeFile ?? null : inPackage?.length ? pickDefinition(typeName!, declaredFirst(typeName!, inPackage), a.filePath, (f, n) => declAt.get(memberKey(f, n)), (f) => languageOfFile.get(f), (f) => closureOf(a.filePath).has(f))
+          typeName: path ? path.typeName : owned ? owned.typeName : typeName ?? "",
+          typeFile: owned !== undefined ? owned?.typeFile ?? null : path !== undefined ? path?.typeFile ?? null : inPackage?.length ? pickDefinition(typeName!, declaredFirst(typeName!, inPackage), a.filePath, (f, n) => declAt.get(memberKey(f, n)), (f) => languageOfFile.get(f), (f) => closureOf(a.filePath).has(f))
             : typeName ? fileOf(typeName, a.filePath) : null,
           member: rawName,
           consumer: cls.name,
@@ -6026,6 +6030,15 @@ function resolveCallToDefinitionBody(
         : null;
     // `new B.Foo()` where `A.Foo` and `B.Foo` exist: the namespace written decides, never the caller's own.
     const qualifier = ctorMatch ? ctorMatch[1]!.split(/[.\\]/).slice(0, -1).join(".") : "";
+    // `new Right.Builder()` (`ownerPathTypes`): the class nested in `Right`, or nothing — never a namesake's.
+    const ownerPath = ctorMatch && !literal && manifestFor(analysis.language as Language)?.ownerPathTypes ? ownerTypePath(ctorMatch[1]!) : null;
+    if (ownerPath) {
+      const ref = ownerPathType(ctx, ownerPath, sourceFile, analysis.projectId);
+      const cls = ref ? ctx.classAt.get(memberKey(ref.typeFile, ref.typeName)) : undefined;
+      if (!ref || !cls) return null;
+      const ctor = ownConstructor(cls, ctx.languageOf.get(ref.typeFile), true);
+      return mkLink(ref.typeFile, ctor ? `${ref.typeName}.${ctor.name}` : ref.typeName, ctor?.line ?? cls.line, "INFERRED", "constructor");
+    }
     if (qualifier && className) {
       const memoKey = `${qualifier}\0${className}`;
       const memo = (ctx.packageClassFiles ??= new Map<string, FileAnalysis[]>());
@@ -9238,8 +9251,81 @@ function buildTypePaths(analyses: readonly FileAnalysis[]): Map<string, Array<{ 
   return out;
 }
 
+/**
+ * `Right.Builder` (`ownerPathTypes`): the class declared inside the body of the class `Right` names — found
+ * through `Right`'s own file, then each next segment's class within the previous one's lines (or the class a
+ * generated file states as `nestedPath`) — and the file that declares it; never a namesake nested in another
+ * owner or declared at the top level. Null when no owner bears the path out, or when the file holds two classes
+ * of the leaf name (a class is told apart by file and name). `from` is the file whose scope names the owner
+ * (`declaredTypeName` asks from the file already found, where the owner's name is known to be that file's).
+ */
+function ownerPathType(ctx: LinkContext, written: string, from: string, projectId: string | undefined): { typeName: string; typeFile: string } | null {
+  const analysisByFile = (ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a])));
+  const lang = ctx.languageOf.get(from) ?? "";
+  return ownerPathIn(written, {
+    fileOf: (name) => typeFileFor(ctx, name, from, projectId ?? ctx.projectOf.get(from) ?? ""),
+    filesNamed: (name) => (ctx.classFiles.get(name) ?? []).filter((f) => sameTypeSpace(from, lang, f, ctx.languageOf.get(f) ?? "")),
+    classesOf: (f) => analysisByFile.get(f)?.classes,
+  });
+}
+
+/** What `ownerPathIn` reads of the project: where a class name is declared and the classes of a file. */
+interface OwnerPathEnv {
+  fileOf: (name: string) => string | null;
+  filesNamed: (name: string) => readonly string[];
+  classesOf: (file: string) => readonly ClassInfo[] | undefined;
+}
+
+/**
+ * `ownerPathType` over the facts it needs (the member-type index is built before the link context). The owner's
+ * file is the one its name means from the written place; where that decides nothing (a same-package class of
+ * another module), the one file declaring both the owner and a class nested in it. A nested type the owner
+ * inherits (`TagReconciler.Request`, declared in the interface it implements) is read through its bases, three
+ * hops. Several answers decide nothing.
+ */
+function ownerPathIn(written: string, env: OwnerPathEnv, depth = 0): { typeName: string; typeFile: string } | null {
+  const segments = written.split(".");
+  const owner = segments[0]!;
+  const ownerFile = env.fileOf(owner);
+  if (!ownerFile) {
+    const holders = env.filesNamed(owner).filter((f) => nestedClassByPath(env.classesOf(f) ?? [], written));
+    return holders.length === 1 ? { typeName: nestedClassByPath(env.classesOf(holders[0]!) ?? [], written)!, typeFile: holders[0]! } : null;
+  }
+  const classes = env.classesOf(ownerFile) ?? [];
+  const own = nestedClassByPath(classes, written);
+  if (own) return { typeName: own, typeFile: ownerFile };
+  if (depth >= 3) return null;
+  const decl = classes.filter((c) => c.name === owner && !c.synthetic);
+  if (decl.length !== 1) return null;
+  const hits = new Map<string, { typeName: string; typeFile: string }>();
+  for (const base of [decl[0]!.extends, ...decl[0]!.implements]) {
+    const name = base?.replace(/<.*$/s, "").split(".").pop()?.trim();
+    if (!name || !/^[A-Z]/.test(name)) continue;
+    const hit = ownerPathIn([name, ...segments.slice(1)].join("."), env, depth + 1);
+    if (hit) hits.set(`${hit.typeFile}\0${hit.typeName}`, hit);
+  }
+  return hits.size === 1 ? [...hits.values()][0]! : null;
+}
+
+/** The name of the class `written` (`Right.Builder`) stands for among `classes`, all of one file: the one inside its owner's lines, or a generated class's `nestedPath`; null when none or two bear that name. */
+function nestedClassByPath(classes: readonly ClassInfo[], written: string): string | null {
+  const segments = written.split(".");
+  if (segments.length < 2) return null;
+  const gen = classes.find((c) => c.nestedPath === written);
+  const leaf = segments[segments.length - 1]!;
+  if (gen) return classes.filter((c) => c.name === gen.name).length === 1 ? gen.name : null;
+  let owners = classes.filter((c) => c.name === segments[0] && !c.synthetic);
+  for (const name of segments.slice(1)) {
+    const outer = owners;
+    owners = classes.filter((c) => c.name === name && outer.some((o) => o !== c && o.line <= c.line && c.endLine <= o.endLine && (o.line < c.line || c.endLine < o.endLine)));
+    if (owners.length === 0) return null;
+  }
+  return owners.length === 1 && classes.filter((c) => c.name === leaf).length === 1 ? leaf : null;
+}
+
 /** The name `file` declares the class at path `written` under (`Club` for `League::Club` in `module League`), else `written`. */
 function declaredTypeName(ctx: LinkContext, file: string, written: string): string {
+  if (written.includes(".") && manifestFor((ctx.languageOf.get(file) ?? "") as Language)?.ownerPathTypes) return ownerPathType(ctx, written, file, undefined)?.typeName ?? written;
   if (!written.includes("::") || ctx.classAt.has(memberKey(file, written))) return written;
   // `LeagueCore::Valve` where the file declares `Valve` in namespace `LeagueCore`: the class as declared.
   const path = written.replace(/^::/, "");
@@ -9478,6 +9564,7 @@ function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, pro
 }
 
 function typeFileForUncached(ctx: LinkContext, typeName: string, sourceFile: string, projectId: string): string | null {
+  if (typeName.includes(".") && manifestFor((ctx.languageOf.get(sourceFile) ?? "") as Language)?.ownerPathTypes) return ownerPathType(ctx, typeName, sourceFile, projectId)?.typeFile ?? null;
   const named = typeFileByImportedNamespace(ctx, typeName, sourceFile);
   if (named !== undefined) return named;
   const file = typeFileForInner(ctx, typeName, sourceFile, projectId);

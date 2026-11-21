@@ -9,7 +9,7 @@ import {
   getNameFromNode,
 } from "../../shared/node-helpers.js";
 import { callChainText, extractCalls } from "../../shared/call-graph.js";
-import { simpleTypeName } from "../../shared/type-parser.js";
+import { ownerTypePath, simpleTypeName } from "../../shared/type-parser.js";
 import { annotationNodes, isInjectMarked, pointQualifier } from "./di-annotations.js";
 import { javalinSparkAccess } from "./routes/javalin-spark.js";
 import { expressionFact, koinQualifier, type ExprFact } from "./di-expressions.js";
@@ -1006,6 +1006,15 @@ function extractLocalTypes(body: Node | null, language: JkLang): LocalType[] {
     // alone (`Client`) names no service, so the enclosing class stays.
     const nested = declared && /(?:^|[\s.])([A-Z]\w*)\.(?:Client|AsyncClient|Iface|AsyncIface)\b/.exec(declared.split("<")[0]!);
     if (nested) simple = `${nested[1]}.${simple}`;
+    else {
+      // `Right.Builder b` / `new Right.Builder()`: the type keeps its owner path, which the linker resolves through
+      // Right's nested classes (`ownerPathTypes`); the leaf alone names every nested `Builder`.
+      const written = rawType && rawType !== "var" ? rawType
+        : init?.type === "object_creation_expression" ? init.childForFieldName("type")?.text
+        : init?.type === "call_expression" && fact?.constructed ? init.children[0]?.text : undefined;
+      const path = written ? ownerTypePath(written.split("<")[0]!.replace(/\?/g, "").trim()) : null;
+      if (path && path.endsWith(`.${simple}`)) simple = path;
+    }
     seen.add(name);
     const entry: LocalType = { name, type: simple };
     if (fact?.qualifier) entry.qualifier = fact.qualifier;

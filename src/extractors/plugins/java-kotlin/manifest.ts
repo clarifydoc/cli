@@ -102,6 +102,7 @@ export const javaManifest: LanguagePluginManifest = {
   testCommand: jvmTestCommand,
   projectCommands: jvmProjectCommands,
   language: "java",
+  ownerPathTypes: true,
   callPathsFromHead: true,
   // No `await`: the value comes out of a future, a `Mono` or an `Optional` through these calls.
   valueOut: valueOut({ calls: JVM_UNWRAP_CALLS, elementCalls: ["get"], elementOf: jvmIndexedElement }),
@@ -137,6 +138,7 @@ export const kotlinManifest: LanguagePluginManifest = {
   // `runBlocking` and `Thread.sleep` inside a `suspend` function park the coroutine's thread.
   blockingCalls: /^(?:runBlocking|Thread\.sleep)$/,
   language: "kotlin",
+  ownerPathTypes: true,
   callPathsFromHead: true,
   // `lazy.value` of a declared `Lazy<ClubRepo>`.
   valueOut: valueOut({ calls: { ...JVM_UNWRAP_CALLS, await: ["Deferred"] }, members: { value: ["Lazy"] }, elementCalls: ["get"], elementOf: jvmIndexedElement, index: "get" }),

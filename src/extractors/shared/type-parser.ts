@@ -212,6 +212,25 @@ export function registerNestedTypePaths(language: Language, on: boolean | undefi
   if (on) NESTED_TYPE_PATHS.set(language, separator ?? "::");
 }
 
+/** Languages whose type `Right.Builder` keeps its owner path (`ownerPathTypes`); classes keep their bare names. */
+const OWNER_PATH_TYPES = new Set<Language>();
+
+/** Called by the registry while aggregating plugin metas. */
+export function registerOwnerPathTypes(language: Language, on: boolean | undefined): void {
+  if (on) OWNER_PATH_TYPES.add(language);
+}
+
+/** `com.example.Right.Builder` → `Right.Builder`: the capitalized names at the end of a dotted path (two or more), else null. */
+export function ownerTypePath(s: string): string | null {
+  if (!s.includes(".")) return null;
+  const parts = s.split(".").map((p) => p.trim());
+  if (parts.some((p) => !/^[A-Za-z_$][\w$]*$/.test(p))) return null;
+  let i = 0;
+  while (i < parts.length && !/^[A-Z]/.test(parts[i]!)) i++;
+  const tail = parts.slice(i);
+  return tail.length >= 2 && tail.every((p) => /^[A-Z]/.test(p)) ? tail.join(".") : null;
+}
+
 /**
  * `league::Paddock::Iterator` → `Paddock::Iterator`: the class names at the end of a
  * `::` path, namespaces (lowercase, by convention) and template arguments left off;
@@ -322,6 +341,11 @@ export function receiverTypeName(raw: string | null | undefined, language: Langu
   if (separator) {
     const path = nestedTypePath(s, separator);
     if (path) return path;
+  }
+  if (OWNER_PATH_TYPES.has(language)) {
+    const path = ownerTypePath(s);
+    // A platform owner (`Map.Entry`) holds a platform type: no project class of that leaf is it.
+    if (path) return isBuiltinType(path.split(".")[0]!, language) ? null : path;
   }
   const simple = s.split(/\\|::|\./).filter(Boolean).pop() ?? "";
   if (!/^[A-Za-z_$][\w$]*$/.test(simple)) return null;

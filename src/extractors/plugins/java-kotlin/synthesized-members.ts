@@ -191,6 +191,8 @@ function builderClass(name: string, methods: FunctionInfo[], cls: ClassInfo): Cl
     isExported: cls.isExported,
     line: cls.line,
     endLine: cls.line,
+    // Lombok nests the builder in the class: `Club.ClubBuilder` as written.
+    nestedPath: `${cls.name}.${name}`,
   };
 }
 
@@ -322,7 +324,8 @@ export function synthesizeGeneratedValueClasses(classNode: Node, cls: ClassInfo,
   }
   if (find(cls.decorators, IMMUTABLE) && !find(cls.decorators, /^(?:org\.immutables\.value\.)?Value\.Style\b/)) {
     const name = `Immutable${cls.name}`;
-    // A simple, unique name: the written `ImmutableClub.Builder` is read by its last segment, which a hundred other builders share.
+    // A unique name (a class is told apart by file and name; one file may hold several value types): the written
+    // `ImmutableClub.Builder` reaches it through `nestedPath`.
     const builderName = `${name}_Builder`;
     const attrs = valueAttributes(body);
     const methods: FunctionInfo[] = [synthetic("builder", [], builderName, cls.line), synthetic("copyOf", [{ name: "instance", type: cls.name, defaultValue: null }], name, cls.line)];
@@ -333,7 +336,7 @@ export function synthesizeGeneratedValueClasses(classNode: Node, cls: ClassInfo,
     out.push(generatedClass(name, cls, isInterface ? null : cls.name, isInterface ? [cls.name] : [], methods, name));
     const builderMethods = attrs.map((a) => synthetic(a.name, [{ name: a.name, type: a.type, defaultValue: null }], builderName, a.line));
     builderMethods.push(synthetic("from", [{ name: "instance", type: cls.name, defaultValue: null }], builderName, cls.line), synthetic("build", [], name, cls.line));
-    out.push(generatedClass(builderName, cls, null, [], builderMethods, name));
+    out.push({ ...generatedClass(builderName, cls, null, [], builderMethods, name), nestedPath: `${name}.Builder` });
   }
   return out;
 }

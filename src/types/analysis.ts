@@ -2021,6 +2021,12 @@ export interface ClassInfo {
    * name is never two classes. Omitted otherwise.
    */
   yieldsTo?: string;
+  /**
+   * The owner path a generated class stands for where the generated source declares it nested (`ImmutableClub.Builder`
+   * for the synthesized `ImmutableClub_Builder`): a type written so (`ownerPathTypes`) means this class. The class keeps
+   * a unique name — a class is told apart by file and name.
+   */
+  nestedPath?: string;
   /** One declaration of a class written in several (C# `partial class`): its namesakes in the file are the same class. */
   partial?: true;
   /** The first sentence of its doc comment or docstring, capped (core/doc-comments.ts). Absent when it has none. */

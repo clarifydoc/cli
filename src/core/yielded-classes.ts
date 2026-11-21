@@ -16,8 +16,8 @@ export function dropYieldedClasses(analyses: FileAnalysis[]): void {
     if (!a.classes.some((c) => c.yieldsTo)) continue;
     a.classes = a.classes.filter((c) => {
       if (!c.yieldsTo) return true;
-      // The generated class itself, or a class generated inside it (`ImmutableClub_Builder`), by the written name.
-      return !written.has(key(a, c.yieldsTo)) && !written.has(key(a, c.name));
+      // `yieldsTo` names the written sibling: the generated class itself, or the one it nests in (`ImmutableClub`).
+      return !written.has(key(a, c.yieldsTo));
     });
   }
 }

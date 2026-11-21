@@ -1499,6 +1499,13 @@ export interface LanguagePluginManifest {
    */
   nestedPackageLookup?: boolean;
   /**
+   * A type written through its owner (`Right.Builder`, package left off) means the class declared inside `Right`'s
+   * body, never a namesake nested elsewhere or a top-level one: `receiverTypeName` keeps the dotted owner path and
+   * the linker resolves it through the owner's nested classes (line ranges, or `ClassInfo.nestedPath` for a
+   * generated class), refusing a path no owner bears out. Classes keep their bare names.
+   */
+  ownerPathTypes?: boolean;
+  /**
    * An extension method (`ParamInfo.isReceiver`) links only from a file that has its declaring file in
    * scope by this language's import rules: the same file, a `using` of its namespace (or `using static`
    * of its class), its own or an enclosing namespace, a project-wide import, an imported project. Needs
