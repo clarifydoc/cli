@@ -14,7 +14,7 @@ import { join } from "path";
 import type { McpTool } from "../protocol.js";
 import type { ImpactDiffResult } from "../../core/impact-diff.js";
 import { AnalysisCancelledError, EngineOlderError, describeRun, type LoadedAnalysis } from "../store.js";
-import type { FileChurnInfo, PatternInfo, ProjectAnalysis, ProjectDependency, RefactorPressureInfo } from "../../types/analysis.js";
+import type { FileChurnInfo, PatternInfo, ProjectAnalysis, ProjectDependency, RefactorPressureInfo, VulnerableReach } from "../../types/analysis.js";
 import {
   ago,
   bulletList,
@@ -147,6 +147,18 @@ export function analyzeTool(ctx: ToolContext): McpTool {
 const SEARCH_KINDS: readonly SearchKind[] = ["route", "screen", "file", "symbol", "entity", "api-call"];
 
 /** One ranked row: a symbol found by a name it is imported under says which. */
+/** What the call graph says about an advisory's vulnerable functions, as a suffix of its line; nothing for a package-level advisory. */
+function reachNote(reach: VulnerableReach | undefined): string {
+  if (!reach) return "";
+  const c = reach.calls?.[0];
+  switch (reach.status) {
+    case "reachable": return ` — REACHABLE: ${c!.symbol} called at ${c!.file}:${c!.line}, from ${c!.from} (${c!.path!.map((k) => k.slice(k.indexOf("::") + 2)).join(" -> ")})`;
+    case "called": return ` — vulnerable function ${c!.symbol} called at ${c!.file}:${c!.line}, no route or entry point traced to it`;
+    case "not-called": return " — vulnerable functions not called";
+    default: return " — reach not judged (the advisory names methods)";
+  }
+}
+
 function hitLine(hit: RankedCandidate, query: string): string {
   const importedAs = hit.kind === "symbol" && hit.via === "aka" ? hit.aka?.find((a) => normalize(a) === normalize(query)) ?? hit.aka?.[0] : undefined;
   return `${kindTag(hit.kind)} ${hit.text}${hit.via === "doc" ? ` · doc: ${hit.doc}` : ""}${importedAs ? ` · imported as ${importedAs}` : ""}`;
@@ -1144,7 +1156,7 @@ export function healthTool(ctx: ToolContext): McpTool {
               `# Dependencies — ${plural(vulnerable.length, "package")} with advisories, ${plural(skewed.length, "version skew")}, ${plural(unused.length, "unused package")}`,
               ...(vulnerable.length ? ["", "## Known vulnerabilities (OSV)", ...bulletList(vulnerable, limit, (p) =>
                 `${p.name} ${p.resolvedVersion ?? p.version ?? ""} (${p.ecosystem}${p.scope !== "prod" ? `, ${p.scope}` : ""}${p.used === false ? ", unused" : ""}): ${
-                  p.advisories!.slice(0, 4).map((a) => `${a.id}${a.severity ? ` [${a.severity.toLowerCase()}]` : ""}${a.summary ? ` ${a.summary}` : ""}`).join("; ")
+                  p.advisories!.slice(0, 4).map((a) => `${a.id}${a.severity ? ` [${a.severity.toLowerCase()}]` : ""}${a.summary ? ` ${a.summary}` : ""}${reachNote(a.reach)}`).join("; ")
                 }${p.advisories!.length > 4 ? ` … +${p.advisories!.length - 4}` : ""}`, { offset })] : []),
               ...(skewed.length ? ["", "## Declared with different versions", ...bulletList(skewed, limit, (p) =>
                 `${p.name} (${p.ecosystem}): ${(p.declarations ?? []).map((d) => `${d.version ?? "—"} in ${d.declaredIn}`).join(", ")}`, { offset })] : []),

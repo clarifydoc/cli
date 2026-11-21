@@ -5810,6 +5810,30 @@ export type PackageCategory =
   | "other";
 
 /**
+ * What the call graph says about an advisory's vulnerable functions.
+ * `reachable`: a route or entry point reaches a call of one (`calls[].path` is the shortest chain);
+ * `called`: the project calls one but no entry point is traced to the call;
+ * `not-called`: no project call names any of them;
+ * `not-judged`: a stated symbol is a method (`Type.Method`), which a package-qualified call does not name, so
+ * "not called" cannot be told — never read as safe.
+ */
+export interface VulnerableReach {
+  status: "reachable" | "called" | "not-called" | "not-judged";
+  calls?: Array<{
+    /** The vulnerable symbol as the advisory names it (`Unmarshal`). */
+    symbol: string;
+    file: string;
+    line: number;
+    /** The project function that makes the call. */
+    caller: string;
+    /** The route (`POST /squad`) or entry point (`cli-command sync`) the call is reached from. */
+    from?: string;
+    /** `file::function` hops, entry first, ending at the caller; capped. */
+    path?: string[];
+  }>;
+}
+
+/**
  * One external dependency declared in a project manifest (package.json,
  * *.csproj, go.mod, …), cross-referenced against the code that actually imports
  * it. This is the inventory the framework detector consumes and the report
@@ -5877,7 +5901,20 @@ export interface ExternalPackage {
    * Known vulnerabilities of `resolvedVersion` (or an exact `version`), from
    * OSV — only when the analysis ran with `--osv`.
    */
-  advisories?: Array<{ id: string; summary?: string; severity?: string; aliases?: string[] }>;
+  advisories?: Array<{
+    id: string;
+    summary?: string;
+    severity?: string;
+    aliases?: string[];
+    /**
+     * The functions the advisory states as vulnerable, where its ecosystem's record says so (Go's
+     * `ecosystem_specific.imports`): an import path and its exported symbols (`Unmarshal`, `Decoder.Decode`).
+     * Absent for an advisory stated per package only.
+     */
+    functions?: Array<{ path: string; symbols: string[] }>;
+    /** Whether the project's entry points reach those functions (`vuln-reach.ts`); absent without `functions`. */
+    reach?: VulnerableReach;
+  }>;
   /**
    * Every manifest declaring it, when there are several (`web/package.json`
    * and `admin/package.json`), each with its own version spec — `version` and

@@ -269,6 +269,8 @@ export interface AnalyzeOptions {
    * off unless asked.
    */
   osv?: boolean;
+  /** The `fetch` the OSV check uses; a seam for tests, never set from the command line. */
+  osvFetch?: typeof fetch;
   /**
    * Write machine-independent artifacts: a sentinel `analyzedAt` and a
    * cwd-relative `projectRoot`. For committed fixtures only.
@@ -2579,10 +2581,15 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   attachPackageUsage(externalPackages, allAnalyses, { installedOwners });
   if (options.osv) {
     progress.step("Checking packages against OSV...");
-    const osv = await attachOsvAdvisories(externalPackages);
+    const osv = await attachOsvAdvisories(externalPackages, options.osvFetch ? { fetch: options.osvFetch } : {});
     progress.detail(osv.error
       ? `  OSV: not reached (${osv.error}); packages left unchecked`
       : `  OSV: ${osv.asked} package version(s) checked, ${osv.vulnerable} with known advisories`);
+    const judgedAdvisories = attachVulnerableReach(externalPackages, allAnalyses, symbolLinks, allRoutes, allEntryPoints);
+    if (judgedAdvisories > 0) {
+      const reached = externalPackages.flatMap((p) => p.advisories ?? []).filter((a) => a.reach?.status === "reachable").length;
+      progress.detail(`  OSV: ${judgedAdvisories} advisory(ies) name vulnerable functions, ${reached} reached by a route or entry point`);
+    }
   }
 
   // Step 5: Write project summary
@@ -4320,6 +4327,7 @@ import type { FunctionInfo, ImportInfo, RouteInfo, SubProject } from "../types/a
 import { ignoreSuggestionLines, ignoreSuggestions } from "./ignore-suggestions.js";
 import { anonymousWriteFindings, attachFindingEntries, attachPatternEntries, filterGapFindings, rankPerformanceByReach, safeMethodWriteFindings } from "./finding-entries.js";
 import { attachOsvAdvisories } from "./osv.js";
+import { attachVulnerableReach } from "./vuln-reach.js";
 import { readSourceRevision } from "./source-revision.js";
 import { importSarif } from "./sarif-import.js";
 import { assessCoverage } from "./coverage.js";
