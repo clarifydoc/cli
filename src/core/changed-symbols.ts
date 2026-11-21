@@ -164,13 +164,22 @@ export function symbolsInHunks(
           for (const n of owned) set.add(n);
           continue;
         }
-        moduleLevel.add(file);
         // Edits inside the file's import block change what IT imports, not what it offers its importers —
         // unless the file declares nothing and is only a barrel of imports.
         // Only top-level imports bound the block: an import inside a function or type body would stretch it
         // over every module-level line above it (a constant edited there must keep its importers).
         const lines = (a.imports ?? []).map((i) => i.line).filter((l) => !spans.some((sp) => sp.line < l && l <= sp.endLine) && !typeSpans.some((t) => t.line < l && l <= t.endLine));
-        if ((a.functions.length || a.classes.length) && lines.length && s >= Math.min(...lines) && e <= Math.max(...lines)) {
+        const inImports = (a.functions.length || a.classes.length) && lines.length && s >= Math.min(...lines) && e <= Math.max(...lines);
+        // Lines right above a definition — a decorator written (or being written) there, the blank line before it —
+        // are that definition's: the change is to it, whoever calls it. (Inside a type they stay the type's: a member
+        // added between two others is judged by the type's comparison.)
+        const below = inImports || typeSpans.some((t) => t.line <= s && e <= t.endLine) ? undefined : spans.find((sp) => sp.line === e + 1);
+        if (below) {
+          symbols.set(`${file}::${below.symbol}`, below);
+          continue;
+        }
+        moduleLevel.add(file);
+        if (inImports) {
           importOnly.add(file);
           if (a.reexports?.length) forwarded.set(file, a.reexports);
           continue;

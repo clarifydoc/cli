@@ -660,7 +660,7 @@ function narrowDependents(
           const via = targets.find((t) => reached.has(t));
           if (!via || reached.has(fwd) || changedFiles.includes(fwd)) continue;
           reached.add(fwd);
-          named.files.set(fwd, [`re-exports ${via} whole`]);
+          named.files.set(fwd, [...(named.files.get(fwd) ?? []), `re-exports ${via} whole`]);
           grew = true;
         }
       }

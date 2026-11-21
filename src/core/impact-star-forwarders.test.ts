@@ -20,6 +20,9 @@ const FILES: Record<string, string> = {
   "web/clock.ts": CLOCK_TS,
   "web/hooks/index.ts": "export * from './hooks';\n",
   "web/hooks/hooks.ts": "import { addJob } from '../clock';\nexport const register = () => addJob('final');\n",
+  "league/table.py": "def rank():\n    return 1\n\n\ndef relegate():\n    return 2\n",
+  "league/ranks.py": "from league.table import rank\n\n\ndef top():\n    return rank()\n",
+  "league/drops.py": "from league.table import relegate\n\n\ndef bottom():\n    return relegate()\n",
   "web/decoy.ts": "import { tick } from './clock';\nexport const beat = () => tick();\n",
 };
 
@@ -50,5 +53,10 @@ describe("impact charges a file that hands a charged module on whole", () => {
   it("TypeScript: a barrel re-exporting the caller with `export *` is charged with it", async () => {
     const r = await run("web/clock.ts", CLOCK_TS.replace(/export function addJob[^]*?\n}\n\n/, ""));
     expect(r.dependents).toEqual(["web/hooks/hooks.ts", "web/hooks/index.ts"]);
+  });
+
+  it("a decorator inserted right above a function is an edit of that function: only its callers are charged", async () => {
+    const r = await run("league/table.py", "def rank():\n    return 1\n\n\n@memoize\ndef relegate():\n    return 2\n");
+    expect(r.dependents).toEqual(["league/drops.py"]);
   });
 });
