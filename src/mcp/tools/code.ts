@@ -1711,7 +1711,7 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
         adding: { type: "boolean", description: "The members are new: charge what implements, extends or builds the type." },
         change: {
           type: "object",
-          description: "Per member; a lost name charges files re-exporting this one whole.",
+          description: "Per member; a lost name charges files re-exporting this whole.",
           additionalProperties: { type: "string", enum: ["removed", "renamed", "moved", "retyped", "body"] },
         },
       },
