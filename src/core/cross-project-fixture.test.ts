@@ -51,6 +51,24 @@ import type { ProjectAnalysis } from "../types/analysis.js";
  *                             under `server.servlet.context-path: /league`.
  *   billing SponsorBilling    a WebClient built on `http://league/league` —
  *                             the same discovery name, then the uri.
+ *
+ * Four more callers, one per language whose plugin reads a client base, each
+ * naming fleet / cars through a different spelling and holding one decoy: a
+ * client on `http://archive:8080`, a host no project answers to, whose path
+ * (`GET /api/parts`, `POST /api/cars`) every service above serves — it must
+ * link to none of them.
+ *
+ *   stats     Python  app.py: `httpx.Client(base_url=os.environ["FLEET_URL"])`
+ *                     → compose `FLEET_URL: http://fleet:8080`; an aiohttp
+ *                     `ClientSession(base_url="http://cars:8080")` → cars.
+ *   dispatch  Go      cmd/main.go: resty `SetBaseURL(os.Getenv("CARS_URL"))`
+ *                     → compose → cars; a `fleetURL` struct field holding
+ *                     "http://fleet:8080" joined onto the path → fleet.
+ *   invoices  PHP     `config('services.fleet.url')` → config/services.php
+ *                     `env('FLEET_API_URL')` → compose → fleet; a Guzzle
+ *                     `base_uri => env('CARS_API_URL')` → compose → cars.
+ *   mailer    Ruby    `Faraday.new(url: ENV.fetch("FLEET_URL"))` → fleet,
+ *                     `ENV["CARS_URL"]` → cars (both from compose).
  */
 const FIXTURE = resolve(__dirname, "..", "..", "test-fixtures", "sample-microservices");
 
@@ -68,6 +86,14 @@ const EXPECTED = [
   { call: "billing/src/main/java/com/shop/billing/DriverLookup.java:16", route: "POST /v1/persons", at: "person/person-api/src/main/java/com/shop/person/api/PersonRepository.java:19" },
   { call: "billing/src/main/java/com/shop/billing/ClubClient.java:8", route: "GET /league/clubs/{id}", at: "league/src/main/java/com/shop/league/ClubController.java:9" },
   { call: "billing/src/main/java/com/shop/billing/SponsorBilling.java:10", route: "POST /league/clubs/{id}/sponsors", at: "league/src/main/java/com/shop/league/ClubController.java:14" },
+  { call: "stats/app.py:14", route: "GET /api/parts", at: "fleet/Controllers/PartsController.cs:9" },
+  { call: "stats/app.py:23", route: "POST /api/cars", at: "cars/Controllers/CarsController.cs:26" },
+  { call: "dispatch/cmd/main.go:22", route: "GET /api/parts", at: "fleet/Controllers/PartsController.cs:9" },
+  { call: "dispatch/cmd/main.go:26", route: "POST /api/cars", at: "cars/Controllers/CarsController.cs:26" },
+  { call: "invoices/app/Services/PartsGateway.php:12", route: "GET /api/parts", at: "fleet/Controllers/PartsController.cs:9" },
+  { call: "invoices/app/Services/PartsGateway.php:23", route: "POST /api/cars", at: "cars/Controllers/CarsController.cs:26" },
+  { call: "mailer/app/services/parts_client.rb:12", route: "GET /api/parts", at: "fleet/Controllers/PartsController.cs:9" },
+  { call: "mailer/app/services/parts_client.rb:20", route: "POST /api/cars", at: "cars/Controllers/CarsController.cs:26" },
 ];
 
 let out: string | undefined;
@@ -105,6 +131,22 @@ describe("service-to-service links — hand-labelled fixture", () => {
     expect(origin("worker/src/index.ts", 15)).toMatchObject({ project: "fleet", host: "fleet" });
     expect(origin("cars/Clients/PaymentsClient.cs", 9)).toMatchObject({ host: "api.stripe.com", external: true });
     expect(origin("cars/Clients/PaymentsClient.cs", 9)).not.toHaveProperty("project");
+    // Python, Go, PHP and Ruby clients: the base each states, valued from compose or written out.
+    const reaches = (file: string, line: number, project: string) =>
+      expect(origin(file, line)).toMatchObject({ project, host: project, confidence: "EXTRACTED" });
+    reaches("stats/app.py", 14, "fleet");
+    reaches("stats/app.py", 23, "cars");
+    reaches("dispatch/cmd/main.go", 22, "fleet");
+    reaches("dispatch/cmd/main.go", 26, "cars");
+    reaches("invoices/app/Services/PartsGateway.php", 12, "fleet");
+    reaches("invoices/app/Services/PartsGateway.php", 23, "cars");
+    reaches("mailer/app/services/parts_client.rb", 12, "fleet");
+    reaches("mailer/app/services/parts_client.rb", 20, "cars");
+    // The decoys: a host nobody serves is outside, never fleet or legacy by path.
+    for (const [file, line] of [["stats/app.py", 18], ["dispatch/cmd/main.go", 30], ["invoices/app/Services/PartsGateway.php", 17], ["mailer/app/services/parts_client.rb", 16]] as const) {
+      expect(origin(file, line)).toMatchObject({ host: "archive", external: true });
+      expect(origin(file, line)).not.toHaveProperty("project");
+    }
     // A discovery name: the project whose spring.application.name it is.
     expect(origin("billing/src/main/java/com/shop/billing/ClubClient.java", 8)).toMatchObject({ project: "league", host: "league", confidence: "EXTRACTED" });
     // Two hops: the dev proxy to the gateway, the gateway's route to the service.
@@ -125,8 +167,17 @@ describe("service-to-service links — hand-labelled fixture", () => {
       // docker-compose.yml: cars `Services__Fleet: http://fleet:8080`.
       ["cars", "fleet", "http", 3, "Services__Fleet"],
       ["cars", "legacy", "http", 1, null],
+      ["dispatch", "cars", "http", 1, "CARS_URL"],
+      // A literal base written in the code: no deployment edge states it.
+      ["dispatch", "fleet", "http", 1, null],
+      ["invoices", "cars", "http", 1, "CARS_API_URL"],
+      ["invoices", "fleet", "http", 1, "FLEET_API_URL"],
+      ["mailer", "cars", "http", 1, "CARS_URL"],
+      ["mailer", "fleet", "http", 1, "FLEET_URL"],
       // person/person-service/pom.xml depends on the same artifact.
       ["person-person-service", "person-person-api", "package", 0, null],
+      ["stats", "cars", "http", 1, null],
+      ["stats", "fleet", "http", 1, "FLEET_URL"],
       ["web", "cars", "http", 1, null],
       ["web", "fleet", "http", 2, null],
       ["worker", "cars", "http", 1, "CARS_URL"],
