@@ -1001,7 +1001,7 @@ export function traceTool(ctx: ToolContext): McpTool {
       const limit = numberArg(args, "limit", 20, { max: 200 });
       if (direction === "writers") {
         if (!symbol) throw new Error("`direction=writers` needs `symbol`: a field (\"Club.status\") or an exception class.");
-        return { text: writersText(loaded.summary, symbol, limit) };
+        return { text: writersText(loaded.summary, symbol, limit, fileArg ? mustResolveFile(loaded, fileArg) : undefined) };
       }
       const minConfidence = enumArg(args, "minConfidence", ["EXTRACTED", "INFERRED", "AMBIGUOUS"] as const) ?? "AMBIGUOUS";
       if (!symbol && !fileArg) {

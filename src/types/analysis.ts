@@ -6048,8 +6048,7 @@ export interface ConfigFileUse {
   consumers: Array<{ file: string; line: number; project?: string }>;
 }
 
-/** A configuration key a file sets and the code that reads it (`ProjectAnalysis.configKeys`). */
-/** One assignment to `<class>.<member>`: the function that makes it and where. `via` is the receiver's spelling class. */
+/** One assignment to `<class>.<member>`: the function that makes it and where. */
 export interface FieldWriteRow {
   /** The class whose field is written (the one declaring it when an own or base class does; else the receiver's class). */
   class: string;
@@ -6074,6 +6073,7 @@ export interface ThrownTypeRow {
   classFile?: string;
 }
 
+/** A configuration key a file sets and the code that reads it (`ProjectAnalysis.configKeys`). */
 export interface ConfigKeyUse {
   key: string;
   /** Project-relative posix path of the config file setting it, and its line. */

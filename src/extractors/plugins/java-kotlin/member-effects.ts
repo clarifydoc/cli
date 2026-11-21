@@ -27,7 +27,7 @@ function declaredNames(body: Node, language: string): Set<string> {
     }
     return out;
   }
-  for (const n of body.descendantsOfType(["variable_declarator", "formal_parameter", "spread_parameter", "catch_formal_parameter", "enhanced_for_statement"])) {
+  for (const n of body.descendantsOfType(["variable_declarator", "formal_parameter", "spread_parameter", "catch_formal_parameter", "enhanced_for_statement", "resource", "type_pattern"])) {
     const id = n.childForFieldName("name") ?? n.namedChildren.find((c) => c.type === "identifier");
     if (id) out.add(id.text);
   }

@@ -20,6 +20,7 @@ export function joinMemberEffects(
 ): { fieldWrites: FieldWriteRow[]; thrownTypes: ThrownTypeRow[] } {
   const byName = new Map<string, ClassRef[]>();
   for (const a of analyses) {
+    if (!include(a.filePath)) continue;
     for (const cls of a.classes) {
       const list = byName.get(cls.name) ?? [];
       list.push({ cls, file: a.filePath, project: a.projectId ?? "" });
@@ -79,11 +80,11 @@ export function joinMemberEffects(
         const field = declaring(owner)(w.receiver.slice(5));
         const type = field?.type ? receiverTypeName(field.type, a.language) : null;
         const typed = type ? locate(type, field!.ref.file, field!.ref.project) : null;
-        target = typed ? declaring(typed)(w.member)?.ref ?? typed : null;
+        target = typed ? declaring(typed)(w.member)?.ref ?? null : null;
       } else if (w.receiver && !w.receiver.includes(".") && w.receiver !== "this") {
         const type = typeOfName(w.receiver);
         const typed = type ? locate(type, a.filePath, project) : null;
-        target = typed ? declaring(typed)(w.member)?.ref ?? typed : null;
+        target = typed ? declaring(typed)(w.member)?.ref ?? null : null;
       }
       if (!target) continue;
       fieldWrites.push({ class: target.cls.name, classFile: target.file, member: w.member, function: symbol, file: a.filePath, line: w.line, via });

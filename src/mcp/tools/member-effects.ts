@@ -7,7 +7,7 @@ import { noResults } from "../empty.js";
  * Null when it states neither. `file` narrows to one definition when the name is declared in several files.
  */
 export function functionEffectsText(summary: ProjectAnalysis, symbol: string, file?: string): string | null {
-  const here = (r: { function: string; file: string }): boolean => r.function === symbol && (!file || r.file === file);
+  const here = (r: { function: string; file: string }): boolean => (r.function === symbol || r.function.endsWith(`.${symbol}`)) && (!file || r.file === file);
   const writes = (summary.fieldWrites ?? []).filter(here);
   const throws = (summary.thrownTypes ?? []).filter(here);
   if (writes.length === 0 && throws.length === 0) return null;
@@ -27,12 +27,12 @@ export function functionEffectsText(summary: ProjectAnalysis, symbol: string, fi
  * `clarifydoc_trace direction=writers`: who assigns `Class.field`, or — for a name with no member — who throws that
  * exception class. Direct statements only: a write through a call is the callee's.
  */
-export function writersText(summary: ProjectAnalysis, symbol: string, limit: number): string {
+export function writersText(summary: ProjectAnalysis, symbol: string, limit: number, file?: string): string {
   const dot = symbol.lastIndexOf(".");
   const cls = dot > 0 ? symbol.slice(0, dot) : "";
   const member = dot > 0 ? symbol.slice(dot + 1) : "";
-  const writes = dot > 0 ? (summary.fieldWrites ?? []).filter((w) => w.class === cls.slice(cls.lastIndexOf(".") + 1) && w.member === member) : [];
-  const thrown = (summary.thrownTypes ?? []).filter((t) => t.type === symbol || t.type.endsWith(`.${symbol}`));
+  const writes = dot > 0 ? (summary.fieldWrites ?? []).filter((w) => w.class === cls.slice(cls.lastIndexOf(".") + 1) && w.member === member && (!file || w.classFile === file)) : [];
+  const thrown = (summary.thrownTypes ?? []).filter((t) => (t.type === symbol || t.type.endsWith(`.${symbol}`)) && (!file || t.classFile === file));
   if (writes.length === 0 && thrown.length === 0) {
     const members = [...new Set((summary.fieldWrites ?? []).map((w) => `${w.class}.${w.member}`))].sort();
     return noResults({
@@ -44,7 +44,9 @@ export function writersText(summary: ProjectAnalysis, symbol: string, limit: num
   }
   const lines: string[] = [];
   if (writes.length > 0) {
+    const homes = [...new Set(writes.map((w) => w.classFile))];
     lines.push(`# Who assigns ${cls}.${member} — ${plural(writes.length, "write")} in ${plural(new Set(writes.map((w) => w.function)).size, "function")}`, "");
+    if (homes.length > 1) lines.push(`Several classes are named ${cls} (${homes.join(", ")}); pass \`file\` to pick one.`, "");
     lines.push(...bulletList(writes, limit, (w) => `${w.function} — ${loc(w.file, w.line)}${w.via === "typed" ? " (through a typed receiver)" : ""}`));
   }
   if (thrown.length > 0) {
