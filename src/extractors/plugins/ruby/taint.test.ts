@@ -132,4 +132,39 @@ end
     Club.where("n = #{params[:n]}"
 `)).toEqual([]);
   });
+  it("reads interpolation inside a heredoc that reaches a SQL sink", async () => {
+    expect(await findings(`class ClubsController < ApplicationController
+  def index
+    Club.find_by_sql(<<~SQL)
+      SELECT * FROM clubs WHERE name = '#{params[:name]}'
+    SQL
+  end
+
+  def reset
+    sql = <<-SQL
+      DELETE FROM players WHERE club = '#{params[:club]}'
+    SQL
+    ActiveRecord::Base.connection.execute(sql)
+    ActiveRecord::Base.connection.execute(<<~SQL, 1)
+      UPDATE players SET name = '#{params[:name]}'
+    SQL
+  end
+
+  def safe
+    Club.find_by_sql(<<~SQL)
+      SELECT * FROM clubs WHERE id = #{params[:id].to_i}
+    SQL
+    Club.find_by_sql(<<~'SQL')
+      SELECT '#{params[:id]}'
+    SQL
+    Club.find_by_sql(<<~SQL)
+      SELECT * FROM clubs WHERE league = '#{LEAGUE}'
+    SQL
+    Club.logger.debug(<<~SQL)
+      #{params[:id]}
+    SQL
+  end
+end
+`)).toEqual(["3 sql-injection", "12 sql-injection", "13 sql-injection"]);
+  });
 });

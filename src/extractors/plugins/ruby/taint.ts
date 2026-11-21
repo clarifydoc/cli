@@ -58,6 +58,29 @@ function assignsLocal(fn: Node, name: string): boolean {
   return visit(fn);
 }
 
+/**
+ * The text of a heredoc whose opening `node` is: tree-sitter-ruby puts every `heredoc_body` of a line after the
+ * statement that opens them, one per opening in order, so `find_by_sql(<<~SQL)` has no text of its own.
+ */
+function heredocBody(node: Node): Node | null {
+  let stmt: Node = node;
+  while (stmt.parent && stmt.nextNamedSibling?.type !== "heredoc_body" && stmt.parent.type !== "program") stmt = stmt.parent;
+  let index = 0;
+  const count = (n: Node): void => {
+    if (n.type === "heredoc_beginning" && n.startIndex < node.startIndex) index++;
+    for (const c of n.namedChildren) count(c);
+  };
+  count(stmt);
+  let body = stmt.nextNamedSibling;
+  for (let i = 0; body && i < index; i++) body = body.nextNamedSibling;
+  return body?.type === "heredoc_body" ? body : null;
+}
+
+/** A heredoc opening stands for its body, so interpolations in it are what the statement reads. */
+function withBody(node: Node): Node {
+  return node.type === "heredoc_beginning" ? (heredocBody(node) ?? node) : node;
+}
+
 function buildSpec(filePath: string): TaintSpec {
   const controllerFile = CONTROLLER_PATH.test(filePath);
   return {
@@ -73,7 +96,7 @@ function buildSpec(filePath: string): TaintSpec {
     assignment(node) {
       if (node.type === "assignment") {
         const value = node.childForFieldName("right");
-        return value ? { names: targetNames(node.childForFieldName("left")), value } : null;
+        return value ? { names: targetNames(node.childForFieldName("left")), value: withBody(value) } : null;
       }
       if (node.type === "operator_assignment") {
         const value = node.childForFieldName("right");
@@ -88,7 +111,7 @@ function buildSpec(filePath: string): TaintSpec {
       if (!method) return null;
       const receiver = node.childForFieldName("receiver")?.text;
       // A keyword argument (`where(name: params[:x])`, `redirect_to controller: …`) is bound or a routing option, never the SQL or the target.
-      const args = (node.childForFieldName("arguments")?.namedChildren ?? []).filter((a) => a.type !== "pair" && a.type !== "comment" && a.type !== "block_argument" && a.type !== "hash_splat_argument");
+      const args = (node.childForFieldName("arguments")?.namedChildren ?? []).filter((a) => a.type !== "pair" && a.type !== "comment" && a.type !== "block_argument" && a.type !== "hash_splat_argument").map(withBody);
       return { callee: (receiver ? `${receiver.replace(/\s+/g, "")}.` : "") + method, args };
     },
     sanitizer: SANITIZER,
