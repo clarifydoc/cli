@@ -43,8 +43,8 @@ const spec: TaintSpec = {
     { callee: /\.(?:query|execute|raw|\$queryRawUnsafe|\$executeRawUnsafe)$|^(?:sequelize|knex)\.raw$/, category: "sql-injection", cwe: "CWE-89", what: "the SQL text" },
     { callee: /^(?:exec|execSync|child_process\.(?:exec|execSync)|cp\.(?:exec|execSync)|shell\.exec)$/, category: "command-injection", cwe: "CWE-78", what: "the command" },
     { callee: /^(?:fs\.(?:promises\.)?(?:readFile|readFileSync|createReadStream|writeFile|writeFileSync|unlink|unlinkSync|rm|rmSync)|res\.sendFile|res\.download)$/, category: "path-traversal", cwe: "CWE-22", what: "the file path" },
-    { callee: /^(?:fetch|axios(?:\.(?:get|post|put|patch|delete|request))?|got|needle|superagent\.(?:get|post)|https?\.(?:get|request))$/, category: "ssrf", cwe: "CWE-918", what: "the URL" },
-    { callee: /^(?:res|reply|ctx|response)\.redirect$/, category: "open-redirect", cwe: "CWE-601", what: "the redirect target" },
+    { callee: /^(?:fetch|axios(?:\.(?:get|post|put|patch|delete|request))?|got|needle|superagent\.(?:get|post)|https?\.(?:get|request))$/, category: "ssrf", hostSensitive: true, cwe: "CWE-918", what: "the URL" },
+    { callee: /^(?:res|reply|ctx|response)\.redirect$/, category: "open-redirect", hostSensitive: true, cwe: "CWE-601", what: "the redirect target" },
     { callee: /^(?:eval|Function)$/, category: "eval-exec", cwe: "CWE-95", what: "the code" },
   ],
 };

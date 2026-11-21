@@ -146,8 +146,8 @@ function buildSpec(filePath: string): TaintSpec {
       { callee: /^(?:eval|instance_eval|class_eval|module_eval|[\w:.]+\.(?:instance_eval|class_eval|module_eval))$/, category: "eval-exec", cwe: "CWE-95", what: "the code" },
       { callee: /(?:^|\.)(?:send|public_send|__send__)$/, category: "eval-exec", cwe: "CWE-470", what: "the method name" },
       { callee: /^(?:File|IO|FileUtils)\.(?:read|binread|readlines|foreach|open|write|binwrite|delete|unlink|rm|rm_f|rm_rf|cp|mv)$|^(?:send_file|send_data)$/, category: "path-traversal", cwe: "CWE-22", what: "the file path" },
-      { callee: /^(?:Net::HTTP\.(?:get|get_response|post|post_form|get_print)|(?:HTTParty|Faraday|RestClient|Typhoeus|Excon)\.(?:get|post|put|delete|head)|URI\.open)$/, category: "ssrf", cwe: "CWE-918", what: "the URL" },
-      { callee: /^(?:redirect_to|redirect)$/, category: "open-redirect", cwe: "CWE-601", what: "the redirect target" },
+      { callee: /^(?:Net::HTTP\.(?:get|get_response|post|post_form|get_print)|(?:HTTParty|Faraday|RestClient|Typhoeus|Excon)\.(?:get|post|put|delete|head)|URI\.open)$/, category: "ssrf", hostSensitive: true, cwe: "CWE-918", what: "the URL" },
+      { callee: /^(?:redirect_to|redirect)$/, category: "open-redirect", hostSensitive: true, cwe: "CWE-601", what: "the redirect target" },
     ],
   };
 }

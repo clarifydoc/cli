@@ -267,9 +267,9 @@ function buildSpec(requests: readonly string[], usesReqwest: boolean): TaintSpec
       { callee: /^(?:(?:std|tokio)::process::)?Command::new$/, category: "command-injection", cwe: "CWE-78", what: "the command" },
       { callee: /^(?:(?:std|tokio)::process::)?Command::new\((?:\/bin\/)?(?:ba|z|da|a)?sh\)(?:\.\w+\([^()]*\))*\.arg\(-c\)\.arg$/, category: "command-injection", cwe: "CWE-78", what: "the shell command" },
       { callee: /^(?:(?:std|tokio|async_std)::)?(?:fs::File|File)::(?:open|create|create_new)$|^(?:(?:std|tokio|async_std)::)?fs::(?:read|read_to_string|read_dir|write|remove_file|remove_dir|remove_dir_all|create_dir|create_dir_all|copy|rename|metadata|canonicalize|hard_link)$/, category: "path-traversal", cwe: "CWE-22", what: "the file path" },
-      { callee: new RegExp(`^(?:reqwest|ureq|surf|isahc|attohttpc)::(?:blocking::)?(?:get|post|put|delete|head|patch)$${clientCall}`), category: "ssrf", cwe: "CWE-918", what: "the URL" },
-      { callee: /^(?:Redirect|axum::response::Redirect|rocket::response::Redirect)::(?:to|temporary|permanent|found|see_other|moved)$/, category: "open-redirect", cwe: "CWE-601", what: "the redirect target" },
-      { callee: /^HttpResponse::(?:Found|SeeOther|TemporaryRedirect|PermanentRedirect|MovedPermanently)\(\)\.(?:insert_header|append_header)$/, category: "open-redirect", cwe: "CWE-601", what: "the redirect target", when: isLocationHeader },
+      { callee: new RegExp(`^(?:reqwest|ureq|surf|isahc|attohttpc)::(?:blocking::)?(?:get|post|put|delete|head|patch)$${clientCall}`), category: "ssrf", hostSensitive: true, cwe: "CWE-918", what: "the URL" },
+      { callee: /^(?:Redirect|axum::response::Redirect|rocket::response::Redirect)::(?:to|temporary|permanent|found|see_other|moved)$/, category: "open-redirect", hostSensitive: true, cwe: "CWE-601", what: "the redirect target" },
+      { callee: /^HttpResponse::(?:Found|SeeOther|TemporaryRedirect|PermanentRedirect|MovedPermanently)\(\)\.(?:insert_header|append_header)$/, category: "open-redirect", hostSensitive: true, cwe: "CWE-601", what: "the redirect target", when: isLocationHeader },
     ],
   };
 }

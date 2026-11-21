@@ -82,8 +82,8 @@ const spec: TaintSpec = {
     { callee: /^(?:this\.)?\w*(?:jdbc|Jdbc|[Tt]emplate|stmt|[Ss]tatement|conn|[Cc]onnection|entityManager|EntityManager|\bem|session|Session|dsl|DSL)\w*\.(?:query|update|execute)$/, category: "sql-injection", cwe: "CWE-89", what: "the SQL text" },
     { callee: /^(?:Runtime\.getRuntime\(\)\.exec|\w*[Rr]untime\.exec|new ProcessBuilder)$/, category: "command-injection", cwe: "CWE-78", what: "the command" },
     { callee: /^(?:new (?:File|FileInputStream|FileReader|FileOutputStream|FileWriter|RandomAccessFile)|Files\.(?:readAllBytes|readAllLines|readString|lines|newInputStream|newBufferedReader|newOutputStream|write|writeString|delete|deleteIfExists|copy|move))$/, category: "path-traversal", cwe: "CWE-22", what: "the file path" },
-    { callee: /\.(?:getForObject|getForEntity|postForObject|postForEntity|exchange|openConnection|openStream)$|^new URL$/, category: "ssrf", cwe: "CWE-918", what: "the URL" },
-    { callee: /^\w*(?:[Rr]esponse|resp)\.sendRedirect$/, category: "open-redirect", cwe: "CWE-601", what: "the redirect target" },
+    { callee: /\.(?:getForObject|getForEntity|postForObject|postForEntity|exchange|openConnection|openStream)$|^new URL$/, category: "ssrf", hostSensitive: true, cwe: "CWE-918", what: "the URL" },
+    { callee: /^\w*(?:[Rr]esponse|resp)\.sendRedirect$/, category: "open-redirect", hostSensitive: true, cwe: "CWE-601", what: "the redirect target" },
     { callee: /^\w*(?:[Ee]ngine|[Ss]hell)\.eval$/, category: "eval-exec", cwe: "CWE-95", what: "the code" },
   ],
 };

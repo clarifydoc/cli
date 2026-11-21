@@ -60,8 +60,8 @@ const spec: TaintSpec = {
     { callee: /(?:^|\.)(?:execute|executemany|executescript|raw)$|^(?:sqlalchemy\.)?text$/, category: "sql-injection", cwe: "CWE-89", what: "the SQL text" },
     { callee: /^(?:os\.(?:system|popen)|subprocess\.(?:run|call|check_call|check_output|Popen|getoutput|getstatusoutput))$/, category: "command-injection", cwe: "CWE-78", what: "the command" },
     { callee: /^(?:open|io\.open|send_file|FileResponse|os\.(?:remove|unlink|rmdir)|shutil\.(?:rmtree|copy|move))$/, category: "path-traversal", cwe: "CWE-22", what: "the file path" },
-    { callee: /^(?:requests|httpx|session|client)\.(?:get|post|put|patch|delete|head)$|^(?:urllib\.request\.)?urlopen$/, category: "ssrf", cwe: "CWE-918", what: "the URL" },
-    { callee: /^(?:redirect|RedirectResponse|HttpResponseRedirect)$/, category: "open-redirect", cwe: "CWE-601", what: "the redirect target" },
+    { callee: /^(?:requests|httpx|session|client)\.(?:get|post|put|patch|delete|head)$|^(?:urllib\.request\.)?urlopen$/, category: "ssrf", hostSensitive: true, cwe: "CWE-918", what: "the URL" },
+    { callee: /^(?:redirect|RedirectResponse|HttpResponseRedirect)$/, category: "open-redirect", hostSensitive: true, cwe: "CWE-601", what: "the redirect target" },
     { callee: /^(?:eval|exec)$/, category: "eval-exec", cwe: "CWE-95", what: "the code" },
   ],
 };

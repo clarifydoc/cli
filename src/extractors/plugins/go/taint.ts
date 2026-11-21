@@ -197,12 +197,12 @@ function buildSpec(names: readonly string[]): TaintSpec {
       { callee: /^(?:os\.(?:Open|OpenFile|ReadFile|Remove|RemoveAll|Create|WriteFile|Stat|ReadDir|Mkdir|MkdirAll)|ioutil\.(?:ReadFile|WriteFile|ReadDir)|filepath\.(?:Walk|WalkDir)|afero\.\w+)$/, category: "path-traversal", cwe: "CWE-22", what: "the file path" },
       { callee: /^http\.ServeFile$/, arg: 2, category: "path-traversal", cwe: "CWE-22", what: "the file path" },
       { callee: /^\w+\.(?:File|FileAttachment|SendFile|Attachment|Download)$/, category: "path-traversal", cwe: "CWE-22", what: "the file path" },
-      { callee: /^(?:http\.(?:Get|Head|Post|PostForm)|(?:client|httpClient|http\.DefaultClient)\.(?:Get|Head|Post|PostForm))$/, category: "ssrf", cwe: "CWE-918", what: "the URL" },
-      { callee: /^http\.NewRequest$/, arg: 1, category: "ssrf", cwe: "CWE-918", what: "the URL" },
-      { callee: /^http\.NewRequestWithContext$/, arg: 2, category: "ssrf", cwe: "CWE-918", what: "the URL" },
-      { callee: /^http\.Redirect$/, arg: 2, category: "open-redirect", cwe: "CWE-601", what: "the redirect target" },
-      { callee: /^(?!http\.)\w+\.Redirect$/, category: "open-redirect", cwe: "CWE-601", what: "the redirect target" },
-      { callee: /^(?!http\.)\w+\.Redirect$/, arg: 1, category: "open-redirect", cwe: "CWE-601", what: "the redirect target" },
+      { callee: /^(?:http\.(?:Get|Head|Post|PostForm)|(?:client|httpClient|http\.DefaultClient)\.(?:Get|Head|Post|PostForm))$/, category: "ssrf", hostSensitive: true, cwe: "CWE-918", what: "the URL" },
+      { callee: /^http\.NewRequest$/, arg: 1, category: "ssrf", hostSensitive: true, cwe: "CWE-918", what: "the URL" },
+      { callee: /^http\.NewRequestWithContext$/, arg: 2, category: "ssrf", hostSensitive: true, cwe: "CWE-918", what: "the URL" },
+      { callee: /^http\.Redirect$/, arg: 2, category: "open-redirect", hostSensitive: true, cwe: "CWE-601", what: "the redirect target" },
+      { callee: /^(?!http\.)\w+\.Redirect$/, category: "open-redirect", hostSensitive: true, cwe: "CWE-601", what: "the redirect target" },
+      { callee: /^(?!http\.)\w+\.Redirect$/, arg: 1, category: "open-redirect", hostSensitive: true, cwe: "CWE-601", what: "the redirect target" },
     ],
   };
 }
