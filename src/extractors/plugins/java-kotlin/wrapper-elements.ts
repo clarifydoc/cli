@@ -35,7 +35,7 @@ export function kotlinTupleElements(returnType: string): string[] | null {
   return null;
 }
 
-const LISTS: ReadonlySet<string> = new Set(["List", "ArrayList", "LinkedList", "Vector", "CopyOnWriteArrayList", "MutableList", "Deque", "ArrayDeque"]);
+const LISTS: ReadonlySet<string> = new Set(["List", "ArrayList", "LinkedList", "Vector", "CopyOnWriteArrayList", "MutableList", "Deque", "ArrayDeque", "Array"]);
 const MAP_TYPES: ReadonlySet<string> = new Set(["Map", "HashMap", "TreeMap", "LinkedHashMap", "SortedMap", "NavigableMap", "ConcurrentMap", "ConcurrentHashMap", "MutableMap"]);
 
 /**

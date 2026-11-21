@@ -122,7 +122,9 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
    */
   private walkNestedClasses(owner: Node, classes: ClassInfo[], lang: JkLang): void {
     const body = owner.childForFieldName("body") ?? this.findChildByType(owner, "class_body") ?? this.findChildByType(owner, "enum_class_body");
-    for (const member of body?.children ?? []) {
+    // A Java enum keeps its members after the constants, inside `enum_body_declarations`.
+    const members = (body?.children ?? []).flatMap((m) => (m.type === "enum_body_declarations" ? m.children : [m]));
+    for (const member of members) {
       if (
         member.type === "class_declaration" ||
         member.type === "interface_declaration" ||

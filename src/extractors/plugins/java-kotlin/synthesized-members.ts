@@ -265,6 +265,10 @@ export function synthesizeEnumMembers(cls: ClassInfo, lang: "java" | "kotlin"): 
   if (cls.kind !== "enum") return;
   addUnlessWritten(cls.methods, synthetic("values", [], lang === "kotlin" ? `Array<${cls.name}>` : `${cls.name}[]`, cls.line));
   addUnlessWritten(cls.methods, synthetic("valueOf", [{ name: "name", type: "String", defaultValue: null }], cls.name, cls.line));
+  // Kotlin 1.9 `entries`: a static `List` of the enum, read as a property (`Position.entries.first().label()`).
+  if (lang === "kotlin" && !cls.properties.some((p) => p.name === "entries")) {
+    cls.properties.push({ name: "entries", type: `List<${cls.name}>`, visibility: "public", isStatic: true, isReadonly: true });
+  }
 }
 
 const AUTO_VALUE = ANN("AutoValue");
@@ -292,9 +296,11 @@ function generatedClass(name: string, base: ClassInfo, extendsName: string | nul
 function valueAttributes(body: Node | null): Array<{ name: string; type: string | null; line: number; parameter: boolean }> {
   const out: Array<{ name: string; type: string | null; line: number; parameter: boolean }> = [];
   for (const m of body?.namedChildren ?? []) {
-    if (m.type !== "method_declaration" || m.childForFieldName("body")) continue;
-    if (m.childForFieldName("parameters")?.namedChildren.length) continue;
+    if (m.type !== "method_declaration") continue;
     const mods = m.namedChildren.find((c) => c.type === "modifiers")?.text ?? "";
+    // An abstract accessor, or a `@Value.Default` one whose body is the default the builder may override.
+    if (m.childForFieldName("body") && !/@(?:org\.immutables\.value\.)?Value\.Default\b/.test(mods)) continue;
+    if (m.childForFieldName("parameters")?.namedChildren.length) continue;
     const type = m.childForFieldName("type")?.text ?? null;
     const name = m.childForFieldName("name")?.text;
     if (!name || !type || type === "void" || /\bstatic\b/.test(mods)) continue;
@@ -315,7 +321,7 @@ export function synthesizeGeneratedValueClasses(classNode: Node, cls: ClassInfo,
     // `AutoValue_Outer_Inner` for a nested type.
     const path: string[] = [cls.name];
     for (let p = classNode.parent; p; p = p.parent) {
-      if (p.type === "class_declaration" || p.type === "interface_declaration") {
+      if (p.type === "class_declaration" || p.type === "interface_declaration" || p.type === "record_declaration" || p.type === "enum_declaration") {
         const n = p.childForFieldName("name")?.text;
         if (n) path.unshift(n);
       }

@@ -104,6 +104,30 @@ enum Shape { A; static Shape valueOf(String s) { return A; } }`, "java");
     expect(members(kt).filter((m) => m.includes("@"))).toEqual(["values(): Array<Gear> @1", "valueOf(String): Gear @1"]);
   });
 
+  it("gives a Kotlin enum a static entries list of itself, and a Java enum none", async () => {
+    const [kt, own] = await classesOf(`enum class Gear { FIRST, SECOND }
+enum class Mode { A; val entries: Int = 1 }`, "kotlin");
+    expect(kt!.properties.find((p) => p.name === "entries")).toMatchObject({ type: "List<Gear>", isStatic: true });
+    expect(own!.properties.filter((p) => p.name === "entries")).toHaveLength(1);
+    expect(own!.properties.find((p) => p.name === "entries")!.type).toBe("Int");
+    const [java] = await classesOf(`enum Gear { FIRST }`, "java");
+    expect(java!.properties.some((p) => p.name === "entries")).toBe(false);
+  });
+
+  it("names AutoValue types nested in a record or an enum, and gives @Value.Default a builder setter", async () => {
+    const classes = await classesOf(`
+record Outer(int x) { @AutoValue abstract static class Inner { abstract int n(); } }
+enum Kind { A; @AutoValue abstract static class Deep { abstract int n(); } }
+@Value.Immutable
+abstract class Club { abstract String name(); @Value.Default int points() { return 0; } int plain() { return 1; } }`, "java");
+    const by = new Map(classes.map((c) => [c.name, c]));
+    expect(by.has("AutoValue_Outer_Inner")).toBe(true);
+    expect(by.has("AutoValue_Kind_Deep")).toBe(true);
+    expect(members(by.get("ImmutableClub_Builder"))).toEqual([
+      "name(String): ImmutableClub_Builder @5", "points(int): ImmutableClub_Builder @5", "from(Club): ImmutableClub_Builder @4", "build(): ImmutableClub @4",
+    ]);
+  });
+
   it("gives an AutoValue class its generated subclass and an Immutables type its Immutable class and builder", async () => {
     const classes = await classesOf(`
 @AutoValue

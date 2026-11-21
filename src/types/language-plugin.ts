@@ -1348,6 +1348,8 @@ export interface ValueOutHook {
   at(declared: string, hop: ValueHop): ValueOut | null;
   /** The member an index read `x[i]` calls (Kotlin `get`): where no hop takes an element, the chain follows that member's declared return type. Set only where the language reads index steps. */
   index?: string;
+  /** Set where an index read over a declared array type yields its element and no indexer member exists (Java); the step is read only then. */
+  arrayIndex?: true;
 }
 
 export interface LanguagePluginManifest {

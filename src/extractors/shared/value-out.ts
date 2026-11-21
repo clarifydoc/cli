@@ -13,6 +13,8 @@ export interface ValueOutTables {
   elementOf?: (type: string) => string | null;
   /** The member an index read `x[i]` calls (Kotlin `operator fun get`); its presence makes `x[i]` a step the linker reads, taking an element out of a list or map. */
   index?: string;
+  /** Java: `x[i]` over a declared array `Club[]` yields `Club` (an index step the linker reads; any other type yields nothing). */
+  arrayIndex?: boolean;
 }
 
 /** The four answers `takes` gives, shared: a chain walk asks once per hop and allocates nothing. */
@@ -31,7 +33,7 @@ export function valueOut(tables: ValueOutTables): ValueOutHook {
   const elementCalls = new Set(tables.elementCalls ?? []);
   /** The wrappers a hop unwraps, and whether it takes an element out — the one lookup both questions share. */
   const kindOf = (hop: ValueHop): { wrappers: readonly string[] | undefined; element: boolean } => {
-    if (hop.index) return { wrappers: undefined, element: !!tables.index };
+    if (hop.index) return { wrappers: undefined, element: !!tables.index || !!tables.arrayIndex };
     const table = hop.call ? tables.calls : tables.members;
     return {
       wrappers: table && Object.hasOwn(table, hop.name) ? table[hop.name] : undefined,
@@ -40,6 +42,7 @@ export function valueOut(tables: ValueOutTables): ValueOutHook {
   };
   return {
     ...(tables.index ? { index: tables.index } : {}),
+    ...(tables.arrayIndex ? { arrayIndex: true } : {}),
     takes(hop) {
       const { wrappers, element } = kindOf(hop);
       return wrappers ? (element ? TAKES.both : TAKES.wrapper) : element ? TAKES.element : null;
@@ -48,6 +51,10 @@ export function valueOut(tables: ValueOutTables): ValueOutHook {
       const { wrappers, element } = kindOf(hop);
       if (!wrappers && !element) return null;
       const written = declared.trim();
+      if (hop.index && tables.arrayIndex) {
+        const array = /^([A-Za-z_][\w.]*)\[\]$/.exec(written);
+        return array ? { type: array[1]!, wrapper: "", kind: "element" } : null;
+      }
       if (!written.endsWith(">")) return null;
       const open = written.indexOf("<");
       const wrapper = open > 0 ? written.slice(0, open).trim().split(/\.|::/).pop() ?? "" : "";

@@ -106,7 +106,7 @@ export const javaManifest: LanguagePluginManifest = {
   ownerPathTypes: true,
   callPathsFromHead: true,
   // No `await`: the value comes out of a future, a `Mono` or an `Optional` through these calls.
-  valueOut: valueOut({ calls: JVM_UNWRAP_CALLS, elementCalls: ["get"], elementOf: jvmIndexedElement }),
+  valueOut: valueOut({ calls: JVM_UNWRAP_CALLS, elementCalls: ["get"], elementOf: jvmIndexedElement, arrayIndex: true }),
   collectionElementOf: jvmElementText("java"),
   family: "jvm",
   packageManagers: [mavenPackageManager, gradlePackageManager],
@@ -143,7 +143,7 @@ export const kotlinManifest: LanguagePluginManifest = {
   ownerPathTypes: true,
   callPathsFromHead: true,
   // `lazy.value` of a declared `Lazy<ClubRepo>`.
-  valueOut: valueOut({ calls: { ...JVM_UNWRAP_CALLS, await: ["Deferred"] }, members: { value: ["Lazy"] }, elementCalls: ["get"], elementOf: jvmIndexedElement, index: "get" }),
+  valueOut: valueOut({ calls: { ...JVM_UNWRAP_CALLS, await: ["Deferred"] }, members: { value: ["Lazy"] }, elementCalls: ["get", "first", "last"], elementOf: jvmIndexedElement, index: "get" }),
   collectionElementOf: jvmElementText("kotlin"),
   // `val (club, player) = load()` over a declared `Pair<Club, Player>` / `Triple`; over a data class, its constructor's
   // properties in order (`componentN`).

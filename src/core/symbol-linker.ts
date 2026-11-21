@@ -8405,8 +8405,9 @@ function receiverChainOf(callName: string, language: string | undefined): ChainS
   const chain = receiverChain(callName);
   if (!chain?.some((seg) => seg.index)) return chain;
   const hook = valueOutOf(language);
-  if (hook?.index === undefined) return null;
-  const indexer = hook.index;
+  if (hook?.index === undefined && !hook?.arrayIndex) return null;
+  // Java has no indexer member: the empty name resolves to nothing, so only a hop that takes an array element passes.
+  const indexer = hook.index ?? "";
   return chain.map((seg) => (seg.index ? { ...seg, name: indexer } : seg));
 }
 
