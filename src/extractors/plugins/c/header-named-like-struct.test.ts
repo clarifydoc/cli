@@ -58,6 +58,14 @@ describe("a C struct declared in a header named like it", () => {
   it("seeds its fields from a designated initializer", () => {
     expect(found).toContain("run ops.scout -> src/impl.c::club_scout");
   });
+  it("seeds through the struct's body when the initializer's own file only forward-declares it", () => {
+    const fwd = buildSymbolLinks([
+      withFields(read(header, "src/club_ops.h"), { club_ops: [["scout", "int (*)(int)", true], ["release", "int (*)(int)", true]], club_mgr: [["ops", "struct club_ops"]] }),
+      read(`#include "club_ops.h"\nstruct club_ops;\nstatic int club_scout(int x) { return x; }\nstatic struct club_ops ops = { club_scout };\n`, "src/fwd.c"),
+      read(caller, "src/use.c"),
+    ]).filter((l) => l.strategy === "value-flow").map((l) => `${l.sourceSymbol} ${l.callName} -> ${l.targetFile}::${l.targetSymbol}`);
+    expect(fwd).toContain("run ops.scout -> src/fwd.c::club_scout");
+  });
   it("never reaches the namesake struct of another folder", () => {
     expect(found).not.toContain("run ops.scout -> src/rival/rival.c::rival_scout");
     expect(found).not.toContain("rival_run ops.scout -> src/impl.c::club_scout");

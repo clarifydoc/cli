@@ -4650,17 +4650,17 @@ function valueFlowLinks(links: readonly SymbolLink[], ctx: LinkContext): SymbolL
       if (!name) return null;
       const project = ctx.projectOf.get(file) ?? "root";
       const located = locateClass(ctx, name, file, project);
-      if (located) return { file: located, name };
+      if (located && (ctx.classAt.get(memberKey(located, name))?.properties.length ?? 0) > 0) return { file: located, name };
       // A typedef of a struct (`typedef struct club_ops club_ops_t`) names the class it stands for.
-      const whole = dealias(ctx, name, file);
-      const target = whole !== name ? locateClass(ctx, whole, file, project) : null;
+      const whole = located ? name : dealias(ctx, name, file);
+      const target = !located && whole !== name ? locateClass(ctx, whole, file, project) : null;
       if (target) return { file: target, name: whole };
-      // Forward declarations (`struct club_ops;`) are classes without a body that make the name ambiguous: the one
-      // declaration with fields the include closure of the file reaches is the struct, never a namesake outside it.
-      if (!pluginFor(language!)?.importsShareScope) return null;
+      // Forward declarations (`struct club_ops;`) are classes without a body that make the name ambiguous or hide the
+      // struct: the one declaration with fields the include closure of the file reaches is the struct, never a namesake outside it.
+      if (!pluginFor(language!)?.importsShareScope) return located ? { file: located, name } : null;
       const seen = includeClosure(ctx, file);
       const bodies = (ctx.classFiles.get(whole) ?? []).filter((f) => seen.has(f) && (ctx.classAt.get(memberKey(f, whole))?.properties.length ?? 0) > 0);
-      return bodies.length === 1 ? { file: bodies[0]!, name: whole } : null;
+      return bodies.length === 1 ? { file: bodies[0]!, name: whole } : located ? { file: located, name } : null;
     },
     parentOf(file, name) {
       const parent = parentClassOf(ctx, name, file);

@@ -11,7 +11,7 @@ const NAMESPACE_ALIAS = /^\s*namespace\s+([A-Za-z_]\w*)\s*=\s*((?:::\s*)?[A-Za-z
 /** A class head: `class Car {`, `struct CLUB_API Car : public Base`, `typedef struct car {` — its name, if any. */
 const CLASS_HEAD = /^\s*(?:template\s*<[^>]*>\s*)?(typedef\s+)?(?:class|struct|union)\s+(?:[A-Z][A-Z0-9_]+\s+)?([A-Za-z_]\w*)?(?![\w:]*\s*;)/;
 // The scan reads each line with its string literals blanked, so the language name of `extern "C" {` is spaces by then.
-const NAMESPACE_HEAD = /^\s*(?:inline\s+)?namespace\b|^\s*extern\s+"\s*"\s*\{?\s*$/;
+const NAMESPACE_HEAD = /^\s*(?:inline\s+)?namespace\b|^\s*extern\s+"(?:C(?:\+\+)?|\s*)"\s*\{?\s*$/;
 
 /**
  * A pointer or reference alias stands for what it points at: `using ClubRef = Club*;` types `ClubRef c; c->Play()`
