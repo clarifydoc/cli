@@ -42,6 +42,8 @@ interface RenderOptions {
 /** One `render-mode` fact: the file's role and what it states. */
 type RenderFact =
   | { fw: "next-pages"; mode: RenderMode }
+  /** `pages/_app`: whether it defines `getInitialProps` (every page then renders per request); null when it hides its exports. */
+  | { fw: "next-shell"; initialProps: boolean | null }
   | { fw: "next-app"; role: "page" | "layout"; opts: RenderOptions }
   | { fw: "sveltekit"; role: "page" | "layout"; opts: RenderOptions }
   | { fw: "nuxt-page"; mode: RenderMode }
@@ -133,9 +135,11 @@ function forwardsUnknownExports(text: string): boolean {
   return /\bexport\s*\*\s*from\b/.test(text) || /\bexport\s*\{[^}]*\}\s*from\b/.test(text);
 }
 
+const GET_INITIAL_PROPS = /\.getInitialProps\s*=|\bstatic\s+(?:async\s+)?getInitialProps\b/;
+
 /** A pages-router page's mode, or null when the file hides what it exports. */
 function nextPagesMode(text: string): RenderMode | null {
-  if (exportsName(text, "getServerSideProps") || /\.getInitialProps\s*=|\bstatic\s+(?:async\s+)?getInitialProps\b/.test(text)) return "ssr";
+  if (exportsName(text, "getServerSideProps") || GET_INITIAL_PROPS.test(text)) return "ssr";
   if (exportsName(text, "getStaticProps")) {
     // `revalidate` in what getStaticProps returns (a number or a variable), not elsewhere in the file.
     const decl = /\bexport\s+(?:async\s+)?(?:function\s+getStaticProps\b|(?:const|let|var)\s+getStaticProps\b)/.exec(text);
@@ -285,7 +289,10 @@ export function inferRenderModeFacts(relativePath: string, sourceText: string, r
   if (frameworkIds.includes("nextjs")) {
     const text = blankComments(sourceText);
     const route = inferFileBasedRoute(rel, ["nextjs"]);
-    if (route?.kind === "frontend" && /^(?:src\/)?pages\//.test(rel)) {
+    if (/^(?:src\/)?pages\/_app\.(?:tsx?|jsx?)$/.test(rel)) {
+      const has = GET_INITIAL_PROPS.test(text);
+      data = { fw: "next-shell", initialProps: has ? true : forwardsUnknownExports(text) ? null : false };
+    } else if (route?.kind === "frontend" && /^(?:src\/)?pages\//.test(rel)) {
       const mode = nextPagesMode(text);
       if (mode) data = { fw: "next-pages", mode };
     } else {
@@ -370,7 +377,17 @@ function pageMode(
 ): ((r: RouteInfo) => RenderMode | null) | null {
   const own = facts.get(a.filePath);
   if (inferFileBasedRoute(rel, ["nextjs"])?.kind === "frontend" && /^(?:src\/)?pages\//.test(rel)) {
-    return own?.fw === "next-pages" ? () => own.mode : null;
+    if (own?.fw !== "next-pages") return null;
+    if (own.mode !== "csr") return () => own.mode;
+    // No data function: client-fetched, unless `_app` fetches initial props for every page (or hides what it does).
+    const fileRoot = a.filePath.slice(0, a.filePath.length - rel.length);
+    const dir = rel.startsWith("src/") ? "src/pages" : "pages";
+    let shell: boolean | null = false;
+    for (const ext of ["tsx", "ts", "jsx", "js"]) {
+      const f = facts.get(`${fileRoot}${dir}/_app.${ext}`);
+      if (f?.fw === "next-shell") shell = f.initialProps;
+    }
+    return shell === null ? null : () => (shell ? "ssr" : "csr");
   }
   const app = NEXT_APP_FILE.exec(rel);
   if (app && app[1] === "page") {

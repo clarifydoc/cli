@@ -25,6 +25,15 @@ const FILES: Record<string, string> = {
   "next/pages/forward.tsx": "export { default } from '../lib/club-page'\n",
   "next/pages/notes.tsx": `${page("Notes")}// export async function getServerSideProps() { return { props: {} } }\n`,
   "next/lib/decoy.tsx": "export const revalidate = 30\nexport async function getStaticProps() { return { props: {}, revalidate: 5 } }\nexport function Decoy() { return <div /> }\n",
+  // Next.js whose `_app` fetches initial props for every page
+  "shell/package.json": JSON.stringify({ name: "club-shell", dependencies: { next: "14.0.0", react: "18.0.0" } }),
+  "shell/pages/_app.tsx": "export default function App({ Component }: any) { return <Component /> }\nApp.getInitialProps = async () => ({ pageProps: {} })\n",
+  "shell/pages/index.tsx": page("Home"),
+  "shell/pages/squad.tsx": `${page("Squad")}export const getStaticProps = async () => ({ props: {} })\n`,
+  // Next.js whose `_app` forwards its exports
+  "hidden/package.json": JSON.stringify({ name: "club-hidden", dependencies: { next: "14.0.0", react: "18.0.0" } }),
+  "hidden/pages/_app.tsx": "export { default } from '../lib/app'\n",
+  "hidden/pages/index.tsx": page("Home"),
   // Next.js, app router
   "next/app/layout.tsx": layout,
   "next/app/shop/layout.tsx": `export const dynamic = 'force-dynamic'\n${layout}`,
@@ -102,6 +111,13 @@ describe("page rendering mode", () => {
     // A comment is no export, and a page forwarding its exports from elsewhere hides them.
     expect(m["/notes"]).toBe("csr");
     expect(m["/forward"]).toBe("none");
+  });
+
+  it("makes a data-less page ssr when _app has getInitialProps, and states nothing when _app hides its exports", () => {
+    const shell = modes("shell/");
+    expect(shell["/"]).toBe("ssr");
+    expect(shell["/squad"]).toBe("ssg");
+    expect(modes("hidden/")["/"]).toBe("none");
   });
 
   it("reads the Next.js app router segment config, the page's own before its layout's", () => {
