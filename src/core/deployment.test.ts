@@ -464,4 +464,35 @@ describe("detectDeployment — broker URLs held in an env var", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("judges an edge by the kind of the service the host resolves to, whatever the scheme or key", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clarifydoc-broker-kind-"));
+    try {
+      await writeFile(join(root, "docker-compose.yml"), [
+        "services:",
+        "  pulsar:", "    image: apachepulsar/pulsar:3",
+        "  pit:", "    image: nats:2",
+        "  sqsbox:", "    image: softwaremill/elasticmq",
+        "  prometheus:", "    image: prom/prometheus",
+        "  garage:", "    image: reg.io/garage",
+        "  cars:",
+        "    image: reg.io/cars",
+        "    environment:",
+        "      PULSAR_URL: pulsar://pulsar:6650",
+        "      EVENTS: nats+tls://pit:4222",
+        "      JOBS_ADDR: sqsbox:9324",
+        "      GARAGE_API: http://garage:8080",
+        "      LISTEN_ADDR: 0.0.0.0:8080",
+        "      METRICS_HOST: prometheus:9090",
+        "      PULSAR_USER: pulsar:6650",
+        "",
+      ].join("\n"));
+      const dep = await detectDeployment(root, { subProjects: [{ id: "root", name: "infra", root: "", type: "unknown" } as unknown as SubProject] });
+      const busOrDb = dep!.edges.filter((e) => e.from === "cars" && (e.kind === "bus" || e.kind === "db")).map((e) => `${e.to} ${e.kind} ${e.via ?? ""}`).sort();
+      expect(busOrDb.filter((e) => !e.endsWith(" "))).toEqual(["pit bus EVENTS", "pulsar bus PULSAR_URL", "sqsbox bus JOBS_ADDR"]);
+      expect(busOrDb.some((e) => e.startsWith("garage") || e.startsWith("prometheus"))).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

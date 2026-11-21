@@ -49,6 +49,15 @@ export type HostResolution =
   | { kind: "unknown" };
 
 /**
+ * The service name an in-cluster DNS name carries as its first label
+ * (`orders.shop.svc.cluster.local` → `orders`), or undefined for any other host.
+ */
+export function clusterServiceLabel(host: string): string | undefined {
+  const h = host.toLowerCase();
+  return /\.svc(?:\.cluster\.local)?$/.test(h) ? h.split(".")[0]! : undefined;
+}
+
+/**
  * Resolve a host (and port) through the address book. A loopback host is the
  * machine running the call, so only the PORT says which service it reaches; a
  * named host matches by name — its port is the container's, not a published
@@ -63,8 +72,8 @@ export function resolveHost(addresses: readonly ServiceAddress[], host: string, 
     hits = addresses.filter((a) => a.host === "localhost" && a.port === port);
   } else {
     hits = addresses.filter((a) => a.host === h && a.source !== "port");
-    if (hits.length === 0 && /\.svc(?:\.cluster\.local)?$/.test(h)) {
-      const label = h.split(".")[0]!;
+    const label = clusterServiceLabel(h);
+    if (hits.length === 0 && label !== undefined) {
       hits = addresses.filter((a) => a.host === label && a.source !== "port");
     }
   }

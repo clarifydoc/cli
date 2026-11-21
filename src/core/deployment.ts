@@ -1,6 +1,7 @@
 import { globUnignored as glob } from "./clarifydoc-ignore.js";
 import { urlValue } from "./url-values.js";
 import { byOrdinal } from "./ordinal.js";
+import { clusterServiceLabel } from "./service-addresses.js";
 import { readFile } from "fs/promises";
 import { join, posix, resolve } from "path";
 import type {
@@ -452,7 +453,7 @@ const INFRA_FAMILIES: Array<{ re: RegExp; kind: DeployedServiceKind; family: str
   { re: /elasticsearch|opensearch|solr/i, kind: "datastore", family: "search" },
   { re: /rabbitmq/i, kind: "queue", family: "rabbitmq" },
   { re: /kafka|redpanda/i, kind: "queue", family: "kafka" },
-  { re: /activemq|artemis|nats(?![a-z])|mosquitto|emqx/i, kind: "queue", family: "mq" },
+  { re: /activemq|artemis|nats(?![a-z])|mosquitto|emqx|pulsar|elasticmq/i, kind: "queue", family: "mq" },
   { re: /redis|keydb|valkey|memcached/i, kind: "cache", family: "redis" },
   { re: /traefik|haproxy|envoy|nginx|ingress/i, kind: "proxy", family: "proxy" },
   { re: /graylog|grafana|prometheus|jaeger|zipkin|kibana|loki/i, kind: "observability", family: "observability" },
@@ -686,20 +687,21 @@ function hostOf(value: string): string | undefined {
   return m ? m[1] : undefined;
 }
 
-const BROKER_URL_RE = /\b(?:amqps?|kafka|rediss?|nats|tls|mqtts?|stomp|jms):\/\/(?:[^@/\s'"]*@)?([A-Za-z0-9_.-]+)/gi;
-const BROKER_KEY_RE = /(?:broker|bootstrap|amqp|rabbit|kafka|redis|nats|valkey|memcache)/i;
+const ANY_URL_HOST_RE = /\b[a-z][a-z0-9+.-]*:\/\/(?:[^@/\s'"]*@)?([A-Za-z0-9_.-]+)/gi;
+/** A key naming a credential, a person, a topic or a label, whose `host:port`-looking value is no address. */
+const NON_ADDRESS_KEY_RE = /(?:password|passwd|user|username|name|topic|queue|db|database|secret|token)$/i;
 
 /**
- * The hosts a broker or cache variable names: every `amqp://`/`kafka://`/`redis://`/`nats://`-style URL in
- * its value, or, for a key named for a broker, a bare `host:port` list (`KAFKA_BROKERS=kafka:9092,kafka2:9092`).
- * A value with a placeholder in the host names nothing.
+ * Every host an env value names: the host of each `scheme://[user@]host` URL (any scheme — the target
+ * service's kind decides, not the scheme) and each `host:port` item of a comma/space list. A key naming a
+ * credential or label contributes no bare `host:port`. A value with a placeholder in the host names nothing.
  */
-function brokerHostsOf(key: string, value: string): string[] {
+function hostsOfEnvValue(key: string, value: string): string[] {
   const hosts = new Set<string>();
-  for (const m of value.matchAll(BROKER_URL_RE)) hosts.add(m[1]!.toLowerCase());
-  if (hosts.size === 0 && BROKER_KEY_RE.test(key) && !/(?:password|passwd|user|username|name|topic|queue|db|database|secret|token)$/i.test(key)) {
-    for (const part of value.split(",")) {
-      const m = part.trim().match(/^([A-Za-z][A-Za-z0-9_.-]*):\d{1,5}$/);
+  for (const m of value.matchAll(ANY_URL_HOST_RE)) hosts.add(m[1]!.toLowerCase());
+  if (!NON_ADDRESS_KEY_RE.test(key)) {
+    for (const part of value.split(/[,\s;]+/)) {
+      const m = part.match(/^([A-Za-z][A-Za-z0-9_.-]*):\d{1,5}$/);
       if (m) hosts.add(m[1]!.toLowerCase());
     }
   }
@@ -1076,8 +1078,9 @@ export async function detectDeployment(
 
     for (const [k, v] of Object.entries(svc.env)) {
       // A broker or cache URL held in a variable: an edge to the service of that host.
-      for (const target of brokerHostsOf(k, v)) {
-        const b = brokerByHost.get(target) ?? (/\.svc(?:\.cluster\.local)?$/.test(target) ? brokerByHost.get(target.split(".")[0]!) : undefined);
+      for (const target of hostsOfEnvValue(k, v)) {
+        const label = clusterServiceLabel(target);
+        const b = brokerByHost.get(target) ?? (label !== undefined ? brokerByHost.get(label) : undefined);
         if (!b) continue;
         addEdge({ from: svc.name, to: b.name, kind: b.kind === "queue" ? "bus" : "db", via: k });
         if (b.kind === "queue") brokerEdges++;
