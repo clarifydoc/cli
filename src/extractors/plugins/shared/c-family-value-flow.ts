@@ -32,7 +32,7 @@ const TYPE_WORDS = new Set([
   "cb", "fn", "func", "handler", "callback", "hook", "listener", "action", "proc", "task", "job", "thunk", "visitor", "pred", "predicate",
   "cmp", "compare", "closure", "lambda", "routine", "worker", "notify", "completion", "callable", "function", "delegate", "op",
 ]);
-/** Words that make a typedef name a number or a character (`u_char`, `ngx_uint_t`, `off_t`). */
+/** Words that make a typedef name a number or a character (`u_char`, `club_uint_t`, `off_t`). */
 const NUMERIC_WORDS = new Set(["char", "int", "uint", "long", "ulong", "short", "ushort", "size", "off", "float", "double", "byte", "bool", "flag", "flags", "len", "num", "count", "time", "id", "fd", "str", "string", "buf", "buffer", "mode", "pid", "uid", "gid", "u"]);
 const wordsOf = (name: string): string[] => name.replace(/([a-z\d])([A-Z])/g, "$1_$2").toLowerCase().split(/[_\W]+/).filter(Boolean);
 /** Member and variable names that read as holding a callable (`on_sign`, `onSave_`, `hook_`). */
