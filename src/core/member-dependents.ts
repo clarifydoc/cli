@@ -1,5 +1,6 @@
 import type { BlastRadiusInfo, ProjectAnalysis, SymbolLink, TypeUsageKind } from "../types/analysis.js";
 import { byOrdinal } from "./ordinal.js";
+import { EXTENSION_TO_LANGUAGE, manifestFor } from "../extractors/registry.js";
 
 /**
  * Which files NAME what a change touched — the members, not the module. A file importing a changed
@@ -59,6 +60,12 @@ export function namingIndex(summary: Pick<ProjectAnalysis, "symbolLinks" | "blas
   return { into, blast: new Map((summary.blastRadius ?? []).map((b) => [b.filePath, b])) };
 }
 
+/** Whether the file's language records every naming of a type, so a type with no usage record is named by nobody. */
+function typeUsageComplete(file: string): boolean {
+  const language = EXTENSION_TO_LANGUAGE[file.slice(file.lastIndexOf(".")).toLowerCase()];
+  return language !== undefined && manifestFor(language)?.typeUsageComplete === true;
+}
+
 /** The files that name any of `targets`, with the reason for each. */
 export function filesNaming(index: NamingIndex, targets: readonly MemberTarget[]): NamingFiles {
   const files = new Map<string, string[]>();
@@ -79,12 +86,13 @@ export function filesNaming(index: NamingIndex, targets: readonly MemberTarget[]
       continue;
     }
     const usage = blast.get(t.file)?.typeUsages?.find((u) => u.typeName === t.type);
-    if (!usage) {
+    if (!usage && !typeUsageComplete(t.file)) {
       undecided = true;
       named.push(false);
       continue;
     }
-    for (const u of usage.usagesByFile) {
+    // No record in a language that records every naming of a type: nobody names it by type, only the links below can.
+    for (const u of usage?.usagesByFile ?? []) {
       if (u.filePath === t.file) continue;
       const kinds = Object.keys(u.byKind) as TypeUsageKind[];
       const used = t.mode === "changed" ? kinds : t.interfaceLike || t.field ? kinds.filter((k) => PRODUCER_KINDS.has(k)) : [];

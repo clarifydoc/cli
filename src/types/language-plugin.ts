@@ -1582,6 +1582,12 @@ export interface LanguagePluginManifest {
    */
   typesSpanFiles?: boolean;
   /**
+   * The analysis records every way a file can name one of its types — an import by name, an annotation, a base
+   * class, a construction — so a class with no `blastRadius[].typeUsages` record is named by nobody (impact then
+   * narrows by member; where this is unset, a class without a record keeps every importer charged).
+   */
+  typeUsageComplete?: boolean;
+  /**
    * A type named by a path call (`Garage::park()`, `Garage::new()`) is in scope only where the language says
    * so: through an import (`use`, a glob, a re-export), the module path written before it
    * (`crate::garage::Garage::park()`), or its own file. The linker then never binds such a call to a

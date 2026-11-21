@@ -75,6 +75,8 @@ export const pythonManifest: LanguagePluginManifest = {
   importsBindNames: {},
   // `class D(B, C)`: bases are classes, searched in C3 order.
   multipleInheritance: true,
+  // A class is named by an import, an annotation or a base class, all of which the analysis records.
+  typeUsageComplete: true,
   // A decorator may inject or rewrite parameters (`@inject`, `@click.option`); these keep them.
   callArity: {
     signatureKeepingDecorators: [
