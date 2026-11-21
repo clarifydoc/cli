@@ -3,6 +3,7 @@ import { dirname, join } from "path";
 import { byOrdinal } from "./ordinal.js";
 import type { Confidence, FileAnalysis, ImportInfo, ProjectAnalysis, SymbolLink } from "../types/analysis.js";
 import { GIT_SAFE_CONFIG, GIT_SAFE_DIFF } from "./git-safe.js";
+import { importersOf } from "./importers.js";
 
 /** New-side line ranges a diff changed, per project-relative file (1-based, inclusive). */
 export type ChangedHunks = Map<string, Array<[number, number]>> & {
@@ -677,8 +678,7 @@ function mayRead(imports: readonly ImportInfo[], target: string, names: Readonly
  */
 export async function boundReaders(analysisDir: string, summary: Pick<ProjectAnalysis, "componentGraph">, bound: ReadonlyMap<string, readonly string[]>): Promise<Record<string, string[]>> {
   if (!bound.size) return {};
-  const importers = new Map<string, string[]>();
-  for (const [from, tos] of Object.entries(summary.componentGraph ?? {})) for (const to of tos) (importers.get(to) ?? importers.set(to, []).get(to)!).push(from);
+  const importers = importersOf(summary.componentGraph);
   const loaded = new Map<string, FileAnalysis | null>();
   const analysisOf = async (f: string): Promise<FileAnalysis | null> => {
     if (!loaded.has(f)) {

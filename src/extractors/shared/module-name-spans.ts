@@ -33,8 +33,8 @@ export function moduleNameSpans(tree: Tree, namesOf: (top: Node) => string[]): M
     if (names.length === 0) return;
     let next = i + 1;
     while (next < tops.length && isComment(tops[next]!)) next++;
-    // The last statement owns no lines after itself: in a single-file component the rest of the file is its
-    // template, which the script's tree reads as blank lines.
+    // The last statement owns no lines after itself: what follows the tree's last statement may be another
+    // region of the file the tree reads as blank lines.
     const endRow = next < tops.length ? groupStart.get(next)! : n.endPosition.row + 1;
     const line = groupStart.get(i)! + 1;
     const endLine = Math.max(n.endPosition.row + 1, endRow);

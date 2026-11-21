@@ -82,6 +82,11 @@ export function serviceForLoopbackPort(port: number | string | undefined): strin
   return n === undefined || !Number.isFinite(n) ? undefined : LOCAL_SERVICE_PORTS.get(n);
 }
 
+/** The third party a host belongs to: by name, or a loopback host on a vendor's default port (`localhost:11434`). */
+export function serviceOfHost(host: string): string | undefined {
+  return serviceForHost(host) ?? (host.startsWith("localhost:") ? serviceForLoopbackPort(host.slice("localhost:".length)) : undefined);
+}
+
 /** Every external host the code calls, grouped by the service it belongs to (or by itself). */
 export interface ExternalService {
   /** The service (`Stripe`), or the host itself when the table does not know it. */

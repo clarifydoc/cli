@@ -47,7 +47,7 @@ export interface CallableQuestions {
   isFunctionType: FunctionTypeQuestion;
   isCallableMember: CallableMemberQuestion;
   /** The names some class declares a `PropertyInfo.callable` member under: only a call of one is ever asked. */
-  callableNames?: ReadonlySet<string>;
+  callableFieldNames?: ReadonlySet<string>;
 }
 const NOTHING_CALLABLE: CallableQuestions = { isFunctionType: () => false, isCallableMember: () => false };
 
@@ -73,7 +73,7 @@ export interface ValueFlowHost {
   /** Whether the member a call `x.m()` names is a field its receiver's class declares callable. */
   isCallableMember?: CallableMemberQuestion;
   /** The names some class declares a callable member under. */
-  callableNames?: ReadonlySet<string>;
+  callableFieldNames?: ReadonlySet<string>;
   /** A test file, or a test double's. */
   isTest(file: string): boolean;
   /** One line of progress, shown in verbose runs. */
@@ -122,7 +122,7 @@ function gated(facts: readonly ValueFlowFact[], scope: { file: string; symbol: s
  * asked, and a call a plugin already states an invoke for is left to that fact.
  */
 function fieldInvokes(facts: readonly ValueFlowFact[], fn: FunctionInfo | null, scope: { file: string; symbol: string }, ask: CallableQuestions): readonly ValueFlowFact[] {
-  const names = ask.callableNames;
+  const names = ask.callableFieldNames;
   if (!names || names.size === 0 || !fn?.calls) return facts;
   let out = facts;
   for (const c of fn.calls) {
@@ -253,7 +253,7 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
   const { analyses } = host;
   if (!hasValueFlowFacts(analyses)) return [];
 
-  const ask: CallableQuestions = { isFunctionType: host.isFunctionType ?? NOTHING_CALLABLE.isFunctionType, isCallableMember: host.isCallableMember ?? NOTHING_CALLABLE.isCallableMember, callableNames: host.callableNames };
+  const ask: CallableQuestions = { isFunctionType: host.isFunctionType ?? NOTHING_CALLABLE.isFunctionType, isCallableMember: host.isCallableMember ?? NOTHING_CALLABLE.isCallableMember, callableFieldNames: host.callableFieldNames };
   const scopes: Scope[] = [];
   let factCount = 0;
   for (const a of analyses) for (const s of scopesOf(a, ask)) { scopes.push(s); factCount += s.facts.length; }

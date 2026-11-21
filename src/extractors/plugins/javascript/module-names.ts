@@ -16,7 +16,6 @@ function patternNames(node: Node | null): string[] {
     case "pair_pattern":
       return patternNames(node.childForFieldName("value"));
     case "assignment_pattern":
-      return patternNames(node.childForFieldName("left"));
     case "object_assignment_pattern":
       return patternNames(node.childForFieldName("left"));
     default:

@@ -1,6 +1,7 @@
 import { EXTENSION_TO_LANGUAGE, manifestFor } from "../extractors/registry.js";
 import type { TestTarget } from "../types/language-plugin.js";
 import { ownersOf } from "./code-owners.js";
+import { importersOf } from "./importers.js";
 import { describeSignatureChange, signatureChangeTail, reverseSymbolReach, type ChangedClass, type ChangedSymbol, type ClassChange, type SignatureChange, type SymbolCaller } from "./changed-symbols.js";
 import { filesImportingNames, filesNaming, namingIndex, type MemberTarget } from "./member-dependents.js";
 import type {
@@ -268,8 +269,7 @@ export function computeImpactDiff(
   const VERDICT_RANK: Record<string, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 
   // Importee → importers: the narrowed files' test reach and the sample chains below both walk it.
-  const reverseGraph = new Map<string, string[]>();
-  for (const [source, targets] of Object.entries(summary.componentGraph ?? {})) for (const t of targets) (reverseGraph.get(t) ?? reverseGraph.set(t, []).get(t)!).push(source);
+  const reverseGraph = importersOf(summary.componentGraph);
   // Which changed files the diff's lines let us judge by member, and who names what changed in them.
   const narrowing = narrowDependents(summary, changedFiles, options?.symbols);
   for (const file of changedFiles) {

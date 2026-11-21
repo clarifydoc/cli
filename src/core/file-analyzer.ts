@@ -328,18 +328,12 @@ function computeImportRewriteStamp(file: Pick<DiscoveredFile, "absolutePath" | "
  */
 function mergeTaint(raw: SecurityIssue[], sourceText: string, issues: SecurityIssue[]): SecurityIssue[] {
   if (raw.length === 0) return issues;
-  let sourceLines: string[] | null = null;
-  const tainted = raw.filter((t) => {
-    sourceLines ??= sourceText.split(/\r?\n/);
-    return !isSuppressed(t.category, sourceLines[t.line - 1] ?? "", sourceLines[t.line - 2] ?? "");
-  });
-  const silenced = new Set(raw.filter((t) => !tainted.includes(t)).map((t) => `${t.line}\u0000${t.category}`));
-  if (silenced.size) issues = issues.filter((i) => !silenced.has(`${i.line}\u0000${i.category}`));
-  if (tainted.length > 0) {
-    const covered = new Set(tainted.map((t) => `${t.line}\u0000${t.category}`));
-    issues = [...issues.filter((i) => !covered.has(`${i.line}\u0000${i.category}`)), ...tainted];
-  }
-  return issues;
+  const sourceLines = sourceText.split(/\r?\n/);
+  const key = (i: SecurityIssue) => `${i.line}\u0000${i.category}`;
+  const tainted = raw.filter((t) => !isSuppressed(t.category, sourceLines[t.line - 1] ?? "", sourceLines[t.line - 2] ?? ""));
+  // Both a silenced finding's line and a kept one's drop the regex finding there.
+  const replaced = new Set(raw.map(key));
+  return [...issues.filter((i) => !replaced.has(key(i))), ...tainted];
 }
 
 /**
@@ -347,9 +341,9 @@ function mergeTaint(raw: SecurityIssue[], sourceText: string, issues: SecurityIs
  * walked by its `handlerTaint` spec. Nothing for a file the gate does not match, a test or generated file, one past
  * the front ends' size limit, or a tree with syntax errors; a grammar that fails to load only costs the findings.
  */
-async function regexTaintOf(language: Language, sourceText: string, filePath: string, skip: boolean): Promise<{ issues: SecurityIssue[]; facts: TaintFacts } | null> {
+async function regexTaintOf(language: Language, sourceText: string, filePath: string, skip: () => boolean): Promise<{ issues: SecurityIssue[]; facts: TaintFacts } | null> {
   const reader = pluginFor(language)?.regexTaint;
-  if (!reader || skip || !featureEnabled("taint") || sourceText.length > FRONT_END_MAX_CHARS || !reader.gate.test(sourceText)) return null;
+  if (!reader || !featureEnabled("taint") || skip() || sourceText.length > FRONT_END_MAX_CHARS || !reader.gate.test(sourceText)) return null;
   try {
     const parser = await getGrammarParser(reader.grammar);
     const tree = parser.parse(normalizeSource(sourceText));
@@ -508,7 +502,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       applyTsconfigAliasesToImports(analysis);
       attachDocComments(analysis, rawSource, manifestFor(analysis.language)?.docComments);
       let fileSecurityIssues = scanSecurity(rawSource, file.relativePath, file.language);
-      const regexTaint = await regexTaintOf(regexLanguage, regexSource, file.relativePath, generated || minified || isTestFile(file.relativePath, regexLanguage));
+      const regexTaint = await regexTaintOf(regexLanguage, regexSource, file.relativePath, () => generated || minified || isTestFile(file.relativePath, regexLanguage));
       if (regexTaint) {
         fileSecurityIssues = mergeTaint(regexTaint.issues, regexSource, fileSecurityIssues);
         if (regexTaint.facts.summaries.length || regexTaint.facts.calls.length) analysis.taintFacts = regexTaint.facts;

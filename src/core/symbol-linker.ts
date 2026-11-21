@@ -2188,7 +2188,10 @@ interface LinkContext {
    * never resolve them, so a namesake of the callee's name cannot take the call. Absent when no file states facts.
    */
   invokeSites?: Map<string, "suppress" | "same-file">;
-  /** The names a class declares a `PropertyInfo.callable` member under (`callableQuestions`). */
+  /**
+   * The names a class declares a `PropertyInfo.callable` member under (`callableQuestions`) — fields holding a
+   * function, unlike `callableNames`, the names functions and methods bear.
+   */
   callableFieldNames?: Set<string>;
   /** Lazy: per language and name, the files declaring it a function-type alias or a class (`functionTypeQuestion`). */
   fnTypeDecls?: Map<string, { aliases: string[]; classes: string[] }>;
@@ -4675,7 +4678,7 @@ function callableQuestions(ctx: LinkContext): CallableQuestions {
     ctx.callableFieldNames = new Set();
     for (const a of ctx.analyses) for (const c of a.classes) for (const p of c.properties ?? []) if (p.callable) ctx.callableFieldNames.add(p.name);
   }
-  return { isFunctionType: functionTypeQuestion(ctx), isCallableMember: callableMemberQuestion(ctx), callableNames: ctx.callableFieldNames };
+  return { isFunctionType: functionTypeQuestion(ctx), isCallableMember: callableMemberQuestion(ctx), callableFieldNames: ctx.callableFieldNames };
 }
 
 /**

@@ -9,6 +9,7 @@ import type {
   ScreenInfo,
 } from "../types/analysis.js";
 import { byOrdinal } from "./ordinal.js";
+import { importersOf } from "./importers.js";
 
 /**
  * Which screen leads to which, and how — the navigation map of the app.
@@ -291,8 +292,7 @@ export function buildScreenFlow(input: {
   }
 
   // Who imports each file, for lifting a component's edges to its pages.
-  const importers = new Map<string, string[]>();
-  for (const [f, deps] of Object.entries(componentGraph)) for (const d of deps) (importers.get(d) ?? importers.set(d, []).get(d)!).push(f);
+  const importers = importersOf(componentGraph);
   /**
    * The screens (pages and dialogs) that use a file, through the UI components
    * between them — never through another screen. One module that is no

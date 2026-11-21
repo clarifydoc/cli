@@ -8,7 +8,7 @@ import type {
   ProxyRule,
   ServiceAddress,
 } from "../types/analysis.js";
-import { serviceForHost, serviceForLoopbackPort } from "./external-services.js";
+import { serviceForLoopbackPort, serviceOfHost } from "./external-services.js";
 import type { ImportIndex } from "../types/project.js";
 import type { ProjectConfigValue } from "./config-values.js";
 import { serviceConfigFor } from "../extractors/registry.js";
@@ -236,7 +236,7 @@ export function resolveCallOrigins(input: {
     if (found.ref.kind === "service") return { baseRef: found.ref, host: found.ref.key.toLowerCase(), confidence: "INFERRED", evidence };
     // A fallback literal is the code's own guess, not evidence of another system: with the variable unvalued, a host no
     // address, deployment or `listen` names and no third party owns keeps the unresolved base (the candidate stays in the evidence).
-    if (allFallback && outside.length > 0 && outside.every((o) => !(serviceForHost(o.host) ?? (o.host.startsWith("localhost:") ? serviceForLoopbackPort(o.host.slice("localhost:".length)) : undefined)))) {
+    if (allFallback && outside.length > 0 && outside.every((o) => !serviceOfHost(o.host))) {
       const envNames = envNamesOf(found.ref, a.projectId, a.language);
       return { baseRef: found.ref, ...(envNames.length ? { envNames } : {}), confidence: "INFERRED", evidence };
     }
@@ -317,7 +317,7 @@ export function resolveCallOrigins(input: {
     }
     if (!origin) continue;
     if (origin.external && origin.host) {
-      const service = serviceForHost(origin.host) ?? (origin.host.startsWith("localhost:") ? serviceForLoopbackPort(origin.host.slice("localhost:".length)) : undefined);
+      const service = serviceOfHost(origin.host);
       if (service) origin.service = service;
     }
     call.origin = origin;
