@@ -95,6 +95,16 @@ export interface TaintSpec {
    * order like an assignment; `fn` is the function being followed.
    */
   binds?(node: Node, fn: Node): string[] | null;
+  /**
+   * The variables a string literal reads without an interpolation node: Rust's `format!("… {name}")` captures
+   * `name` by the braces, so the literal's own text names what it reads. Space-separated names, or null.
+   */
+  stringReads?(literal: Node): string | null;
+  /**
+   * The parts an expression's VALUE is made of, where that is less than its text: an `if` expression's arms (never its
+   * condition), a `match`'s arm values (never its scrutinee), a comparison's none (a boolean). Null for any other node.
+   */
+  result?(node: Node): Node[] | null;
 }
 
 type Step = { line: number; note: string };
@@ -304,8 +314,12 @@ function taintFunction(fn: Node, params: ReadonlyMap<string, Taint | null>, ctx:
    * callee, receiver included, is kept).
    */
   const codeText = (n: Node, stripPartial = false): string => {
+    const parts = spec.result?.(n);
+    if (parts) return parts.map((p) => codeText(p, stripPartial)).join(" ").trim();
     if (stringTypes.has(n.type)) {
-      return n.namedChildren.filter((c) => interpolations.has(c.type)).map((c) => codeText(c, stripPartial)).join(" ");
+      const inner = n.namedChildren.filter((c) => interpolations.has(c.type)).map((c) => codeText(c, stripPartial)).join(" ");
+      const reads = spec.stringReads?.(n);
+      return reads ? `${inner} ${reads}`.trim() : inner;
     }
     if (n.childCount === 0) return n.text;
     // A sanitizer anywhere in an expression cleans what it wraps (`build_sql(int(request.GET["n"]))`);

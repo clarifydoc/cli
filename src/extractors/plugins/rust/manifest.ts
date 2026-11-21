@@ -39,6 +39,8 @@ export const rustManifest: LanguagePluginManifest = {
   packageManagers: [cargoPackageManager],
   packageEcosystems: ["cargo"],
   parsing: "regex",
+  // Read by the taint reader only (meta.regexTaint): the wasm tree-sitter-rust ships.
+  grammar: { variants: { rust: { pkg: "tree-sitter-rust", wasm: "tree-sitter-rust.wasm" } } },
   extensions: [".rs"],
   // One type spans files here: `impl` blocks for a type can live in other files of its module.
   typesSpanFiles: true,
