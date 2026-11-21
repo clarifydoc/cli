@@ -2201,7 +2201,7 @@ interface LinkContext {
   fnTypeDecls?: Map<string, { aliases: string[]; classes: string[] }>;
   /** Lazy: the answers `functionTypeQuestion` gave, `file\0type` → function type or not. */
   fnTypeAnswers?: Map<string, boolean>;
-  /** Lazy: per language, the classes each declared package holds (`judgePlatformFunctionType`'s shadowing and import checks). */
+  /** Lazy: per language family, the classes each declared package holds (`judgePlatformFunctionType`'s shadowing and import checks). */
   fnTypePackages?: Map<string, Map<string, Set<string>>>;
   /**
    * Lazy: the map calls `dispatchMapCall` is resolving (`file\0scope\0name`). Two values assigned from each
@@ -4824,15 +4824,17 @@ function judgeFunctionType(ctx: LinkContext, file: string, type: string): boolea
 function judgePlatformFunctionType(ctx: LinkContext, file: FileAnalysis, name: string, platform: { implicit: readonly string[] }, bare: boolean): boolean {
   if (!bare || platform.implicit.includes(name)) return true;
   if (file.classes.some((c) => c.name === name)) return false;
-  const packages = ((ctx.fnTypePackages ??= new Map()).get(file.language) ?? (() => {
+  // One index per language family: Java and Kotlin files share packages and see each other's classes.
+  const family = manifestFor(file.language as Language)?.family ?? file.language;
+  const packages = ((ctx.fnTypePackages ??= new Map()).get(family) ?? (() => {
     const held = new Map<string, Set<string>>();
     for (const a of ctx.analyses) {
-      if (a.language !== file.language || !a.packageName) continue;
+      if (!a.packageName || (manifestFor(a.language as Language)?.family ?? a.language) !== family) continue;
       let classes = held.get(a.packageName);
       if (!classes) held.set(a.packageName, (classes = new Set()));
       for (const c of a.classes) classes.add(c.name);
     }
-    ctx.fnTypePackages!.set(file.language, held);
+    ctx.fnTypePackages!.set(family, held);
     return held;
   })());
   const explicit = file.imports.find((i) => !i.isNamespace && !i.executes && i.specifiers.includes(name) && !i.aliases?.[name] && i.source.endsWith(`.${name}`));

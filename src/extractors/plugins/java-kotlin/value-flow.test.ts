@@ -22,7 +22,7 @@ async function analyzeAll(files: Record<string, string>, language: Language): Pr
   }
   for (const rel of Object.keys(files)) {
     const result = await analyzeFile({
-      file: { absolutePath: join(root, rel), relativePath: rel, language },
+      file: { absolutePath: join(root, rel), relativePath: rel, language: rel.endsWith(".java") ? "java" : language },
       frameworkIds: [],
       projectId: "root",
       outputOpts: { outputDir: out, pretty: false },
@@ -641,5 +641,12 @@ describe("a platform function type is judged by the file's package and imports (
     expect(l.filter((x) => x.startsWith("Club.feed"))).toEqual(["Club.feed: s.get -> Supplier.java::Supplier.get"]);
     expect(l.filter((x) => x.startsWith("Fan.cheer"))).toEqual(["Fan.cheer: s.get -> Supplier.java::Supplier.get"]);
     expect(l.filter((x) => x.startsWith("Match.play"))).toEqual([]);
+  });
+  it("sees a Java class of the same package from a Kotlin file", async () => {
+    const l = links(await analyzeAll({
+      "league/Supplier.java": java["league/Supplier.java"],
+      "league/Garage.kt": ["package league", "import java.util.function.*", "class Garage {", "  fun feed(s: Supplier) {", "    s.get()", "  }", "}"].join("\n"),
+    }, "kotlin")).map((x) => x.replace(/ \[.*\]$/, ""));
+    expect(l.filter((x) => x.startsWith("Garage.feed"))).toEqual(["Garage.feed: s.get -> Supplier.java::Supplier.get"]);
   });
 });
