@@ -99,10 +99,35 @@ export interface TaintSpec {
    */
   stringReads?(literal: Node): string | null;
   /**
-   * The parts an expression's VALUE is made of, where that is less than its text: an `if` expression's arms (never its
-   * condition), a `match`'s arm values (never its scrutinee), a comparison's none (a boolean). Null for any other node.
+   * Expressions whose VALUE is less than their text (`ValuePart`): an `if` expression's arms (never its condition), a
+   * `match`'s arm values (never its scrutinee), a comparison's none (a boolean). Data, read by the one rule.
    */
-  result?(node: Node): Node[] | null;
+  valueParts?: readonly ValuePart[];
+}
+
+/** What an expression of one node type is worth as a value; the first entry of its type whose `operator` fits applies. */
+export type ValuePart = { type: string } & (
+  /** A boolean (a comparison, `&&`): no payload. `operator` limits it to the operators named. */
+  | { none: true; operator?: RegExp }
+  /** The nodes of these fields (`if`: `consequence`, `alternative`). */
+  | { fields: readonly string[] }
+  /** Every named child (an `else` clause). */
+  | { children: true }
+  /** The `value` of each `arm` below the `in` field (`match`: `body` → `match_arm` → `value`). */
+  | { arms: { in: string; arm: string; value: string } }
+);
+
+/** The parts a node's value is made of, or null when its whole text is (`TaintSpec.valueParts`). */
+function valueOf(node: Node, parts: readonly ValuePart[]): Node[] | null {
+  for (const p of parts) {
+    if (p.type !== node.type) continue;
+    if ("none" in p) {
+      if (!p.operator || p.operator.test(node.childForFieldName("operator")?.text ?? "")) return [];
+    } else if ("fields" in p) return p.fields.map((f) => node.childForFieldName(f)).filter((n): n is Node => !!n);
+    else if ("children" in p) return node.namedChildren;
+    else return (node.childForFieldName(p.arms.in)?.namedChildren ?? []).flatMap((a) => (a.type === p.arms.arm ? [a.childForFieldName(p.arms.value)].filter((n): n is Node => !!n) : []));
+  }
+  return null;
 }
 
 type Step = { line: number; note: string };
@@ -314,7 +339,7 @@ function taintFunction(fn: Node, params: ReadonlyMap<string, Taint | null>, ctx:
    * callee, receiver included, is kept).
    */
   const codeText = (n: Node, stripPartial = false): string => {
-    const parts = spec.result?.(n);
+    const parts = spec.valueParts ? valueOf(n, spec.valueParts) : null;
     if (parts) return parts.map((p) => codeText(p, stripPartial)).join(" ").trim();
     if (stringTypes.has(n.type)) {
       const inner = n.namedChildren.filter((c) => interpolations.has(c.type)).map((c) => codeText(c, stripPartial)).join(" ");

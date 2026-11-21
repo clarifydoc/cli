@@ -250,14 +250,13 @@ function buildSpec(requests: readonly string[], usesReqwest: boolean): TaintSpec
       while (n?.type === "binary_expression") n = n.childForFieldName("left");
       return n;
     },
-    result(node) {
-      // A boolean has no payload; an `if` or `match` is its arms' values, never what it tests.
-      if (node.type === "binary_expression" && /^(?:==|!=|<|>|<=|>=|&&|\|\|)$/.test(node.childForFieldName("operator")?.text ?? "")) return [];
-      if (node.type === "if_expression") return [node.childForFieldName("consequence"), node.childForFieldName("alternative")].filter((n): n is Node => !!n);
-      if (node.type === "else_clause") return node.namedChildren;
-      if (node.type === "match_expression") return (node.childForFieldName("body")?.namedChildren ?? []).flatMap((arm) => (arm.type === "match_arm" ? [arm.childForFieldName("value")].filter((n): n is Node => !!n) : []));
-      return null;
-    },
+    // A boolean has no payload; an `if` or `match` is its arms' values, never what it tests.
+    valueParts: [
+      { type: "binary_expression", none: true, operator: /^(?:==|!=|<|>|<=|>=|&&|\|\|)$/ },
+      { type: "if_expression", fields: ["consequence", "alternative"] },
+      { type: "else_clause", children: true },
+      { type: "match_expression", arms: { in: "body", arm: "match_arm", value: "value" } },
+    ],
     returnTypes: new Set(["return_expression"]),
     sinks: [
       { callee: /^(?:sqlx::)?(?:query|query_as|query_scalar|raw_sql)$|^(?:diesel::)?sql_query$/, category: "sql-injection", cwe: "CWE-89", what: "the SQL text" },
