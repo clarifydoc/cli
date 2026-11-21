@@ -427,3 +427,39 @@ describe("detectDeployment — a build whose context is the repository root", ()
     }
   });
 });
+
+describe("detectDeployment — broker URLs held in an env var", () => {
+  it("joins a service to the broker or cache service its URL names, and no other (decoy host, decoy broker)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clarifydoc-broker-"));
+    try {
+      await writeFile(join(root, "docker-compose.yml"), [
+        "services:",
+        "  rabbitmq:", "    image: rabbitmq:3",
+        "  other-queue:", "    image: rabbitmq:3",
+        "  kafka:", "    image: bitnami/kafka",
+        "  cache:", "    image: redis:7",
+        "  nats:", "    image: nats:2",
+        "  clubs:",
+        "    image: reg.io/clubs",
+        "    environment:",
+        "      AMQP_URL: amqp://guest:guest@rabbitmq:5672",
+        "      KAFKA_BROKERS: kafka:9092,kafka2:9092",
+        "      REDIS_URL: redis://cache:6379/0",
+        "      NATS_URL: nats://nats:4222",
+        "  players:",
+        "    image: reg.io/players",
+        "    environment:",
+        "      AMQP_URL: amqp://broker.example.com:5672",
+        "      KAFKA_BROKERS: broker-two:9092",
+        "",
+      ].join("\n"));
+      const dep = await detectDeployment(root, { subProjects: [{ id: "root", name: "infra", root: "", type: "unknown" } as unknown as SubProject] });
+      const from = (n: string) => dep!.edges.filter((e) => e.from === n).map((e) => `${e.to} ${e.kind} ${e.via ?? ""}`).sort();
+      expect(from("clubs")).toEqual(["cache db REDIS_URL", "kafka bus KAFKA_BROKERS", "nats bus NATS_URL", "rabbitmq bus AMQP_URL"]);
+      // A host no service answers to is no edge to a namesake-looking broker; the one-queue guess may remain.
+      expect(from("players").filter((e) => e.includes("kafka") || e.includes("nats") || e.includes("other-queue"))).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

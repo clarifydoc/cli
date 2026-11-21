@@ -686,6 +686,26 @@ function hostOf(value: string): string | undefined {
   return m ? m[1] : undefined;
 }
 
+const BROKER_URL_RE = /\b(?:amqps?|kafka|rediss?|nats|tls|mqtts?|stomp|jms):\/\/(?:[^@/\s'"]*@)?([A-Za-z0-9_.-]+)/gi;
+const BROKER_KEY_RE = /(?:broker|bootstrap|amqp|rabbit|kafka|redis|nats|valkey|memcache)/i;
+
+/**
+ * The hosts a broker or cache variable names: every `amqp://`/`kafka://`/`redis://`/`nats://`-style URL in
+ * its value, or, for a key named for a broker, a bare `host:port` list (`KAFKA_BROKERS=kafka:9092,kafka2:9092`).
+ * A value with a placeholder in the host names nothing.
+ */
+function brokerHostsOf(key: string, value: string): string[] {
+  const hosts = new Set<string>();
+  for (const m of value.matchAll(BROKER_URL_RE)) hosts.add(m[1]!.toLowerCase());
+  if (hosts.size === 0 && BROKER_KEY_RE.test(key)) {
+    for (const part of value.split(",")) {
+      const m = part.trim().match(/^([A-Za-z][A-Za-z0-9_.-]*)(?::\d{1,5})?$/);
+      if (m) hosts.add(m[1]!.toLowerCase());
+    }
+  }
+  return [...hosts];
+}
+
 // ─── Main entry ─────────────────────────────────────────────────────────────
 
 /**
@@ -1040,11 +1060,27 @@ export async function detectDeployment(
     addEdge({ from, to: id, kind: "external", label: url ? hostOf(url) : undefined, via });
   }
 
+  // Broker and cache services by the names the network knows them under (compose name, k8s Service aliases).
+  const brokerByHost = new Map<string, DeployedService>();
+  for (const s of services) if (s.kind === "queue" || s.kind === "cache") brokerByHost.set(s.name.toLowerCase(), s);
+  for (const [alias, target] of k8s?.aliases ?? []) {
+    const t = svcByLower.get(target.toLowerCase());
+    if (t && (t.kind === "queue" || t.kind === "cache") && !brokerByHost.has(alias.toLowerCase())) brokerByHost.set(alias.toLowerCase(), t);
+  }
+
   for (const svc of rawMerged) {
     const s = svcByLower.get(svc.name.toLowerCase());
     if (!s || s.kind !== "app") continue;
+    let brokerEdges = 0;
 
     for (const [k, v] of Object.entries(svc.env)) {
+      // A broker or cache URL held in a variable: an edge to the service of that host.
+      for (const target of brokerHostsOf(k, v)) {
+        const b = brokerByHost.get(target) ?? (target.includes(".") ? brokerByHost.get(target.split(".")[0]!) : undefined);
+        if (!b) continue;
+        addEdge({ from: svc.name, to: b.name, kind: b.kind === "queue" ? "bus" : "db", via: k });
+        if (b.kind === "queue") brokerEdges++;
+      }
       const ph = v.match(PLACEHOLDER_RE);
       const phName = ph ? ph[1] : "";
 
@@ -1128,7 +1164,7 @@ export async function detectDeployment(
     }
 
     // Bus attachment → edge to the (first) queue service.
-    if (s.bus && queues.length > 0) {
+    if (s.bus && queues.length > 0 && brokerEdges === 0) {
       addEdge({ from: svc.name, to: queues[0].name, kind: "bus" });
     }
   }

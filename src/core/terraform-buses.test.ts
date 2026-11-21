@@ -159,3 +159,76 @@ resource "aws_lambda_function" "cars" {
     }
   }, 60_000);
 });
+
+describe("Terraform registry modules", () => {
+  it("builds the queue, table, database and function a well-known module states, and wires them (decoys: other publisher, unknown module, local path)", async () => {
+    const dir = await project({
+      "infra/main.tf": `
+module "jobs" {
+  source  = "terraform-aws-modules/sqs/aws"
+  version = "~> 4.0"
+  name    = "garage-jobs"
+}
+module "late" {
+  source = "git::https://github.com/terraform-aws-modules/terraform-aws-sqs.git?ref=v4.0.0"
+  name   = "garage-late"
+}
+module "decoy" {
+  source = "someclub/sqs/aws"
+  name   = "league-decoy"
+}
+module "net" {
+  source = "terraform-aws-modules/vpc/aws"
+  name   = "league-net"
+}
+module "table" {
+  source = "registry.terraform.io/terraform-aws-modules/dynamodb-table/aws"
+  name   = "cars"
+}
+module "worker" {
+  source        = "terraform-aws-modules/lambda/aws"
+  function_name = "match-worker"
+  handler       = "index.handler"
+  environment_variables = {
+    QUEUE_URL = module.jobs.queue_url
+    TABLE     = module.table.dynamodb_table_id
+    NET       = module.net.vpc_id
+    DECOY     = module.decoy.queue_url
+  }
+  event_source_mapping = {
+    sqs = {
+      event_source_arn = module.late.queue_arn
+    }
+  }
+}`,
+    });
+    try {
+      const tf = await collectTerraform(dir, []);
+      expect(tf!.groups.flat().map((s) => `${s.name} ${s.kind ?? "app"}`).sort()).toEqual(["cars datastore", "garage-jobs queue", "garage-late queue", "match-worker app"]);
+      expect(tf!.edges.map((e) => `${e.from} → ${e.to} [${e.kind}] ${e.via}`).sort()).toEqual([
+        "match-worker → cars [db] TABLE",
+        "match-worker → garage-jobs [bus] QUEUE_URL",
+        "match-worker → garage-late [bus] event source",
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("Terraform registry packages", () => {
+  it("lists registry modules, short or hosted, and not local, git or GitHub sources", async () => {
+    const { terraformPackageManager } = await import("../extractors/plugins/terraform/package-manifests.js");
+    const text = `
+module "a" { source = "terraform-aws-modules/sqs/aws"
+  version = "~> 4.0"
+}
+module "b" { source = "registry.terraform.io/clubs/league/aws//modules/x" }
+module "c" { source = "./modules/club" }
+module "d" { source = "git::https://example.com/club.git?ref=v1" }
+module "e" { source = "github.com/clubs/terraform-aws-league" }
+`;
+    const got = await terraformPackageManager.manifests[0]!.parse(text, { declaredIn: "main.tf", path: "main.tf", readSibling: async () => null });
+    expect(got.map((p) => `${p.name} ${p.version ?? ""}`.trim())).toEqual(["terraform-aws-modules/sqs/aws ~> 4.0", "clubs/league/aws"]);
+  });
+});

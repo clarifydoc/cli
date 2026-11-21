@@ -5782,6 +5782,7 @@ export type PackageEcosystem =
   | "nimble"
   | "dub"
   | "vpm"
+  | "terraform"
   | "git";
 
 /** How a dependency is consumed (production vs tooling-only). */

@@ -1,3 +1,4 @@
+import { terraformPackageManager } from "./package-manifests.js";
 import { terraformServiceConfig } from "./tfvars.js";
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 
@@ -12,4 +13,6 @@ export const terraformManifest: LanguagePluginManifest = {
   extensions: [".tf"],
   importTarget: false,
   serviceConfig: terraformServiceConfig,
+  packageManagers: [terraformPackageManager],
+  packageEcosystems: ["terraform"],
 };

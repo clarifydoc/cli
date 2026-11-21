@@ -45,6 +45,29 @@ function engineFamily(b: HclBlock): string {
   return /postgres/.test(e) ? "postgres" : /mysql|maria/.test(e) ? "mysql" : /sqlserver/.test(e) ? "sqlserver" : /oracle/.test(e) ? "oracle" : "rds";
 }
 
+/**
+ * Well-known registry modules (`terraform-aws-modules/<name>/aws`) and what each builds: the module's inputs state
+ * the resource's name the way the raw resource's attributes do. A module the table does not name builds nothing
+ * here, and neither does a namesake of another publisher.
+ */
+const REGISTRY_MODULES: Record<string, { kind: DeployedServiceKind; family: (b: HclBlock) => string; names: string[] }> = {
+  "terraform-aws-modules/sqs/aws": { kind: "queue", family: () => "sqs", names: ["name"] },
+  "terraform-aws-modules/sns/aws": { kind: "queue", family: () => "sns", names: ["name"] },
+  "terraform-aws-modules/dynamodb-table/aws": { kind: "datastore", family: () => "dynamodb", names: ["name"] },
+  "terraform-aws-modules/rds/aws": { kind: "datastore", family: (b) => engineFamily(b), names: ["identifier", "db_name"] },
+  "terraform-aws-modules/lambda/aws": { kind: "app", family: () => "lambda", names: ["function_name"] },
+};
+
+/** `terraform-aws-modules/sqs/aws` from a registry address, a hosted-registry address or the module's GitHub source. */
+export function registryModuleKey(source: string): string | undefined {
+  const gh = source.match(/github\.com[/:]([\w.-]+)\/terraform-([a-z0-9]+)-([a-z0-9-]+?)(?:\.git)?(?:[/?#]|$)/i);
+  if (gh) return `${gh[1]}/${gh[3]}/${gh[2]}`.toLowerCase();
+  if (/^(?:git|hg|s3|gcs|https?)::|^(?:https?|git|ssh):/i.test(source)) return undefined;
+  const parts = source.replace(/\?.*$/, "").replace(/\/\/.*$/, "").split("/");
+  if (parts.length === 4 && /^registry\.terraform\.io$/i.test(parts[0]!)) parts.shift();
+  return parts.length === 3 ? parts.join("/").toLowerCase() : undefined;
+}
+
 const MODULE_EXTENSIONS = [".ts", ".js", ".mjs", ".cjs", ".py", ".rb"];
 
 export async function collectTerraform(projectRoot: string, ignore: readonly string[]): Promise<TerraformDeployment | undefined> {
@@ -81,7 +104,9 @@ export async function collectTerraform(projectRoot: string, ignore: readonly str
         if (v !== undefined) scope.outputs.set(block.labels[0], v);
       } else if (block.type === "module" && block.labels[0]) {
         const source = hclString(block.attrs.get("source"));
-        if (source && /^\.\.?\//.test(source)) scope.calls.set(block.labels[0], { source: posix.normalize(posix.join(dir, source)).replace(/\/$/, "").replace(/^\.$/, ""), args: block.attrs });
+        const registry = source && !/^\.\.?\//.test(source) ? registryModuleKey(source) : undefined;
+        if (registry && REGISTRY_MODULES[registry]) scope.registry.set(block.labels[0], { key: registry, block, file: rel });
+        else if (source && /^\.\.?\//.test(source)) scope.calls.set(block.labels[0], { source: posix.normalize(posix.join(dir, source)).replace(/\/$/, "").replace(/^\.$/, ""), args: block.attrs });
       }
     }
   }
@@ -89,6 +114,7 @@ export async function collectTerraform(projectRoot: string, ignore: readonly str
   const out: TerraformDeployment = { files: [], groups: [], edges: [] };
   const nameOfAll = new Map<string, string>(); // `<dir>|<type>.<label>` → service name
   const pending: PendingEdge[] = [];
+  const kindOf = new Map<string, DeployedServiceKind>(); // `<dir>|module.<label>` → kind of the registry module's service
   for (const [dir, list] of modules) {
     const addr = new Map(list.map((x) => [`${x.block.type === "data" ? "data." : ""}${x.block.labels[0]}.${x.block.labels[1]}`, x]));
     const services: RawService[] = [];
@@ -153,6 +179,27 @@ export async function collectTerraform(projectRoot: string, ignore: readonly str
       nameOf.set(`${type}.${label}`, name);
       files.add(file);
     }
+    for (const [label, call] of scopes.get(dir)?.registry ?? []) {
+      const spec = REGISTRY_MODULES[call.key]!;
+      const arg = (n: string) => hclString(call.block.attrs.get(n)) ?? undefined;
+      const name = named(spec.names.map(arg).find((v) => v) ?? label, spec.family(call.block));
+      if (spec.kind === "app") {
+        const envExpr = call.block.attrs.get("environment_variables") ?? "";
+        const env: Record<string, string> = {};
+        for (const m of envExpr.matchAll(/^\s*([A-Za-z_][\w]*)\s*=\s*(.+?)\s*$/gm)) env[m[1]!] = hclString(m[2]) ?? m[2]!;
+        const handler = arg("handler");
+        const src = hclPath(call.block.attrs.get("source_path"), dir);
+        const context = src ? posix.normalize(src).replace(/^\.\/?/, "").replace(/\/$/, "") : undefined;
+        const svc: RawService = { name, file: call.file, entrypoint: handler, env, dependsOn: [], ports: [], ...(context !== undefined && !context.startsWith("..") && !/\.[a-z]+$/i.test(context) ? { build: { context } } : {}) };
+        services.push(svc);
+        for (const m of envExpr.matchAll(/^\s*([A-Za-z_][\w]*)\s*=\s*(.+?)\s*$/gm)) pending.push({ dir, from: `module.${label}`, expr: m[2]!, via: m[1]!, how: "env" });
+        const mapping = call.block.attrs.get("event_source_mapping");
+        if (mapping) pending.push({ dir, from: `module.${label}`, expr: mapping, via: "event source", how: "event" });
+      } else services.push({ name, file: call.file, env: {}, dependsOn: [], ports: [], kind: spec.kind, family: spec.family(call.block), ...(spec.kind === "queue" ? { destination: true } : {}) });
+      nameOf.set(`module.${label}`, name);
+      kindOf.set(`${dir}|module.${label}`, spec.kind);
+      files.add(call.file);
+    }
     if (services.length === 0) continue;
     for (const [a, n] of nameOf) nameOfAll.set(`${dir}|${a}`, n);
     out.groups.push(services);
@@ -163,7 +210,14 @@ export async function collectTerraform(projectRoot: string, ignore: readonly str
     const from = nameOfAll.get(`${e.dir}|${e.from}`);
     if (!from) continue;
     const refs = resolveRefs(scopes, e.dir, e.expr, 0);
-    for (const r of e.how === "event" ? refs.slice(0, 1) : refs) {
+    for (const r of e.how === "event" ? refs.filter((x) => x.type === "module" || INFRA[x.type]).slice(0, 1) : refs) {
+      if (r.type === "module") {
+        const kind = kindOf.get(`${r.dir}|module.${r.name}`);
+        const to = nameOfAll.get(`${r.dir}|module.${r.name}`);
+        if (!kind || !to || (e.how === "event" && kind !== "queue")) continue;
+        out.edges.push({ from, to, kind: kind === "queue" || e.how === "event" ? "bus" : kind === "app" ? "http" : "db", via: e.via });
+        continue;
+      }
       const infra = INFRA[r.type];
       const lambda = r.type === "aws_lambda_function" || r.type === "aws_lambda_function_url";
       if (e.how === "event" && !infra) continue;
@@ -180,8 +234,10 @@ interface ModuleScope {
   locals: Map<string, string>;
   outputs: Map<string, string>;
   calls: Map<string, { source: string; args: Map<string, string> }>;
+  /** `module` blocks calling a well-known registry module, by label. */
+  registry: Map<string, { key: string; block: HclBlock; file: string }>;
 }
-const newScope = (): ModuleScope => ({ defaults: new Map(), locals: new Map(), outputs: new Map(), calls: new Map() });
+const newScope = (): ModuleScope => ({ defaults: new Map(), locals: new Map(), outputs: new Map(), calls: new Map(), registry: new Map() });
 interface PendingEdge { dir: string; from: string; expr: string; via: string; how: "env" | "event" }
 interface GlobalRef { dir: string; type: string; name: string }
 
@@ -215,6 +271,10 @@ function resolveRefs(scopes: Map<string, ModuleScope>, dir: string, expr: string
       if (sites.length === 0) out.push(...resolveDefault(scopes, dir, m[2]!, depth));
       else if (results.every((r) => keyOf(r) === keyOf(results[0]!))) out.push(...results[0]!);
     } else {
+      if (scope?.registry.has(m[3]!)) {
+        out.push({ dir, type: "module", name: m[3]! });
+        continue;
+      }
       const call = scope?.calls.get(m[3]!);
       const v = call ? scopes.get(call.source)?.outputs.get(m[4]!) : undefined;
       if (call && v) out.push(...resolveRefs(scopes, call.source, v, depth + 1));
