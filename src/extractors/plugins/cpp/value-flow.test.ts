@@ -277,3 +277,53 @@ void stop(Derived& d) { d.value(); }
     expect(found.some((l) => l.includes("stop d.value -> Derived.value"))).toBe(true);
   });
 });
+
+// A header's class declares a callback field in a header named unlike the class; a namesake class elsewhere, which the
+// caller never includes, has methods of the same names defined out of line.
+describe("C++ member calls: a namesake class outside the include closure never takes the call", () => {
+  const typesH = `#pragma once
+#include <functional>
+class Squad {
+public:
+  std::function<void()> onGoal;
+  void cheer();
+};
+`;
+  const typesCpp = `#include "club/types.h"
+void Squad::cheer() {}
+`;
+  const decoyH = `#pragma once
+class Squad {
+public:
+  void onGoal();
+  void rest();
+  void cheer();
+};
+`;
+  const decoyCpp = `#include "decoy.h"
+void Squad::onGoal() {}
+void Squad::rest() {}
+void Squad::cheer() {}
+`;
+  const wireCpp = `#include "club/types.h"
+void celebrate() {}
+void wire(Squad& squad) { squad.onGoal = celebrate; }
+`;
+  const mainCpp = `#include "club/types.h"
+void play(Squad& squad) {
+  squad.onGoal();
+  squad.rest();
+  squad.cheer();
+}
+`;
+  const found = buildSymbolLinks([
+    read(typesH, "club/types.h"), read(typesCpp, "club/types.cpp"), read(decoyH, "other/decoy.h"), read(decoyCpp, "other/decoy.cpp"),
+    read(wireCpp, "wire.cpp"), read(mainCpp, "main.cpp"),
+  ]).filter((l) => l.sourceSymbol === "play").map((l) => `${l.strategy} ${l.callName} -> ${l.targetFile}::${l.targetSymbol}`);
+  it("a member only the other class defines does not link to it", () => {
+    expect(found.filter((l) => l.includes("other/decoy"))).toEqual([]);
+  });
+  it("a method the included class defines out of line keeps its link", () => {
+    expect(found).toContain("injection squad.cheer -> club/types.cpp::Squad.cheer");
+  });
+});
