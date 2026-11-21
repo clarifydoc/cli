@@ -1413,6 +1413,14 @@ export interface LanguagePluginManifest {
    */
   autoloadedFiles?(analysis: FileAnalysis, filesEndingWith: (suffix: string) => readonly string[]): readonly string[];
   /**
+   * Type names the language's platform declares as function types (Java/Kotlin `Consumer`, `Supplier`, `Runnable`):
+   * a held value written with one is a function unless the project declares a class of that name nearer than the
+   * platform's. `names` are the simple names; `implicit` are the ones a file names with no import (`java.lang`'s).
+   * A plugin states an `invoke` with `ifFnType` for such a name and core's function-type question
+   * (`judgePlatformFunctionType`) reads the file's imports, package and declared classes. Leaf data.
+   */
+  platformFunctionTypes?: { names: readonly string[]; implicit: readonly string[] };
+  /**
    * How a class name written in code is looked up, for a language whose
    * lookup follows the namespaces lexically open where it is written (Ruby:
    * inside `module League; class Report` a bare `Helper` is

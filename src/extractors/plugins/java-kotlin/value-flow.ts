@@ -23,6 +23,7 @@ import type { Node } from "web-tree-sitter";
 import type { CallInfo, ParamInfo, ValueCell, ValueFlowFact } from "../../../types/analysis.js";
 import { javaMethodRefName, kotlinReferenceName } from "./call-hooks.js";
 import { javaManifest } from "./manifest.js";
+import { FN_DEFAULT_IMPORTED, FN_INTERFACES } from "./function-types.js";
 import { wrapsWhole } from "../shared/text-scan.js";
 
 type Lang = "java" | "kotlin";
@@ -36,13 +37,6 @@ const INVOKE_METHODS = new Set(["run", "apply", "accept", "get", "call", "test",
 const ADD_METHODS = new Set(["add", "addLast", "addFirst", "offer", "push", "put", "putIfAbsent", "set"]);
 /** Methods whose result is an element of the collection they are called on. */
 const ELEMENT_METHODS = new Set(["get", "getOrDefault", "first", "last", "getFirst", "getLast", "firstOrNull", "lastOrNull", "getValue", "peek", "poll", "pop", "remove"]);
-/** Functional interfaces of the JDK (and the common Kotlin aliases) whose single method runs a function. */
-const FN_INTERFACES = new Set([
-  "Runnable", "Callable", "Supplier", "Consumer", "BiConsumer", "Function", "BiFunction", "UnaryOperator", "BinaryOperator",
-  "Predicate", "BiPredicate", "Comparator", "IntFunction", "IntSupplier", "IntConsumer", "IntPredicate", "IntUnaryOperator",
-  "IntBinaryOperator", "ToIntFunction", "ToLongFunction", "ToDoubleFunction", "LongSupplier", "LongFunction", "LongConsumer",
-  "DoubleSupplier", "DoubleFunction", "DoubleConsumer", "BooleanSupplier", "ObjIntConsumer",
-]);
 const COLLECTIONS = new Set([
   "List", "MutableList", "ArrayList", "LinkedList", "Set", "MutableSet", "HashSet", "LinkedHashSet", "TreeSet", "Collection", "MutableCollection",
   "Iterable", "MutableIterable", "Deque", "ArrayDeque", "Queue", "Stack", "Vector", "CopyOnWriteArrayList", "Array", "Sequence",
@@ -68,9 +62,6 @@ const LIBRARY_HEADS = new Set(["log", "logger", "LOG", "LOGGER", "System", "Math
 
 const norm = (text: string): string => text.replace(/\s+/g, "");
 
-/** Functional interfaces a file names without an import: `java.lang`'s (and Kotlin's `Comparator` alias). */
-const FN_DEFAULT_IMPORTED = new Set(["Runnable", "Comparator"]);
-
 /**
  * Whether a bare functional-interface name is the platform's in this file. `Consumer` needs an import or a wildcard
  * one, so a file with neither, or one that imports a project class of that name, or declares it, names a project
@@ -90,6 +81,16 @@ function namesPlatformInterface(lib: LibraryContext | null | undefined, simple: 
  * type. `lib`, the file's imports, keeps a project class that shares a JDK interface's simple name from passing.
  */
 export function isFunctionType(text: string | null | undefined, lib?: LibraryContext | null): boolean {
+  const verdict = functionTypeVerdict(text);
+  return typeof verdict === "string" ? namesPlatformInterface(lib, verdict) : verdict;
+}
+
+/**
+ * What the written type alone says: `true` (an arrow type, a name written with its package, a name `java.lang` brings
+ * in), `false`, or the bare platform name (`Consumer`) that only the file's imports, package and declared classes can
+ * judge — the question core answers (`judgePlatformFunctionType`) when the fact says `ifFnType`.
+ */
+export function functionTypeVerdict(text: string | null | undefined): boolean | string {
   if (!text) return false;
   let t = text.trim().replace(/\s+/g, " ").replace(/^(?:@\w+\s+)+/, "").replace(/^final\s+/, "").replace(/\?$/, "");
   if (t.startsWith("suspend ")) t = t.slice(8).trim();
@@ -99,7 +100,8 @@ export function isFunctionType(text: string | null | undefined, lib?: LibraryCon
   const simple = path.pop()!;
   if (!FN_INTERFACES.has(simple)) return false;
   // Written with its package (`java.util.function.Consumer`): the platform's, whatever the project declares.
-  return path.length > 0 || namesPlatformInterface(lib, simple);
+  if (path.length > 0 || FN_DEFAULT_IMPORTED.has(simple)) return true;
+  return simple;
 }
 
 function hasTopLevelArrow(t: string): boolean {
@@ -341,7 +343,8 @@ export function classFlowOf(body: Node, lang: Lang, headerFields: ReadonlyArray<
 }
 
 type Kind = "fn" | "elem" | null;
-interface Ref { cell: ValueCell; fn: boolean; elem: boolean; field?: string; name: string }
+/** `cond`: the bare platform type name a parameter or local is declared with — it holds a function only if core says so. */
+interface Ref { cell: ValueCell; fn: boolean; elem: boolean; field?: string; name: string; cond?: string }
 
 /** The facts of one function body, or of a class's field initializers (`calls` null: only seeds and copies). */
 class Flow {
@@ -354,6 +357,8 @@ class Flow {
   private readonly forEachParams = new Map<number, string>();
   private lambdaDepth = 0;
   private readonly seen = new Set<string>();
+  /** Parameters and locals declared with a bare platform type name: name → the name core judges (`invoke.ifFnType`). */
+  private readonly condNames = new Map<string, string>();
 
   constructor(
     private readonly lang: Lang,
@@ -374,8 +379,10 @@ class Flow {
     this.facts.push(f);
   }
 
-  bind(name: string, fn: boolean, elem: boolean): void {
+  bind(name: string, fn: boolean, elem: boolean, cond?: string): void {
     this.bound.add(name);
+    if (cond !== undefined) this.condNames.set(name, cond);
+    else this.condNames.delete(name);
     if (fn) this.fnNames.add(name);
     if (elem) this.elemNames.add(name);
   }
@@ -387,7 +394,8 @@ class Flow {
       if (held !== undefined) return { cell: { name }, fn: held, elem: false, name };
     }
     if (this.bound.has(name)) {
-      return { cell: { name }, fn: this.fnNames.has(name), elem: this.elemNames.has(name), name };
+      const cond = this.condNames.get(name);
+      return { cell: { name }, fn: this.fnNames.has(name), elem: this.elemNames.has(name), name, ...(cond !== undefined ? { cond } : {}) };
     }
     if (this.ctx?.fields.has(name)) {
       return { cell: { name: "this", member: name }, fn: this.ctx.fn.has(name), elem: this.ctx.elem.has(name), field: name, name };
@@ -679,7 +687,8 @@ class Flow {
   run(params: readonly ParamInfo[], body: Node): void {
     for (const p of params) {
       if (p.isReceiver) continue;
-      this.bind(p.name, isFunctionType(p.type, this.library), isFunctionCollectionType(p.type, this.library));
+      const verdict = functionTypeVerdict(p.type);
+      this.bind(p.name, verdict !== false, isFunctionCollectionType(p.type, this.library), typeof verdict === "string" ? verdict : undefined);
       if (p.type) this.paramTypes.set(p.name, p.type);
     }
     // Kotlin `fun mk(): () -> Unit = ::load`: the body is the returned expression.
@@ -886,12 +895,15 @@ class Flow {
   }
 
   private declare(name: string, type: string | null, init: Node | null | undefined): void {
-    const declaredFn = isFunctionType(type, this.library) && !buildsObject(init);
+    const verdict = functionTypeVerdict(type);
+    const declaredFn = verdict !== false && !buildsObject(init);
     const declaredElem = isFunctionCollectionType(type, this.library);
     // The initializer is read before the name it declares is bound (`var f = f2`).
     let kind: Kind = null;
     if (init) kind = this.initialize({ name }, name, false, init, declaredFn, declaredElem, type === null);
-    this.bind(name, declaredFn || kind === "fn", declaredElem || kind === "elem");
+    // A local that takes a conditional one's value (`var c = param`) is as conditional as its source.
+    const cond = declaredFn ? (typeof verdict === "string" ? verdict : undefined) : kind === "fn" && init ? this.refOf(init)?.cond : undefined;
+    this.bind(name, declaredFn || kind === "fn", declaredElem || kind === "elem", cond);
   }
 
   private javaFor(node: Node): void {
@@ -899,8 +911,8 @@ class Flow {
     const source = this.refOf(node.childForFieldName("value")) ?? this.valuesOf(node.childForFieldName("value"));
     if (!name) return;
     const type = node.childForFieldName("type")?.text ?? null;
-    const fn = isFunctionType(type, this.library) || !!source?.elem;
-    this.bind(name, fn, false);
+    const verdict = functionTypeVerdict(type);
+    this.bind(name, verdict !== false || !!source?.elem, false, typeof verdict === "string" && !source?.elem ? verdict : undefined);
     if (source?.elem) this.push({ kind: "copy", from: this.elementCell(source), to: { name }, line: node.startPosition.row + 1 });
   }
 
@@ -1127,7 +1139,7 @@ class Flow {
     if (!receiver) return;
     const ref = this.refOf(receiver);
     if (ref) {
-      if (ref.fn) this.push({ kind: "invoke", cell: ref.cell, call, line });
+      if (ref.fn) this.push({ kind: "invoke", cell: ref.cell, call, line, ...(ref.cond !== undefined ? { ifFnType: ref.cond } : {}) });
       return;
     }
     const element = this.elementRead(receiver);

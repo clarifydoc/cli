@@ -7,6 +7,7 @@ import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { javaKotlinFrameworkRules } from "./frameworks.js";
 import { mavenPackageManager, gradlePackageManager } from "./package-manifests.js";
 import { jvmServiceConfig } from "./service-config.js";
+import { jvmPlatformFunctionTypes } from "./function-types.js";
 import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
@@ -124,6 +125,7 @@ export const javaManifest: LanguagePluginManifest = {
   testSubjectAffixes: { suffixes: ["ITCase", "Tests", "Test", "IT"] },
   externalModulePrefixes: ["java.", "javax.", "jakarta.", "org.springframework.", "org.apache.", "org.hibernate.", "org.junit.", "io.ktor.", "io.netty.", "com.google.", "com.fasterxml.", "com.amazonaws."],
   externalNamespaceRoots: ["java", "javax", "jakarta", "org", "com", "io"],
+  platformFunctionTypes: jvmPlatformFunctionTypes,
   frameworkImportHints: { "io.ktor.server.routing": "ktor", "org.springframework.web.bind.annotation": "spring-web", "org.hibernate": "hibernate", "javax.persistence": "hibernate", "jakarta.persistence": "hibernate", "org.eclipse.persistence": "eclipselink", "org.apache.openjpa": "openjpa", "org.springframework.data.jpa": "spring-data-jpa", "org.springframework.data.jdbc": "spring-data-jdbc", "org.springframework.data.relational": "spring-data-jdbc", "org.mybatis": "mybatis", "org.jooq": "jooq", "org.jetbrains.exposed": "exposed" },
   frameworkRules: javaKotlinFrameworkRules,
   activationFiles: ["pom.xml", "build.gradle", "build.gradle.kts"],
@@ -166,6 +168,7 @@ export const kotlinManifest: LanguagePluginManifest = {
   testSubjectAffixes: { suffixes: ["ITCase", "Tests", "Test", "IT"] },
   externalModulePrefixes: ["java.", "javax.", "jakarta.", "org.springframework.", "org.apache.", "org.hibernate.", "org.junit.", "io.ktor.", "io.netty.", "com.google.", "com.fasterxml.", "com.amazonaws."],
   externalNamespaceRoots: ["java", "javax", "jakarta", "org", "com", "io"],
+  platformFunctionTypes: jvmPlatformFunctionTypes,
   frameworkImportHints: { "io.ktor.server.routing": "ktor", "org.springframework.web.bind.annotation": "spring-web", "org.hibernate": "hibernate", "javax.persistence": "hibernate", "jakarta.persistence": "hibernate", "org.eclipse.persistence": "eclipselink", "org.apache.openjpa": "openjpa", "org.springframework.data.jpa": "spring-data-jpa", "org.springframework.data.jdbc": "spring-data-jdbc", "org.springframework.data.relational": "spring-data-jdbc", "org.mybatis": "mybatis", "org.jooq": "jooq", "org.jetbrains.exposed": "exposed" },
   builtinMembers: JVM_BUILTIN_MEMBERS,
 };

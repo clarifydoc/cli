@@ -625,3 +625,21 @@ describe("a project class named like a JDK functional interface", () => {
     expect(l.filter((x) => x.startsWith("Club.feed")).map((x) => x.replace(/ \[.*\]$/, ""))).toEqual(["Club.feed: c.accept -> Consumer.kt::Consumer.accept"]);
   });
 });
+
+describe("a platform function type is judged by the file's package and imports (one core question)", () => {
+  const java = {
+    "league/Supplier.java": ["package league;", "public class Supplier {", "  public String get() { return \"x\"; }", "}"].join("\n"),
+    // An on-demand import never shadows a class of the file's own package: the project's class.
+    "league/Club.java": ["package league;", "import java.util.function.*;", "public class Club {", "  void feed(Supplier s) {", "    s.get();", "  }", "}"].join("\n"),
+    // Another package: the on-demand import brings the platform's in, so the call leaves the name tiers.
+    "cup/Match.java": ["package cup;", "import java.util.function.*;", "public class Match {", "  void play(Supplier s) {", "    Supplier t = s;", "    t.get();", "  }", "}"].join("\n"),
+    // An explicit import of the project's class from its package: not the platform's.
+    "cup/Fan.java": ["package cup;", "import league.Supplier;", "public class Fan {", "  void cheer(Supplier s) {", "    s.get();", "  }", "}"].join("\n"),
+  };
+  it("keeps a same-package or explicitly imported project class and the platform's imported interface apart", async () => {
+    const l = links(await analyzeAll(java, "java")).map((x) => x.replace(/ \[.*\]$/, ""));
+    expect(l.filter((x) => x.startsWith("Club.feed"))).toEqual(["Club.feed: s.get -> Supplier.java::Supplier.get"]);
+    expect(l.filter((x) => x.startsWith("Fan.cheer"))).toEqual(["Fan.cheer: s.get -> Supplier.java::Supplier.get"]);
+    expect(l.filter((x) => x.startsWith("Match.play"))).toEqual([]);
+  });
+});

@@ -2201,6 +2201,8 @@ interface LinkContext {
   fnTypeDecls?: Map<string, { aliases: string[]; classes: string[] }>;
   /** Lazy: the answers `functionTypeQuestion` gave, `file\0type` → function type or not. */
   fnTypeAnswers?: Map<string, boolean>;
+  /** Lazy: per language, the classes each declared package holds (`judgePlatformFunctionType`'s shadowing and import checks). */
+  fnTypePackages?: Map<string, Map<string, Set<string>>>;
   /**
    * Lazy: the map calls `dispatchMapCall` is resolving (`file\0scope\0name`). Two values assigned from each
    * other (`a.value = b.value` in one function, `b.value = a.value` in another) would otherwise send
@@ -4774,6 +4776,11 @@ function judgeFunctionType(ctx: LinkContext, file: string, type: string): boolea
   if (!/^[\w$]+$/.test(name)) return false;
   const language = ctx.languageOf.get(file);
   if (!language) return false;
+  const platform = manifestFor(language as Language)?.platformFunctionTypes;
+  if (platform?.names.includes(name)) {
+    const own = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(file);
+    return own ? judgePlatformFunctionType(ctx, own, name, platform, !type.includes(".")) : false;
+  }
   if (!ctx.fnTypeDecls) {
     // Only names some file declares as a function-type alias matter: a class is indexed by such a name, never every class.
     const decls = (ctx.fnTypeDecls = new Map());
@@ -4804,6 +4811,34 @@ function judgeFunctionType(ctx: LinkContext, file: string, type: string): boolea
     ?? (project === undefined ? undefined : decide((f) => ctx.projectOf.get(f) === project))
     ?? decide((f) => importedProjects.has(ctx.projectOf.get(f) ?? ""))
     ?? false;
+}
+
+/**
+ * A bare platform function-type name (`Consumer`, `Supplier`; the manifest's `platformFunctionTypes`) written in a file:
+ * the platform's unless the project's own class of that name is the nearer reading. Judged as the language's scoping
+ * does: a name the platform brings in unasked (`implicit`) is the platform's; a class the file declares is the
+ * project's; a single-type import names the platform's unless the project declares that class in the package it
+ * names; with no such import, the on-demand imports of a package the project does not declare bring the platform's in
+ * — unless a class of the file's own package has that name, which an on-demand import never shadows.
+ */
+function judgePlatformFunctionType(ctx: LinkContext, file: FileAnalysis, name: string, platform: { implicit: readonly string[] }, bare: boolean): boolean {
+  if (!bare || platform.implicit.includes(name)) return true;
+  if (file.classes.some((c) => c.name === name)) return false;
+  const packages = ((ctx.fnTypePackages ??= new Map()).get(file.language) ?? (() => {
+    const held = new Map<string, Set<string>>();
+    for (const a of ctx.analyses) {
+      if (a.language !== file.language || !a.packageName) continue;
+      let classes = held.get(a.packageName);
+      if (!classes) held.set(a.packageName, (classes = new Set()));
+      for (const c of a.classes) classes.add(c.name);
+    }
+    ctx.fnTypePackages!.set(file.language, held);
+    return held;
+  })());
+  const explicit = file.imports.find((i) => !i.isNamespace && !i.executes && i.specifiers.includes(name) && !i.aliases?.[name] && i.source.endsWith(`.${name}`));
+  if (explicit) return !packages.get(explicit.source.slice(0, -name.length - 1))?.has(name);
+  if (file.packageName && packages.get(file.packageName)?.has(name)) return false;
+  return file.imports.some((i) => i.isNamespace && !i.inScope && !packages.has(i.source));
 }
 
 /**
