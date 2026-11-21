@@ -46,10 +46,12 @@ export interface NamingFiles {
 export interface NamingIndex {
   into: Map<string, SymbolLink[]>;
   blast: Map<string, BlastRadiusInfo>;
+  /** `file::Name` of every class the analysis declares: a name that is one is a type even when no file uses it. */
+  classes: Set<string>;
 }
 
 /** The index for questions about `files` (the files whose members changed). */
-export function namingIndex(summary: Pick<ProjectAnalysis, "symbolLinks" | "blastRadius">, files: Iterable<string>): NamingIndex {
+export function namingIndex(summary: Pick<ProjectAnalysis, "symbolLinks" | "blastRadius"> & Partial<Pick<ProjectAnalysis, "classGraph">>, files: Iterable<string>): NamingIndex {
   const wanted = new Set(files);
   const into = new Map<string, SymbolLink[]>();
   for (const l of summary.symbolLinks ?? []) {
@@ -57,7 +59,9 @@ export function namingIndex(summary: Pick<ProjectAnalysis, "symbolLinks" | "blas
     const key = `${l.targetFile}::${l.targetSymbol}`;
     (into.get(key) ?? into.set(key, []).get(key)!).push(l);
   }
-  return { into, blast: new Map((summary.blastRadius ?? []).map((b) => [b.filePath, b])) };
+  const classes = new Set<string>();
+  for (const n of summary.classGraph?.nodes ?? []) if (!n.isExternal && !n.isFile && wanted.has(n.filePath)) classes.add(`${n.filePath}::${n.name}`);
+  return { into, blast: new Map((summary.blastRadius ?? []).map((b) => [b.filePath, b])), classes };
 }
 
 /** Whether the file's language records every naming of a type, so a type with no usage record is named by nobody. */
@@ -86,7 +90,8 @@ export function filesNaming(index: NamingIndex, targets: readonly MemberTarget[]
       continue;
     }
     const usage = blast.get(t.file)?.typeUsages?.find((u) => u.typeName === t.type);
-    if (!usage && !typeUsageComplete(t.file)) {
+    const unrecorded = !usage && typeUsageComplete(t.file);
+    if (!usage && !unrecorded) {
       undecided = true;
       named.push(false);
       continue;
@@ -100,7 +105,8 @@ export function filesNaming(index: NamingIndex, targets: readonly MemberTarget[]
     }
     if (t.mode === "changed") for (const l of into.get(`${t.file}::${t.type}`) ?? []) add(l.sourceFile, l.sourceSymbol === "(reference)" ? `imports ${t.type}` : `constructs ${t.type}`);
     else if (t.interfaceLike || t.field) for (const l of into.get(`${t.file}::${t.type}`) ?? []) if (l.sourceSymbol !== "(reference)") add(l.sourceFile, `constructs ${t.type}`);
-    named.push(hit);
+    // A declared type no file names is still a known name, not a misspelling.
+    named.push(hit || unrecorded);
   }
   return { files, undecided, named };
 }
@@ -124,7 +130,9 @@ export function targetsFromNames(index: NamingIndex, file: string, names: readon
   const blast = index.blast.get(file);
   return names.map((n): MemberTarget => {
     const type = blast?.typeUsages?.find((u) => u.typeName === n);
-    return type ? { file, type: n, mode: adding ? "added" : "changed", interfaceLike: type.definedAt.isInterface } : { file, symbol: n };
+    if (type) return { file, type: n, mode: adding ? "added" : "changed", interfaceLike: type.definedAt.isInterface };
+    // A class with no usage record is a type target where the language's records are complete (nobody names it by type).
+    return index.classes.has(`${file}::${n}`) && typeUsageComplete(file) ? { file, type: n, mode: adding ? "added" : "changed", interfaceLike: false } : { file, symbol: n };
   });
 }
 

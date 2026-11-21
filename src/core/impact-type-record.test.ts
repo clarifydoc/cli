@@ -5,6 +5,7 @@ import { join } from "path";
 import { analyze } from "./analyzer.js";
 import { loadReportSummary } from "./report-payload.js";
 import { impactOfContents } from "./impact-proposed.js";
+import { filesNaming, namingIndex, targetsFromNames } from "./member-dependents.js";
 import type { ProjectAnalysis } from "../types/analysis.js";
 
 const CONTROLLER_PY = [
@@ -54,6 +55,14 @@ describe("a type with no usage record", () => {
     const r = await run("pkg/controller.py", edited);
     expect(r.dependents).toEqual([]);
     expect(r.narrowed?.importers).toBe(1);
+  });
+
+  it("members given by name: a declared class nobody names counts as a known name that charges no file", () => {
+    const index = namingIndex(summary, ["pkg/controller.py"]);
+    const named = filesNaming(index, targetsFromNames(index, "pkg/controller.py", ["MatchController", "MatchController.nothing"]));
+    expect(named.undecided).toBe(false);
+    expect([...named.files.keys()]).toEqual([]);
+    expect(named.named).toEqual([true, false]);
   });
 
   it("Python: a file importing the class by name, or annotating with it, is still charged", async () => {
