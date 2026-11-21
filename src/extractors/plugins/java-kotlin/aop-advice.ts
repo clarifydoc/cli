@@ -1,6 +1,7 @@
 import type { ClassInfo, FileAnalysis, FunctionInfo, Language, SymbolLink } from "../../../types/analysis.js";
 import type { DispatchResolver } from "../../dispatch/base.js";
 import { isTestFile } from "../../../core/test-file-detector.js";
+import { matchingParen } from "../shared/text-scan.js";
 
 /**
  * Spring AOP / AspectJ advice on its join points. An `@Aspect` class's `@Before`, `@After`, `@AfterReturning`,
@@ -617,13 +618,4 @@ function matchSegments(pattern: readonly string[], name: readonly string[]): boo
     row = next;
   }
   return row[name.length]!;
-}
-
-function matchingParen(text: string, open: number): number {
-  let depth = 0;
-  for (let i = open; i < text.length; i++) {
-    if (text[i] === "(") depth++;
-    else if (text[i] === ")" && --depth === 0) return i;
-  }
-  return -1;
 }
