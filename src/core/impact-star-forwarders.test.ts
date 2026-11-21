@@ -91,4 +91,23 @@ describe("impact charges a file that hands a charged module on whole", () => {
     const r = computeImpactDiff(summary, ["league/table.py"], { symbols });
     expect(r.dependents).toEqual(["league/drops.py"]);
   });
+
+  it("a git diff that deletes a file charges the files naming what it held, like the proposed deletion", async () => {
+    const diff = ["diff --git a/league/table.py b/league/table.py", "deleted file mode 100644", "--- a/league/table.py", "+++ /dev/null", "@@ -1,6 +0,0 @@"].join("\n");
+    const hunks = parseUnifiedHunks(diff);
+    const symbols = await symbolsOfChange(root, join(dir, "out"), summary, ["league/table.py"], hunks);
+    expect(symbols.changed.map((c) => c.symbol).sort()).toEqual(["rank", "relegate"]);
+    const r = computeImpactDiff(summary, ["league/table.py"], { symbols });
+    expect(r.dependents).toEqual(["league/drops.py", "league/ranks.py"]);
+  });
+
+  it("a summary from before star re-exports were recorded follows none by path words and says to re-run", async () => {
+    const old: ProjectAnalysis = { ...summary, starReexports: undefined, provenance: { ...summary.provenance!, extractorVersion: "1.721.0" } };
+    const out = await impactOfContents(old, join(dir, "out"), root, new Map([["league/clock.py", CLOCK_PY.replace(/def add_job[^]*?\n\n\n/, "")]]));
+    expect(out.dependents).toEqual(["league/tasks/hooks.py"]);
+    expect(out.limitations?.some((l) => /re-run the analysis/.test(l))).toBe(true);
+    // The current summary says nothing of the kind.
+    const now = await run("league/clock.py", CLOCK_PY.replace(/def add_job[^]*?\n\n\n/, ""));
+    expect(now.limitations?.some((l) => /re-run the analysis/.test(l)) ?? false).toBe(false);
+  });
 });

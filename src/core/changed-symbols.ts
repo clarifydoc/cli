@@ -1,6 +1,7 @@
 import { readFile } from "fs/promises";
 import { dirname, join } from "path";
 import { byOrdinal } from "./ordinal.js";
+import { compareExtractorVersions } from "./manifest.js";
 import type { Confidence, FileAnalysis, ImportInfo, ProjectAnalysis, SymbolLink } from "../types/analysis.js";
 import { GIT_SAFE_CONFIG, GIT_SAFE_DIFF } from "./git-safe.js";
 import { importersOf } from "./importers.js";
@@ -171,8 +172,11 @@ export function symbolsInHunks(
       const hit = spans
         .filter((sp) => sp.line <= e && sp.endLine >= s)
         .sort((x, y) => (x.endLine - x.line) - (y.endLine - y.line))[0];
-      if (hit) symbols.set(`${file}::${hit.symbol}`, hit);
-      else {
+      if (hit) {
+        symbols.set(`${file}::${hit.symbol}`, hit);
+        // A range that covers other functions whole (a deleted file, a block cut out) changes each of them, not just the smallest it touches.
+        for (const sp of spans) if (sp.line >= s && sp.endLine <= e) symbols.set(`${file}::${sp.symbol}`, sp);
+      } else {
         // A range wholly inside the lines of module-level names changes those names: the files that import them are
         // the ones to look at. This is judged before the import block, so a constant between two imports is a constant.
         const owned = ownedNames(a.moduleNames, s, e);
@@ -651,7 +655,7 @@ export function editedLines(hunks: ChangedHunks): (file: string, line: number) =
 export async function symbolsOfChange(
   root: string,
   analysisDir: string,
-  summary: Pick<ProjectAnalysis, "symbolLinks" | "classGraph" | "componentGraph" | "starReexports">,
+  summary: Pick<ProjectAnalysis, "symbolLinks" | "classGraph" | "componentGraph" | "starReexports" | "provenance">,
   files: readonly string[],
   hunks: ChangedHunks,
   contents?: ReadonlyMap<string, string | null>,
@@ -661,6 +665,7 @@ export async function symbolsOfChange(
   // Every touched file, new ones too: a function that left one file may have moved into another.
   const after = await analyzeWorkingFiles(root, files, contents);
   const read = analysisReader(analysisDir);
+  const stars = await starForwarders(analysisDir, summary, files, read);
   return {
     changed: found.symbols,
     moduleLevel: found.moduleLevel,
@@ -668,7 +673,8 @@ export async function symbolsOfChange(
     importOnly: found.importOnly,
     forwarded: Object.fromEntries(found.forwarded),
     boundReaders: await boundReaders(analysisDir, summary, found.bound, read),
-    starForwarders: await starForwarders(analysisDir, summary, files, read),
+    starForwarders: stars.forwarders,
+    ...(stars.stale ? { starReexportsStale: true } : {}),
     signatureChanges: await judgeSignatures(analysisDir, before, after, summary, editedLines(hunks)),
     classChanges: classChanges(before, after, found.classLevel),
     hunks,
@@ -758,20 +764,33 @@ export async function boundReaders(
   return out;
 }
 
+/** The extractor that first wrote `ProjectAnalysis.starReexports`: a summary older than this cannot say where a star export leads. */
+export const STAR_REEXPORTS_SINCE = "1.722.0";
+
+/** What `starForwarders` found: the forwarders, and whether an old summary left a star export it could not follow. */
+export interface StarForwarders {
+  forwarders: Record<string, string[]>;
+  /** A star export in reach has no recorded target and the summary predates `starReexports`: re-run the analysis. */
+  stale: boolean;
+}
+
+/** The message every consumer shows when `StarForwarders.stale` is set. */
+export const STAR_REEXPORTS_STALE_NOTE = `this analysis predates star re-export resolution (extractor ${STAR_REEXPORTS_SINCE}): files that re-export a changed module whole were not followed — re-run the analysis`;
+
 /**
  * The files that hand a module's names on whole — Python `from .hooks import *` in a package file, JS/TS
  * `export * from "./hooks"` / `export * as ns from` — among the files that (transitively) import `files`, each
  * with the files it forwards. A forwarder names no member, so no call or import-by-name link reaches the module
  * through it; what the module loses, it loses too. Importers come from `componentGraph`; the module a star
- * export names is the file the analysis resolved it to (`starReexports`), else — an old summary, an unresolved
- * source — the importee whose path spells the source's words.
+ * export names is the file the analysis resolved it to (`starReexports`). A source with no recorded target is
+ * not guessed from path words: in a summary written before the field existed it sets `stale`.
  */
 export async function starForwarders(
   analysisDir: string,
-  summary: Pick<ProjectAnalysis, "componentGraph" | "starReexports">,
+  summary: Pick<ProjectAnalysis, "componentGraph" | "starReexports" | "provenance">,
   files: readonly string[],
   analysisOf = analysisReader(analysisDir),
-): Promise<Record<string, string[]>> {
+): Promise<StarForwarders> {
   const importers = importersOf(summary.componentGraph);
   const seen = new Set(files);
   const out: Record<string, string[]> = {};
@@ -783,6 +802,9 @@ export async function starForwarders(
   const closure = [...seen];
   const analyses: Array<FileAnalysis | null> = [];
   for (let i = 0; i < closure.length; i += 32) analyses.push(...(await Promise.all(closure.slice(i, i + 32).map(analysisOf))));
+  const version = summary.provenance?.extractorVersion;
+  const old = !summary.starReexports && (version === undefined || (compareExtractorVersions(version, STAR_REEXPORTS_SINCE) ?? -1) < 0);
+  let stale = false;
   for (let k = 0; k < closure.length; k++) {
     const f = closure[k]!;
     const a = analyses[k];
@@ -791,22 +813,13 @@ export async function starForwarders(
     if (!stars.length) continue;
     const targets = new Set<string>();
     for (const e of stars) {
-      // Where the import index resolved this source, when the analysis recorded it.
       const resolved = summary.starReexports?.[f]?.[e.source!];
-      if (resolved) {
-        targets.add(resolved);
-        continue;
-      }
-      // The importee whose path spells the source's words (`.hooks`, `./hooks.service`, `pkg.hooks`): which row reaches which file is not resolved, so a package folder over-matches rather than misses.
-      const wanted = pathWords(e.source!);
-      for (const t of summary.componentGraph[f] ?? []) {
-        const have = new Set(pathWords(t));
-        if (wanted.length && wanted.every((w) => have.has(w))) targets.add(t);
-      }
+      if (resolved) targets.add(resolved);
+      else if (old) stale = true;
     }
     if (targets.size) out[f] = [...targets].sort(byOrdinal);
   }
-  return out;
+  return { forwarders: out, stale };
 }
 
 /**

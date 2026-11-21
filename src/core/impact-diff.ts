@@ -2,7 +2,7 @@ import { EXTENSION_TO_LANGUAGE, manifestFor } from "../extractors/registry.js";
 import type { TestTarget } from "../types/language-plugin.js";
 import { ownersOf } from "./code-owners.js";
 import { importersOf } from "./importers.js";
-import { describeSignatureChange, signatureChangeTail, reverseSymbolReach, type ChangedClass, type ChangedSymbol, type ClassChange, type SignatureChange, type SymbolCaller } from "./changed-symbols.js";
+import { STAR_REEXPORTS_STALE_NOTE, describeSignatureChange, signatureChangeTail, reverseSymbolReach, type ChangedClass, type ChangedSymbol, type ClassChange, type SignatureChange, type SymbolCaller } from "./changed-symbols.js";
 import { filesImportingNames, filesNaming, namingIndex, type MemberTarget } from "./member-dependents.js";
 import type {
   Language,
@@ -217,6 +217,8 @@ export function computeImpactDiff(
       boundReaders?: Record<string, string[]>;
       /** Files that hand a module on whole (a star import re-exported, `export * from`), with the files they forward. */
       starForwarders?: Record<string, string[]>;
+      /** The summary predates star re-export resolution and a star export in reach could not be followed (`StarForwarders.stale`). */
+      starReexportsStale?: boolean;
     };
   },
 ): ImpactDiffResult {
@@ -541,6 +543,7 @@ export function computeImpactDiff(
 
   const limitations: string[] = [];
   if (unknownFiles.length) limitations.push(`${unknownFiles.length} changed file(s) are not in the analysis (${unknownFiles.slice(0, 5).join(", ")}${unknownFiles.length > 5 ? ", …" : ""}), so what they reach was not judged — analyze again to include them`);
+  if (options?.symbols?.starReexportsStale) limitations.push(STAR_REEXPORTS_STALE_NOTE);
   if (truncated) limitations.push("a capped list overflowed, so the counts of screens, routes, data and dependents are lower bounds");
   if (coverageNote) limitations.push(`no per-test evidence: ${coverageNote}`);
 
