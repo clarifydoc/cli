@@ -1,4 +1,5 @@
 import { blankStringAwareComments } from "../shared/text-scan.js";
+
 /**
  * The names a Vue template binds below an element, which its handlers read as if they were the
  * component's own: a `v-for` loop variable (`club` in `v-for="club in clubs"`) and a scoped slot's
