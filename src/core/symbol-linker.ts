@@ -4765,6 +4765,11 @@ function functionTypeQuestion(ctx: LinkContext): FunctionTypeQuestion {
   };
 }
 
+/** The function-type declarations of a name: per language, but one pool where includes share scope (a `.h` read as C++ beside the `.c` including it). */
+function fnTypeKey(language: string | undefined, name: string): string {
+  return importsShareScope(language) ? `\0${name}` : `${language}\0${name}`;
+}
+
 function judgeFunctionType(ctx: LinkContext, file: string, type: string): boolean {
   // `Callback<T>?` and a prefixed `k.Callback` name the declaration `Callback`.
   const name = type.trim().replace(/\?$/, "").replace(/<[\s\S]*$/, "").split(".").pop()!;
@@ -4781,15 +4786,15 @@ function judgeFunctionType(ctx: LinkContext, file: string, type: string): boolea
     const decls = (ctx.fnTypeDecls = new Map());
     for (const a of ctx.analyses) {
       for (const n of a.functionTypeAliases ?? []) {
-        const key = `${a.language}\0${n}`;
+        const key = fnTypeKey(a.language, n);
         let decl = decls.get(key);
         if (!decl) decls.set(key, (decl = { aliases: [], classes: [] }));
         decl.aliases.push(a.filePath);
       }
     }
-    if (decls.size > 0) for (const a of ctx.analyses) for (const c of a.classes) decls.get(`${a.language}\0${c.name}`)?.classes.push(a.filePath);
+    if (decls.size > 0) for (const a of ctx.analyses) for (const c of a.classes) decls.get(fnTypeKey(a.language, c.name))?.classes.push(a.filePath);
   }
-  const decl = ctx.fnTypeDecls.get(`${language}\0${name}`);
+  const decl = ctx.fnTypeDecls.get(fnTypeKey(language, name));
   if (!decl || decl.aliases.length === 0) return false;
   const analysis = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(file);
   if (!analysis) return false;
@@ -4798,6 +4803,12 @@ function judgeFunctionType(ctx: LinkContext, file: string, type: string): boolea
     const cls = decl.classes.some(inScope);
     return alias || cls ? alias && !cls : undefined;
   };
+  // Where includes share scope, a typedef is seen through the whole include closure — and nowhere else: a namesake in a
+  // header the file never reaches is no answer, whatever sub-project it sits in.
+  if (importsShareScope(language)) {
+    const seen = includeClosure(ctx, file);
+    return decide((f) => f === file) ?? decide((f) => seen.has(f)) ?? false;
+  }
   const imported = importedFilesOf(analysis, ctx);
   const project = ctx.projectOf.get(file);
   const importedProjects = importedProjectsOf(analysis, ctx);

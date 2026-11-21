@@ -32,6 +32,8 @@ const TYPE_WORDS = new Set([
   "cb", "fn", "func", "handler", "callback", "hook", "listener", "action", "proc", "task", "job", "thunk", "visitor", "pred", "predicate",
   "cmp", "compare", "closure", "lambda", "routine", "worker", "notify", "completion", "callable", "function", "delegate", "op",
 ]);
+/** Words that make a typedef name a number or a character (`u_char`, `ngx_uint_t`, `off_t`). */
+const NUMERIC_WORDS = new Set(["char", "int", "uint", "long", "ulong", "short", "ushort", "size", "off", "float", "double", "byte", "bool", "flag", "flags", "len", "num", "count", "time", "id", "fd", "str", "string", "buf", "buffer", "mode", "pid", "uid", "gid", "u"]);
 const wordsOf = (name: string): string[] => name.replace(/([a-z\d])([A-Z])/g, "$1_$2").toLowerCase().split(/[_\W]+/).filter(Boolean);
 /** Member and variable names that read as holding a callable (`on_sign`, `onSave_`, `hook_`). */
 const CALLABLE_NAME = { test: (name: string): boolean => wordsOf(name).some((w) => TYPE_WORDS.has(w) || w === "on") };
@@ -388,6 +390,11 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
   for (const m of text.matchAll(/\btypedef\b[^;{}]*?\(\s*[*^]\s*([A-Za-z_]\w*)\s*\)/g)) fpTypedefs.add(m[1]!);
   for (const m of text.matchAll(/\busing\s+([A-Za-z_]\w*)\s*=\s*(?:std\s*::\s*function\b|[^;]*\(\s*[*^]\s*\))/g)) fpTypedefs.add(m[1]!);
   for (const m of text.matchAll(/\btypedef\s+std\s*::\s*function\b[^;]*?\b([A-Za-z_]\w*)\s*;/g)) fpTypedefs.add(m[1]!);
+  // `typedef void Dtor(void *);`: a function type itself (a pointer to one is `Dtor *`), declared apart from the `(*Name)` form.
+  const fnTypedefs = new Set(fpTypedefs);
+  for (const m of text.matchAll(/\btypedef\b[^;{}()]*?\b([A-Za-z_]\w*)\s*\((?!\s*[*^])[^;{}]*\)\s*;/g)) fnTypedefs.add(m[1]!);
+  // What other files may ask: a parameter or field typed by one of these names holds a function (`FileAnalysis.functionTypeAliases`).
+  if (fnTypedefs.size > 0) analysis.functionTypeAliases = [...fnTypedefs];
   const classes = analysis.classes;
   // A C++ field typed by a function-pointer typedef or alias the file declares (`http_cb on_done;`) holds a function.
   if (cpp && fpTypedefs.size > 0) {
@@ -473,6 +480,8 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
     }
     return CALLABLE_NAME.test(name);
   };
+  /** Whether a statement stated something since `before`: a copy that waits on a type another file may declare (`ifFnType`) is no evidence yet. */
+  const grew = (s: Scope, before: number): boolean => s.out.slice(before).some((f) => !(f.kind === "copy" && f.ifFnType !== undefined));
   const holds = (s: Scope, name: string, info: { type: string; fp: boolean }): boolean => maybeCallable(info.type, info.fp) || s.called.has(name);
   const plausibleFunction = (s: Scope, name: string): boolean =>
     name.length >= 2 && !/^[A-Z][A-Z0-9_]*$/.test(name) && !s.data.has(name) && !/^\d/.test(name);
@@ -696,6 +705,16 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
         if (e.startsWith("&")) return;
         const info = s.declared.get(name) ?? s.params.get(name)!;
         if (holds(s, name, info)) s.out.push({ kind: "copy", from: { name }, to, line });
+        else if (to.member !== undefined && !cpp) {
+          // Stored into a field, typed by a name this file cannot judge (a typedef another header may declare as a function type):
+          // core keeps the copy only when that name is one in the file's include closure.
+          const key = info.type.replace(STORAGE, " ").replace(/[*&]/g, " ").trim().split(/\s+/).pop() ?? "";
+          // A number, a character or a pointer to pointers is data; so is a struct this file declares.
+          const data = wordsOf(key).some((w) => NUMERIC_WORDS.has(w)) || /\*\s*\*/.test(info.type) || classes.some((c) => c.name === key);
+          if (/^[A-Za-z_]\w*$/.test(key) && !data && !PRIMITIVES.has(key) && !fnTypedefs.has(key) && !/\b(?:struct|union|enum)\b/.test(info.type)) {
+            s.out.push({ kind: "copy", from: { name }, to, line, ifFnType: key });
+          }
+        }
         return;
       }
       if (kind === "module") {
@@ -767,7 +786,7 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
     const cell = pseudo(s, at);
     const before = s.out.length;
     flowInto(s, cell, expr, at, 0, allowResult);
-    return s.out.length > before ? cell : null;
+    return grew(s, before) ? cell : null;
   };
 
   // ── Per function ───────────────────────────────────────────────────────
@@ -890,7 +909,7 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
           const argAt = a + t.indexOf("(", insert[1]!.length) + 1;
           const before = scope.out.length;
           flowInto(scope, to, insert[2]!.slice(last[0], last[1]), argAt + last[0]);
-          if (scope.out.length > before) noteAssigned(to);
+          if (grew(scope, before)) noteAssigned(to);
         }
         continue;
       }
@@ -914,7 +933,7 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
           if (kind === "field" || kind === "module") allowResult = callableField(segs[0]!);
         } else allowResult = callableField(segs[segs.length - 1]!);
         flowInto(scope, to, assign[2]!, rhsAt, 0, allowResult);
-        if (scope.out.length > before) noteAssigned(to);
+        if (grew(scope, before)) noteAssigned(to);
       }
     }
     // A constructor's initializer list: `: cb_(cb)` sets the field.
@@ -922,7 +941,7 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
       if (item.expr.trim() === "") continue;
       const before = scope.out.length;
       flowInto(scope, { name: "this", member: item.member }, item.expr, item.at);
-      if (scope.out.length > before) assignedMembers.add(item.member);
+      if (grew(scope, before)) assignedMembers.add(item.member);
     }
     // Calls: arguments handed on, and calls that run a held value (once every function's assignments are read).
     return () => {

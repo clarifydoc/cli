@@ -1203,7 +1203,7 @@ export type ValueFlowFact =
   /** `to` holds the function named `fn` as written (`save`, `this.save`, `Club::save`, a held pseudo-name). */
   | { kind: "seed"; to: ValueCell; fn: string; line: number; lambda?: string }
   /** `to` is assigned what `from` holds. */
-  | { kind: "copy"; from: ValueCell; to: ValueCell; line: number; lambda?: string }
+  | { kind: "copy"; from: ValueCell; to: ValueCell; line: number; lambda?: string; ifFnType?: string }
   /**
    * `from` is passed as written argument `index` (0-based) of the call; `name` instead says which formal a named
    * argument (`Btn(onPressed: save)`) binds, `index` then being unused (-1).
@@ -1221,7 +1221,8 @@ export type ValueFlowFact =
   /**
    * `ifFnType`: the cell is declared with a type this file neither declares nor reads as a function type (a name that may be
    * a class or a function-type alias another file declares); the call runs it only when a file of the same language lists
-   * that name in `FileAnalysis.functionTypeAliases`.
+   * that name in `FileAnalysis.functionTypeAliases`. A `copy` states it the same way: a C parameter typed by a typedef another
+   * header may declare as a function type, stored into a field.
    */
   | { kind: "invoke"; cell: ValueCell; call: string; line: number; held?: "module"; ifFnType?: string };
 

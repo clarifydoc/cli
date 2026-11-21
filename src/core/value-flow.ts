@@ -100,12 +100,13 @@ function closureClassOf(analysis: FileAnalysis, fn: FunctionInfo): ClassInfo | n
 }
 
 /**
- * The facts a scope states: a conditional `invoke` — a value typed by a name the file cannot judge (`ifFnType`) — is kept
+ * The facts a scope states: a conditional `invoke` or `copy` — a value typed by a name the file cannot judge (`ifFnType`) — is kept
  * only when the host says it runs a function.
  */
 function gated(facts: readonly ValueFlowFact[], scope: { file: string; symbol: string }, ask: CallableQuestions): readonly ValueFlowFact[] {
-  if (!facts.some((f) => f.kind === "invoke" && f.ifFnType !== undefined)) return facts;
-  return facts.filter((f) => f.kind !== "invoke" || f.ifFnType === undefined || ask.isFunctionType(scope.file, f.ifFnType));
+  const conditional = (f: ValueFlowFact): string | undefined => (f.kind === "invoke" || f.kind === "copy" ? f.ifFnType : undefined);
+  if (!facts.some((f) => conditional(f) !== undefined)) return facts;
+  return facts.filter((f) => conditional(f) === undefined || ask.isFunctionType(scope.file, conditional(f)!));
 }
 
 /**
