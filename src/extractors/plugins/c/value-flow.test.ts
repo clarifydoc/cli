@@ -131,21 +131,21 @@ describe("C function values followed to the call that runs them", () => {
     expect(found).toContain("fire@36 g_cb -> src/club.c::on_kick");
   });
   it("a struct field set in one function and called in another, per struct type", () => {
-    expect(found).toContain("run_club@43 on_sign -> src/club.c::save_club");
-    expect(found).toContain("run_rival@44 on_sign -> src/club.c::rival_hook");
-    expect(found).not.toContain("run_rival@44 on_sign -> src/club.c::save_club");
-    expect(found).not.toContain("run_club@43 on_sign -> src/club.c::rival_hook");
+    expect(found).toContain("run_club@43 c.on_sign -> src/club.c::save_club");
+    expect(found).toContain("run_rival@44 r.on_sign -> src/club.c::rival_hook");
+    expect(found).not.toContain("run_rival@44 r.on_sign -> src/club.c::save_club");
+    expect(found).not.toContain("run_club@43 c.on_sign -> src/club.c::rival_hook");
   });
   it("an ops table filled by designated initializers, called through any pointer to its type", () => {
-    expect(found).toContain("by_table@47 sign -> src/club.c::club_sign");
+    expect(found).toContain("by_table@47 ops.sign -> src/club.c::club_sign");
     expect(found).toContain("by_table@48 club_table.release -> src/club.c::club_release");
-    expect(found).not.toContain("by_table@47 sign -> src/club.c::rival_sign");
-    expect(found).not.toContain("by_rival@52 sign -> src/club.c::club_sign");
+    expect(found).not.toContain("by_table@47 ops.sign -> src/club.c::rival_sign");
+    expect(found).not.toContain("by_rival@52 ops.sign -> src/club.c::club_sign");
   });
   it("a nested table and a table declared inside a function", () => {
     expect(found).toContain("by_conf@51 ops.sign -> src/club.c::conf_sign");
     expect(found).toContain("rival_table@55 local.sign -> src/club.c::rival_sign");
-    expect(found).toContain("by_rival@52 sign -> src/club.c::rival_sign");
+    expect(found).toContain("by_rival@52 ops.sign -> src/club.c::rival_sign");
     expect(found).not.toContain("by_conf@51 ops.sign -> src/club.c::rival_sign");
   });
   it("an array of handlers called by element", () => {
@@ -178,3 +178,19 @@ describe("C text the reader must not be fooled by", () => {
   });
 });
 
+
+// A call through a pointer keeps its receiver: a field named like a project function is the field's, not that function's.
+const garageC = `typedef int (*gate_fn)(int);
+struct garage { gate_fn open_gate; };
+int open_gate(int n) { return n; }
+int park(struct garage *g) { return g->open_gate(1); }
+`;
+
+describe("C `p->m()` names its receiver", () => {
+  it("never links the call to a project function of the field's name", () => {
+    const file = read(garageC, "src/garage.c");
+    const park = file.functions.find((f) => f.name === "park")!;
+    expect(park.calls.map((c) => c.name)).toEqual(["g.open_gate"]);
+    expect(buildSymbolLinks([file]).filter((l) => l.sourceSymbol === "park")).toEqual([]);
+  });
+});

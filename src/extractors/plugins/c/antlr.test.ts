@@ -22,9 +22,14 @@ describe("C through ANTLR", () => {
     expect(shape(source)).toEqual({ errors: 0, functions: [["find_club", 1, 5, ["pick", "lookup"]]] });
   });
 
-  it("names calls as the patterns do: a member path, a member after -> alone", () => {
+  it("names calls as the patterns do: a member path, a member after -> as after .", () => {
     const source = "void kickoff(struct match *m) {\n  m->ops->whistle(m);\n  m->ref.signal(1);\n  start(m);\n}\n";
-    expect(shape(source).functions).toEqual([["kickoff", 1, 5, ["whistle", "ref.signal", "start"]]]);
+    expect(shape(source).functions).toEqual([["kickoff", 1, 5, ["ops.whistle", "ref.signal", "start"]]]);
+  });
+
+  it("names a member after -> on a receiver no name spells alone", () => {
+    const source = "void kickoff(struct match **ms, int i) {\n  ms[i]->whistle(1);\n  find(ms)->wave(2);\n}\n";
+    expect(shape(source).functions).toEqual([["kickoff", 1, 4, ["whistle", "find().wave", "find"]]]);
   });
 
   it("reads a loop macro as a call of the function around it, never a function of its own (real-repo FP)", () => {

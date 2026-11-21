@@ -4716,7 +4716,7 @@ function callableQuestions(ctx: LinkContext): CallableQuestions {
 }
 
 /**
- * The host question behind `ifFnField`: a call through a field another file's class may declare callable is answered
+ * The host question behind `fieldInvokes`: a call through a field another file's class may declare callable is answered
  * from the receiver as the linker types it (`receiverDeclaredType`; `this` is the class the scope is
  * written in) and the class `locateClass` finds from the caller's file — own import and sub-project first — then its
  * bases by the linker's own `parentClassOf`, three hops: a `PropertyInfo.callable` member of that class. A method

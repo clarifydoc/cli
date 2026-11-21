@@ -35,8 +35,7 @@ const CONSTRUCTOR_NAMES = ["constructor", "__init__", "__construct", "init", "ne
  * The questions the linker answers for the solver. `FunctionTypeQuestion` (`ifFnType`): is a held value typed by
  * `type` — a name `file` cannot judge — a function type there? `CallableMemberQuestion`: from the scope (`file`,
  * `symbol`) that holds the call, is `member` of `receiver` (a local, a parameter or `this`) a callable field of its
- * class? Core asks it of the calls it already holds (`fieldInvokes`) whenever the call names its receiver; a plugin states
- * `ifFnField` only for a call that does not. The
+ * class? Core asks it of the calls it already holds (`fieldInvokes`). The
  * linker answers through its own import resolution, receiver typing and class lookup, never a name pooled across
  * sub-projects.
  */
@@ -103,18 +102,12 @@ function closureClassOf(analysis: FileAnalysis, fn: FunctionInfo): ClassInfo | n
 }
 
 /**
- * The facts a scope states: a conditional `invoke` — a value typed by a name the file cannot judge (`ifFnType`), a call
- * through a field of a class the file declares whose call names no receiver (`ifFnField`) — is kept only when the host
- * says it runs a function.
+ * The facts a scope states: a conditional `invoke` — a value typed by a name the file cannot judge (`ifFnType`) — is kept
+ * only when the host says it runs a function.
  */
 function gated(facts: readonly ValueFlowFact[], scope: { file: string; symbol: string }, ask: CallableQuestions): readonly ValueFlowFact[] {
-  if (!facts.some((f) => f.kind === "invoke" && (f.ifFnType !== undefined || f.ifFnField))) return facts;
-  return facts.filter((f) => {
-    if (f.kind !== "invoke") return true;
-    if (f.ifFnType !== undefined) return ask.isFunctionType(scope.file, f.ifFnType);
-    if (!f.ifFnField) return true;
-    return f.cell.member !== undefined && ask.isCallableMember({ ...scope, receiver: f.cell.name, member: f.cell.member });
-  });
+  if (!facts.some((f) => f.kind === "invoke" && f.ifFnType !== undefined)) return facts;
+  return facts.filter((f) => f.kind !== "invoke" || f.ifFnType === undefined || ask.isFunctionType(scope.file, f.ifFnType));
 }
 
 /**

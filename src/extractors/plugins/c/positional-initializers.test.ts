@@ -99,20 +99,20 @@ function links(): string[] {
 describe("C structs of function pointers filled by a positional initializer", () => {
   const found = links();
   it("fills the fields by position, typedef-typed fields and a tagless typedef struct included", () => {
-    expect(found).toContain("run_scout scout -> src/impl.c::club_scout");
-    expect(found).toContain("run_release release -> src/impl.c::club_release");
-    expect(found).toContain("run_transfer transfer -> src/impl.c::club_transfer");
-    expect(found).toContain("run_sign on_sign -> src/impl.c::player_sign");
-    expect(found).toContain("run_sell on_sell -> src/impl.c::player_sell");
+    expect(found).toContain("run_scout ops.scout -> src/impl.c::club_scout");
+    expect(found).toContain("run_release ops.release -> src/impl.c::club_release");
+    expect(found).toContain("run_transfer ops.transfer -> src/impl.c::club_transfer");
+    expect(found).toContain("run_sign pops.on_sign -> src/impl.c::player_sign");
+    expect(found).toContain("run_sell pops.on_sell -> src/impl.c::player_sell");
   });
   it("takes fewer elements than fields, and an object-like macro of one value", () => {
-    expect(found).toContain("run_scout scout -> src/impl.c::club_flagged");
+    expect(found).toContain("run_scout ops.scout -> src/impl.c::club_flagged");
   });
   it("refuses an initializer a macro may widen, one with too many elements and one mixing designators", () => {
     expect(found.filter((l) => /club_(headed|extra|mixed)/.test(l))).toEqual([]);
   });
   it("never reaches the namesake struct of headers the caller does not include", () => {
-    expect(found.filter((l) => l.includes("rival_release")).sort()).toEqual(["rival_run release -> src/rival/rival.c::rival_release"]);
-    expect(found).not.toContain("run_release release -> src/rival/rival.c::rival_release");
+    expect(found.filter((l) => l.includes("rival_release")).sort()).toEqual(["rival_run ops.release -> src/rival/rival.c::rival_release"]);
+    expect(found).not.toContain("run_release ops.release -> src/rival/rival.c::rival_release");
   });
 });

@@ -55,7 +55,7 @@ const C_TOKENS: TokenKinds = {
  *
  * A function is a definition, named by its declarator (through `(*name(…))`) on that name's line, as the patterns
  * place it, and owns the calls in its body. A call is named as the C patterns name it: `f(` is `f`, `a.b(` is `a.b`,
- * a member after `->` alone (`p->ops->read(` is `read`), a statement macro by its name (`foreach(list, i) {`); a
+ * a member after `->` as after `.` (`p->read(` is `p.read`; after what no name spells, `list[i]->read(`, alone), a statement macro by its name (`foreach(list, i) {`); a
  * method on a call's result is the chain from its first call. What the grammar reads as no expression is read off
  * its tokens the same way (`tokenCalls`): a macro's arguments (`expect_cond("x", cmp(a, b) > 0)`) and a `#define`
  * inside a function, whose calls the function makes where it uses the macro.
@@ -259,8 +259,8 @@ function postfixCalls(ctx: PostfixExpressionContext, calls: PatternCallName[]): 
       while (i < children.length && !(children[i] instanceof TerminalNode && (children[i] as TerminalNode).symbol.type === CLexer.RightParen)) i++;
     } else if (type === CLexer.Dot || type === CLexer.Arrow) {
       const member = children[i + 1];
-      // The patterns read a member after `->` alone: `p->fn(` is `fn`.
-      if (type === CLexer.Arrow) steps.push({ kind: "other", bare: true });
+      // `p->fn(` is `p.fn`, as `p.fn(` is; a member after `->` on what no name spells (`list[i]->fn(`) is named alone, as the patterns read it.
+      if (type === CLexer.Arrow && steps.at(-1)?.kind === "other") steps.push({ kind: "other", bare: true });
       if (member instanceof TerminalNode) steps.push(idStep(member.symbol));
       i++;
     } else if (type === CLexer.LeftBracket) {
