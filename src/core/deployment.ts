@@ -493,8 +493,8 @@ const INFRA_FAMILIES: Array<{ re: RegExp; kind: DeployedServiceKind; family: str
  */
 const DEFAULT_SERVICE_PORTS: Array<{ re: RegExp; ports: number[] }> = [
   { re: /rabbitmq/i, ports: [5672, 5671] },
-  { re: /kafka|redpanda/i, ports: [9092, 9093, 9094] },
-  { re: /redis|keydb|valkey/i, ports: [6379, 6380] },
+  { re: /kafka|redpanda/i, ports: [9092, 9093, 9094, 29092] },
+  { re: /redis|keydb|valkey/i, ports: [6379, 6380, 26379] },
   { re: /memcached/i, ports: [11211] },
   { re: /nats(?![a-z])/i, ports: [4222] },
   { re: /mosquitto|emqx/i, ports: [1883, 8883] },
@@ -502,7 +502,6 @@ const DEFAULT_SERVICE_PORTS: Array<{ re: RegExp; ports: number[] }> = [
   { re: /pulsar/i, ports: [6650, 6651] },
   { re: /elasticmq/i, ports: [9324] },
 ];
-
 
 /** Last image path segment without registry/tag: `reg.io/org/rabbitmq:3.8` → `rabbitmq`. */
 function imageTail(image: string | undefined): string | undefined {
