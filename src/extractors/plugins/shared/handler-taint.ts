@@ -71,10 +71,8 @@ export interface TaintSpec {
   paramNames?(fn: Node): string[];
   /** Return statement types (default: `return_statement`). */
   returnTypes?: ReadonlySet<string>;
-  /** An `if`'s condition (default: its `condition` field). */
-  condition?(ifNode: Node): Node | null;
-  /** The text a guard is looked for in, where the condition node alone is not it (Go's `if _, ok := allowed[x]; !ok`). */
-  conditionText?(ifNode: Node): string | null;
+  /** The text an `if`'s guard is looked for in (default: its `condition` field; Go adds the initializer: `if _, ok := allowed[x]; !ok`). */
+  condition?(ifNode: Node): string | null;
   /**
    * The first operand of a concatenation (`dest + r.URL.Path` → `dest`), null for any other expression. A value that
    * starts with something the request does not control (a configured base URL, a literal host) keeps its host: it is
@@ -407,7 +405,7 @@ function taintFunction(fn: Node, params: ReadonlyMap<string, Taint | null>, ctx:
       for (const n of bound) tainted.set(n, { line, path: [{ line, note: `request body bound into ${n}` }] });
     }
     if (spec.ifTypes.has(node.type)) {
-      const cond = spec.conditionText?.(node) ?? (spec.condition ? spec.condition(node) : node.childForFieldName("condition"))?.text ?? "";
+      const cond = (spec.condition ? spec.condition(node) : node.childForFieldName("condition")?.text) ?? "";
       if (GUARD_RE.test(cond) || spec.guard?.test(cond)) {
         for (const name of [...tainted.keys()]) {
           if (mentions(cond, name)) tainted.delete(name);

@@ -172,7 +172,7 @@ function buildSpec(names: readonly string[]): TaintSpec {
     fileNameSanitizers: [{ call: /^\s*(?:filepath|path)\.Base\s*\(/ }],
     propagator: /^(?:fmt\.(?:Sprintf|Sprint|Sprintln)|strings\.(?:Join|Replace|ReplaceAll|TrimSpace|Trim|TrimLeft|TrimRight|TrimPrefix|TrimSuffix|ToLower|ToUpper|Split|SplitN|Fields|Title|Repeat)|filepath\.(?:Join|Clean|Abs)|path\.(?:Join|Clean)|string|\[\]byte|\[\]string|url\.(?:Parse|JoinPath))$/,
     ifTypes: new Set(["if_statement"]),
-    conditionText(ifNode) {
+    condition(ifNode) {
       const init = ifNode.childForFieldName("initializer")?.text;
       const cond = ifNode.childForFieldName("condition")?.text ?? "";
       return init ? `${init}; ${cond}` : cond;

@@ -153,7 +153,7 @@ const kotlinSpec: TaintSpec = {
   fileNameSanitizers: [{ call: /^\s*FilenameUtils\.getName\s*\(/ }],
   propagator: /^(?:String\.format|Paths\.get|Path\.of|new File|new URL|URI\.create|.+\.(?:plus|replace|trim|lowercase|uppercase|substring|format|resolve|toString|joinToString))$|^(?:buildString|listOf|arrayOf)$/,
   ifTypes: new Set(["if_expression"]),
-  condition: (n) => n.namedChildren[0] ?? null,
+  condition: (n) => n.namedChildren[0]?.text ?? null,
   stringTypes: new Set(["string_literal", "multiline_string_literal"]),
   interpolationTypes: new Set(["interpolated_identifier", "interpolated_expression"]),
   functionName: (fn) => fn.namedChildren.find((c) => c.type === "simple_identifier")?.text ?? null,
