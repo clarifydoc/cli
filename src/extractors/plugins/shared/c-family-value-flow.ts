@@ -6,7 +6,7 @@
  * and another method runs; lambdas and `std::bind` held in a variable. The file's text is read statement by
  * statement with comments and strings blanked; nothing is resolved here, a name is stated as written.
  */
-import type { CallInfo, ClassInfo, FileAnalysis, FunctionInfo, ValueCell, ValueFlowFact } from "../../../types/analysis.js";
+import type { CallInfo, ClassInfo, FileAnalysis, FunctionInfo, StructLayout, ValueCell, ValueFlowFact } from "../../../types/analysis.js";
 import { stripTypeArguments } from "./path-utils.js";
 
 
@@ -422,6 +422,11 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
     const open = m.index! + m[0].length - 1;
     const close = matching(fileText, open, fileText.length);
     if (close > 0) bodies.push({ name: m[1]!, from: open, to: close });
+  }
+  // C structs that hold or may hold a function pointer: their field order, for positional initializers written in other files.
+  {
+    const layouts = structLayoutsOf(fileText, fpTypedefs);
+    if (layouts.length > 0) analysis.structLayouts = layouts;
   }
   const classAround = (offset: number): { name: string } | null => {
     let best: { name: string; from: number } | null = null;
@@ -1016,6 +1021,33 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
     return classes.some((c) => c.name.split("::").pop() === typeName) || headerStems.has(stemKey(typeName)) ? { name: head, member: leaf } : null;
   };
 
+  /**
+   * The elements of a struct initializer written by position, or null when the positions cannot be trusted: a designated
+   * element, or a macro (an upper-case name or call the file does not define as one value) that may expand to several.
+   */
+  const positionalElements = (inner: string): Array<{ text: string; at: number }> | null => {
+    const out: Array<{ text: string; at: number }> = [];
+    for (const [pa, pb] of topLevelCommas(inner)) {
+      const part = inner.slice(pa, pb);
+      const trimmed = part.trim();
+      if (trimmed === "") continue;
+      if (trimmed.startsWith(".") || trimmed.startsWith("[")) return null;
+      const macro = /^([A-Z_][A-Z0-9_]*)\s*(?:\(|$)/.exec(trimmed);
+      if (macro && !LITERALS.has(macro[1]!) && !singleValueMacro(macro[1]!)) return null;
+      out.push({ text: trimmed, at: pa + part.indexOf(trimmed) });
+    }
+    return out.length > 0 ? out : null;
+  };
+  /** Whether the file defines `name` as an object-like macro of one value. */
+  const singleValueMacro = (name: string): boolean => {
+    for (const line of lines) {
+      const m = new RegExp(`^\\s*#\\s*define\\s+${name}(\\(?)\\s*(.*)$`).exec(line);
+      if (!m) continue;
+      return m[1] === "" && m[2]!.trim() !== "" && !m[2]!.includes(",") && !m[2]!.trim().endsWith("\\");
+    }
+    return false;
+  };
+
   /** A table initializer: `{ .sign = club_sign }` fills the struct type's members, `{ a, b }` an array of handlers. */
   const initTable = (s: Scope | null, decl: Decl, init: string, at: number, to: ValueCell, rootType?: string, path: string[] = [], sink?: ValueFlowFact[], element = false): void => {
     const out = sink ?? (s ?? moduleScope).out;
@@ -1023,6 +1055,15 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
     const base = at + init.indexOf("{") + 1;
     const root = rootType ?? typeKey(decl.type) ?? undefined;
     const pseudoScope: Scope = s ?? moduleScope;
+    // A positional initializer of a C struct (`{ "club", club_open }`): each element that is a function of this file fills the field at its position.
+    const positional = root && path.length === 0 && (!decl.array || element) ? positionalElements(inner) : null;
+    if (positional) {
+      for (const [index, el] of positional.entries()) {
+        const named = /^(?:\(\s*[\w\s*]+\)\s*)?&?\s*([A-Za-z_]\w*)$/.exec(el.text);
+        if (!named || !definedNames.has(named[1]!)) continue;
+        flowIntoSink(pseudoScope, out, { name: root!, member: `#${index}`, positional: { index, count: positional.length } }, el.text, base + el.at);
+      }
+    }
     for (const [pa, pb] of topLevelCommas(inner)) {
       const part = inner.slice(pa, pb);
       const trimmed = part.trim();
@@ -1089,6 +1130,49 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
   while (deferred.length > 0) deferred.shift()!();
   if (moduleFacts.length > 0) analysis.moduleValueFlow = [...(analysis.moduleValueFlow ?? []), ...moduleFacts];
 
+}
+
+/**
+ * The field order of each C struct (or data-only C++ one) in `text` (comments and function bodies blanked) that holds or may hold a function
+ * pointer: a field that is one, or typed by a name that reads as one (`handler_t`, `recv_pt`, a typedef the file declares
+ * a function pointer). A struct core cannot count — nested braces, a bit-field, several names in one statement, a
+ * preprocessor line — is left out, and so is a union.
+ */
+function structLayoutsOf(text: string, fpTypedefs: ReadonlySet<string>): StructLayout[] {
+  const out: StructLayout[] = [];
+  for (const m of text.matchAll(/\b(typedef\s+)?struct\s+(?:[A-Z_]+\s+)*(?:([A-Za-z_]\w*)\s*)?\{/g)) {
+    const open = m.index! + m[0].length - 1;
+    const close = matching(text, open, text.length);
+    if (close < 0) continue;
+    const names: string[] = [];
+    if (m[2]) names.push(m[2]);
+    if (m[1]) {
+      const tail = /^([^;{}]*);/.exec(text.slice(close + 1, close + 200))?.[1] ?? "";
+      for (const n of tail.split(",")) {
+        const name = n.trim();
+        if (/^[A-Za-z_]\w*$/.test(name)) names.push(name);
+      }
+    }
+    if (names.length === 0) continue;
+    const body = text.slice(open + 1, close);
+    if (/[{}#]/.test(body) || body.length > 8000) continue;
+    const fields: string[] = [];
+    let mayHoldFunction = false;
+    let countable = true;
+    for (const [a, b] of splitStatements(text, open + 1, close)) {
+      const statement = text.slice(a, b).trim();
+      const decl = parseDecl(statement);
+      // A method, a constructor or a static member takes no slot of an aggregate: such a struct is not counted.
+      if (!decl || (!decl.fp && statement.includes("(")) || /^(?:static|friend|using|typedef|template)\b/.test(statement) || topLevelCommas(statement).length > 1 || /(?:^|[^:?]):(?!:)/.test(statement.replace(/\([^()]*\)/g, ""))) {
+        countable = false;
+        break;
+      }
+      fields.push(decl.name);
+      if (typeCallable(decl.type, decl.fp, fpTypedefs) || /(?:^|_)pt$/.test(decl.type.replace(STORAGE, " ").replace(/[*&]/g, " ").trim().split(/\s+/).pop() ?? "")) mayHoldFunction = true;
+    }
+    if (countable && mayHoldFunction && fields.length > 0 && fields.length <= 200) out.push({ names, fields });
+  }
+  return out;
 }
 
 /** Index of the first `c` at bracket depth zero in `text`, or -1. */

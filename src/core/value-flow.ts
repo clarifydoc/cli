@@ -60,6 +60,8 @@ export interface ValueFlowHost {
   resolveSeed(file: string, symbol: string, name: string, line: number): { file: string; symbol: string; line: number } | null;
   /** The project class a declared type names (as seen from `file`), or null. */
   classOfType(file: string, type: string): { file: string; name: string } | null;
+  /** The fields, in order, of the struct type `type` names as seen from `file` (a C struct no class stands for), or null when it is none or several. */
+  layoutOf?(file: string, type: string): { file: string; name: string; fields: readonly string[] } | null;
   /** The class `name` of `file` extends, located in the project. */
   parentOf(file: string, name: string): { file: string; name: string } | null;
   /** The class `name` declares in `file`. */
@@ -494,6 +496,13 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
       const base = baseOf(s, name);
       if (!base) return null;
       return cellOfKey(base.kind === "local" ? base.key : `M\0${base.file}\0${base.name}`);
+    }
+    if (cell.positional) {
+      // The field a positional initializer element fills: by the struct's declared order, never past its last field.
+      if (baseOf(s, name)) return null;
+      const layout = host.layoutOf?.(s.file, name);
+      const field = layout?.fields[cell.positional.index];
+      return layout && field !== undefined && cell.positional.count <= layout.fields.length ? fieldCell(layout.file, layout.name, field) : null;
     }
     if (RECEIVER_NAMES.has(name)) {
       if (s.cls) {

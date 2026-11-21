@@ -284,6 +284,12 @@ export interface DataAccessGraph {
 }
 
 /** Per-file analysis result */
+/** One C struct's field order (`FileAnalysis.structLayouts`). */
+export interface StructLayout {
+  names: string[];
+  fields: string[];
+}
+
 export interface FileAnalysis {
   /** Value-flow facts of the file's module-level code (see `ValueFlowFact`); omitted when it states none. */
   moduleValueFlow?: ValueFlowFact[];
@@ -293,6 +299,15 @@ export interface FileAnalysis {
    * some file of the same language says that name is one. Omitted when the file declares none.
    */
   functionTypeAliases?: string[];
+  /**
+   * The fields, in declaration order, of each C struct this file declares that holds or may hold a function pointer
+   * (`typedef struct club_ops { …; club_open_pt open; } club_ops_t;`, also a tagless typedef struct): the names the struct
+   * answers to (tag first, then its typedef names) and its field names. Core maps the position of a positional
+   * initializer (`{ "club", club_open }`) written in another file onto the field it fills. Omitted when the file
+   * declares none, and a struct whose body core cannot count (nested braces, bit-fields, several declarators in one
+   * statement, `#if`) is not listed.
+   */
+  structLayouts?: StructLayout[];
   filePath: string;
   language: Language;
   frameworks: string[];
@@ -1182,6 +1197,12 @@ export interface ValueCell {
   package?: true;
   /** `name` is a property of the enclosing class read by its bare name (a Dart State's `widget`): its declared type owns `member`. */
   field?: true;
+  /**
+   * `member` stands for the field at `index` of the struct type `name` (a positional initializer `{ "club", club_open }`
+   * of `count` elements): core names it from the struct's `FileAnalysis.structLayouts` and drops the fact when the
+   * layout is unknown, ambiguous or has fewer fields than `count`.
+   */
+  positional?: { index: number; count: number };
 }
 
 /**
