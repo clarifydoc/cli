@@ -26,8 +26,6 @@ const PRIMITIVES = new Set([
   "intptr_t", "uintptr_t", "int8_t", "int16_t", "int32_t", "int64_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t", "_Bool", "string", "FILE",
 ]);
 const FN_TYPE = /function|\(\s*[*^]|Callback|Handler|Callable|Delegate|Listener/;
-/** A header stem or a class name as one comparable key: `Club_Squad`, `club-squad` and `ClubSquad` agree. */
-const stemKey = (name: string): string => name.toLowerCase().replace(/[^a-z\d]/g, "");
 const LITERALS = new Set(["NULL", "nullptr", "true", "false", "this", "TRUE", "FALSE", "nil"]);
 /** Words that make a type's name one a callable has (`handler_t`, `ClubCallback`, `sign_fn`). */
 const TYPE_WORDS = new Set([
@@ -391,12 +389,6 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
   for (const m of text.matchAll(/\busing\s+([A-Za-z_]\w*)\s*=\s*(?:std\s*::\s*function\b|[^;]*\(\s*[*^]\s*\))/g)) fpTypedefs.add(m[1]!);
   for (const m of text.matchAll(/\btypedef\s+std\s*::\s*function\b[^;]*?\b([A-Za-z_]\w*)\s*;/g)) fpTypedefs.add(m[1]!);
   const classes = analysis.classes;
-  /** The project headers the file includes by their stem (`#include "club/squad.h"` → `squad`), the way a class is usually named after its header. */
-  const headerStems = new Set<string>();
-  for (const line of lines) {
-    const m = /^\s*#\s*include\s*"([^"]+)"/.exec(line);
-    if (m) headerStems.add(stemKey(m[1]!.replace(/^.*\//, "").replace(/\.[^.]*$/, "")));
-  }
   // A C++ field typed by a function-pointer typedef or alias the file declares (`http_cb on_done;`) holds a function.
   if (cpp && fpTypedefs.size > 0) {
     for (const c of classes) for (const p of c.properties) if (!p.callable && p.type && fpTypedefs.has(p.type)) p.callable = true;
@@ -952,7 +944,7 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
         }
       }
       const held = invokeCell(scope, site, call);
-      // A call through a field another file's class may declare callable, when no held value answers it.
+      // A call that names no receiver (`p->m()` is read as `m`) core cannot type: a field of a class this file declares.
       const field = held ? null : fieldInvokeCell(scope, site, call);
       const invoke = held ?? field;
       if (invoke) {
@@ -999,24 +991,20 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
   };
 
   /**
-   * A call `x.m(…)` / `x->m(…)` / `this->m(…)` in C++ whose member this file neither declares as a method nor stores into: a
-   * field of a class a header declares, which another file may fill with a function. Core keeps the invoke only when
-   * the receiver's class declares `m` as a function-typed property (`ifFnField`), so a method of that name keeps its link.
+   * A call `p->m(…)` in C++ that names no receiver (`CallInfo.name` is `m`) and whose member this file neither declares as a
+   * method nor stores into, on a local or parameter typed by a class this file declares: a field another file may fill
+   * with a function. Core keeps the invoke only when that class declares `m` a function-typed property (`ifFnField`).
+   * A call that names its receiver (`x.m()`, `this->m()`) is read by core from the calls it holds (`fieldInvokes`).
    */
   const fieldInvokeCell = (s: Scope, site: Site, call: CallInfo | null): ValueCell | null => {
-    if (!cpp || !call || call.boundLocally || site.form !== "id" || site.opaque || site.segs.length !== 2) return null;
+    if (!cpp || !call || call.boundLocally || site.form !== "id" || site.opaque || site.segs.length !== 2 || call.name.includes(".")) return null;
     const [head, leaf] = site.segs as [string, string];
-    if (methodNames.has(leaf) || definedNames.has(leaf)) return null;
-    if (head === "this") return s.cls ? { name: "this", member: leaf } : null;
+    if (methodNames.has(leaf) || definedNames.has(leaf) || head === "this") return null;
     const info = s.declared.get(head) ?? s.params.get(head);
     const key = info ? typeKey(info.type) : null;
     if (!key || key.startsWith("std::") || kindOf(s, head) === "module") return null;
-    // Stated fact: the receiver's class is one this file declares or one a project header it includes is named for.
-    // A library type (`QString`, a container) has neither, and a field call on it is no stored callback; core's
-    // gate answers the rest. A class a header declares under another name is missed, a recall cost, never a wrong link.
     const typeName = key.replace(/<[\s\S]*$/, "").split("::").pop()!;
-    if (!classes.some((c) => c.name.split("::").pop() === typeName) && !headerStems.has(stemKey(typeName))) return null;
-    return { name: head, member: leaf };
+    return classes.some((c) => c.name.split("::").pop() === typeName) ? { name: head, member: leaf } : null;
   };
 
   /** A table initializer: `{ .sign = club_sign }` fills the struct type's members, `{ a, b }` an array of handlers. */

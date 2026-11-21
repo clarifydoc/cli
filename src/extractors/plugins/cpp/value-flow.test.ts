@@ -327,3 +327,48 @@ void play(Squad& squad) {
     expect(found).toContain("injection squad.cheer -> club/types.cpp::Squad.cheer");
   });
 });
+
+// The class's header is named unlike the class (`club/types.h` declares `Squad`): core finds the class through the
+// caller's include closure and reads the member call as the run of what another file stored in the field.
+describe("C++ callable fields: the class's header need not be named for it", () => {
+  const typesH = `#pragma once
+#include <functional>
+class Squad {
+public:
+  std::function<void()> onGoal;
+  void cheer();
+};
+`;
+  const decoyH = `#pragma once
+class Squad {
+public:
+  void onGoal();
+};
+`;
+  const decoyCpp = `#include "decoy.h"
+void Squad::onGoal() {}
+`;
+  const wireCpp = `#include "club/types.h"
+void celebrate() {}
+void wire(Squad& squad) { squad.onGoal = celebrate; }
+`;
+  const mainCpp = `#include "club/types.h"
+void play(Squad& squad) { squad.onGoal(); }
+void rally() { Squad s; s.onGoal(); }
+`;
+  const otherCpp = `#include "other/decoy.h"
+void rest(Squad& squad) { squad.onGoal(); }
+`;
+  const found = buildSymbolLinks([
+    read(typesH, "club/types.h"), read(decoyH, "other/decoy.h"), read(decoyCpp, "other/decoy.cpp"),
+    read(wireCpp, "wire.cpp"), read(mainCpp, "main.cpp"), read(otherCpp, "other/rest.cpp"),
+  ]).map((l) => `${l.strategy} ${l.sourceSymbol} ${l.callName} -> ${l.targetFile}::${l.targetSymbol}`);
+  it("the call runs what another file stored in the field", () => {
+    expect(found).toContain("value-flow play squad.onGoal -> wire.cpp::celebrate");
+  });
+  it("no namesake takes the call, and the namesake's own caller keeps its method", () => {
+    expect(found.filter((l) => l.startsWith("injection play") || l.startsWith("injection rally"))).toEqual([]);
+    expect(found).toContain("injection rest squad.onGoal -> other/decoy.cpp::Squad.onGoal");
+    expect(found.filter((l) => l.startsWith("value-flow rest"))).toEqual([]);
+  });
+});

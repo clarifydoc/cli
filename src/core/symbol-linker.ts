@@ -4670,7 +4670,12 @@ function valueFlowLinks(links: readonly SymbolLink[], ctx: LinkContext): SymbolL
 
 /** Both host questions behind a conditional `invoke`, for the invoke-site pass. */
 function callableQuestions(ctx: LinkContext): CallableQuestions {
-  return { isFunctionType: functionTypeQuestion(ctx), isCallableMember: callableMemberQuestion(ctx) };
+  // The names a class declares a callable member under, once per run: only a call of one is asked about.
+  if (!ctx.callableFieldNames) {
+    ctx.callableFieldNames = new Set();
+    for (const a of ctx.analyses) for (const c of a.classes) for (const p of c.properties) if (p.callable) ctx.callableFieldNames.add(p.name);
+  }
+  return { isFunctionType: functionTypeQuestion(ctx), isCallableMember: callableMemberQuestion(ctx), callableNames: ctx.callableFieldNames };
 }
 
 /**

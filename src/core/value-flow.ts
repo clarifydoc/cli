@@ -32,11 +32,13 @@ const RECEIVER_NAMES = new Set(["this", "self"]);
 const CONSTRUCTOR_NAMES = ["constructor", "__init__", "__construct", "init", "new"];
 
 /**
- * The two questions behind a conditional invoke, asked of the linker. `FunctionTypeQuestion` (`ifFnType`): is a held
- * value typed by `type` — a name `file` cannot judge — a function type there? `CallableMemberQuestion` (`ifFnField`):
- * from the scope (`file`, `symbol`) that states the call, is `member` of `receiver` (a local, a parameter or `this`) a
- * callable field of its class? The linker answers through its own import resolution, receiver typing and class
- * lookup, never a name pooled across sub-projects.
+ * The questions the linker answers for the solver. `FunctionTypeQuestion` (`ifFnType`): is a held value typed by
+ * `type` — a name `file` cannot judge — a function type there? `CallableMemberQuestion`: from the scope (`file`,
+ * `symbol`) that holds the call, is `member` of `receiver` (a local, a parameter or `this`) a callable field of its
+ * class? Core asks it of the calls it already holds (`fieldInvokes`) whenever the call names its receiver; a plugin states
+ * `ifFnField` only for a call that does not. The
+ * linker answers through its own import resolution, receiver typing and class lookup, never a name pooled across
+ * sub-projects.
  */
 export type FunctionTypeQuestion = (file: string, type: string) => boolean;
 export type CallableMemberQuestion = (query: { file: string; symbol: string; receiver: string; member: string }) => boolean;
@@ -44,6 +46,8 @@ export type CallableMemberQuestion = (query: { file: string; symbol: string; rec
 export interface CallableQuestions {
   isFunctionType: FunctionTypeQuestion;
   isCallableMember: CallableMemberQuestion;
+  /** The names some class declares a `PropertyInfo.callable` member under: only a call of one is ever asked. */
+  callableNames?: ReadonlySet<string>;
 }
 const NOTHING_CALLABLE: CallableQuestions = { isFunctionType: () => false, isCallableMember: () => false };
 
@@ -66,8 +70,10 @@ export interface ValueFlowHost {
   sharedModuleFiles?(file: string): readonly string[];
   /** Whether a type name an `ifFnType` invoke is held under is a function type in `file` (an alias of one, no class of the name nearer). */
   isFunctionType?: FunctionTypeQuestion;
-  /** Whether the member an `ifFnField` invoke calls is a field its receiver's class declares callable. */
+  /** Whether the member a call `x.m()` names is a field its receiver's class declares callable. */
   isCallableMember?: CallableMemberQuestion;
+  /** The names some class declares a callable member under. */
+  callableNames?: ReadonlySet<string>;
   /** A test file, or a test double's. */
   isTest(file: string): boolean;
   /** One line of progress, shown in verbose runs. */
@@ -96,8 +102,8 @@ function closureClassOf(analysis: FileAnalysis, fn: FunctionInfo): ClassInfo | n
 
 /**
  * The facts a scope states: a conditional `invoke` — a value typed by a name the file cannot judge (`ifFnType`), a call
- * through a field another file's class may declare callable (`ifFnField`) — is kept only when the host says it runs a
- * function.
+ * through a field of a class the file declares whose call names no receiver (`ifFnField`) — is kept only when the host
+ * says it runs a function.
  */
 function gated(facts: readonly ValueFlowFact[], scope: { file: string; symbol: string }, ask: CallableQuestions): readonly ValueFlowFact[] {
   if (!facts.some((f) => f.kind === "invoke" && (f.ifFnType !== undefined || f.ifFnField))) return facts;
@@ -109,18 +115,45 @@ function gated(facts: readonly ValueFlowFact[], scope: { file: string; symbol: s
   });
 }
 
+/**
+ * The invokes core derives from the calls a function holds: `x.m()` — `x` a local, a parameter or `this` — where the
+ * receiver's class (found by the linker through the caller's imports or include closure, then its bases) declares `m` a
+ * callable field runs whatever another statement stored there. Only a call whose leaf some class declares callable is
+ * asked, and a call a plugin already states an invoke for is left to that fact.
+ */
+function fieldInvokes(facts: readonly ValueFlowFact[], fn: FunctionInfo | null, scope: { file: string; symbol: string }, ask: CallableQuestions): readonly ValueFlowFact[] {
+  const names = ask.callableNames;
+  if (!names || names.size === 0 || !fn?.calls) return facts;
+  let out = facts;
+  for (const c of fn.calls) {
+    if (c.boundLocally || c.passed || c.read) continue;
+    const dot = c.name.indexOf(".");
+    if (dot <= 0 || c.name.indexOf(".", dot + 1) >= 0) continue;
+    const receiver = c.name.slice(0, dot);
+    const member = c.name.slice(dot + 1);
+    if (!names.has(member) || !/^\w+$/.test(receiver)) continue;
+    if (out.some((f) => f.kind === "invoke" && f.call === c.name && f.line === c.line)) continue;
+    if (!ask.isCallableMember({ ...scope, receiver, member })) continue;
+    if (out === facts) out = [...facts];
+    (out as ValueFlowFact[]).push({ kind: "invoke", cell: { name: receiver, member }, call: c.name, line: c.line });
+  }
+  return out;
+}
+
 function* scopesOf(analysis: FileAnalysis, ask: CallableQuestions): Generator<Scope> {
   const setup = analysis.functions.find((f) => f.name === "<setup>") ?? null;
   const moduleFacts = analysis.moduleValueFlow ?? [];
   for (const fn of analysis.functions) {
     const facts = fn === setup ? [...(fn.valueFlow ?? []), ...moduleFacts] : fn.valueFlow ?? [];
     const cls = closureClassOf(analysis, fn);
-    yield { file: analysis.filePath, symbol: fn.name, analysis, fn, cls, facts: gated(facts, { file: analysis.filePath, symbol: fn.name }, ask) };
+    const at = { file: analysis.filePath, symbol: fn.name };
+    yield { file: analysis.filePath, symbol: fn.name, analysis, fn, cls, facts: fieldInvokes(gated(facts, at, ask), fn, at, ask) };
   }
   for (const cls of analysis.classes) {
     for (const m of cls.methods) {
       const symbol = `${cls.name}.${m.name}`;
-      yield { file: analysis.filePath, symbol, analysis, fn: m, cls, facts: gated(m.valueFlow ?? [], { file: analysis.filePath, symbol }, ask) };
+      const at = { file: analysis.filePath, symbol };
+      yield { file: analysis.filePath, symbol, analysis, fn: m, cls, facts: fieldInvokes(gated(m.valueFlow ?? [], at, ask), m, at, ask) };
     }
   }
   if (!setup && moduleFacts.length > 0) yield { file: analysis.filePath, symbol: "<setup>", analysis, fn: null, cls: null, facts: gated(moduleFacts, { file: analysis.filePath, symbol: "<setup>" }, ask) };
@@ -220,7 +253,7 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
   const { analyses } = host;
   if (!hasValueFlowFacts(analyses)) return [];
 
-  const ask: CallableQuestions = { isFunctionType: host.isFunctionType ?? NOTHING_CALLABLE.isFunctionType, isCallableMember: host.isCallableMember ?? NOTHING_CALLABLE.isCallableMember };
+  const ask: CallableQuestions = { isFunctionType: host.isFunctionType ?? NOTHING_CALLABLE.isFunctionType, isCallableMember: host.isCallableMember ?? NOTHING_CALLABLE.isCallableMember, callableNames: host.callableNames };
   const scopes: Scope[] = [];
   let factCount = 0;
   for (const a of analyses) for (const s of scopesOf(a, ask)) { scopes.push(s); factCount += s.facts.length; }

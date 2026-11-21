@@ -1216,8 +1216,9 @@ export type ValueFlowFact =
    * `ifFnType`: the cell is declared with a type this file neither declares nor reads as a function type (a name that may be
    * a class or a function-type alias another file declares); the call runs it only when a file of the same language lists
    * that name in `FileAnalysis.functionTypeAliases`.
-   * `ifFnField`: the cell is a member of a value whose class this file does not declare (a header's field, read in a .cpp
-   * file): the call runs it only when the receiver's class, or a base, declares that member as a `callable` property.
+   * `ifFnField`: the call names no receiver (C++ `p->m()` is read as `m`, so core cannot derive the receiver from it): the cell
+   * is a member of a value of a class this file declares, and the call runs it only when that class, or a base, declares
+   * the member as a `callable` property.
    */
   | { kind: "invoke"; cell: ValueCell; call: string; line: number; held?: "module"; ifFnType?: string; ifFnField?: true };
 
