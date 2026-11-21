@@ -241,11 +241,11 @@ function fqnOf(file: FileAnalysis, cls: ClassInfo): string {
  * A bare type name → its fully qualified name through the file's imports (single or wildcard) or, with `index`, its own
  * package when exactly that class is declared there; null when unknown. A single import names its type by the name it
  * binds: the last segment, or the alias (`ImportInfo.aliases`, Kotlin `import a.Mechanic as Fixer` — the original name is
- * then no longer in scope); a static import (`inScope`) binds a member, never a type.
+ * then no longer in scope); a static import (`inScope`) binds a member, never a type — unless the project declares a class of exactly that name (a Kotlin lower-case class).
  */
 function resolveSimpleName(file: FileAnalysis, name: string, index?: ProjectIndex): string | null {
   for (const imp of file.imports) {
-    if (imp.isNamespace || imp.inScope) continue;
+    if (imp.isNamespace || (imp.inScope && !index?.classByFqn(imp.source))) continue;
     const aliased = imp.aliases && Object.keys(imp.aliases).length > 0;
     if (aliased ? imp.aliases![name] === simpleName(imp.source) : simpleName(imp.source) === name) return imp.source;
   }

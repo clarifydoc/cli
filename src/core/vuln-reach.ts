@@ -65,19 +65,23 @@ export function attachVulnerableReach(
     const spans = a ? spansFor(a) : [];
     let key = routeHandlerKey(r, spans, byLeaf);
     // A route registered inside another function (`r.GET("/clubs", h.List)` in `main`) has no symbol link here to
-    // name its handler, so the handler's own name finds it: written exactly in this file, else the project's one
-    // function of that leaf name — never a namesake the receiver does not state (`h.List` is no free `List`).
+    // name its handler, so the handler's own name finds it: the one match written in this file, else the project's one
+    // function of that leaf name — a method when the handler names a receiver (`h.List` is no free `List`).
     if (!key && r.handler) {
       const local = byName(spans, r.handler);
-      key = local.length ? keyOf(r.filePath, local[0]!.symbol) : byLeaf(r.handler.split(".").pop()!);
+      const global = local.length === 0 ? byLeaf(r.handler.split(".").pop()!) : null;
+      if (local.length === 1) key = keyOf(r.filePath, local[0]!.symbol);
+      else if (global && (!r.handler.includes(".") || global.split("::")[1]?.includes("."))) key = global;
     }
     const label = `${r.httpMethod ?? "ANY"} ${r.path}`.trim();
     if (key && !roots.has(key)) roots.set(key, { label });
     // A call every request makes: the middleware the route names (its own and what its router mounts).
     const names = [...(r.middlewareCalls ?? []), ...(r.inheritedMiddleware ?? []).flatMap((m) => m.calls)].filter((n) => n !== r.handler);
     for (const name of names) {
-      const mw = resolveHandler(r.filePath, name);
-      if (mw && !roots.has(mw)) roots.set(mw, { label });
+      // Only a function this file declares by that plain name: a library's `cors` or `auth.Required` names no project function.
+      const own = /^\w+$/.test(name) ? byName(spans, name) : [];
+      const mw = own.length === 1 ? keyOf(r.filePath, own[0]!.symbol) : null;
+      if (mw && !roots.has(mw)) roots.set(mw, { label: `middleware ${name}` });
     }
   }
   const inlineByFile = new Map<string, Array<{ symbol: string; line: number; endLine: number; label: string }>>();
