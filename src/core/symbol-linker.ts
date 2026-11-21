@@ -4765,9 +4765,9 @@ function functionTypeQuestion(ctx: LinkContext): FunctionTypeQuestion {
   };
 }
 
-/** The function-type declarations of a name: per language, but one pool where includes share scope (a `.h` read as C++ beside the `.c` including it). */
+/** The function-type declarations of a name: per language, but one pool where a header declares for the files including it (a `.h` read as C++ beside the `.c`). */
 function fnTypeKey(language: string | undefined, name: string): string {
-  return importsShareScope(language) ? `\0${name}` : `${language}\0${name}`;
+  return declaredInHeaders(language) ? `\0${name}` : `${language}\0${name}`;
 }
 
 function judgeFunctionType(ctx: LinkContext, file: string, type: string): boolean {
@@ -4805,7 +4805,7 @@ function judgeFunctionType(ctx: LinkContext, file: string, type: string): boolea
   };
   // Where includes share scope, a typedef is seen through the whole include closure — and nowhere else: a namesake in a
   // header the file never reaches is no answer, whatever sub-project it sits in.
-  if (importsShareScope(language)) {
+  if (declaredInHeaders(language)) {
     const seen = includeClosure(ctx, file);
     return decide((f) => f === file) ?? decide((f) => seen.has(f)) ?? false;
   }
@@ -9630,13 +9630,18 @@ function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, pro
   return found;
 }
 
+/** Does `language` declare in headers beside the bodies it includes (`declarationExtensions`: C, C++), so a class may be written without a body? */
+function declaredInHeaders(language: string | undefined): boolean {
+  return importsShareScope(language) && !!manifestFor(language as Language)?.declarationExtensions;
+}
+
 /**
  * Where includes share scope, a forward declaration (`struct club_ops;`, `class Club;`) is a class without members that
  * must neither hide nor tie with the declaration that has them: when the file found has no body (or none was found),
  * the ONE declaration with fields or methods in the caller's include closure is the type, never a namesake outside it.
  */
 function preferBody(ctx: LinkContext, found: string | null, typeName: string, sourceFile: string): string | null {
-  if (!importsShareScope(ctx.languageOf.get(sourceFile))) return found;
+  if (!declaredInHeaders(ctx.languageOf.get(sourceFile))) return found;
   const hasBody = (f: string): boolean => {
     const c = ctx.classAt.get(memberKey(f, typeName));
     return !!c && !c.extension && ((c.properties?.length ?? 0) > 0 || (c.methods?.length ?? 0) > 0);

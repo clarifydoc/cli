@@ -394,7 +394,7 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
   const fnTypedefs = new Set(fpTypedefs);
   for (const m of text.matchAll(/\btypedef\b[^;{}()]*?\b([A-Za-z_]\w*)\s*\((?!\s*[*^])[^;{}]*\)\s*;/g)) fnTypedefs.add(m[1]!);
   // What other files may ask: a parameter or field typed by one of these names holds a function (`FileAnalysis.functionTypeAliases`).
-  if (fnTypedefs.size > 0) analysis.functionTypeAliases = [...fnTypedefs];
+  if (fnTypedefs.size > 0) analysis.functionTypeAliases = [...new Set([...(analysis.functionTypeAliases ?? []), ...fnTypedefs])];
   const classes = analysis.classes;
   // A C++ field typed by a function-pointer typedef or alias the file declares (`http_cb on_done;`) holds a function.
   if (cpp && fpTypedefs.size > 0) {
