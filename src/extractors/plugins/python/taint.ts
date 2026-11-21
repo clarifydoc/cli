@@ -42,8 +42,7 @@ const spec: TaintSpec = {
     const value = node.childForFieldName("right");
     if (!value) return null;
     const names = boundIdentifiers(node.childForFieldName("left"));
-    // `x += y` keeps x's taint and adds y's.
-    return { names: node.type === "augmented_assignment" ? names : names, value };
+    return { names, value };
   },
   call(node) {
     if (node.type !== "call") return null;
