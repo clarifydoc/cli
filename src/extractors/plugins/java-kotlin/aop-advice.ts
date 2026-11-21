@@ -39,7 +39,7 @@ export class AopAdviceResolver implements DispatchResolver {
           const ctx: EvalContext = { index, aspects, aspect, advice: bindings, jp, depth: 0 };
           if (evalNode(expr, ctx) !== true) continue;
           const sourceSymbol = `${jp.cls.name}.${jp.method.name}`;
-          const key = `${jp.file.filePath}|${sourceSymbol}|${aspect.file.filePath}|${aspect.cls.name}.${advice.method.name}`;
+          const key = `${jp.file.filePath}|${sourceSymbol}|${aspect.file.filePath}|${aspect.cls.name}.${advice.method.name}@${advice.method.line}`;
           if (seen.has(key)) continue;
           seen.add(key);
           links.push({
@@ -192,7 +192,8 @@ class ProjectIndex {
         (this.bySimple.get(cls.name) ?? this.bySimple.set(cls.name, []).get(cls.name)!).push(entry);
         if (isTestFile(file.filePath, file.language)) continue;
         for (const method of cls.methods) {
-          if (method.name === "constructor" || method.name === cls.name || method.synthetic) continue;
+          // A private method is no join point (no proxy reaches it); a constructor is none either.
+          if (method.name === "constructor" || method.name === cls.name || method.synthetic || (method.isExported === false && cls.kind !== "interface")) continue;
           this.joinPoints.push({ file, cls, method });
         }
       }
@@ -246,9 +247,14 @@ function fqnOf(file: FileAnalysis, cls: ClassInfo): string {
 }
 
 /** A bare type name → its fully qualified name through the file's imports (single or wildcard) or its own package; null when unknown. */
-function resolveSimpleName(file: FileAnalysis, name: string): string | null {
+function resolveSimpleName(file: FileAnalysis, name: string, index?: ProjectIndex): string | null {
   for (const imp of file.imports) {
-    if (!imp.isNamespace && (imp.specifiers.includes(name) || simpleName(imp.source) === name) && imp.source.endsWith(name)) return imp.source;
+    if (!imp.isNamespace && simpleName(imp.source) === name) return imp.source;
+  }
+  // A wildcard import names the type only when exactly one imported package of the project declares it.
+  if (index) {
+    const hits = file.imports.filter((i) => i.isNamespace && index.classByFqn(`${i.source}.${name}`));
+    if (hits.length === 1) return `${hits[0]!.source}.${name}`;
   }
   return null;
 }
@@ -425,7 +431,7 @@ function matchExecution(arg: string, ctx: EvalContext): Tri {
   let modifierOk: Tri = true;
   while (head.length > 2) {
     const mod = head.shift()!;
-    if (mod === "public") modifierOk = ctx.jp.method.isExported ? modifierOk : false;
+    if (mod === "public") modifierOk = ctx.jp.method.isExported || ctx.jp.cls.kind === "interface" ? modifierOk : false;
     else if (MODIFIERS.has(mod)) modifierOk = modifierOk === false ? false : undefined;
     else return undefined;
   }
@@ -482,10 +488,12 @@ function matchAnnotation(arg: string, ctx: EvalContext, on: "method" | "class"):
     // `@annotation(audited)` binds the advice parameter `audited`; its type names the annotation.
     const type = ctx.advice.get(fqn);
     if (!type) return undefined;
-    const resolved = resolveSimpleName(ctx.aspect.file, type.trim());
-    if (resolved) fqn = resolved;
-    else if (ctx.aspect.file.packageName) fqn = `${ctx.aspect.file.packageName}.${type.trim()}`;
-    else return undefined;
+    // Only a type the aspect's imports or its own package certainly name; a guess would make `!@annotation(x)` true.
+    const written = type.trim();
+    const own = ctx.aspect.file.packageName ? `${ctx.aspect.file.packageName}.${written}` : written;
+    const resolved = resolveSimpleName(ctx.aspect.file, written, ctx.index) ?? (ctx.index.classByFqn(own) ? own : null);
+    if (!resolved) return undefined;
+    fqn = resolved;
   }
   if (/[*+]/.test(fqn)) return undefined;
   const decorators = on === "method" ? ctx.jp.method.decorators : ctx.jp.cls.decorators;
@@ -507,6 +515,8 @@ function matchReturn(pattern: string, returnType: string | null | undefined): Tr
 function matchParams(pattern: string, method: FunctionInfo): Tri {
   const wanted = pattern.trim() === "" ? [] : splitArgs(pattern).map((p) => p.trim());
   if (wanted.some((w) => w.endsWith("+") || w.startsWith("!"))) return undefined;
+  // A nullable, array or varargs type is written differently in a pattern: say nothing certain.
+  if (method.params.some((p) => p.type && /[\[?]|\.\.\./.test(p.type))) return wanted.every((w) => w === "..") ? true : undefined;
   const have = method.params.map((p) => (p.type ? simpleName(p.type.replace(/<[\s\S]*$/, "").replace(/\s/g, "")) : null));
   if (have.some((h) => h === null) && wanted.some((w) => w !== ".." && w !== "*")) return undefined;
   // Zero or more parameters for `..`, exactly one for anything else: a dynamic program, never a backtracking search.
@@ -559,7 +569,7 @@ function matchTypePattern(pattern: string, names: readonly string[], ctx: EvalCo
   if (!p.includes(".")) {
     // A bare class name is resolved where the aspect is written; a wildcard without a package says nothing certain.
     if (/\*/.test(p)) return undefined;
-    const fqn = resolveSimpleName(ctx.aspect.file, p) ?? (ctx.index.classByFqn(ctx.aspect.file.packageName ? `${ctx.aspect.file.packageName}.${p}` : p) ? (ctx.aspect.file.packageName ? `${ctx.aspect.file.packageName}.${p}` : p) : null);
+    const fqn = resolveSimpleName(ctx.aspect.file, p, ctx.index) ?? (ctx.index.classByFqn(ctx.aspect.file.packageName ? `${ctx.aspect.file.packageName}.${p}` : p) ? (ctx.aspect.file.packageName ? `${ctx.aspect.file.packageName}.${p}` : p) : null);
     if (!fqn) return undefined;
     p = fqn;
   }

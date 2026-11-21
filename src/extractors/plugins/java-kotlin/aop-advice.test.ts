@@ -149,4 +149,17 @@ describe("Spring AOP advice on its join points", () => {
     expect(slow).toEqual([]);
     expect(Date.now() - started).toBeLessThan(3000);
   });
+
+  it("skips private methods, resolves a wildcard-imported annotation, and never turns a guess into a negation", async () => {
+    const out = await edges(
+      `
+      @Before("within(com.example.league.Bench) && !@annotation(audited)")
+      public void guarded(Audited audited) { }
+      @Before("within(com.example.league.Bench) && !@annotation(ghost)")
+      public void unresolved(Ghost ghost) { }`,
+      [[`package com.example.league;\npublic class Bench { public void sit() { } private void hide() { } @Audited public void audit() { } }`, `${base}/league/Bench.java`]],
+    );
+    // `Audited` is in the aspect's explicit import; `Ghost` is no project type, so the negation says nothing.
+    expect(out).toEqual(["league/Bench.java#Bench.sit -> LeagueAspect.guarded INFERRED"]);
+  });
 });
