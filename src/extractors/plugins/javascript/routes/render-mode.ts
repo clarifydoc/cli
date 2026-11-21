@@ -26,9 +26,9 @@ import { inferFileBasedRoute } from "./file-routes.js";
  * Per file the extractor states a `render-mode` fact only when it finds one of those spellings; the
  * resolver joins the facts to the page routes (`RouteInfo.renderMode`).
  */
-export const RENDER_MODE = "render-mode";
+const RENDER_MODE = "render-mode";
 
-export type RenderMode = NonNullable<RouteInfo["renderMode"]>;
+type RenderMode = NonNullable<RouteInfo["renderMode"]>;
 
 interface RenderOptions {
   dynamic?: "force-dynamic" | "force-static" | "error";
@@ -286,7 +286,9 @@ const NEXT_APP_FILE = /^(?:src\/)?app\/(?:.*\/)?(page|layout)\.(?:tsx?|jsx?)$/;
 export function inferRenderModeFacts(relativePath: string, sourceText: string, rawSource: string, frameworkIds: string[]): RouteFact[] {
   const rel = relativePath.replace(/\\/g, "/");
   let data: RenderFact | null = null;
-  if (frameworkIds.includes("nextjs")) {
+  // Only a pages-router file or an app-router `page`/`layout` can state a Next mode: the path decides before the text is read.
+  const nextApp = NEXT_APP_FILE.exec(rel);
+  if (frameworkIds.includes("nextjs") && (nextApp || /^(?:src\/)?pages\//.test(rel))) {
     const text = blankComments(sourceText);
     const route = inferFileBasedRoute(rel, ["nextjs"]);
     if (/^(?:src\/)?pages\/_app\.(?:tsx?|jsx?)$/.test(rel)) {
@@ -296,7 +298,7 @@ export function inferRenderModeFacts(relativePath: string, sourceText: string, r
       const mode = nextPagesMode(text);
       if (mode) data = { fw: "next-pages", mode };
     } else {
-      const app = NEXT_APP_FILE.exec(rel);
+      const app = nextApp;
       // A page must be a routed one (not under `_private` or an interception folder); a layout configures what it wraps.
       if (app && (app[1] === "layout" || route?.kind === "frontend")) {
         const opts = nextSegmentConfig(text);

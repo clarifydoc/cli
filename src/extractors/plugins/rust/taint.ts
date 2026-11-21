@@ -174,10 +174,6 @@ function requestObjects(root: Node): string[] {
 }
 
 /** The identifiers a `let` or `if let` pattern binds. */
-function letNames(node: Node): string[] {
-  return patternNames(node.childForFieldName("pattern"));
-}
-
 function buildSpec(requests: readonly string[], usesReqwest: boolean): TaintSpec {
   const recv = requests.length ? `(?:${requests.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})` : "(?!)";
   const source = new RegExp(`(?<![\\w.])${recv}\\.(?:query_string|match_info|uri|path|headers|cookie|cookies|query)\\b`);
@@ -195,17 +191,14 @@ function buildSpec(requests: readonly string[], usesReqwest: boolean): TaintSpec
     assignment(node) {
       if (node.type === "let_declaration" || node.type === "let_condition") {
         const value = node.childForFieldName("value");
-        return value ? { names: letNames(node), value } : null;
+        return value ? { names: patternNames(node.childForFieldName("pattern")), value } : null;
       }
-      if (node.type === "assignment_expression") {
+      // `x = v`, and `x += v`, which keeps what `x` carried.
+      if (node.type === "assignment_expression" || node.type === "compound_assignment_expr") {
         const value = node.childForFieldName("right");
         const left = node.childForFieldName("left");
-        return value && left?.type === "identifier" ? { names: [left.text], value } : null;
-      }
-      if (node.type === "compound_assignment_expr") {
-        const value = node.childForFieldName("right");
-        const left = node.childForFieldName("left");
-        return value && left?.type === "identifier" ? { names: [left.text], value, keep: true } : null;
+        if (!value || left?.type !== "identifier") return null;
+        return node.type === "compound_assignment_expr" ? { names: [left.text], value, keep: true } : { names: [left.text], value };
       }
       // `sql.push_str(&x)`: the string being built now carries what it was given.
       if (node.type === "call_expression") {

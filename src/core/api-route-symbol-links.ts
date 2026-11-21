@@ -2,6 +2,7 @@ import { routeSymbolName } from "./route-symbol.js";
 import { normalizeRoutePath } from "./route-linker.js";
 import type { ApiRouteLink, FileAnalysis, SymbolDataAccess, SymbolLink } from "../types/analysis.js";
 import { queueHoleKey } from "./data-access-graph.js";
+import { keyOf } from "./symbol-graph.js";
 
 /**
  * Synthesize cross-tier symbol links from the api↔route join, so the Call
@@ -85,6 +86,27 @@ export function innermostAt(spans: SymbolSpan[], line: number): SymbolSpan | nul
  */
 export function declaredOn(span: SymbolSpan, handler: string | null | undefined, line: number): boolean {
   return handler ? span.symbol.split(".").pop() === handler.split(".").pop() : line === span.line;
+}
+
+/**
+ * The project's one function bearing a leaf name, as a symbol key — for a handler declared in another file than its
+ * route. Unique-or-nothing: a name several functions bear answers null. The index is built on first use.
+ */
+export function uniqueSymbolByLeaf(analyses: readonly FileAnalysis[], spansFor: (a: FileAnalysis) => SymbolSpan[]): (leaf: string) => string | null {
+  let index: Map<string, string[]> | null = null;
+  return (leaf) => {
+    if (!index) {
+      index = new Map();
+      for (const a of analyses) {
+        for (const s of spansFor(a)) {
+          const l = s.symbol.split(".").pop()!;
+          (index.get(l) ?? index.set(l, []).get(l)!).push(keyOf(a.filePath, s.symbol));
+        }
+      }
+    }
+    const all = index.get(leaf) ?? [];
+    return all.length === 1 ? all[0]! : null;
+  };
 }
 
 /** Spans in `spans` matching a bare handler name (`login` or `Auth.login`). */

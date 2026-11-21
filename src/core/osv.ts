@@ -1,4 +1,5 @@
 import type { ExternalPackage, PackageEcosystem } from "../types/analysis.js";
+import { packageMatchingFor } from "../extractors/registry.js";
 
 /**
  * Known vulnerabilities of the installed packages, from OSV (osv.dev) — the
@@ -22,35 +23,17 @@ const BATCH = 1000;
 const MAX_DETAILS = 300;
 const CONCURRENCY = 8;
 
-/** The parts of an OSV `affected[]` entry read here. */
-interface OsvAffected {
-  package?: { name?: string; ecosystem?: string };
-  ecosystem_specific?: { imports?: Array<{ path?: string; symbols?: string[] }> };
-}
-
 const MAX_FUNCTION_ROWS = 16;
 const MAX_FUNCTION_SYMBOLS = 64;
 
 /**
- * The functions an advisory states as vulnerable, for the ecosystems whose records say so: Go's
- * `ecosystem_specific.imports[]` (an import path and its symbols), read only from the entry naming THIS
- * module. Only exported names are kept (`Unmarshal`, `Decoder.Decode`): an unexported symbol is reached
- * through one of them, and no caller writes it. Other ecosystems state none, and stay package-level.
+ * The functions an advisory states as vulnerable, where the package's ecosystem reads them from its records
+ * (`PackageManagerSpec.advisoryFunctions`); every other ecosystem stays package-level.
  */
-function vulnerableFunctionsOf(pkg: ExternalPackage, affected: OsvAffected[] | undefined): Array<{ path: string; symbols: string[] }> {
-  if (pkg.ecosystem !== "go" || !affected) return [];
-  const byPath = new Map<string, Set<string>>();
-  for (const a of affected) {
-    if (a.package?.ecosystem !== "Go" || a.package.name !== pkg.name) continue;
-    for (const imp of a.ecosystem_specific?.imports ?? []) {
-      if (typeof imp.path !== "string" || !Array.isArray(imp.symbols)) continue;
-      const exported = imp.symbols.filter((s): s is string => typeof s === "string" && /^\p{Lu}/u.test(s));
-      if (exported.length === 0) continue;
-      const set = byPath.get(imp.path) ?? byPath.set(imp.path, new Set()).get(imp.path)!;
-      for (const s of exported) set.add(s);
-    }
-  }
-  return [...byPath].slice(0, MAX_FUNCTION_ROWS).map(([path, set]) => ({ path, symbols: [...set].sort().slice(0, MAX_FUNCTION_SYMBOLS) }));
+function vulnerableFunctionsOf(pkg: ExternalPackage, affected: unknown[] | undefined): Array<{ path: string; symbols: string[] }> {
+  const read = affected && packageMatchingFor(pkg.ecosystem)?.advisoryFunctions;
+  if (!read) return [];
+  return read.functionsOf(affected, pkg.name).slice(0, MAX_FUNCTION_ROWS).map((f) => ({ path: f.path, symbols: f.symbols.slice(0, MAX_FUNCTION_SYMBOLS) }));
 }
 
 export interface OsvOptions {
@@ -92,13 +75,13 @@ export async function attachOsvAdvisories(packages: ExternalPackage[], opts: Osv
     }
     // Details (summary, severity, aliases) for the advisories found, capped.
     const unique = [...new Set([...ids.values()].flat())].sort().slice(0, MAX_DETAILS);
-    const details = new Map<string, { summary?: string; severity?: string; aliases?: string[]; affected?: OsvAffected[] }>();
+    const details = new Map<string, { summary?: string; severity?: string; aliases?: string[]; affected?: unknown[] }>();
     for (let i = 0; i < unique.length; i += CONCURRENCY) {
       await Promise.all(unique.slice(i, i + CONCURRENCY).map(async (id) => {
         try {
           const res = await doFetch(`${base}/v1/vulns/${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(timeoutMs) });
           if (!res.ok) return;
-          const v = (await res.json()) as { summary?: string; aliases?: string[]; database_specific?: { severity?: string }; affected?: OsvAffected[] };
+          const v = (await res.json()) as { summary?: string; aliases?: string[]; database_specific?: { severity?: string }; affected?: unknown[] };
           details.set(id, {
             ...(v.summary ? { summary: v.summary } : {}),
             ...(typeof v.database_specific?.severity === "string" ? { severity: v.database_specific.severity.toUpperCase() } : {}),

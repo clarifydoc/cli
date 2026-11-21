@@ -2,6 +2,7 @@ import type { ClassInfo, FileAnalysis, FunctionInfo, Language, SymbolLink } from
 import type { DispatchResolver } from "../../dispatch/base.js";
 import { isTestFile } from "../../../core/test-file-detector.js";
 import { matchingParen } from "../shared/text-scan.js";
+import { splitTopLevel } from "../../shared/split-top-level.js";
 
 /**
  * Spring AOP / AspectJ advice on its join points. An `@Aspect` class's `@Before`, `@After`, `@AfterReturning`,
@@ -98,31 +99,9 @@ function stringArg(args: string | null, keys: readonly string[]): string | null 
   return keys.includes("value") ? positional : null;
 }
 
+/** An annotation's or a signature's arguments at the top level; Java strings in double quotes, with escapes. */
 function splitArgs(text: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let inStr = false;
-  let cur = "";
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i]!;
-    if (inStr) {
-      cur += c;
-      if (c === "\\") cur += text[++i] ?? "";
-      else if (c === '"') inStr = false;
-      continue;
-    }
-    if (c === '"') inStr = true;
-    else if (c === "(" || c === "[" || c === "{") depth++;
-    else if (c === ")" || c === "]" || c === "}") depth--;
-    else if (c === "," && depth === 0) {
-      out.push(cur);
-      cur = "";
-      continue;
-    }
-    cur += c;
-  }
-  if (cur.trim()) out.push(cur);
-  return out;
+  return splitTopLevel(text, { quotes: '"', escapes: '"' });
 }
 
 /** `"a" + "b"` → `ab`; anything else (a constant, a Kotlin raw string, an array) → null. */
@@ -183,6 +162,8 @@ class ProjectIndex {
   private readonly byFqn = new Map<string, Array<{ file: FileAnalysis; cls: ClassInfo }>>();
   private readonly bySimple = new Map<string, Array<{ file: FileAnalysis; cls: ClassInfo }>>();
   private readonly supers = new Map<ClassInfo, Array<{ fqn: string; cls: ClassInfo }>>();
+  /** Named pointcuts parsed once per run, by their text. */
+  readonly parsedPointcuts = new Map<string, Node | null>();
 
   constructor(analyses: readonly FileAnalysis[]) {
     for (const file of analyses) {
@@ -412,7 +393,9 @@ function evalNamed(name: string, ctx: EvalContext): Tri {
     owner = hits.length === 1 ? hits[0] : undefined;
   }
   if (!owner) return undefined;
-  const expr = parsePointcut(owner.pointcuts.get(method)!);
+  const text = owner.pointcuts.get(method)!;
+  let expr = ctx.index.parsedPointcuts.get(text);
+  if (expr === undefined) ctx.index.parsedPointcuts.set(text, (expr = parsePointcut(text)));
   if (!expr) return undefined;
   return evalNode(expr, { ...ctx, aspect: owner, depth: ctx.depth + 1 });
 }

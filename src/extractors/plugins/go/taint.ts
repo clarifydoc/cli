@@ -120,6 +120,10 @@ function buildSpec(names: readonly string[]): TaintSpec {
   );
   // A database call is made on a database handle, never on the request's own context (`c.Query("name")` reads input).
   const notContext = names.length ? `(?!${recv}\\.)` : "";
+  // A bind on the context (`c.ShouldBindJSON`, `c.BodyParser`) or a JSON decoder over the request body.
+  const bindCall = names.length
+    ? new RegExp(`^${recv}\\.(?:ShouldBind\\w*|Bind\\w*|MustBindWith|BodyParser|QueryParser|ParamsParser|ReqHeaderParser)$|^(?:json|jsoniter)\\.NewDecoder\\(${recv}\\.(?:Body|Request(?:\\(\\))?\\.Body)\\)\\.Decode$`)
+    : null;
   return {
     functionTypes: new Set(["function_declaration", "method_declaration", "func_literal"]),
     handler(fn) {
@@ -157,9 +161,7 @@ function buildSpec(names: readonly string[]): TaintSpec {
       if (node.type !== "call_expression") return null;
       const callee = (node.childForFieldName("function")?.text ?? "").replace(/\s+/g, "");
       const args = node.childForFieldName("arguments")?.namedChildren ?? [];
-      const viaContext = names.length > 0 && new RegExp(`^${recv}\\.(?:ShouldBind\\w*|Bind\\w*|MustBindWith|BodyParser|QueryParser|ParamsParser|ReqHeaderParser)$`).test(callee);
-      const viaDecoder = names.length > 0 && new RegExp(`^(?:json|jsoniter)\\.NewDecoder\\(${recv}\\.(?:Body|Request(?:\\(\\))?\\.Body)\\)\\.Decode$`).test(callee);
-      if (!viaContext && !viaDecoder) return null;
+      if (!bindCall?.test(callee)) return null;
       const target = boundTarget(args[0]);
       if (!target) return null;
       const type = localStructType(fn, target);

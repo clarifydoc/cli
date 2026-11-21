@@ -12,7 +12,7 @@ import type { EntryPointInfo,
   SymbolReachSummary,
 } from "../types/analysis.js";
 import { buildSymbolAdjacency, edgeKey, fileOf, keyOf, nodeKey, stateNode, strongerFirst, usageGate } from "./symbol-graph.js";
-import { byName, declaredOn, innermostAt, spansOf, type SymbolSpan } from "./api-route-symbol-links.js";
+import { byName, declaredOn, innermostAt, spansOf, uniqueSymbolByLeaf, type SymbolSpan } from "./api-route-symbol-links.js";
 import { byOrdinal } from "./ordinal.js";
 
 /**
@@ -573,22 +573,7 @@ export function computeDataFlows(
     return spans;
   };
   // Project-wide handler-name index (unique-or-nothing), built lazily.
-  let globalByName: Map<string, string[]> | null = null;
-  const globalLookup = (name: string): string | null => {
-    if (!globalByName) {
-      globalByName = new Map();
-      for (const a of analyses) {
-        for (const s of spansFor(a.filePath)) {
-          const leaf = s.symbol.split(".").pop()!;
-          let arr = globalByName.get(leaf);
-          if (!arr) globalByName.set(leaf, (arr = []));
-          arr.push(keyOf(a.filePath, s.symbol));
-        }
-      }
-    }
-    const candidates = globalByName.get(name) ?? [];
-    return candidates.length === 1 ? candidates[0]! : null;
-  };
+  const globalLookup = uniqueSymbolByLeaf(analyses, (a) => spansFor(a.filePath));
 
   // Route symbols that link to something: the handler the linker resolved, the calls of an inline body.
   const linkedRoutes = new Set<string>();

@@ -324,6 +324,16 @@ export interface PackageManagerSpec {
    * too. Null when the package is not installed there.
    */
   installedApi?(dirs: readonly string[], name: string, symbol?: string): Promise<InstalledPackageApi | null>;
+  /**
+   * The vulnerable functions an OSV advisory names, where this ecosystem's records state them (`analyze --osv`):
+   * `functionsOf` reads one record's `affected[]` for the package `name` — import path → the exported symbols a
+   * caller writes; `callHeads` gives the names a call through one import of such a path is written with
+   * (`xlib` in `xlib.Unmarshal(…)`), and `unreadable` when the import names the path in a way no call head shows.
+   */
+  advisoryFunctions?: {
+    functionsOf(affected: readonly unknown[], name: string): Array<{ path: string; symbols: string[] }>;
+    callHeads(imp: ImportInfo): { heads: string[]; unreadable: boolean };
+  };
 }
 
 /** What an installed package exports, from its own declarations (`PackageManagerSpec.installedApi`). */

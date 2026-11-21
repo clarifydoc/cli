@@ -1,3 +1,4 @@
+import type { ImportInfo } from "../../../types/analysis.js";
 import type { DeclaredPackage, PackageManagerSpec } from "../../../types/language-plugin.js";
 import { declared } from "../shared/declared-package.js";
 
@@ -44,6 +45,45 @@ export function goLocalReplacements(text: string): Array<{ name: string; path: s
   return out;
 }
 
+/** The parts of an OSV `affected[]` entry Go's records state: `ecosystem_specific.imports[]`. */
+interface OsvGoAffected {
+  package?: { name?: string; ecosystem?: string };
+  ecosystem_specific?: { imports?: Array<{ path?: string; symbols?: string[] }> };
+}
+
+/**
+ * The vulnerable functions of a Go advisory: `ecosystem_specific.imports[]` (an import path and its symbols) of the
+ * entry naming THIS module. Only exported names are kept (`Unmarshal`, `Decoder.Decode`): an unexported symbol is
+ * reached through one of them, and no caller writes it.
+ */
+function goAdvisoryFunctions(affected: readonly unknown[], name: string): Array<{ path: string; symbols: string[] }> {
+  const byPath = new Map<string, Set<string>>();
+  for (const a of affected as OsvGoAffected[]) {
+    if (a?.package?.ecosystem !== "Go" || a.package.name !== name) continue;
+    for (const imp of a.ecosystem_specific?.imports ?? []) {
+      if (typeof imp.path !== "string" || !Array.isArray(imp.symbols)) continue;
+      const exported = imp.symbols.filter((s): s is string => typeof s === "string" && /^\p{Lu}/u.test(s));
+      if (exported.length === 0) continue;
+      const set = byPath.get(imp.path) ?? byPath.set(imp.path, new Set()).get(imp.path)!;
+      for (const s of exported) set.add(s);
+    }
+  }
+  return [...byPath].map(([path, set]) => ({ path, symbols: [...set].sort() }));
+}
+
+/**
+ * The names a Go call through an import is written with: the specifiers the import reads (the package name, or its
+ * alias). A dot import, or a name Go takes from a path segment that is no plain identifier (`yaml.v3`, a `/v2`
+ * suffix, `go-yaml`), cannot be matched to a call head.
+ */
+function goCallHeads(imp: ImportInfo): { heads: string[]; unreadable: boolean } {
+  const specifiers = imp.specifiers ?? [];
+  return {
+    heads: specifiers.filter((n) => n !== "_" && n !== "."),
+    unreadable: !!imp.inScope || specifiers.some((n) => (n !== "_" && !/^[\p{L}_][\p{L}\p{N}_]*$/u.test(n)) || /^v\d+$/.test(n)),
+  };
+}
+
 export const goPackageManager: PackageManagerSpec = {
   ecosystem: "go",
   manifests: [{
@@ -62,4 +102,5 @@ export const goPackageManager: PackageManagerSpec = {
   importKey: (s) => (s.startsWith(".") ? null : s.toLowerCase()),
   prefixMatch: { separator: "/" },
   assertsUnused: true,
+  advisoryFunctions: { functionsOf: goAdvisoryFunctions, callHeads: goCallHeads },
 };

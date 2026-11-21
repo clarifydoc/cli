@@ -182,3 +182,25 @@ export function hclRefs(expr: string | undefined): Array<{ type: string; name: s
   }
   return out;
 }
+
+/**
+ * A Terraform registry module's address, `namespace/name/provider`, from its short or hosted-registry source
+ * (`registry.terraform.io/…` is the same module as its short form); undefined for a local path, a VCS host
+ * shorthand (`github.com/…`), a URL or a `git::`-style source.
+ */
+export function registryAddress(source: string): string | undefined {
+  if (/^(?:\.|\/|[a-z0-9+.-]+::|[a-z]+:\/\/)/i.test(source) || /^(?:github\.com|bitbucket\.org)\//i.test(source)) return undefined;
+  const parts = source.replace(/\?.*$/, "").replace(/\/\/.*$/, "").split("/");
+  if (parts.length === 4 && /^registry\.terraform\.io$/i.test(parts[0]!)) parts.shift();
+  return parts.length === 3 && parts.every((p) => /^[\w.-]+$/.test(p)) ? parts.join("/") : undefined;
+}
+
+/**
+ * The lower-case key a table of well-known registry modules is read by: the registry address, or the one a
+ * module's own GitHub source spells (`github.com/ns/terraform-aws-sqs` → `ns/sqs/aws`).
+ */
+export function registryModuleKey(source: string): string | undefined {
+  const gh = source.match(/github\.com[/:]([\w.-]+)\/terraform-([a-z0-9]+)-([a-z0-9-]+?)(?:\.git)?(?:[/?#]|$)/i);
+  if (gh) return `${gh[1]}/${gh[3]}/${gh[2]}`.toLowerCase();
+  return registryAddress(source)?.toLowerCase();
+}

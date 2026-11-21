@@ -1,8 +1,9 @@
 import type { EntryPointInfo, ExternalPackage, FileAnalysis, RouteInfo, SymbolLink, VulnerableReach } from "../types/analysis.js";
 import { buildSymbolAdjacency, edgeKey, keyOf } from "./symbol-graph.js";
 import { inlineRouteDefinitions } from "./route-symbol.js";
-import { spansOf, type SymbolSpan } from "./api-route-symbol-links.js";
+import { spansOf, uniqueSymbolByLeaf, type SymbolSpan } from "./api-route-symbol-links.js";
 import { isTestFile } from "./test-file-detector.js";
+import { packageMatchingFor } from "../extractors/registry.js";
 
 /**
  * Whether the project reaches the functions an advisory states as vulnerable. Post-analysis: the facts are
@@ -42,7 +43,7 @@ export function attachVulnerableReach(
   const analysisOf = new Map(analyses.map((a) => [a.filePath, a] as const));
   // The project's functions by leaf name, for a handler declared in another file (`intake.Handle`): the one
   // function of that name, as the data-flow pass reads it — never one of several.
-  let byLeaf: Map<string, string[]> | null = null;
+  const byLeaf = uniqueSymbolByLeaf(analyses, spansFor);
   const resolveHandler = (file: string, name: string): string | null => {
     const leaf = name.split(".").pop()!;
     const a = analysisOf.get(file);
@@ -52,17 +53,7 @@ export function attachVulnerableReach(
       const here = spans.filter((s) => s.symbol.split(".").pop() === leaf);
       if (here.length === 1) return keyOf(file, here[0]!.symbol);
     }
-    if (!byLeaf) {
-      byLeaf = new Map();
-      for (const x of analyses) {
-        for (const s of spansFor(x)) {
-          const l = s.symbol.split(".").pop()!;
-          (byLeaf.get(l) ?? byLeaf.set(l, []).get(l)!).push(keyOf(x.filePath, s.symbol));
-        }
-      }
-    }
-    const all = byLeaf.get(leaf) ?? [];
-    return all.length === 1 ? all[0]! : null;
+    return byLeaf(leaf);
   };
 
   // Where a walk may stop: a route's handler (or its inline body), an entry point's handler.
@@ -94,7 +85,14 @@ export function attachVulnerableReach(
 
   const adj = buildSymbolAdjacency(symbolLinks);
   /** Shortest chain from a root down to `start`, entry first. */
+  // Several call sites in one function, and several advisories, walk from the same caller: one walk each.
+  const chains = new Map<string, { root: Root; path: string[] } | null>();
   const chainTo = (start: string): { root: Root; path: string[] } | null => {
+    let found = chains.get(start);
+    if (found === undefined) chains.set(start, (found = walkTo(start)));
+    return found;
+  };
+  const walkTo = (start: string): { root: Root; path: string[] } | null => {
     const first = roots.get(start);
     if (first) return { root: first, path: [start] };
     const parent = new Map<string, string>([[start, ""]]);
@@ -127,8 +125,10 @@ export function attachVulnerableReach(
       const hasMethods = adv.functions.some((f) => f.symbols.some((s) => s.includes(".")));
       const calls: NonNullable<VulnerableReach["calls"]> = [];
       let reachable = false;
-      // An import the call head cannot be matched to: a dot import, or a specifier that is no plain package
-      // name (`yaml.v3`, `v2`, `go-yaml`) because the language names it by the path's last segment.
+      // How the ecosystem names a call through an import (`advisoryFunctions.callHeads`); an import whose name no
+      // call head shows leaves the advisory unjudged rather than "not called".
+      const callHeads = packageMatchingFor(pkg.ecosystem)?.advisoryFunctions?.callHeads;
+      if (!callHeads) continue;
       let unreadable = false;
       for (const a of analyses) {
         if (isTestFile(a.filePath, a.language)) continue;
@@ -137,10 +137,9 @@ export function attachVulnerableReach(
         for (const imp of a.imports ?? []) {
           const symbols = symbolsByPath.get(imp.source);
           if (!symbols?.size || imp.isType) continue;
-          if (imp.inScope || (imp.specifiers ?? []).some((n) => n !== "_" && !/^[\p{L}_][\p{L}\p{N}_]*$/u.test(n) || /^v\d+$/.test(n))) unreadable = true;
-          for (const name of imp.specifiers ?? []) {
-            if (name !== "_" && name !== ".") heads.set(name, symbols);
-          }
+          const named = callHeads(imp);
+          if (named.unreadable) unreadable = true;
+          for (const name of named.heads) heads.set(name, symbols);
         }
         if (heads.size === 0) continue;
         const inline = inlineByFile.get(a.filePath) ?? [];

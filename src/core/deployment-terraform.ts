@@ -3,7 +3,7 @@ import { readFile } from "fs/promises";
 import { join, posix, resolve } from "path";
 import { globUnignored as glob } from "./clarifydoc-ignore.js";
 import { byOrdinal } from "./ordinal.js";
-import { hclPath, hclRefs, hclString, parseHcl, type HclBlock } from "../extractors/shared/hcl.js";
+import { hclPath, hclRefs, hclString, parseHcl, registryModuleKey, type HclBlock } from "../extractors/shared/hcl.js";
 import type { DeployedServiceKind } from "../types/analysis.js";
 import type { RawService } from "./deployment.js";
 
@@ -57,16 +57,6 @@ const REGISTRY_MODULES: Record<string, { kind: DeployedServiceKind; family: (b: 
   "terraform-aws-modules/rds/aws": { kind: "datastore", family: (b) => engineFamily(b), names: ["identifier", "db_name"] },
   "terraform-aws-modules/lambda/aws": { kind: "app", family: () => "lambda", names: ["function_name"] },
 };
-
-/** `terraform-aws-modules/sqs/aws` from a registry address, a hosted-registry address or the module's GitHub source. */
-export function registryModuleKey(source: string): string | undefined {
-  const gh = source.match(/github\.com[/:]([\w.-]+)\/terraform-([a-z0-9]+)-([a-z0-9-]+?)(?:\.git)?(?:[/?#]|$)/i);
-  if (gh) return `${gh[1]}/${gh[3]}/${gh[2]}`.toLowerCase();
-  if (/^(?:git|hg|s3|gcs|https?)::|^(?:https?|git|ssh):/i.test(source)) return undefined;
-  const parts = source.replace(/\?.*$/, "").replace(/\/\/.*$/, "").split("/");
-  if (parts.length === 4 && /^registry\.terraform\.io$/i.test(parts[0]!)) parts.shift();
-  return parts.length === 3 ? parts.join("/").toLowerCase() : undefined;
-}
 
 const MODULE_EXTENSIONS = [".ts", ".js", ".mjs", ".cjs", ".py", ".rb"];
 
@@ -216,7 +206,7 @@ export async function collectTerraform(projectRoot: string, ignore: readonly str
         const kind = kindOf.get(`${r.dir}|module.${r.name}`);
         const to = nameOfAll.get(`${r.dir}|module.${r.name}`);
         if (!kind || !to || (e.how === "event" && kind !== "queue")) continue;
-        out.edges.push({ from, to, kind: kind === "queue" || e.how === "event" ? "bus" : kind === "app" ? "http" : "db", via: e.via });
+        out.edges.push({ from, to, kind: kind === "queue" ? "bus" : kind === "app" ? "http" : "db", via: e.via });
         continue;
       }
       const infra = INFRA[r.type];

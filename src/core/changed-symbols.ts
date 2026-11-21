@@ -645,14 +645,15 @@ export async function symbolsOfChange(
   const before = await loadFileAnalyses(analysisDir, files);
   const found = symbolsInHunks(before, hunks);
   const after = await analyzeWorkingFiles(root, contents ? files : [...before.keys()], contents);
+  const read = analysisReader(analysisDir);
   return {
     changed: found.symbols,
     moduleLevel: found.moduleLevel,
     moduleOnly: found.moduleOnly,
     importOnly: found.importOnly,
     forwarded: Object.fromEntries(found.forwarded),
-    boundReaders: await boundReaders(analysisDir, summary, found.bound),
-    starForwarders: await starForwarders(analysisDir, summary, files),
+    boundReaders: await boundReaders(analysisDir, summary, found.bound, read),
+    starForwarders: await starForwarders(analysisDir, summary, files, read),
     signatureChanges: await judgeSignatures(analysisDir, before, after, summary, editedLines(hunks)),
     classChanges: classChanges(before, after, found.classLevel),
     hunks,
@@ -690,20 +691,27 @@ function mayRead(imports: readonly ImportInfo[], target: string, names: Readonly
  * importers of that file in turn. An importer the analysis has no record of stays. Importers come from
  * `componentGraph` (every importing file, whatever the length of `affectedFiles`).
  */
-export async function boundReaders(analysisDir: string, summary: Pick<ProjectAnalysis, "componentGraph">, bound: ReadonlyMap<string, readonly string[]>): Promise<Record<string, string[]>> {
+/** A reader of the per-file analyses under `analysisDir`, each read once (null when it is missing or unreadable). */
+export function analysisReader(analysisDir: string): (file: string) => Promise<FileAnalysis | null> {
+  const loaded = new Map<string, Promise<FileAnalysis | null>>();
+  return (f) => {
+    let p = loaded.get(f);
+    if (!p) {
+      p = readFile(join(analysisDir, `${f}.json`), "utf8").then((t) => JSON.parse(t) as FileAnalysis, () => null);
+      loaded.set(f, p);
+    }
+    return p;
+  };
+}
+
+export async function boundReaders(
+  analysisDir: string,
+  summary: Pick<ProjectAnalysis, "componentGraph">,
+  bound: ReadonlyMap<string, readonly string[]>,
+  analysisOf = analysisReader(analysisDir),
+): Promise<Record<string, string[]>> {
   if (!bound.size) return {};
   const importers = importersOf(summary.componentGraph);
-  const loaded = new Map<string, FileAnalysis | null>();
-  const analysisOf = async (f: string): Promise<FileAnalysis | null> => {
-    if (!loaded.has(f)) {
-      try {
-        loaded.set(f, JSON.parse(await readFile(join(analysisDir, `${f}.json`), "utf8")) as FileAnalysis);
-      } catch {
-        loaded.set(f, null);
-      }
-    }
-    return loaded.get(f)!;
-  };
   const out: Record<string, string[]> = {};
   for (const [file, names] of bound) {
     const readers = new Set<string>();
@@ -742,7 +750,12 @@ export async function boundReaders(analysisDir: string, summary: Pick<ProjectAna
  * through it; what the module loses, it loses too. Importers come from `componentGraph`; the module a star
  * export names is the importee whose file stem (or folder, for `__init__`/`index`) is the last word of its source.
  */
-export async function starForwarders(analysisDir: string, summary: Pick<ProjectAnalysis, "componentGraph">, files: readonly string[]): Promise<Record<string, string[]>> {
+export async function starForwarders(
+  analysisDir: string,
+  summary: Pick<ProjectAnalysis, "componentGraph">,
+  files: readonly string[],
+  analysisOf = analysisReader(analysisDir),
+): Promise<Record<string, string[]>> {
   const importers = importersOf(summary.componentGraph);
   const seen = new Set(files);
   const out: Record<string, string[]> = {};
@@ -751,13 +764,13 @@ export async function starForwarders(analysisDir: string, summary: Pick<ProjectA
     for (const f of frontier) for (const from of importers.get(f) ?? []) if (!seen.has(from)) (seen.add(from), next.push(from));
     frontier = next;
   }
-  for (const f of seen) {
-    let a: FileAnalysis;
-    try {
-      a = JSON.parse(await readFile(join(analysisDir, `${f}.json`), "utf8")) as FileAnalysis;
-    } catch {
-      continue;
-    }
+  const closure = [...seen];
+  const analyses: Array<FileAnalysis | null> = [];
+  for (let i = 0; i < closure.length; i += 32) analyses.push(...(await Promise.all(closure.slice(i, i + 32).map(analysisOf))));
+  for (let k = 0; k < closure.length; k++) {
+    const f = closure[k]!;
+    const a = analyses[k];
+    if (!a) continue;
     const stars = (a.exports ?? []).filter((e) => e.name === "*" && e.source);
     if (!stars.length) continue;
     const targets = new Set<string>();
