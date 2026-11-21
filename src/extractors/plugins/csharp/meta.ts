@@ -38,6 +38,7 @@ import { CSHARP_SECURITY_RULES, csharpSecurityPostScan } from "./security-rules.
 import { csharpGrpcStub, csharpGrpcService } from "../shared/grpc-stubs.js";
 import { csharpThriftStub, firstService, firstStub, thriftServiceOf } from "../shared/thrift-stubs.js";
 import { hotChocolateResolver } from "./graphql.js";
+import { csharpTopLevelValueFlow, fileDelegateNames } from "./value-flow.js";
 
 export const csharpMeta: LanguagePluginMeta = {
   securityRules: CSHARP_SECURITY_RULES,
@@ -102,6 +103,10 @@ export const csharpMeta: LanguagePluginMeta = {
     proxyRules: (_tree, sourceText, filePath) => yarpForwarders(sourceText, filePath),
     // `Program.cs` top-level statements → the `<setup>` pseudo-function's locals.
     topLevelLocalTypes: (tree) => extractCsharpTopLevelLocalTypes(tree.rootNode),
+    // `Program.cs` top-level statements state their function values (`app.Run(Handle)`) on the `<setup>` pseudo-function.
+    moduleValueFlow: (tree) => csharpTopLevelValueFlow(tree.rootNode),
+    // `delegate void ClubAction(string club);` — a held value typed by it in another file is a function (`invoke.ifFnType`).
+    functionTypeAliases: (tree, sourceText) => (sourceText.includes("delegate") ? [...fileDelegateNames(tree.rootNode)] : []),
     // `await Get<T>(uri)` on a helper that requests its `uri` parameter: the path each call hands over.
     // Gated on a string holding a `/` — a file without one names no path.
     pathArgCalls: (tree, sourceText) => (/"[^"\n]*\/[^"\n]*"/.test(sourceText) ? extractCsharpPathArgCalls(tree, sourceText) : []),

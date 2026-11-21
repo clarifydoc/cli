@@ -25,6 +25,11 @@ export interface ClassValueContext {
   methods: ReadonlySet<string>;
   /** Delegate types the file declares (`delegate void Notify(string who);`). */
   delegates: ReadonlySet<string>;
+  /**
+   * Members whose declared type is a plain name (`ClubAction`) that the class itself calls (`_onSigned(c)`,
+   * `Signed?.Invoke(c)`): a delegate when some other file declares that name as one (`invoke.ifFnType`).
+   */
+  calledNamed?: ReadonlySet<string>;
   /** Cache of the member-level gate (see `mayStateFlow`). */
   signal?: RegExp | null;
 }
@@ -49,7 +54,7 @@ const STORE_METHODS: ReadonlySet<string> = new Set(["Add", "Push", "Enqueue", "T
 const ELEMENT_VIEWS: ReadonlySet<string> = new Set(["Values", "Keys"]);
 
 /** A name's shape: a delegate itself, a collection whose elements are delegates, an unknown (`var`), or neither. */
-type Shape = "delegate" | "collection" | "unknown" | null;
+type Shape = "delegate" | "collection" | "unknown" | "named" | null;
 
 function splitTop(text: string): string[] {
   return splitTopLevelWith(text, { brackets: "<>()[]", quotes: "", tail: "empty" });
@@ -69,6 +74,27 @@ function shapeOfType(type: string | null | undefined, delegates: ReadonlySet<str
   if (SEQUENCES.has(head) && args.length === 1) return shapeOfType(args[0], delegates) ? "collection" : null;
   if (MAPS.has(head) && args.length === 2) return shapeOfType(args[1], delegates) ? "collection" : null;
   return null;
+}
+
+/**
+ * The head of a type written as a plain name (`ClubAction`, `League.ClubAction<T>`), the kind another file may declare
+ * with `delegate`; null for a keyword type, a collection or a lower-case name. Only a name the class or member also
+ * CALLS (`x(…)`, `x.Invoke(…)`, which only a delegate allows) is ever read as one, and core asks whether any file declares it so.
+ */
+function plainTypeName(type: string | null | undefined): string | null {
+  if (!type) return null;
+  const t = type.replace(/\s+/g, "").replace(/\?$/, "").replace(/^global::/, "");
+  const lt = t.indexOf("<");
+  const head = (lt >= 0 ? t.slice(0, lt) : t).split(".").pop()!;
+  return /^[A-Z]\w*$/.test(head) && !SEQUENCES.has(head) && !MAPS.has(head) && !DELEGATE_TYPES.has(head) ? head : null;
+}
+
+/** Names a text calls as a function value: `x(…)` with no receiver, `this.x(…)`, `x.Invoke(…)`, `x?.Invoke(…)`. */
+const CALLED_RE = /(?<![\w.])(?:this\.)?([A-Za-z_]\w*)\s*\(|(?<![\w])([A-Za-z_]\w*)\s*\??\.Invoke\s*\(/g;
+function calledNames(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of text.matchAll(CALLED_RE)) out.add((m[1] ?? m[2])!);
+  return out;
 }
 
 /** `Task<Func<int>>` → `Func<int>` (an async factory's result). */
@@ -212,7 +238,7 @@ function mayStateFlow(text: string, params: readonly ParamInfo[], ctx: ClassValu
   if (ctx.signal === undefined) {
     const parts: string[] = [];
     for (const d of ctx.delegates) parts.push(`\\b${escapeRe(d)}\\b`);
-    for (const [name, type] of ctx.members) if (shapeOfType(type, ctx.delegates)) parts.push(`\\b${escapeRe(name)}\\b`);
+    for (const [name, type] of ctx.members) if (shapeOfType(type, ctx.delegates) || ctx.calledNamed?.has(name)) parts.push(`\\b${escapeRe(name)}\\b`);
     // A method of the class named without a call or type arguments: a method group.
     if (ctx.methods.size > 0) parts.push(`\\b(?:${[...ctx.methods].map(escapeRe).join("|")})\\b(?!\\s*[(<])`);
     ctx.signal = parts.length > 0 ? new RegExp(parts.join("|")) : null;
@@ -231,7 +257,32 @@ export function csharpValueFlow(
   returnType: string | null,
   ctx: ClassValueContext | null,
 ): ValueFlowFact[] {
-  if (!body || !mayStateFlow(body.text, params, ctx, returnType)) return [];
+  return body ? statementsFlow([body], body.text, params, returnType, ctx) : [];
+}
+
+/**
+ * The facts of a file's top-level statements (`Program.cs`: `app.Run(Handle)`, a local function handed to a
+ * registrar), which core joins to the file's `<setup>`. The file's local functions are the methods a bare name may
+ * be; classes and namespaces are no part of it.
+ */
+export function csharpTopLevelValueFlow(root: Node): ValueFlowFact[] {
+  const statements = root.namedChildren.filter((c) => c.type === "global_statement");
+  if (statements.length === 0) return [];
+  const methods = new Set<string>();
+  for (const s of statements) for (const n of s.namedChildren) if (n.type === "local_function_statement") { const name = n.childForFieldName("name")?.text; if (name) methods.add(name); }
+  const ctx: ClassValueContext = { members: new Map(), methods, delegates: fileDelegateNames(root) };
+  return statementsFlow(statements, statements.map((n) => n.text).join("\n"), [], null, ctx);
+}
+
+function statementsFlow(
+  roots: readonly Node[],
+  text: string,
+  params: readonly ParamInfo[],
+  returnType: string | null,
+  ctx: ClassValueContext | null,
+): ValueFlowFact[] {
+  if (!mayStateFlow(text, params, ctx, returnType)) return [];
+  const body = roots[0]!;
   const delegates = ctx?.delegates ?? new Set<string>();
   const members = ctx?.members ?? new Map<string, string | null>();
   const methods = ctx?.methods ?? new Set<string>();
@@ -299,8 +350,8 @@ export function csharpValueFlow(
     }
     for (const c of node.namedChildren) scan(c);
   };
-  scan(body);
-  if (LAMBDAS.has(body.type)) return [];
+  for (const r of roots) scan(r);
+  if (roots.length === 1 && LAMBDAS.has(body.type)) return [];
 
   // `x => …` binds an untyped identifier parameter.
   const bindLambdaParams = (node: Node): void => {
@@ -310,10 +361,12 @@ export function csharpValueFlow(
     }
     for (const c of node.namedChildren) bindLambdaParams(c);
   };
-  bindLambdaParams(body);
+  for (const r of roots) bindLambdaParams(r);
 
   // ── Which unknown (`var`) names are read as values: only those are worth facts ──
   const valueUses = new Set<string>();
+  /** Names the member calls as function values; with a plain type name they may hold a delegate another file declares. */
+  const called = calledNames(text);
   const noteUse = (n: Node | null | undefined): void => {
     const e = n ? unwrapExpression(n) : null;
     if (e?.type === "identifier") valueUses.add(e.text);
@@ -342,33 +395,35 @@ export function csharpValueFlow(
     }
     for (const c of node.namedChildren) collectUses(c);
   };
-  collectUses(body);
+  for (const r of roots) collectUses(r);
 
   // ── Cells ──────────────────────────────────────────────────────────────────
   /** The member `name` (of this class) if the class declares it as a field, property or event. */
   const isMember = (name: string): boolean => members.has(name);
   const shapeOfName = (name: string): Shape => {
     const l = locals.get(name);
-    if (l) return l.shape === "unknown" ? (valueUses.has(name) ? "unknown" : null) : l.shape;
-    if (members.has(name)) return shapeOfType(members.get(name), delegates);
+    if (l) return l.shape === "unknown" ? (valueUses.has(name) ? "unknown" : null) : l.shape ?? (called.has(name) && plainTypeName(l.type) ? "named" : null);
+    if (members.has(name)) return shapeOfType(members.get(name), delegates) ?? (ctx?.calledNamed?.has(name) && plainTypeName(members.get(name)) ? "named" : null);
     return null;
   };
+  /** The declared type of a local, parameter or member name. */
+  const typeOfName = (name: string): string | null => (locals.has(name) ? locals.get(name)!.type : members.get(name) ?? null);
   const isLocal = (name: string): boolean => locals.has(name) && !localFunctions.has(name);
 
-  interface Holder { cell: ValueCell; shape: Shape; /** the collection is a member: its elements share its cell */ collapsed: boolean; local: boolean }
+  interface Holder { cell: ValueCell; shape: Shape; /** the collection is a member: its elements share its cell */ collapsed: boolean; local: boolean; /** the declared type of a `named` holder */ type?: string | null }
   /** The cell an expression names, with what it is declared to hold. */
   const holderOf = (expr: Node): Holder | null => {
     const e = unwrapExpression(expr);
     if (e.type === "identifier") {
-      if (isLocal(e.text)) return { cell: { name: e.text }, shape: shapeOfName(e.text), collapsed: false, local: true };
-      if (isMember(e.text)) return { cell: { name: "this", member: e.text }, shape: shapeOfName(e.text), collapsed: true, local: false };
+      if (isLocal(e.text)) return { cell: { name: e.text }, shape: shapeOfName(e.text), collapsed: false, local: true, type: typeOfName(e.text) };
+      if (isMember(e.text)) return { cell: { name: "this", member: e.text }, shape: shapeOfName(e.text), collapsed: true, local: false, type: typeOfName(e.text) };
       return null;
     }
     if (e.type === "member_access_expression") {
       const target = e.childForFieldName("expression");
       const name = e.childForFieldName("name")?.text;
       if (!target || !name) return null;
-      if (target.type === "this") return { cell: { name: "this", member: name }, shape: members.has(name) ? shapeOfName(name) : "unknown", collapsed: true, local: false };
+      if (target.type === "this") return { cell: { name: "this", member: name }, shape: members.has(name) ? shapeOfName(name) : "unknown", collapsed: true, local: false, type: members.get(name) ?? null };
       if (target.type === "identifier" && isLocal(target.text)) {
         if (ELEMENT_VIEWS.has(name)) { const inner = holderOf(target); return inner?.shape === "collection" ? inner : null; }
         return { cell: { name: target.text, member: name }, shape: "unknown", collapsed: false, local: false };
@@ -528,7 +583,16 @@ export function csharpValueFlow(
     const h = holderOf(left);
     if (!h) return;
     // A destination whose type is stated holds delegates; an unknown one (`other.Saved`, a `var`) only what is surely a method group.
-    const known = h.shape === "delegate" || h.shape === "collection";
+    const known = h.shape === "delegate" || h.shape === "collection" || h.shape === "named";
+    if (h.shape === "named") {
+      // A name the class calls, of a type another file may declare as a delegate: it takes what is surely a function
+      // value, and the value of a variable declared with that same type (`_onSigned = cb`).
+      const r = unwrapExpression(right);
+      const sources = sourcesOf(right, true);
+      const from = r.type === "identifier" && isLocal(r.text) && shapeOfName(r.text) === null && plainTypeName(typeOfName(r.text)) === plainTypeName(h.type) ? { name: r.text } : null;
+      bindAt(h.cell, from ? [...sources, { kind: "copy", from }] : sources, line);
+      return;
+    }
     if (h.shape === "collection") {
       // `handlers = new() { … }` / `new List<Action> { … }`: the initializer's elements.
       bindAt(wholeCollection(h), collectionElements(right), line);
@@ -586,23 +650,26 @@ export function csharpValueFlow(
       // ── invoke ──
       const f = unwrapExpression(fnNode);
       let invoked: ValueCell | null = null;
+      let ifFnType: string | undefined;
       if (f.type === "identifier") {
         const h = holderOf(f);
-        if (h && h.shape !== "collection") invoked = h.cell;
+        if (h && h.shape !== "collection") { invoked = h.cell; if (h.shape === "named") ifFnType = plainTypeName(h.type) ?? undefined; }
       } else if (f.type === "member_access_expression") {
         const nm = f.childForFieldName("name")?.text;
         const target = f.childForFieldName("expression");
-        if (target?.type === "this" && nm && isMember(nm) && shapeOfName(nm) !== "collection") invoked = { name: "this", member: nm };
-        else if (nm === "Invoke" && target) {
+        if (target?.type === "this" && nm && isMember(nm) && shapeOfName(nm) !== "collection") {
+          invoked = { name: "this", member: nm };
+          if (shapeOfName(nm) === "named") ifFnType = plainTypeName(members.get(nm)) ?? undefined;
+        } else if (nm === "Invoke" && target) {
           const h = holderOf(target);
-          if (h && h.shape === "delegate") invoked = h.cell;
+          if (h && (h.shape === "delegate" || h.shape === "named")) { invoked = h.cell; if (h.shape === "named") ifFnType = plainTypeName(h.type) ?? undefined; }
         }
       } else if (f.type === "conditional_access_expression") {
         const cond = f.childForFieldName("condition");
         const last = f.namedChildren[f.namedChildren.length - 1];
         if (cond && last?.type === "member_binding_expression" && last.childForFieldName("name")?.text === "Invoke") {
           const h = holderOf(cond);
-          if (h && h.shape === "delegate") invoked = h.cell;
+          if (h && (h.shape === "delegate" || h.shape === "named")) { invoked = h.cell; if (h.shape === "named") ifFnType = plainTypeName(h.type) ?? undefined; }
         }
       } else if (f.type === "element_access_expression") {
         const cells = elementCells(f);
@@ -610,7 +677,7 @@ export function csharpValueFlow(
       }
       // An element's call (`handlers[key]()`) is no call row of the extractor: it is named `handlers[]`.
       const invokeName = f.type === "element_access_expression" ? `${f.childForFieldName("expression")?.text ?? ""}[]` : callName;
-      if (invoked && invokeName) emit({ kind: "invoke", cell: invoked, call: invokeName, line });
+      if (invoked && invokeName) emit({ kind: "invoke", cell: invoked, call: invokeName, line, ...(ifFnType ? { ifFnType } : {}) });
 
       // ── a store into a collection: `handlers.Add(Save)`, `handlers.Add("a", Save)`, `queue.Enqueue(f)` ──
       if (f.type === "member_access_expression") {
@@ -698,7 +765,7 @@ export function csharpValueFlow(
     if (isLambda) lambdaDepth--;
   };
 
-  if (body.type === "arrow_expression_clause") {
+  if (roots.length === 1 && body.type === "arrow_expression_clause") {
     const value = body.namedChildren[0];
     if (value && delegateReturn) {
       const line = value.startPosition.row + 1;
@@ -707,7 +774,7 @@ export function csharpValueFlow(
     }
     walk(body);
   } else {
-    walk(body);
+    for (const r of roots) walk(r);
   }
   return facts;
 }
@@ -800,5 +867,11 @@ export function classValueContext(classBody: Node, delegates: ReadonlySet<string
       }
     }
   }
-  return { members, methods, delegates };
+  // Members of a plain type name that the class calls like a function: only a delegate allows it.
+  let calledNamed: Set<string> | undefined;
+  if ([...members.values()].some((t) => plainTypeName(t))) {
+    const called = calledNames(classBody.text);
+    for (const [n, t] of members) if (called.has(n) && plainTypeName(t) && !shapeOfType(t, delegates)) (calledNamed ??= new Set()).add(n);
+  }
+  return { members, methods, delegates, ...(calledNamed ? { calledNamed } : {}) };
 }

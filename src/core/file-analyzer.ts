@@ -774,6 +774,8 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     if (stringConstants && Object.keys(stringConstants).length > 0) analysis.stringConstants = stringConstants;
     const moduleValueFlow = hooks?.moduleValueFlow?.(tree, sourceText);
     if (moduleValueFlow && moduleValueFlow.length > 0) analysis.moduleValueFlow = moduleValueFlow;
+    const functionTypeAliases = hooks?.functionTypeAliases?.(tree, sourceText);
+    if (functionTypeAliases && functionTypeAliases.length > 0) analysis.functionTypeAliases = functionTypeAliases;
     const attributeReads = hooks?.attributeReads?.(tree, sourceText);
     if (attributeReads && attributeReads.length > 0) analysis.attributeReads = attributeReads;
     const browserNavigations = hooks?.browserNavigations?.(tree, sourceText);

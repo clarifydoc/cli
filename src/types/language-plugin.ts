@@ -821,6 +821,8 @@ export interface AstExtractorHooks {
   stringConstants?(tree: Tree, sourceText: string): Record<string, string>;
   /** The file's module-level value-flow facts → `FileAnalysis.moduleValueFlow` (see `ValueFlowFact`). */
   moduleValueFlow?(tree: Tree, sourceText: string): ValueFlowFact[];
+  /** The names the file declares as function types (C# `delegate`) → `FileAnalysis.functionTypeAliases`. */
+  functionTypeAliases?(tree: Tree, sourceText: string): string[];
   /** URL-holding markup attributes the file's scripts read → `FileAnalysis.attributeReads`. */
   attributeReads?(tree: Tree, sourceText: string): Array<{ attribute: string; method?: string; line: number }>;
   /** Pages a browser driver opens by address (`page.goto`, `cy.visit`) → `FileAnalysis.browserNavigations`. */

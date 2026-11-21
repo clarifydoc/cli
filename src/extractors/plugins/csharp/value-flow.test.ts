@@ -587,3 +587,143 @@ describe("C# value flow: leftovers", () => {
     expect(links).toContain("Linesman.Flag@8 Whistled?.Invoke -> League/Coach.cs::Coach.Listen");
   });
 });
+
+describe("C# value flow: delegate types declared in another file", () => {
+  const delegateFile = { "League/Delegates.cs": lines("namespace League;", "public delegate void ClubAction(string club);") };
+
+  it("follows a handler through a field and a parameter typed by a delegate another file declares", async () => {
+    const links = flowLinks(await analyzeAll({
+      ...delegateFile,
+      "League/Registry.cs": lines(
+        "namespace League;",
+        "public class Registry {",
+        "  private ClubAction _onSigned;",
+        "  public void Subscribe(ClubAction cb) { _onSigned = cb; }",
+        "  public void Fire(string c) { _onSigned(c); }",
+        "  public void Run(ClubAction cb, string c) { cb(c); }",
+        "}",
+      ),
+      "League/Main.cs": lines(
+        "namespace League;",
+        "public class Main {",
+        "  public void Wire(Registry r) { r.Subscribe(Handle); r.Run(Other, \"x\"); }",
+        "  public void Handle(string club) {}",
+        "  public void Other(string club) {}",
+        "  public void Decoy(string club) {}",
+        "}",
+      ),
+    }));
+    expect(links).toContain("Registry.Fire@5 _onSigned -> League/Main.cs::Main.Handle");
+    expect(links).toContain("Registry.Run@6 cb -> League/Main.cs::Main.Other");
+    expect(links.filter((l) => l.includes("Decoy"))).toEqual([]);
+    // The field is only written by `Subscribe`, never with `Other`.
+    expect(links).not.toContain("Registry.Fire@5 _onSigned -> League/Main.cs::Main.Other");
+  });
+
+  it("states nothing when no file declares the name as a delegate", async () => {
+    const links = flowLinks(await analyzeAll({
+      "League/Registry.cs": lines(
+        "namespace League;",
+        "public class Registry {",
+        "  private ClubAction _onSigned;",
+        "  public void Subscribe(ClubAction cb) { _onSigned = cb; }",
+        "  public void Fire(string c) { _onSigned(c); }",
+        "}",
+      ),
+      "League/Main.cs": lines(
+        "namespace League;",
+        "public class Main {",
+        "  public void Wire(Registry r) { r.Subscribe(Handle); }",
+        "  public void Handle(string club) {}",
+        "}",
+      ),
+    }));
+    expect(links).toEqual([]);
+  });
+
+  it("refuses a name that is also a class", async () => {
+    const links = flowLinks(await analyzeAll({
+      ...delegateFile,
+      "League/ClubAction.cs": lines("namespace League;", "public class ClubAction { }"),
+      "League/Registry.cs": lines(
+        "namespace League;",
+        "public class Registry {",
+        "  private ClubAction _onSigned;",
+        "  public void Subscribe(ClubAction cb) { _onSigned = cb; }",
+        "  public void Fire(string c) { _onSigned(c); }",
+        "}",
+      ),
+      "League/Main.cs": lines(
+        "namespace League;",
+        "public class Main {",
+        "  public void Wire(Registry r) { r.Subscribe(Handle); }",
+        "  public void Handle(string club) {}",
+        "}",
+      ),
+    }));
+    expect(links).toEqual([]);
+  });
+
+  it("follows an event typed by a delegate another file declares", async () => {
+    const links = flowLinks(await analyzeAll({
+      "League/Delegates.cs": lines("namespace League;", "public delegate void SignedHandler(object who);"),
+      "League/Club.cs": lines(
+        "namespace League;",
+        "public class Club {",
+        "  public event SignedHandler Signed;",
+        "  public void Sign() { Signed?.Invoke(this); }",
+        "}",
+      ),
+      "League/Fan.cs": lines(
+        "namespace League;",
+        "public class Fan {",
+        "  public void Cheer(object who) {}",
+        "  public void Decoy(object who) {}",
+        "  public void Watch(Club c) { c.Signed += Cheer; }",
+        "}",
+      ),
+    }));
+    expect(links).toContain("Club.Sign@4 Signed?.Invoke -> League/Fan.cs::Fan.Cheer");
+    expect(links.filter((l) => l.includes("Decoy"))).toEqual([]);
+  });
+});
+
+describe("C# value flow: top-level statements", () => {
+  it("hands a top-level local function to a method that runs it", async () => {
+    const links = flowLinks(await analyzeAll({
+      "League/Registry.cs": lines(
+        "using System;",
+        "namespace League;",
+        "public class Registry {",
+        "  public void Run(Action<string> cb, string c) { cb(c); }",
+        "}",
+      ),
+      "Program.cs": lines(
+        "var r = new League.Registry();",
+        "void Kickoff(string club) { }",
+        "r.Run(Kickoff, \"x\");",
+      ),
+      "League/Other.cs": lines("namespace League;", "public class Other { public void Kickoff(string club) {} public void Decoy(string c) {} }"),
+    }));
+    expect(links).toContain("Registry.Run@4 cb -> Program.cs::Kickoff");
+    expect(links.filter((l) => l.includes("Other."))).toEqual([]);
+  });
+
+  it("does not take a bare name that is no top-level function for a method group", async () => {
+    const links = flowLinks(await analyzeAll({
+      "League/Registry.cs": lines(
+        "using System;",
+        "namespace League;",
+        "public class Registry {",
+        "  public void Run(Action<string> cb, string c) { cb(c); }",
+        "}",
+      ),
+      "Program.cs": lines(
+        "var r = new League.Registry();",
+        "r.Run(Kickoff, \"x\");",
+      ),
+      "League/Other.cs": lines("namespace League;", "public class Other { public static void Kickoff(string club) {} }"),
+    }));
+    expect(links).toEqual([]);
+  });
+});
