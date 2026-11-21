@@ -2188,6 +2188,8 @@ interface LinkContext {
    * never resolve them, so a namesake of the callee's name cannot take the call. Absent when no file states facts.
    */
   invokeSites?: Map<string, "suppress" | "same-file">;
+  /** The names a class declares a `PropertyInfo.callable` member under (`callableQuestions`). */
+  callableFieldNames?: Set<string>;
   /** Lazy: per language and name, the files declaring it a function-type alias or a class (`functionTypeQuestion`). */
   fnTypeDecls?: Map<string, { aliases: string[]; classes: string[] }>;
   /** Lazy: the answers `functionTypeQuestion` gave, `file\0type` → function type or not. */
@@ -10881,10 +10883,11 @@ function methodBesideClass(
     const seeing = hits.filter((f) => includeClosure(ctx, f).has(classFile));
     if (seeing.length > 0) hits = seeing;
   }
-  // A part that only defines members out of line (a `.cpp`, no declaration of its own) and whose includes reach ANOTHER
-  // declaration of the class but never this one defines that namesake's member (`other/decoy.cpp` → `other/decoy.h`'s
-  // `Club`), not the one the caller's header declares.
-  if (hits.length > 0 && importsShareScope(language)) {
+  // Where `classFile` declares the class itself: a part that only defines members out of line (a `.cpp`, no declaration
+  // of its own) and whose includes reach ANOTHER declaration of the class but never this one defines that namesake's
+  // member (`other/decoy.cpp` → `other/decoy.h`'s `Club`), not the one the caller's header declares.
+  const declaring = ctx.classAt.get(memberKey(classFile, className));
+  if (hits.length > 0 && declaring && !declaring.extension && importsShareScope(language)) {
     const rivals = (ctx.classFiles.get(className) ?? []).filter((d) => d !== classFile && !ctx.classAt.get(memberKey(d, className))?.extension);
     if (rivals.length > 0) {
       hits = hits.filter((f) => {
