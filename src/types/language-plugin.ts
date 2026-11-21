@@ -946,6 +946,11 @@ export interface PreprocessOutcome {
    * judged unused.
    */
   embedded?: true;
+  /**
+   * The file is a JSON/markup wrapper and `sourceText` is all its code (a notebook's code cells): the
+   * file's line count and its minified flag are judged on `sourceText`, never on the wrapper's bytes.
+   */
+  codeOnly?: true;
 }
 
 /**

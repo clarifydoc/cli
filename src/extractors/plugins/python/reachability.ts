@@ -194,6 +194,7 @@ async function loadPythonReachability(ctx: ReachabilityLoadContext): Promise<Rea
 
     entryReason(analysis: FileAnalysis, relPath: string, frameworks: ReadonlySet<string>): string | null {
       const f = analysis.filePath;
+      if (relPath.endsWith(".ipynb")) return "notebook (runs top to bottom)";
       if (analysis.pathReferences?.includes("__main__")) return "script (`__main__` guard)";
       if (SCRIPT_BASENAME_RE.test(relPath)) return "conventional entry file";
       if (APP_ENTRY_RE.test(relPath)) return "conventional app entry";

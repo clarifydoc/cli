@@ -444,7 +444,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     const rawSource = isMainThread ? await readFile(file.absolutePath, encoding) : readFileSync(file.absolutePath, encoding);
     // Flag minified/bundled artifacts once; every branch below stamps it on
     // the analysis so project-level detectors can exclude these files.
-    const minified = isMinifiedSource(rawSource);
+    let minified = isMinifiedSource(rawSource);
     // A single-file library copied in (the SQLite amalgamation) is vendored
     // by its banner, wherever it sits and however many licensed files the repo has.
     const vendoredLibrary = vendoredLibraryOf(rawSource, file.language);
@@ -532,6 +532,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     let language: Language = file.language;
     let postExtract: ((analysis: FileAnalysis, raw: string) => void) | undefined;
     let embedded = false;
+    let lineSource = rawSource;
     const pre = filePlugin?.preprocess?.(rawSource, file.relativePath);
     if (pre) {
       if ("skip" in pre) {
@@ -542,6 +543,12 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       language = pre.language;
       postExtract = pre.postExtract;
       embedded = pre.embedded === true;
+      // The file's own bytes are no code (a notebook's JSON, its output lines megabytes long): minified and
+      // line count are judged on the text that is read.
+      if (pre.codeOnly) {
+        lineSource = sourceText;
+        minified = isMinifiedSource(sourceText);
+      }
       // The effective language can differ from the file's (Vue SFC → its
       // <script> block); make sure ITS plugin is loaded too.
       await ensureLanguagesLoaded([language]);
@@ -578,7 +585,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
 
     const analysis = createEmptyAnalysis(file.relativePath, language);
     analysis.projectId = projectId;
-    analysis.lineCount = countLines(rawSource);
+    analysis.lineCount = countLines(lineSource);
     const parseErrors = parseErrorsOf(tree, sourceText.length);
     if (parseErrors) analysis.parseErrors = parseErrors;
     if (minified) analysis.minified = true;

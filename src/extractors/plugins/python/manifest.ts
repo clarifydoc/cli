@@ -57,7 +57,7 @@ export const pythonManifest: LanguagePluginManifest = {
   packageEcosystems: ["pypi"],
   importPackageNames: distributionNamesOfImport,
   parsing: "tree-sitter",
-  extensions: [".py", ".pyw"],
+  extensions: [".py", ".pyw", ".ipynb"],
   // A field is only reached through the instance (`this.x`); a bare name never is one.
   explicitSelfMembers: true,
   // A parameter, or a class declared in a function, shadows the module's and an import's namesake.

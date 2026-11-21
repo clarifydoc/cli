@@ -13,6 +13,7 @@ import type { Tree } from "web-tree-sitter";
 import type { LanguagePluginMeta, SecurityRule } from "../../../types/language-plugin.js";
 import { extendControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
+import { notebookPython } from "./notebook.js";
 import { stripPythonNonCode } from "./python-tokenizer.js";
 import { extractPythonTypeReferences } from "./type-references.js";
 import { pythonCallHooks } from "./call-hooks.js";
@@ -203,6 +204,8 @@ export const pythonMeta: LanguagePluginMeta = {
   ),
   securityRules: SECURITY_RULES,
   // Strip strings and comments first to avoid false positives.
+  // A `.ipynb` is read as the Python its code cells run (notebook.ts); a `.py` is read as written.
+  preprocess: (rawSource, relativePath) => (relativePath.endsWith(".ipynb") ? notebookPython(rawSource) : null),
   securityPreprocess: stripPythonNonCode,
   apiCallRoots: ["requests", "httpx", "aiohttp", "urllib.request", "urllib3", "http.client"],
   dbCallRoots: ["cursor", "session", "engine", "db", "connection", "pool"],
