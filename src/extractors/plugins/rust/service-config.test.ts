@@ -2,9 +2,10 @@ import { describe, it, expect } from "vitest";
 import { rustBaseRefOf } from "./service-config.js";
 
 describe("rustBaseRefOf", () => {
-  it("reads an environment variable, whatever the code falls back to", () => {
+  it("reads an environment variable, with the fallback literal when the chain ends on it", () => {
+    // The chain goes on after the fallback: the literal is not the value, so none is stated.
     expect(rustBaseRefOf('env::var("MATCH_ADDR").unwrap_or_else(|_| "http://match:8090".to_string()).parse::<String>().expect("bad")')).toEqual({ kind: "env", key: "MATCH_ADDR" });
-    expect(rustBaseRefOf('std::env::var("MATCH_ADDR").unwrap_or("http://match:8090".to_string())')).toEqual({ kind: "env", key: "MATCH_ADDR" });
+    expect(rustBaseRefOf('std::env::var("MATCH_ADDR").unwrap_or("http://match:8090".to_string())')).toEqual({ kind: "env", key: "MATCH_ADDR", fallback: "http://match:8090" });
     expect(rustBaseRefOf('std::env::var_os("MATCH_ADDR")')).toEqual({ kind: "env", key: "MATCH_ADDR" });
   });
 
