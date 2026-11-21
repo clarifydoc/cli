@@ -11002,22 +11002,22 @@ function methodBesideClass(
     const beside = hits.filter((f) => f.slice(0, f.lastIndexOf("/") + 1) === dir);
     if (beside.length > 0) hits = beside;
   }
-  // Where the declaration comes in through an include, the parts that include it (`home/club.cpp` for
-  // `home/club.h`, not `away/club.cpp` defining another `Club`).
-  if (hits.length > 1 && importsShareScope(language)) {
-    const seeing = hits.filter((f) => includeClosure(ctx, f).has(classFile));
+  // Where the declaration comes in through an include, the parts whose includes reach it (`home/club.cpp` for
+  // `home/club.h`, not `away/club.cpp` defining another `Club`); where none of several does, a part that only defines
+  // members out of line and whose includes reach ANOTHER declaration of the class but never this one defines that
+  // namesake's member (`other/decoy.cpp` → `other/decoy.h`'s `Club`), so it goes.
+  if (hits.length > 0 && importsShareScope(language)) {
+    const sees = (f: string): boolean => includeClosure(ctx, f).has(classFile);
+    const seeing = hits.length > 1 ? hits.filter(sees) : [];
+    const declaring = ctx.classAt.get(memberKey(classFile, className));
+    const rivals = declaring && !declaring.extension
+      ? (ctx.classFiles.get(className) ?? []).filter((d) => d !== classFile && !ctx.classAt.get(memberKey(d, className))?.extension)
+      : [];
     if (seeing.length > 0) hits = seeing;
-  }
-  // Where `classFile` declares the class itself: a part that only defines members out of line (a `.cpp`, no declaration
-  // of its own) and whose includes reach ANOTHER declaration of the class but never this one defines that namesake's
-  // member (`other/decoy.cpp` → `other/decoy.h`'s `Club`), not the one the caller's header declares.
-  const declaring = ctx.classAt.get(memberKey(classFile, className));
-  if (hits.length > 0 && declaring && !declaring.extension && importsShareScope(language)) {
-    const rivals = (ctx.classFiles.get(className) ?? []).filter((d) => d !== classFile && !ctx.classAt.get(memberKey(d, className))?.extension);
-    if (rivals.length > 0) {
+    else if (rivals.length > 0) {
       hits = hits.filter((f) => {
         const own = ctx.classAt.get(memberKey(f, className));
-        if (f === classFile || (own && !own.extension)) return true;
+        if (own && !own.extension) return true;
         const closure = includeClosure(ctx, f);
         return closure.has(classFile) || !rivals.some((d) => closure.has(d));
       });

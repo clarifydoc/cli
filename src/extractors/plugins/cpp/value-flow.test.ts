@@ -372,3 +372,16 @@ void rest(Squad& squad) { squad.onGoal(); }
     expect(found.filter((l) => l.startsWith("value-flow rest"))).toEqual([]);
   });
 });
+
+// A method defined in two parts, only one of which includes the class's header: the part that does is the class's.
+describe("C++ member calls: of two out-of-line parts, the one that includes the class's header", () => {
+  const found = buildSymbolLinks([
+    read("struct Car { void drive(); };\n", "car.h"),
+    read('#include "car.h"\nvoid Car::drive() {}\n', "car.cpp"),
+    read("struct Wheel { int n; };\nvoid Car::drive() {}\n", "spare.cpp"),
+    read('#include "car.h"\nvoid run(Car *c) { c->drive(); }\n', "main.cpp"),
+  ]).filter((l) => l.sourceSymbol === "run").map((l) => `${l.callName} -> ${l.targetFile}::${l.targetSymbol}`);
+  it("links the including part and never the other", () => {
+    expect(found).toEqual(["c.drive -> car.cpp::Car.drive"]);
+  });
+});
