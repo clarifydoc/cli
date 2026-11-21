@@ -727,3 +727,27 @@ describe("C# value flow: top-level statements", () => {
     expect(links).toEqual([]);
   });
 });
+
+describe("C# value flow: a member sharing its type's name with a method", () => {
+  it("still flows when the parameter is both called and stored", async () => {
+    const links = flowLinks(await analyzeAll({
+      "League/Delegates.cs": lines("namespace League;", "public delegate void Match(string club);"),
+      "League/Fixture.cs": lines(
+        "namespace League;",
+        "public class Fixture {",
+        "  public Match Match { get; set; }",
+        "  public void Match2(string c) { Match(c); }",
+        "  void Register(Match cb) { cb(\"x\"); Match = cb; }",
+        "}",
+      ),
+      "League/Main.cs": lines(
+        "namespace League;",
+        "public class Main {",
+        "  public void Wire(Fixture f) { f.Register(Handle); }",
+        "  public void Handle(string c) {}",
+        "}",
+      ),
+    }));
+    expect(links).toContain("Fixture.Match2@4 Match -> League/Main.cs::Main.Handle");
+  });
+});

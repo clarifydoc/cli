@@ -93,7 +93,14 @@ function plainTypeName(type: string | null | undefined): string | null {
 const CALLED_RE = /(?<![\w.])(?:this\.)?([A-Za-z_]\w*)\s*\(|(?<![\w])([A-Za-z_]\w*)\s*\??\.Invoke\s*\(/g;
 function calledNames(text: string): Set<string> {
   const out = new Set<string>();
-  for (const m of text.matchAll(CALLED_RE)) out.add((m[1] ?? m[2])!);
+  for (const m of text.matchAll(CALLED_RE)) {
+    // `Match Match(int id)` / `new Club(` / `void Handle(`: a name after a type or `new` is a declaration or a construction, no call of a value.
+    if (m[1] !== undefined) {
+      const before = /([\w>\]?]+)\s*$/.exec(text.slice(Math.max(0, m.index - 64), m.index));
+      if (before && !/^(?:return|await|else|case|throw|yield|in|is|and|or|not)$/.test(before[1]!)) continue;
+    }
+    out.add((m[1] ?? m[2])!);
+  }
   return out;
 }
 
@@ -589,7 +596,7 @@ function statementsFlow(
       // value, and the value of a variable declared with that same type (`_onSigned = cb`).
       const r = unwrapExpression(right);
       const sources = sourcesOf(right, true);
-      const from = r.type === "identifier" && isLocal(r.text) && shapeOfName(r.text) === null && plainTypeName(typeOfName(r.text)) === plainTypeName(h.type) ? { name: r.text } : null;
+      const from = r.type === "identifier" && isLocal(r.text) && plainTypeName(typeOfName(r.text)) === plainTypeName(h.type) ? { name: r.text } : null;
       bindAt(h.cell, from ? [...sources, { kind: "copy", from }] : sources, line);
       return;
     }
