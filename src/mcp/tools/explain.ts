@@ -1,4 +1,5 @@
 import type { McpTool } from "../protocol.js";
+import { functionEffectsText } from "./member-effects.js";
 import type { FileSeam, ProjectAnalysis, RouteInfo } from "../../types/analysis.js";
 import { numberArg, requiredStringArg, stringArg } from "../format.js";
 import { fileChangedNote, isTestPath, nearSymbols, requireAnalysis, type ToolContext } from "./context.js";
@@ -126,6 +127,7 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
         const where = named ? { file: named } : {};
         parts.push({ title: "Source", get: (left) => extract({ symbol: subject, ...where, depth: 1, maxTokens: Math.max(300, Math.floor(left * 0.6)) }), follow: `clarifydoc_extract symbol="${subject}"` });
         parts.push({ title: "Callers", get: () => trace({ symbol: subject, ...where, direction: "callers", depth: 2, limit: 15 }), follow: `clarifydoc_trace symbol="${subject}" direction="callers"` });
+        parts.push({ title: "Writes and throws", get: async () => functionEffectsText(summary, subject, named), follow: `clarifydoc_trace symbol="${subject}" direction="writers"` });
         // The files declaring it, by the call graph: one, or the one named.
         const declaring = [...new Set((summary.symbolLinks ?? []).filter((l) => l.targetSymbol === subject && (!named || l.targetFile === named)).map((l) => l.targetFile))];
         home = named ?? (declaring.length === 1 ? declaring[0] : definedIn(summary, subject));

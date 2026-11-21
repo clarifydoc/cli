@@ -44,6 +44,7 @@ import { fileChangedNote, mustResolveFile, nearSymbols, requireAnalysis, rowFres
 import { filterToDrop, missHeadline, noResults, type DroppableFilter } from "../empty.js";
 import { decisionsAbout } from "./decisions.js";
 import { filesNaming, namingIndex, rankByUse, targetsFromNames } from "../../core/member-dependents.js";
+import { writersText } from "./member-effects.js";
 import { boundLines, fileBound, refOf, routeBoundLine, routeLiterals, symbolBound, type CallerBound } from "./caller-bounds.js";
 
 /** ` (through the macro M)` for a link a macro's body makes, else nothing. */
@@ -976,13 +977,13 @@ export function traceTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_trace",
     title: "Call traces (callers / callees)",
-    description: "Use for who calls a function or what it calls (through DI and interfaces), with file:line per hop, confidence and the data effects reached. `to`: call paths to a symbol; direction=overrides: what a method overrides and what overrides it.",
+    description: "Use for who calls a function or what it calls (through DI and interfaces), with file:line per hop, confidence and data effects reached. `to`: call paths to a symbol; direction=overrides: what a method overrides, and its overrides.",
     inputSchema: {
       type: "object",
       properties: {
         symbol: { type: "string", description: "`Class.method` or a name; optional with `file`." },
         file: { type: "string" },
-        direction: { type: "string", enum: ["callers", "callees", "both", "overrides"] },
+        direction: { type: "string", enum: ["callers", "callees", "both", "overrides", "writers"] },
         depth: { type: "number", description: "1-4 (default 2)." },
         limit: { type: "number" },
         to: { description: "Target symbol: the call paths to it.", type: "string" },
@@ -995,9 +996,13 @@ export function traceTool(ctx: ToolContext): McpTool {
       const loaded = await requireAnalysis(ctx);
       const symbol = stringArg(args, "symbol");
       const fileArg = stringArg(args, "file");
-      const direction = enumArg(args, "direction", ["callers", "callees", "both", "overrides"] as const) ?? "both";
+      const direction = enumArg(args, "direction", ["callers", "callees", "both", "overrides", "writers"] as const) ?? "both";
       const depth = numberArg(args, "depth", 2, { min: 1, max: 4 });
       const limit = numberArg(args, "limit", 20, { max: 200 });
+      if (direction === "writers") {
+        if (!symbol) throw new Error("`direction=writers` needs `symbol`: a field (\"Club.status\") or an exception class.");
+        return { text: writersText(loaded.summary, symbol, limit) };
+      }
       const minConfidence = enumArg(args, "minConfidence", ["EXTRACTED", "INFERRED", "AMBIGUOUS"] as const) ?? "AMBIGUOUS";
       if (!symbol && !fileArg) {
         throw new Error("Pass `symbol`, `file`, or both.");
