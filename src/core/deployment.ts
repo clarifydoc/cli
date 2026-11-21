@@ -689,7 +689,7 @@ function hostOf(value: string): string | undefined {
 
 const ANY_URL_HOST_RE = /\b[a-z][a-z0-9+.-]*:\/\/(?:[^@/\s'"]*@)?([A-Za-z0-9_.-]+)/gi;
 /** A key naming a credential, a person, a topic or a label, whose `host:port`-looking value is no address. */
-const NON_ADDRESS_KEY_RE = /(?:password|passwd|user|username|name|topic|queue|db|database|secret|token)$/i;
+const NON_ADDRESS_KEY_RE = /(?:password|passwd|user|username|name|topic|queue|db|database|secret|token|image|tag|version)(?:_file)?$/i;
 
 /**
  * Every host an env value names: the host of each `scheme://[user@]host` URL (any scheme — the target
@@ -701,7 +701,7 @@ function hostsOfEnvValue(key: string, value: string): string[] {
   for (const m of value.matchAll(ANY_URL_HOST_RE)) hosts.add(m[1]!.toLowerCase());
   if (!NON_ADDRESS_KEY_RE.test(key)) {
     for (const part of value.split(/[,\s;]+/)) {
-      const m = part.match(/^([A-Za-z][A-Za-z0-9_.-]*):\d{1,5}$/);
+      const m = part.match(/^([A-Za-z][A-Za-z0-9_.-]*):\d{2,5}$/);
       if (m) hosts.add(m[1]!.toLowerCase());
     }
   }
