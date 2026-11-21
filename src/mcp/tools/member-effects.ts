@@ -12,13 +12,25 @@ export function functionEffectsText(summary: ProjectAnalysis, symbol: string, fi
   const throws = (summary.thrownTypes ?? []).filter(here);
   if (writes.length === 0 && throws.length === 0) return null;
   const lines: string[] = [];
+  // One row per field or type and file, its lines together: four `throw new HttpException` sites are one fact.
+  const grouped = <T extends { file: string; line: number }>(rows: readonly T[], key: (r: T) => string): Array<{ row: T; lines: number[] }> => {
+    const by = new Map<string, { row: T; lines: number[] }>();
+    for (const r of rows) {
+      const k = `${key(r)}\0${r.file}`;
+      const g = by.get(k);
+      if (g) g.lines.push(r.line);
+      else by.set(k, { row: r, lines: [r.line] });
+    }
+    return [...by.values()];
+  };
+  const at = (file: string, lines: number[]): string => (lines.length === 1 ? loc(file, lines[0]!) : `${file}:${lines.join(", ")}`);
   if (writes.length > 0) {
     lines.push(`Assigns ${plural(new Set(writes.map((w) => `${w.class}.${w.member}`)).size, "field")}:`);
-    lines.push(...bulletList(writes, 12, (w) => `${w.class}.${w.member} at ${loc(w.file, w.line)}${w.classFile !== w.file ? ` (declared in ${w.classFile})` : ""}`));
+    lines.push(...bulletList(grouped(writes, (w) => `${w.class}.${w.member}`), 12, ({ row: w, lines: ls }) => `${w.class}.${w.member} at ${at(w.file, ls)}${w.classFile !== w.file ? ` (declared in ${w.classFile})` : ""}`));
   }
   if (throws.length > 0) {
     lines.push(`Throws ${plural(new Set(throws.map((t) => t.type)).size, "exception type")}:`);
-    lines.push(...bulletList(throws, 12, (t) => `${t.type}${t.declared ? " (declared in the signature)" : ""} at ${loc(t.file, t.line)}${t.classFile ? ` — project class in ${t.classFile}` : ""}`));
+    lines.push(...bulletList(grouped(throws, (t) => `${t.type}\0${t.declared ? 1 : 0}`), 12, ({ row: t, lines: ls }) => `${t.type}${t.declared ? " (declared in the signature)" : ""} at ${at(t.file, ls)}${t.classFile ? ` — project class in ${t.classFile}` : ""}`));
   }
   return lines.join("\n");
 }
