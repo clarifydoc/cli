@@ -10881,14 +10881,17 @@ function methodBesideClass(
     const seeing = hits.filter((f) => includeClosure(ctx, f).has(classFile));
     if (seeing.length > 0) hits = seeing;
   }
-  // A part whose own includes reach ANOTHER declaration of the class and never this one defines that namesake's
-  // member (`other/decoy.cpp` → `other/decoy.h`'s `Club`), not the one the caller's header declares.
+  // A part that only defines members out of line (a `.cpp`, no declaration of its own) and whose includes reach ANOTHER
+  // declaration of the class but never this one defines that namesake's member (`other/decoy.cpp` → `other/decoy.h`'s
+  // `Club`), not the one the caller's header declares.
   if (hits.length > 0 && importsShareScope(language)) {
     const rivals = (ctx.classFiles.get(className) ?? []).filter((d) => d !== classFile && !ctx.classAt.get(memberKey(d, className))?.extension);
     if (rivals.length > 0) {
       hits = hits.filter((f) => {
+        const own = ctx.classAt.get(memberKey(f, className));
+        if (f === classFile || (own && !own.extension)) return true;
         const closure = includeClosure(ctx, f);
-        return f === classFile || closure.has(classFile) || !rivals.some((d) => d === f || closure.has(d));
+        return closure.has(classFile) || !rivals.some((d) => closure.has(d));
       });
     }
   }
