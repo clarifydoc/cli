@@ -21,10 +21,12 @@ import { buildMcpServer } from "./server.js";
  * argument, its meaning folded into the description's filter list.
  * 17,112 once blast_radius took `members` and `adding` (the files naming what changes, an interface member
  * only its builders): two arguments, ~300 bytes — the narrowing is the reason the tool is worth calling.
+ * 17,317 once blast_radius took `change` (per member: removed, renamed, moved, retyped or body — a lost name also
+ * charges the files that re-export the file whole): a fifth argument, ~200 bytes, the signal the tool cannot derive.
  */
-const BUDGET_BYTES = 17_150;
+const BUDGET_BYTES = 17_350;
 /** `tools/list` alone, `_meta` aside. */
-const TOOLS_LIST_BYTES = 15_950;
+const TOOLS_LIST_BYTES = 16_150;
 /** The server instructions, in characters. */
 const INSTRUCTIONS_CHARS = 1_300;
 
@@ -41,7 +43,7 @@ async function upFront(): Promise<{ list: number; instructions: string }> {
 /** How many arguments each tool takes — what the shorter descriptions must not have dropped. */
 const ARGUMENTS: Record<string, number> = {
   clarifydoc_status: 1, clarifydoc_search: 7, clarifydoc_routes: 17, clarifydoc_contract: 5, clarifydoc_services: 3,
-  clarifydoc_screens: 6, clarifydoc_file: 3, clarifydoc_trace: 8, clarifydoc_extract: 5, clarifydoc_blast_radius: 4, clarifydoc_rename_plan: 4,
+  clarifydoc_screens: 6, clarifydoc_file: 3, clarifydoc_trace: 8, clarifydoc_extract: 5, clarifydoc_blast_radius: 5, clarifydoc_rename_plan: 4,
   clarifydoc_data_model: 4, clarifydoc_data_flows: 6, clarifydoc_health: 6, clarifydoc_architecture: 4,
   clarifydoc_context_docs: 4, clarifydoc_impact: 5, clarifydoc_control_flow: 4, clarifydoc_analyze: 3, clarifydoc_explain: 4,
   clarifydoc_sequence: 4, clarifydoc_diff: 1, clarifydoc_export: 1, clarifydoc_facts: 4,

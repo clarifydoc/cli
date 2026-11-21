@@ -79,7 +79,7 @@ export interface ImpactDiffResult {
    * files altogether, the changed files it was judged for, and why each dependent is charged (the first
    * reasons, `DEP_LIST_CAP` files).
    */
-  narrowed?: { importers: number; files: string[]; members: Array<{ file: string; name: string; adding?: boolean }>; why: Array<{ file: string; reasons: string[] }> };
+  narrowed?: { importers: number; files: string[]; members: Array<{ file: string; name: string; adding?: boolean; lost?: true }>; why: Array<{ file: string; reasons: string[] }> };
   /** Test files among changed ∪ dependents — the "tests to run" set. */
   tests: string[];
   testCount: number;
@@ -617,7 +617,7 @@ function narrowDependents(
   summary: ProjectAnalysis,
   changedFiles: readonly string[],
   symbols: NonNullable<Parameters<typeof computeImpactDiff>[2]>["symbols"],
-): { byFile: Map<string, Set<string>>; why: Map<string, string[]>; members: Array<{ file: string; name: string; adding?: boolean }> } | undefined {
+): { byFile: Map<string, Set<string>>; why: Map<string, string[]>; members: Array<{ file: string; name: string; adding?: boolean; lost?: true }> } | undefined {
   // A diff of pure deletions has no new-side ranges: its lines are in `old` and `deleted`.
   const h = symbols?.hunks;
   if (!h || !(h.size || h.old?.size || h.deleted?.size)) return undefined;
@@ -626,7 +626,7 @@ function narrowDependents(
   const importOnly = new Set(symbols.importOnly);
   const byFile = new Map<string, Set<string>>();
   const why = new Map<string, string[]>();
-  const members: Array<{ file: string; name: string; adding?: boolean }> = [];
+  const members: Array<{ file: string; name: string; adding?: boolean; lost?: true }> = [];
   const index = namingIndex(summary, changedFiles);
   for (const file of changedFiles) {
     const hunked = h.has(file) || h.old?.has(file) || h.deleted?.has(file);
@@ -668,7 +668,11 @@ function narrowDependents(
       const rows = why.get(f) ?? why.set(f, []).get(f)!;
       for (const r of reasons) if (!rows.includes(r)) rows.push(r);
     }
-    members.push(...targets.map((t) => ("symbol" in t ? { file, name: t.symbol } : { file, name: t.type, ...(t.mode === "added" ? { adding: true } : {}) })));
+    // A member that loses its name (a removed, moved, re-typed or hidden function; a type member that changed) takes the forwarders with it.
+    const lostSymbols = new Set((symbols.signatureChanges ?? []).filter((c) => c.file === file).map((c) => c.symbol));
+    members.push(...targets.map((t) => ("symbol" in t
+      ? { file, name: t.symbol, ...(lostSymbols.has(t.symbol) ? { lost: true as const } : {}) }
+      : { file, name: t.type, ...(t.mode === "added" ? { adding: true } : {}), ...(t.mode === "changed" ? { lost: true as const } : {}) })));
   }
   return byFile.size ? { byFile, why, members } : undefined;
 }

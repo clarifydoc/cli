@@ -7,6 +7,7 @@ import { loadReportSummary } from "./report-payload.js";
 import { impactOfContents } from "./impact-proposed.js";
 import { parseUnifiedHunks, symbolsOfChange } from "./changed-symbols.js";
 import { computeImpactDiff } from "./impact-diff.js";
+import { buildMcpServer } from "../mcp/server.js";
 import type { ProjectAnalysis } from "../types/analysis.js";
 
 const CLOCK_PY = ["def add_job(name):", "    return name", "", "", "def tick():", "    return 1", ""].join("\n");
@@ -109,5 +110,26 @@ describe("impact charges a file that hands a charged module on whole", () => {
     // The current summary says nothing of the kind.
     const now = await run("league/clock.py", CLOCK_PY.replace(/def add_job[^]*?\n\n\n/, ""));
     expect(now.limitations?.some((l) => /re-run the analysis/.test(l)) ?? false).toBe(false);
+  });
+
+  it("blast_radius charges the forwarder only for a member that loses its name", async () => {
+    const { server } = buildMcpServer({ projectRoot: root, analysisDir: join(dir, "out"), allowAnalyze: false, allowColdStart: false });
+    const ask = async (args: Record<string, unknown>) => {
+      const res = await server.handleMessage({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "clarifydoc_blast_radius", arguments: { path: "league/clock.py", ...args } } });
+      return (res?.result as { content: Array<{ text: string }> }).content[0]!.text;
+    };
+    const direct = (text: string) => /Direct dependents[^\n]*\n((?:- .*\n?)*)/.exec(text)?.[1] ?? "";
+    expect(direct(await ask({ members: ["add_job"] }))).not.toContain("league/tasks/__init__.py");
+    expect(direct(await ask({ members: ["add_job"], change: { add_job: "body" } }))).not.toContain("league/tasks/__init__.py");
+    expect(direct(await ask({ members: ["add_job"], change: { add_job: "removed" } }))).toContain("league/tasks/__init__.py");
+    // The decoy that only calls `tick` is never charged for `add_job`.
+    expect(direct(await ask({ members: ["add_job"], change: { add_job: "removed" } }))).not.toContain("league/tasks/decoy.py");
+  });
+
+  it("impact marks the members whose name is lost", async () => {
+    const r = await run("league/clock.py", CLOCK_PY.replace(/def add_job[^]*?\n\n\n/, ""));
+    expect(r.narrowed?.members.find((m) => m.name === "add_job")?.lost).toBe(true);
+    const body = await run("league/tasks/hooks.py", "from league.clock import add_job\n\n\ndef register():\n    return add_job('semi-final')\n");
+    expect(body.narrowed?.members.every((m) => !m.lost)).toBe(true);
   });
 });

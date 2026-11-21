@@ -1709,6 +1709,11 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
         limit: { type: "number" },
         members: { type: "array", items: { type: "string" }, description: "What you change: `Class.method`, function or type." },
         adding: { type: "boolean", description: "The members are new: charge what implements, extends or builds the type." },
+        change: {
+          type: "object",
+          description: "Per member; a lost name charges files re-exporting this one whole.",
+          additionalProperties: { type: "string", enum: ["removed", "renamed", "moved", "retyped", "body"] },
+        },
       },
       additionalProperties: false,
     },
@@ -1777,15 +1782,30 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
       let namingReasons: Map<string, string[]> | undefined;
       // Names nothing in the analysis names (an uncalled function, a field, a misspelling).
       let unseen: string[] = [];
+      let staleStars = "";
       if (members.length) {
         const index = namingIndex(loaded.summary, [path]);
         const named = filesNaming(index, targetsFromNames(index, path, members, args.adding === true));
         unseen = members.filter((_, i) => !named.named[i]);
         // A name nothing names says nothing about its importers: when none is named, list them all.
         if (!named.undecided && unseen.length < members.length) {
+          // A file that hands this one on whole (`export * from`, `from .x import *`) names no member, yet loses what the file loses:
+          // charged only when a member loses its name, never for a body edit.
+          const change = args.change && typeof args.change === "object" ? (args.change as Record<string, unknown>) : {};
+          const lost = members.some((m) => typeof change[m] === "string" && change[m] !== "body");
+          const forwarding = new Map<string, string>();
+          if (lost) {
+            const { starForwarders, STAR_REEXPORTS_STALE_NOTE } = await import("../../core/changed-symbols.js");
+            const { forwardingChain } = await import("../../core/impact-diff.js");
+            const stars = await starForwarders(ctx.store.analysisDir, loaded.summary, [path]);
+            for (const [fwd, via] of forwardingChain(stars.forwarders, [...named.files.keys(), path], [path])) forwarding.set(fwd, via);
+            if (stars.stale) staleStars = STAR_REEXPORTS_STALE_NOTE;
+          }
+          for (const [fwd, via] of forwarding) named.files.set(fwd, [...(named.files.get(fwd) ?? []), `re-exports ${via} whole`]);
           namingReasons = named.files;
           const nameSet = new Set(named.files.keys());
           direct = direct.filter((f) => nameSet.has(f));
+          for (const f of forwarding.keys()) if (!direct.includes(f)) direct.push(f);
           imports = b.affectedFiles.filter((f) => !nameSet.has(f));
         }
       }
@@ -1837,6 +1857,7 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
       blocks.push(section(`Direct dependents (${direct.length})`, bulletList(direct, limit, (f) => `${f}${movedRow(f)}${namingReasons?.get(f)?.length ? ` — ${namingReasons.get(f)!.slice(0, 2).join("; ")}` : ""}`)));
       if (namingReasons) {
         blocks.push([`${imports.length} other file(s) import ${path} and name none of ${members.join(", ")}: nothing there breaks by name.`, ""]);
+        if (staleStars) blocks.push([`Note: ${staleStars}.`, ""]);
         if (unseen.length) blocks.push([`Nothing in the analysis names ${unseen.join(", ")} (an uncalled function, a field or a misspelling): its readers are not in this list.`, ""]);
       } else if (b.transitiveFiles.length) {
         blocks.push(
