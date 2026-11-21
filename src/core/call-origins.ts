@@ -234,6 +234,12 @@ export function resolveCallOrigins(input: {
     if (projects.size > 1 || shared) return { baseRef: found.ref, confidence: "AMBIGUOUS", evidence };
     // A discovery name no project here registers under: a service elsewhere, never a third party.
     if (found.ref.kind === "service") return { baseRef: found.ref, host: found.ref.key.toLowerCase(), confidence: "INFERRED", evidence };
+    // A fallback literal is the code's own guess, not evidence of another system: with the variable unvalued, a host no
+    // address, deployment or `listen` names and no third party owns keeps the unresolved base (the candidate stays in the evidence).
+    if (allFallback && outside.length > 0 && outside.every((o) => !serviceForHost(o.host))) {
+      const envNames = envNamesOf(found.ref, a.projectId, a.language);
+      return { baseRef: found.ref, ...(envNames.length ? { envNames } : {}), confidence: "INFERRED", evidence };
+    }
     if (outside.length > 0) {
       const hit = outside[0]!;
       // Another system's URL: whole and absolute, so it never joins a route here.
