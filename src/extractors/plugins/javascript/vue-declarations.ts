@@ -17,7 +17,11 @@ export interface VueDeclarations {
 const OPEN = "([{<";
 const CLOSE: Record<string, string> = { "(": ")", "[": "]", "{": "}", "<": ">" };
 
-/** Index just past the bracket closing the one at `open`, skipping strings; `=>` is no `>`. -1 when unbalanced. */
+/**
+ * Index just past the bracket closing the one at `open`, skipping strings; `=>` is no `>`. -1 when unbalanced.
+ * Not `matchingBracket`: a stack of expected closers (`<>` is a pair here, a closer of another kind is ignored)
+ * and the index after the bracket.
+ */
 function closeOf(s: string, open: number): number {
   const stack: string[] = [];
   for (let i = open; i < s.length; i++) {

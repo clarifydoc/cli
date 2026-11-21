@@ -1,3 +1,4 @@
+import { blankStringAwareComments } from "../shared/text-scan.js";
 /**
  * The names a Vue template binds below an element, which its handlers read as if they were the
  * component's own: a `v-for` loop variable (`club` in `v-for="club in clubs"`) and a scoped slot's
@@ -162,32 +163,7 @@ function scriptType(script: string, chain: string): string | null {
 }
 
 /** `text` with the insides of strings, template literals and comments replaced by spaces (newlines kept). */
-function blankStringsAndComments(text: string): string {
-  const out = text.split("");
-  const blank = (from: number, to: number) => {
-    for (let k = from; k < to && k < out.length; k++) if (out[k] !== "\n") out[k] = " ";
-  };
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (ch === "/" && text[i + 1] === "/") {
-      const end = text.indexOf("\n", i);
-      const to = end < 0 ? text.length : end;
-      blank(i, to);
-      i = to;
-    } else if (ch === "/" && text[i + 1] === "*") {
-      const end = text.indexOf("*/", i + 2);
-      const to = end < 0 ? text.length : end + 2;
-      blank(i, to);
-      i = to - 1;
-    } else if (ch === '"' || ch === "'" || ch === "`") {
-      let k = i + 1;
-      while (k < text.length && text[k] !== ch) k += text[k] === "\\" ? 2 : 1;
-      blank(i + 1, k);
-      i = k;
-    }
-  }
-  return out.join("");
-}
+const blankStringsAndComments = (text: string): string => blankStringAwareComments(text, { strings: "blank" });
 
 /** The bracket depth (`{`, `(`, `[`) at each offset of `flat`. */
 function depthMap(flat: string): Int32Array {

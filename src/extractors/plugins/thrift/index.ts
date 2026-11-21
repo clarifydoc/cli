@@ -1,7 +1,7 @@
 import type { ClassInfo, FileAnalysis, PropertyInfo, RouteFact, RouteInfo } from "../../../types/analysis.js";
 import type { RouteResolver } from "../../route-resolvers/base.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
-import { preparedLines } from "../shared/text-scan.js";
+import { blankStringAwareComments, preparedLines } from "../shared/text-scan.js";
 
 /**
  * Apache Thrift service contracts (`.thrift`):
@@ -33,11 +33,8 @@ import { preparedLines } from "../shared/text-scan.js";
  * still give line numbers. A string's contents are default values and annotation text, never declarations: a
  * default `"2: i32 fake"` must not read as a field, nor an escaped quote end the string early.
  */
-function blankComments(text: string): string {
-  return text.replace(/"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|\/\*[\s\S]*?\*\/|\/\/[^\n]*|#[^\n]*/g, (m) =>
-    m[0] === '"' || m[0] === "'" ? m[0] + " ".repeat(m.length - 2) + m[0] : m.replace(/[^\n]/g, " "),
-  );
-}
+const blankComments = (text: string): string =>
+  blankStringAwareComments(text, { quotes: "\"'", strings: "blank", stringsEndAtLine: true, unclosedBlockIsText: true, lineComments: ["//", "#"] });
 
 const prepared = preparedLines(blankComments);
 

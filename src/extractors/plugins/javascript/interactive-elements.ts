@@ -3,6 +3,7 @@ import { escapeRegex } from "../shared/path-utils.js";
 import type { Node, Tree } from "web-tree-sitter";
 import type { FunctionPropBinding, InteractiveElementInfo, Language, SlotFunction } from "../../../types/analysis.js";
 import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
+import { matchingBracket } from "../shared/text-scan.js";
 
 /** HTML tags that map to interactive element types */
 export const INTERACTIVE_TAGS: Record<string, InteractiveElementInfo["element"]> = {
@@ -374,7 +375,7 @@ export function literalCallbacksOf(source: string, script: string, depth = 0): R
   // One declaration only: a second one of the name is another collection.
   if (starts.length !== 1) return undefined;
   const open = starts[0]!.index! + starts[0]![0].length - 1;
-  const body = balanced(script, open, "[", "]");
+  const body = balanced(script, open);
   if (body === null) return undefined;
   const out: Record<string, string[]> = {};
   for (const element of splitLiteralItems(body)) {
@@ -444,21 +445,9 @@ function importedCollection(source: string, script: string): string | undefined 
 }
 
 /** The text between the bracket at `open` and its match, skipping strings; null when unbalanced. */
-function balanced(text: string, open: number, left: string, right: string): string | null {
-  let depth = 0;
-  let quote: string | null = null;
-  for (let i = open; i < text.length; i++) {
-    const c = text[i]!;
-    if (quote) {
-      if (c === "\\") i++;
-      else if (c === quote) quote = null;
-    } else if (c === "'" || c === '"' || c === "`") quote = c;
-    else if (c === left || c === "(" || c === "{" || c === "[") depth++;
-    else if (c === right || c === ")" || c === "}" || c === "]") {
-      if (--depth === 0) return text.slice(open + 1, i);
-    }
-  }
-  return null;
+function balanced(text: string, open: number): string | null {
+  const end = matchingBracket(text, open, { quotes: "\"'`" });
+  return end < 0 ? null : text.slice(open + 1, end);
 }
 
 /** `text` split at its top-level commas (outside brackets and strings). */

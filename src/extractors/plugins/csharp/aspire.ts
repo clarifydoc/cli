@@ -1,5 +1,5 @@
 import type { DeployedResourceFact, DeployedServiceKind } from "../../../types/analysis.js";
-import { lineIndex } from "../shared/text-scan.js";
+import { blankStringAwareComments, lineIndex, matchingBracket } from "../shared/text-scan.js";
 import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
 /**
@@ -105,25 +105,12 @@ function chainLinks(chain: string): Link[] {
   let m: RegExpExecArray | null;
   while ((m = re.exec(chain))) {
     const open = m.index + m[0].length - 1;
-    const close = matching(chain, open);
+    const close = matchingBracket(chain, open, { pair: "()", quotes: '"' });
     if (close < 0) break;
     out.push({ method: m[1]!, ...(m[2] ? { generic: m[2] } : {}), args: splitArgs(chain.slice(open + 1, close)) });
     re.lastIndex = close + 1;
   }
   return out;
-}
-
-function matching(s: string, open: number): number {
-  let depth = 0;
-  let quote = false;
-  for (let i = open; i < s.length; i++) {
-    const c = s[i]!;
-    if (quote) { if (c === "\\") i++; else if (c === '"') quote = false; continue; }
-    if (c === '"') quote = true;
-    else if (c === "(") depth++;
-    else if (c === ")" && --depth === 0) return i;
-  }
-  return -1;
 }
 
 function splitArgs(s: string): string[] {
@@ -136,7 +123,5 @@ function unquote(arg: string | undefined): string | undefined {
   return m?.[1] || undefined;
 }
 
-/** Comments blanked to spaces (lines kept), strings left as they are. */
-function blankComments(s: string): string {
-  return s.replace(/"(?:[^"\\\n]|\\.)*"|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (c) => (c.startsWith('"') ? c : c.replace(/[^\n]/g, " ")));
-}
+/** Comments blanked to spaces (lines kept), strings left as they are: double-quoted, closing on their line; a `/*` never closed is text. */
+const blankComments = (s: string): string => blankStringAwareComments(s, { quotes: '"', stringsEndAtLine: true, unclosedBlockIsText: true });

@@ -2,6 +2,7 @@ import type { FileAnalysis, RouteFact, RouteInfo } from "../../../../types/analy
 import type { ProjectContext } from "../../../../types/project.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";
 import { splitTopLevel } from "../../../shared/split-top-level.js";
+import { blankStringAwareComments, matchingBracket } from "../../shared/text-scan.js";
 import { inferFileBasedRoute } from "./file-routes.js";
 
 /**
@@ -55,49 +56,9 @@ interface NuxtRule {
   isr?: boolean;
 }
 
-/** Comments blanked to spaces (offsets and line breaks kept); string literals are skipped, so a `//` in a URL or a `/*` in a glob is no comment. */
-function blankComments(text: string): string {
-  let out = "";
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (ch === '"' || ch === "'" || ch === "`") {
-      let j = i + 1;
-      for (; j < text.length && text[j] !== ch; j++) if (text[j] === "\\") j++;
-      out += text.slice(i, j + 1);
-      i = j;
-    } else if (ch === "/" && text[i + 1] === "/") {
-      const end = text.indexOf("\n", i);
-      const stop = end < 0 ? text.length : end;
-      out += " ".repeat(stop - i);
-      i = stop - 1;
-    } else if (ch === "/" && text[i + 1] === "*") {
-      const end = text.indexOf("*/", i + 2);
-      const stop = end < 0 ? text.length : end + 2;
-      out += text.slice(i, stop).replace(/[^\n]/g, " ");
-      i = stop - 1;
-    } else out += ch;
-  }
-  return out;
-}
-
-/** Index of the bracket closing the one at `open`, strings skipped. */
-function closing(text: string, open: number): number {
-  let depth = 0;
-  for (let i = open; i < text.length; i++) {
-    const ch = text[i]!;
-    if (ch === '"' || ch === "'" || ch === "`") {
-      for (i++; i < text.length && text[i] !== ch; i++) if (text[i] === "\\") i++;
-    } else if (ch === "{" || ch === "(" || ch === "[") depth++;
-    else if (ch === "}" || ch === ")" || ch === "]") {
-      if (--depth === 0) return i;
-    }
-  }
-  return -1;
-}
-
 /** The body (without braces) of the object literal opening at `open`, or null. */
 function objectBody(text: string, open: number): string | null {
-  const end = text[open] === "{" ? closing(text, open) : -1;
+  const end = text[open] === "{" ? matchingBracket(text, open, { quotes: "\"'`" }) : -1;
   return end < 0 ? null : text.slice(open + 1, end);
 }
 
@@ -289,7 +250,7 @@ export function inferRenderModeFacts(relativePath: string, sourceText: string, r
   // Only a pages-router file or an app-router `page`/`layout` can state a Next mode: the path decides before the text is read.
   const nextApp = NEXT_APP_FILE.exec(rel);
   if (frameworkIds.includes("nextjs") && (nextApp || /^(?:src\/)?pages\//.test(rel))) {
-    const text = blankComments(sourceText);
+    const text = blankStringAwareComments(sourceText);
     const route = inferFileBasedRoute(rel, ["nextjs"]);
     if (/^(?:src\/)?pages\/_app\.(?:tsx?|jsx?)$/.test(rel)) {
       const has = GET_INITIAL_PROPS.test(text);
@@ -309,14 +270,14 @@ export function inferRenderModeFacts(relativePath: string, sourceText: string, r
   if (!data && frameworkIds.includes("sveltekit")) {
     const m = SVELTE_OPTION_FILE.exec(rel);
     if (m) {
-      const opts = svelteOptions(blankComments(sourceText));
+      const opts = svelteOptions(blankStringAwareComments(sourceText));
       if (Object.keys(opts).length > 0) data = { fw: "sveltekit", role: m[1] as "page" | "layout", opts };
     }
   }
   if (!data && frameworkIds.includes("nuxt")) {
-    if (NUXT_CONFIG.test(rel)) data = nuxtConfigFact(blankComments(sourceText));
+    if (NUXT_CONFIG.test(rel)) data = nuxtConfigFact(blankStringAwareComments(sourceText));
     else if (inferFileBasedRoute(rel, ["nuxt"])?.kind === "frontend") {
-      const mode = nuxtPageMode(blankComments(rawSource));
+      const mode = nuxtPageMode(blankStringAwareComments(rawSource));
       if (mode) data = { fw: "nuxt-page", mode };
     }
   }

@@ -133,3 +133,97 @@ const EOL = /[\r\n]/g;
 export function blankCComments(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (m) => m.replace(/[^\n]/g, " "));
 }
+
+export interface BlankCommentsOptions {
+  /** The characters that open a string literal (a backslash escapes inside it). Default: `"`, `'` and a backtick. */
+  quotes?: string;
+  /** What happens to a string's contents: `keep` them (default) or `blank` them to spaces, quotes and newlines kept. */
+  strings?: "keep" | "blank";
+  /** A string must close on the line it opens; a quote with no partner there is an ordinary character. */
+  stringsEndAtLine?: boolean;
+  /** Line-comment openers. Default: `["//"]`. */
+  lineComments?: readonly string[];
+  /** A `/*` never closed is text, not a comment running to the end. */
+  unclosedBlockIsText?: boolean;
+}
+
+/**
+ * `/* … *\/` and line comments blanked to spaces, newlines kept, so offsets and line numbers still hold; string
+ * literals are skipped (a `//` in a URL is no comment) and, with `strings: "blank"`, emptied too. The spellings of
+ * the languages that call it are options.
+ */
+export function blankStringAwareComments(text: string, options: BlankCommentsOptions = {}): string {
+  const quotes = options.quotes ?? "\"'`";
+  const blankStrings = options.strings === "blank";
+  const lineOpeners = options.lineComments ?? ["//"];
+  const blank = (s: string) => s.replace(/[^\n]/g, " ");
+  const parts: string[] = [];
+  let plainFrom = 0;
+  const flush = (to: number) => {
+    if (to > plainFrom) parts.push(text.slice(plainFrom, to));
+  };
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (quotes.includes(ch)) {
+      let j = i + 1;
+      let closed = false;
+      for (; j < text.length; j++) {
+        const c = text[j]!;
+        if (c === "\\") {
+          if (options.stringsEndAtLine && (j + 1 >= text.length || text[j + 1] === "\n")) break;
+          j++;
+        } else if (c === ch) {
+          closed = true;
+          break;
+        } else if (options.stringsEndAtLine && c === "\n") break;
+      }
+      if (options.stringsEndAtLine && !closed) continue;
+      flush(i);
+      const end = Math.min(j, text.length - 1);
+      if (blankStrings) parts.push(ch + blank(text.slice(i + 1, j)) + (closed ? ch : ""));
+      else parts.push(text.slice(i, end + 1));
+      plainFrom = end + 1;
+      i = end;
+    } else if (ch === "/" && text[i + 1] === "*") {
+      const close = text.indexOf("*/", i + 2);
+      if (close < 0 && options.unclosedBlockIsText) continue;
+      const stop = close < 0 ? text.length : close + 2;
+      flush(i);
+      parts.push(blank(text.slice(i, stop)));
+      plainFrom = stop;
+      i = stop - 1;
+    } else if (lineOpeners.some((o) => text.startsWith(o, i))) {
+      flush(i);
+      const eol = text.indexOf("\n", i);
+      const stop = eol < 0 ? text.length : eol;
+      parts.push(" ".repeat(stop - i));
+      plainFrom = stop;
+      i = stop - 1;
+    }
+  }
+  flush(text.length);
+  return parts.join("");
+}
+
+export interface MatchingBracketOptions {
+  /** The characters that open a string literal to skip (a backslash escapes inside it). Default: none — hand in blanked text. */
+  quotes?: string;
+  /** Count only this pair (`"()"`), so other brackets nest freely; default is any of `([{` against any of `)]}` in one depth. */
+  pair?: string;
+}
+
+/** Index of the bracket closing the one at `open`, or -1; strings are skipped when `quotes` names them. */
+export function matchingBracket(text: string, open: number, options: MatchingBracketOptions = {}): number {
+  const { quotes, pair } = options;
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i]!;
+    if (quotes && quotes.includes(ch)) {
+      for (i++; i < text.length && text[i] !== ch; i++) if (text[i] === "\\") i++;
+    } else if (pair ? ch === pair[0] : ch === "(" || ch === "[" || ch === "{") depth++;
+    else if (pair ? ch === pair[1] : ch === ")" || ch === "]" || ch === "}") {
+      if (--depth === 0) return i;
+    }
+  }
+  return -1;
+}

@@ -1,6 +1,9 @@
 import type { CallInfo, FileAnalysis, FunctionInfo } from "../../../types/analysis.js";
 import { escapeRegex } from "../shared/path-utils.js";
-import { lineStarts, lineOfOffset as lineNo } from "../shared/text-scan.js";
+import { lineStarts, lineOfOffset as lineNo, matchingBracket } from "../shared/text-scan.js";
+
+/** The offset of the bracket closing the one at `open`, strings skipped, or -1. */
+const closing = (raw: string, open: number): number => matchingBracket(raw, open, { quotes: "\"'`" });
 
 /**
  * A function or Observable kept as a property of a descriptor a class declares as a literal, then called through an
@@ -64,19 +67,19 @@ function objectLiterals(raw: string, start: number): Array<{ text: string; offse
   while (/\s/.test(raw[i] ?? "")) i++;
   const out: Array<{ text: string; offset: number }> = [];
   if (raw[i] === "{") {
-    const end = balanced(raw, i);
+    const end = closing(raw, i);
     if (end > 0) out.push({ text: raw.slice(i + 1, end), offset: i + 1 });
   } else if (raw[i] === "[") {
-    const end = balanced(raw, i);
+    const end = closing(raw, i);
     if (end < 0) return out;
     for (let j = i + 1; j < end; j++) {
       if (raw[j] === "{") {
-        const close = balanced(raw, j);
+        const close = closing(raw, j);
         if (close < 0 || close > end) break;
         out.push({ text: raw.slice(j + 1, close), offset: j + 1 });
         j = close;
       } else if (raw[j] === "(" || raw[j] === "[") {
-        const close = balanced(raw, j);
+        const close = closing(raw, j);
         if (close < 0) break;
         j = close;
       }
@@ -130,20 +133,5 @@ function localNames(fn: FunctionInfo, raw: string, lines: number[]): Set<string>
   for (const m of body.matchAll(/\(\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s+(?:of|in)\b/g)) names.add(m[1]!);
   for (const m of body.matchAll(/(?:\(\s*([A-Za-z_$][\w$]*)\s*[,)]|(?<![\w$.])([A-Za-z_$][\w$]*)\s*=>)/g)) names.add((m[1] ?? m[2])!);
   return names;
-}
-
-/** The offset of the bracket closing the one at `open`, or -1. */
-function balanced(raw: string, open: number): number {
-  let depth = 0;
-  for (let i = open; i < raw.length; i++) {
-    const ch = raw[i]!;
-    if (ch === '"' || ch === "'" || ch === "`") {
-      for (i++; i < raw.length && raw[i] !== ch; i++) if (raw[i] === "\\") i++;
-    } else if (ch === "(" || ch === "[" || ch === "{") depth++;
-    else if (ch === ")" || ch === "]" || ch === "}") {
-      if (--depth === 0) return i;
-    }
-  }
-  return -1;
 }
 

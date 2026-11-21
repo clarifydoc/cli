@@ -1,4 +1,5 @@
 import type { FileAnalysis, FunctionPropBinding } from "../../../types/analysis.js";
+import { blankStringAwareComments, matchingBracket } from "../shared/text-scan.js";
 
 /**
  * Callbacks handed to a component the SCRIPT mounts or opens — the options object of a call whose
@@ -39,13 +40,13 @@ export function extractOptionCallbacks(script: string, analysis: FileAnalysis): 
     const importSource = imported.get(component);
     if (!importSource) continue;
     const objStart = m.index + m[0].length;
-    const objEnd = matching(code, objStart);
+    const objEnd = matchingBracket(code, objStart);
     if (objEnd < 0) continue;
     const walk = (from: number, to: number, depth: number): void => {
       for (const e of entriesOf(code, from, to)) {
         const brace = e.valueStart + (code.slice(e.valueStart, e.valueEnd).length - code.slice(e.valueStart, e.valueEnd).trimStart().length);
         if (depth === 0 && PROPS_KEYS.has(e.key) && code[brace] === "{") {
-          const end = matching(code, brace);
+          const end = matchingBracket(code, brace);
           if (end > 0) walk(brace, end, 1);
           continue;
         }
@@ -101,40 +102,5 @@ function entriesOf(code: string, from: number, to: number): Entry[] {
   return out;
 }
 
-/** The index of the bracket closing the one at `open`, or -1. */
-function matching(code: string, open: number): number {
-  let depth = 0;
-  for (let i = open; i < code.length; i++) {
-    const c = code[i]!;
-    if (c === "(" || c === "[" || c === "{") depth++;
-    else if (c === ")" || c === "]" || c === "}") {
-      depth--;
-      if (depth === 0) return i;
-    }
-  }
-  return -1;
-}
-
 /** The script with comments and string contents replaced by spaces, offsets kept. */
-function blank(src: string): string {
-  let out = "";
-  for (let i = 0; i < src.length; i++) {
-    const c = src[i]!;
-    const n = src[i + 1];
-    if (c === "/" && n === "/") {
-      while (i < src.length && src[i] !== "\n") out += " ", i++;
-      i--;
-    } else if (c === "/" && n === "*") {
-      const end = src.indexOf("*/", i + 2);
-      const stop = end < 0 ? src.length : end + 2;
-      out += src.slice(i, stop).replace(/[^\n]/g, " ");
-      i = stop - 1;
-    } else if (c === "'" || c === '"' || c === "`") {
-      let j = i + 1;
-      while (j < src.length && src[j] !== c) j += src[j] === "\\" ? 2 : 1;
-      out += c + src.slice(i + 1, j).replace(/[^\n]/g, " ") + (j < src.length ? c : "");
-      i = j;
-    } else out += c;
-  }
-  return out;
-}
+const blank = (src: string): string => blankStringAwareComments(src, { strings: "blank" });
