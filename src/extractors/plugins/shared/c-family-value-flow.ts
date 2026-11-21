@@ -6,7 +6,7 @@
  * and another method runs; lambdas and `std::bind` held in a variable. The file's text is read statement by
  * statement with comments and strings blanked; nothing is resolved here, a name is stated as written.
  */
-import type { CallInfo, ClassInfo, FileAnalysis, FunctionInfo, StructLayout, ValueCell, ValueFlowFact } from "../../../types/analysis.js";
+import type { CallInfo, ClassInfo, FileAnalysis, FunctionInfo, PropertyInfo, ValueCell, ValueFlowFact } from "../../../types/analysis.js";
 import { stripTypeArguments } from "./path-utils.js";
 
 
@@ -415,11 +415,8 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
     const close = matching(fileText, open, fileText.length);
     if (close > 0) bodies.push({ name: m[1]!, from: open, to: close });
   }
-  // C structs that hold or may hold a function pointer: their field order, for positional initializers written in other files.
-  {
-    const layouts = structLayoutsOf(fileText, fpTypedefs);
-    if (layouts.length > 0) analysis.structLayouts = layouts;
-  }
+  // C structs that hold or may hold a function pointer: their class lists every field in declaration order, for positional initializers written in other files.
+  stateFieldOrder(analysis, structsOf(fileText, fpTypedefs, starts), maybeCallable);
   const classAround = (offset: number): { name: string } | null => {
     let best: { name: string; from: number } | null = null;
     for (const c of bodies) if (c.from < offset && offset < c.to && (!best || c.from > best.from)) best = c;
@@ -472,7 +469,7 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
     if (assignedMembers.has(name)) return true;
     for (const c of classes) {
       const p = c.properties.find((q) => q.name === name);
-      if (p?.type) return FN_TYPE.test(p.type);
+      if (p?.type) return p.callable === true || FN_TYPE.test(p.type);
     }
     return CALLABLE_NAME.test(name);
   };
@@ -1107,14 +1104,23 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
 
 }
 
+interface StructDecl {
+  /** The tag, when it has one, then its typedef names. */
+  names: string[];
+  tagged: boolean;
+  fields: Array<{ decl: Decl; statement: string }>;
+  line: number;
+  endLine: number;
+}
+
 /**
- * The field order of each C struct (or data-only C++ one) in `text` (comments and function bodies blanked) that holds or may hold a function
+ * Each C struct (or data-only C++ one) in `text` (comments and function bodies blanked) that holds or may hold a function
  * pointer: a field that is one, or typed by a name that reads as one (`handler_t`, `recv_pt`, a typedef the file declares
  * a function pointer). A struct core cannot count — nested braces, a bit-field, several names in one statement, a
  * preprocessor line — is left out, and so is a union.
  */
-function structLayoutsOf(text: string, fpTypedefs: ReadonlySet<string>): StructLayout[] {
-  const out: StructLayout[] = [];
+function structsOf(text: string, fpTypedefs: ReadonlySet<string>, starts: readonly number[]): StructDecl[] {
+  const out: StructDecl[] = [];
   for (const m of text.matchAll(/\b(typedef\s+)?struct\s+(?:[A-Z_]+\s+)*(?:([A-Za-z_]\w*)\s*)?\{/g)) {
     const open = m.index! + m[0].length - 1;
     const close = matching(text, open, text.length);
@@ -1131,7 +1137,7 @@ function structLayoutsOf(text: string, fpTypedefs: ReadonlySet<string>): StructL
     if (names.length === 0) continue;
     const body = text.slice(open + 1, close);
     if (/[{}#]/.test(body) || body.length > 8000) continue;
-    const fields: string[] = [];
+    const fields: StructDecl["fields"] = [];
     let mayHoldFunction = false;
     let countable = true;
     for (const [a, b] of splitStatements(text, open + 1, close)) {
@@ -1142,12 +1148,44 @@ function structLayoutsOf(text: string, fpTypedefs: ReadonlySet<string>): StructL
         countable = false;
         break;
       }
-      fields.push(decl.name);
+      fields.push({ decl, statement });
       if (typeCallable(decl.type, decl.fp, fpTypedefs) || /(?:^|_)pt$/.test(decl.type.replace(STORAGE, " ").replace(/[*&]/g, " ").trim().split(/\s+/).pop() ?? "")) mayHoldFunction = true;
     }
-    if (countable && mayHoldFunction && fields.length > 0 && fields.length <= 200) out.push({ names, fields });
+    if (countable && mayHoldFunction && fields.length > 0 && fields.length <= 200) out.push({ names, tagged: !!m[2], fields, line: lineOf(starts, open), endLine: lineOf(starts, close) });
   }
   return out;
+}
+
+/**
+ * Makes each counted struct a class whose `properties` are its fields in declaration order (`ClassInfo.fieldOrder`): the
+ * class the line reader stated (its property objects kept, a function-pointer field it could not read added), else a new
+ * one — a tagless `typedef struct { … } name_t` is the class `name_t`. A class whose own properties name a field the
+ * struct does not, or a name two classes of the file share, is left as it is, unmarked.
+ */
+function stateFieldOrder(analysis: FileAnalysis, structs: readonly StructDecl[], maybeCallable: (type: string, fp: boolean) => boolean): void {
+  for (const st of structs) {
+    const name = st.names[0]!;
+    const same = analysis.classes.filter((c) => c.name === name || (st.tagged && c.name.endsWith(`::${name}`)));
+    const named = new Set(st.fields.map((f) => f.decl.name));
+    if (same.length > 1) continue;
+    const cls = same[0];
+    if (cls && (cls.fieldOrder || cls.properties.some((p) => !named.has(p.name)))) continue;
+    const properties: PropertyInfo[] = st.fields.map(({ decl: f, statement }) => cls?.properties.find((p) => p.name === f.name) ?? {
+      name: f.name,
+      // A function pointer's type is written the way the C++ reading writes it: `int (*)(int)`.
+      type: (f.fp ? statement.replace(/\(\s*\*\s*\w+\s*(?:\[[^\]]*\])?\s*\)/, "(*)") : f.type).replace(STORAGE, " ").replace(/\s+/g, " ").trim(),
+      visibility: "public",
+      isStatic: false,
+      isReadonly: false,
+      ...(maybeCallable(f.type, f.fp) ? { callable: true as const } : {}),
+    });
+    if (cls) {
+      cls.properties = properties;
+      cls.fieldOrder = true;
+    } else {
+      analysis.classes.push({ name, extends: null, implements: [], decorators: [], methods: [], properties, isExported: false, line: st.line, endLine: st.endLine, fieldOrder: true });
+    }
+  }
 }
 
 /** Index of the first `c` at bracket depth zero in `text`, or -1. */

@@ -109,7 +109,6 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   taintFacts: "optional",
   moduleValueFlow: "optional",
   functionTypeAliases: "optional",
-  structLayouts: "optional",
   configKeyReads: "optional",
   filePathReads: "optional",
 };

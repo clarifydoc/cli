@@ -67,6 +67,35 @@ int run_sell(struct manager *m) { return m->pops->on_sell(1); }
 `;
 
 // Another struct of the same name, in headers the callers above never include.
+// A tagged struct whose typedef closes its body inside `extern "C"`, and a tagless one, both filled by position.
+const gearH = `#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct club_gear {
+    int (*shift)(int,
+                 int);
+    int (*brake)(int);
+} club_gear_t;
+typedef struct {
+    const char *label;
+    int (*honk)(int);
+} car_horn_t;
+struct garage {
+    club_gear_t *gear;
+    car_horn_t *horn;
+};
+#ifdef __cplusplus
+}
+#endif
+`;
+const gearC = `#include "gear.h"
+int car_shift(int a, int b) { return a; }
+int car_honk(int a) { return a; }
+static club_gear_t gear = { car_shift };
+static car_horn_t horn = { "h", car_honk };
+int drive(struct garage *g) { return g->gear->shift(1, 2) + g->horn->honk(1); }
+`;
+
 const rivalH = `struct club_ops {
     const char *name;
     int (*release)(void *c);
@@ -89,6 +118,8 @@ function links(): string[] {
     read(useC, "src/use.c"),
     read(rivalH, "src/rival/rival_ops.h"),
     read(rivalC, "src/rival/rival.c"),
+    read(gearH, "src/gear.h"),
+    read(gearC, "src/gear.c"),
   ];
   return buildSymbolLinks(analyses)
     .filter((l) => l.strategy === "value-flow")
@@ -104,6 +135,10 @@ describe("C structs of function pointers filled by a positional initializer", ()
     expect(found).toContain("run_transfer ops.transfer -> src/impl.c::club_transfer");
     expect(found).toContain("run_sign pops.on_sign -> src/impl.c::player_sign");
     expect(found).toContain("run_sell pops.on_sell -> src/impl.c::player_sell");
+  });
+  it("reads a typedef alias closing the body inside extern C, and a tagless typedef struct", () => {
+    expect(found).toContain("drive shift -> src/gear.c::car_shift");
+    expect(found).toContain("drive honk -> src/gear.c::car_honk");
   });
   it("takes fewer elements than fields, and an object-like macro of one value", () => {
     expect(found).toContain("run_scout ops.scout -> src/impl.c::club_flagged");

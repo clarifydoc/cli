@@ -2197,8 +2197,6 @@ interface LinkContext {
   fnTypeDecls?: Map<string, { aliases: string[]; classes: string[] }>;
   /** Lazy: the answers `functionTypeQuestion` gave, `file\0type` → function type or not. */
   fnTypeAnswers?: Map<string, boolean>;
-  /** Lazy: per struct name, the field layouts files state for it (`structLayoutOf`). */
-  layoutIndex?: Map<string, Array<{ file: string; names: string[]; fields: string[] }>>;
   /**
    * Lazy: the map calls `dispatchMapCall` is resolving (`file\0scope\0name`). Two values assigned from each
    * other (`a.value = b.value` in one function, `b.value = a.value` in another) would otherwise send
@@ -4650,13 +4648,20 @@ function valueFlowLinks(links: readonly SymbolLink[], ctx: LinkContext): SymbolL
       // An elaborated type (`const struct club_ops *`) names its class once the keywords are off.
       const name = language ? receiverTypeName(type.replace(/\b(?:struct|union|enum|class|const|volatile)\s+/g, ""), language) : null;
       if (!name) return null;
-      const located = locateClass(ctx, name, file, ctx.projectOf.get(file) ?? "root");
+      const project = ctx.projectOf.get(file) ?? "root";
+      const located = locateClass(ctx, name, file, project);
       if (located) return { file: located, name };
-      // A C struct no class stands for (a tagless `typedef struct { … } club_ops_t`): the layout its include closure states.
-      const layout = structLayoutOf(ctx, file, type);
-      return layout ? { file: layout.file, name: layout.name } : null;
+      // A typedef of a struct (`typedef struct club_ops club_ops_t`) names the class it stands for.
+      const whole = dealias(ctx, name, file);
+      const target = whole !== name ? locateClass(ctx, whole, file, project) : null;
+      if (target) return { file: target, name: whole };
+      // Forward declarations (`struct club_ops;`) are classes without a body that make the name ambiguous: the one
+      // declaration with fields the include closure of the file reaches is the struct, never a namesake outside it.
+      if (!pluginFor(language!)?.importsShareScope) return null;
+      const seen = includeClosure(ctx, file);
+      const bodies = (ctx.classFiles.get(whole) ?? []).filter((f) => seen.has(f) && (ctx.classAt.get(memberKey(f, whole))?.properties.length ?? 0) > 0);
+      return bodies.length === 1 ? { file: bodies[0]!, name: whole } : null;
     },
-    layoutOf: (file, type) => structLayoutOf(ctx, file, type),
     parentOf(file, name) {
       const parent = parentClassOf(ctx, name, file);
       return parent ? { file: parent.parentFile, name: parent.parentClass } : null;
@@ -4683,30 +4688,6 @@ function valueFlowLinks(links: readonly SymbolLink[], ctx: LinkContext): SymbolL
     ...callableQuestions(ctx),
     isTest: (file) => testFileAt(ctx, file),
   });
-}
-
-/**
- * The struct a type names, as the include closure of `file` states its layout (`FileAnalysis.structLayouts`): the one
- * declaration of that name the file sees, never a namesake outside its includes; two different ones refuse. Its `name`
- * is the first name the struct answers to (the tag), so a typedef alias and the tag reach one cell.
- */
-function structLayoutOf(ctx: LinkContext, file: string, type: string): { file: string; name: string; fields: readonly string[] } | null {
-  if (!ctx.layoutIndex) {
-    ctx.layoutIndex = new Map();
-    for (const a of ctx.analyses) {
-      for (const l of a.structLayouts ?? []) for (const n of l.names) (ctx.layoutIndex.get(n) ?? ctx.layoutIndex.set(n, []).get(n)!).push({ file: a.filePath, names: l.names, fields: l.fields });
-    }
-  }
-  if (ctx.layoutIndex.size === 0) return null;
-  const name = type.replace(/\b(?:struct|union|enum|const|volatile)\s+/g, "").replace(/[*&]/g, " ").trim();
-  const found = /^\w+$/.test(name) ? ctx.layoutIndex.get(name) : undefined;
-  if (!found) return null;
-  const seen = includeClosure(ctx, file);
-  const seeing = found.filter((c) => seen.has(c.file));
-  if (seeing.length === 0) return null;
-  const first = seeing[0]!;
-  if (seeing.some((c) => c.file !== first.file || c.fields.join(",") !== first.fields.join(","))) return null;
-  return { file: first.file, name: first.names[0]!, fields: first.fields };
 }
 
 /** Both host questions behind a conditional `invoke`, for the invoke-site pass. */
