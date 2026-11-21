@@ -1588,6 +1588,12 @@ export interface LanguagePluginManifest {
    */
   typeUsageComplete?: boolean;
   /**
+   * The plugin states `FileAnalysis.moduleNames` (its `ast.moduleNames` hook), so a line above a definition that no
+   * module-level name owns is no constant. Static, so impact can ask it before any plugin is loaded; held equal to
+   * the hook by a test.
+   */
+  statesModuleNames?: boolean;
+  /**
    * A type named by a path call (`Garage::park()`, `Garage::new()`) is in scope only where the language says
    * so: through an import (`use`, a glob, a re-export), the module path written before it
    * (`crate::garage::Garage::park()`), or its own file. The linker then never binds such a call to a

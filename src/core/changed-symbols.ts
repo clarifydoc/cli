@@ -4,7 +4,7 @@ import { byOrdinal } from "./ordinal.js";
 import type { Confidence, FileAnalysis, ImportInfo, ProjectAnalysis, SymbolLink } from "../types/analysis.js";
 import { GIT_SAFE_CONFIG, GIT_SAFE_DIFF } from "./git-safe.js";
 import { importersOf } from "./importers.js";
-import { astHooksFor } from "../extractors/registry.js";
+import { manifestFor } from "../extractors/registry.js";
 
 /** New-side line ranges a diff changed, per project-relative file (1-based, inclusive). */
 export type ChangedHunks = Map<string, Array<[number, number]>> & {
@@ -176,8 +176,8 @@ export function symbolsInHunks(
         // Lines right above a definition — a decorator written (or being written) there, the blank line before it —
         // are that definition's: the change is to it, whoever calls it. (Inside a type they stay the type's: a member
         // added between two others is judged by the type's comparison.) Only where the language's plugin states its module-level
-        // names (the `moduleNames` hook): there a constant above a function is a name of its own, so the line is no constant.
-        const below = !(a.language && astHooksFor(a.language)?.moduleNames) || inImports || typeSpans.some((t) => t.line <= s && e <= t.endLine) ? undefined : spans.find((sp) => sp.line === e + 1);
+        // names (`statesModuleNames`, the `moduleNames` hook): there a constant above a function is a name of its own, so the line is no constant.
+        const below = !(a.language && manifestFor(a.language)?.statesModuleNames) || inImports || typeSpans.some((t) => t.line <= s && e <= t.endLine) ? undefined : spans.find((sp) => sp.line === e + 1);
         if (below) {
           symbols.set(`${file}::${below.symbol}`, below);
           continue;

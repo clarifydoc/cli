@@ -77,6 +77,7 @@ export const pythonManifest: LanguagePluginManifest = {
   multipleInheritance: true,
   // A class is named by an import, an annotation or a base class, all of which the analysis records.
   typeUsageComplete: true,
+  statesModuleNames: true,
   // A decorator may inject or rewrite parameters (`@inject`, `@click.option`); these keep them.
   callArity: {
     signatureKeepingDecorators: [
