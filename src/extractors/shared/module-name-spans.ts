@@ -10,7 +10,7 @@ function trailing(tops: Node[], index: number): boolean {
 /**
  * The names a module binds at its top level, each with the lines it owns (`FileAnalysis.moduleNames`): the statement,
  * the comments written directly above it, and the blank or loose-comment lines below it up to the next statement's own
- * comments. `namesOf` says which names one top-level node binds (none for a function, a class or an import). A line
+ * comments (the last statement ends at its own last line). `namesOf` says which names one top-level node binds (none for a function, a class or an import). A line
  * between two statements therefore belongs to the binding above it, so an edit that touches a constant and the blank
  * line beside it still reads as an edit of that constant.
  */
@@ -33,7 +33,9 @@ export function moduleNameSpans(tree: Tree, namesOf: (top: Node) => string[]): M
     if (names.length === 0) return;
     let next = i + 1;
     while (next < tops.length && isComment(tops[next]!)) next++;
-    const endRow = next < tops.length ? groupStart.get(next)! : tree.rootNode.endPosition.row + 1;
+    // The last statement owns no lines after itself: in a single-file component the rest of the file is its
+    // template, which the script's tree reads as blank lines.
+    const endRow = next < tops.length ? groupStart.get(next)! : n.endPosition.row + 1;
     const line = groupStart.get(i)! + 1;
     const endLine = Math.max(n.endPosition.row + 1, endRow);
     for (const name of new Set(names)) out.push({ name, line, endLine });

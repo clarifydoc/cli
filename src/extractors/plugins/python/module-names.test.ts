@@ -35,7 +35,7 @@ describe("module-level names and the lines each owns", () => {
     const tree = await parseSource(["A = 1  # note", "B = 2", ""].join("\n"), "python" as never, "x.py");
     expect(extractPythonModuleNames(tree!)).toEqual([
       { name: "A", line: 1, endLine: 1 },
-      { name: "B", line: 2, endLine: 3 },
+      { name: "B", line: 2, endLine: 2 },
     ]);
   });
 
@@ -50,5 +50,12 @@ describe("module-level names and the lines each owns", () => {
       { name: "f", line: 5, endLine: 5 },
       { name: "late", line: 7, endLine: 7 },
     ]);
+  });
+
+  it("the last name ends at its own statement: a component's template below the script is not its lines", async () => {
+    // A single-file component's script as the parser sees it: the template after it is blanked out.
+    const src = ["", "  let title = 'Club';", "", "", "", "", ""].join("\n");
+    const tree = await parseSource(src, "typescript" as never, "x.ts");
+    expect(extractJsModuleNames(tree!)).toEqual([{ name: "title", line: 2, endLine: 2 }]);
   });
 });
