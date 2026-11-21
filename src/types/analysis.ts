@@ -1994,6 +1994,12 @@ export interface ClassInfo {
   namespace?: string;
   /** Generated, not written (a Lombok `@Builder`'s builder class): see `FunctionInfo.synthetic`. Omitted for written code. */
   synthetic?: true;
+  /**
+   * A synthetic class a code generator writes beside `yieldsTo` (AutoValue's `AutoValue_Club`, Immutables'
+   * `ImmutableClub`): where the generated source is in the tree the written class stands and this one is dropped, so a
+   * name is never two classes. Omitted otherwise.
+   */
+  yieldsTo?: string;
   /** One declaration of a class written in several (C# `partial class`): its namesakes in the file are the same class. */
   partial?: true;
   /** The first sentence of its doc comment or docstring, capped (core/doc-comments.ts). Absent when it has none. */

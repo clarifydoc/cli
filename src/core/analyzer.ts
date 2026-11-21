@@ -130,6 +130,7 @@ import { attachRiskVerdicts } from "./risk-verdict.js";
 import { computeImpactDiff } from "./impact-diff.js";
 import { collectGitHistory, computeHotspots, type GitHistoryResult } from "./git-history.js";
 import { analyzeUnusedCode, analyzeReachability, dropVendoredFacts } from "./dead-code.js";
+import { dropYieldedClasses } from "./yielded-classes.js";
 import { computeHealthScore, findCircularDeps } from "./health-scorer.js";
 import { generateSuggestions } from "./suggestions-engine.js";
 import { detectCommunities, groupCommunities } from "./community-detector.js";
@@ -1252,6 +1253,8 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // them. Project-level + in-memory; the per-file JSON keeps what the file says.
   const vendoredPaths = dropVendoredFacts(allAnalyses);
   if (vendoredPaths.size > 0 && verbose) progress.detail(`  vendored files (no screens, calls or data): ${vendoredPaths.size}`);
+
+  dropYieldedClasses(allAnalyses);
 
   // Step 4: Post-analysis
 

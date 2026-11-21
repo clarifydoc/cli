@@ -163,7 +163,7 @@ function singularOf(p: PropertyInfo): { name: string; type: string } | null {
   if (given) return { name: given, type };
   // Lombok's own English rule for the common plurals; a name it cannot singularize is a compile error there.
   const n = p.name;
-  const name = /ies$/.test(n) ? `${n.slice(0, -3)}y` : /(?:ss|us)$/.test(n) || !/s$/.test(n) ? null : n.slice(0, -1);
+  const name = /ies$/.test(n) ? `${n.slice(0, -3)}y` : /(?:ss|us)$/.test(n) || !/s$/.test(n) ? null : /(?:[sxz]|[cs]h)es$/.test(n) ? null : n.slice(0, -1);
   return name ? { name, type } : null;
 }
 
@@ -211,6 +211,8 @@ function memberBuilders(cls: ClassInfo, staticNames: ReadonlySet<string>): Class
     const builderName = /\bbuilderClassName\s*=\s*"(\w+)"/.exec(ann)?.[1] ?? `${result.replace(/<.*$/, "")}Builder`;
     const builderMethod = /\bbuilderMethodName\s*=\s*"(\w+)"/.exec(ann)?.[1] ?? "builder";
     const buildMethod = /\bbuildMethodName\s*=\s*"(\w+)"/.exec(ann)?.[1] ?? "build";
+    // Two members naming one builder (overloads) would be two classes of one name: the first stands.
+    if (out.some((c) => c.name === builderName)) continue;
     addUnlessWritten(cls.methods, synthetic(builderMethod, [], builderName, m.line));
     const methods = m.params.filter((p) => !p.isReceiver).map((p) => synthetic(p.name, [{ name: p.name, type: p.type, defaultValue: null }], builderName, m.line));
     methods.push(synthetic(buildMethod, [], result, m.line));
@@ -267,10 +269,11 @@ const AUTO_VALUE = ANN("AutoValue");
 const IMMUTABLE = /^(?:org\.immutables\.value\.)?Value\.Immutable(?:\s*\(|$)/;
 
 /** The class a generated type is, with no members of its own beyond `methods`. */
-function generatedClass(name: string, base: ClassInfo, extendsName: string | null, implementsList: string[], methods: FunctionInfo[]): ClassInfo {
+function generatedClass(name: string, base: ClassInfo, extendsName: string | null, implementsList: string[], methods: FunctionInfo[], yieldsTo: string): ClassInfo {
   return {
     name,
     synthetic: true,
+    yieldsTo,
     kind: "class",
     extends: extendsName,
     implements: implementsList,
@@ -315,7 +318,7 @@ export function synthesizeGeneratedValueClasses(classNode: Node, cls: ClassInfo,
         if (n) path.unshift(n);
       }
     }
-    out.push(generatedClass(`AutoValue_${path.join("_")}`, cls, cls.name, [], []));
+    out.push(generatedClass(`AutoValue_${path.join("_")}`, cls, cls.name, [], [], `AutoValue_${path.join("_")}`));
   }
   if (find(cls.decorators, IMMUTABLE) && !find(cls.decorators, /^(?:org\.immutables\.value\.)?Value\.Style\b/)) {
     const name = `Immutable${cls.name}`;
@@ -327,10 +330,10 @@ export function synthesizeGeneratedValueClasses(classNode: Node, cls: ClassInfo,
     const ofParams = attrs.filter((a) => a.parameter);
     if (ofParams.length > 0) methods.push(synthetic("of", ofParams.map((a) => ({ name: a.name, type: a.type, defaultValue: null })), name, cls.line));
     for (const a of attrs) methods.push(synthetic(`with${capitalize(a.name)}`, [{ name: a.name, type: a.type, defaultValue: null }], name, a.line));
-    out.push(generatedClass(name, cls, isInterface ? null : cls.name, isInterface ? [cls.name] : [], methods));
+    out.push(generatedClass(name, cls, isInterface ? null : cls.name, isInterface ? [cls.name] : [], methods, name));
     const builderMethods = attrs.map((a) => synthetic(a.name, [{ name: a.name, type: a.type, defaultValue: null }], builderName, a.line));
     builderMethods.push(synthetic("from", [{ name: "instance", type: cls.name, defaultValue: null }], builderName, cls.line), synthetic("build", [], name, cls.line));
-    out.push(generatedClass(builderName, cls, null, [], builderMethods));
+    out.push(generatedClass(builderName, cls, null, [], builderMethods, name));
   }
   return out;
 }
