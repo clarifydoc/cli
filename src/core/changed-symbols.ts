@@ -132,10 +132,7 @@ export function symbolsInHunks(
   // A file whose diff only deletes lines has no entry in `hunks`: its deletions still count.
   const files = new Set([...hunks.keys(), ...(hunks.deleted?.keys() ?? []), ...(hunks.old?.keys() ?? [])]);
   for (const file of files) {
-    // Prefer old-side ranges when the parser recorded them; fall back to the Map
-    // (new-side, or a hand-built range list) for pure insertions and older callers.
-    const oldSide = [...(hunks.old?.get(file) ?? []), ...(hunks.deleted?.get(file) ?? [])];
-    const ranges = oldSide.length > 0 ? oldSide : [...(hunks.get(file) ?? [])];
+    const ranges = analyzedSideRanges(hunks, file);
     const a = analyses.get(file);
     if (!a) {
       moduleLevel.add(file);
@@ -144,7 +141,7 @@ export function symbolsInHunks(
     }
     const typeSpans: ChangedClass[] = a.classes
       .filter((c) => c.endLine >= c.line)
-      .map((c) => ({ file, name: c.name, kind: c.kind ?? "class", interfaceLike: c.kind === "interface" || !!(c as { abstract?: boolean }).abstract, line: c.line, endLine: c.endLine }));
+      .map((c) => ({ file, name: c.name, kind: c.kind ?? "class", interfaceLike: c.kind === "interface" || !!c.abstract, line: c.line, endLine: c.endLine }));
     const spans: ChangedSymbol[] = [
       ...a.functions.filter((f) => f.name !== "<setup>" && f.endLine >= f.line).map((f) => ({ file, symbol: f.name, line: f.line, endLine: f.endLine })),
       ...a.classes.flatMap((c) => c.methods.filter((m) => m.endLine >= m.line).map((m) => ({ file, symbol: `${c.name}.${m.name}`, line: m.line, endLine: m.endLine }))),
@@ -572,11 +569,21 @@ export function classChanges(before: ReadonlyMap<string, Spans>, after: Readonly
   });
 }
 
-/** Whether the diff edits a line of a file, on the side the stored analysis describes (old, else the Map as written). */
+/**
+ * A file's changed ranges on the side the stored analysis describes: the old-side ranges when the parser
+ * recorded them, else the Map as written (new-side, or a hand-built range list) for pure insertions and older callers.
+ */
+function analyzedSideRanges(hunks: ChangedHunks, file: string): Array<[number, number]> {
+  const oldSide = [...(hunks.old?.get(file) ?? []), ...(hunks.deleted?.get(file) ?? [])];
+  return oldSide.length > 0 ? oldSide : [...(hunks.get(file) ?? [])];
+}
+
+/** Whether the diff edits a line of a file, on the side the stored analysis describes. */
 export function editedLines(hunks: ChangedHunks): (file: string, line: number) => boolean {
+  const byFile = new Map<string, Array<[number, number]>>();
   return (file, line) => {
-    const oldSide = [...(hunks.old?.get(file) ?? []), ...(hunks.deleted?.get(file) ?? [])];
-    return (oldSide.length ? oldSide : [...(hunks.get(file) ?? [])]).some(([a, b]) => a <= line && line <= b);
+    const ranges = byFile.get(file) ?? byFile.set(file, analyzedSideRanges(hunks, file)).get(file)!;
+    return ranges.some(([a, b]) => a <= line && line <= b);
   };
 }
 

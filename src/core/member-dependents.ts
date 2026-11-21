@@ -37,37 +37,51 @@ export interface NamingFiles {
   files: Map<string, string[]>;
   /** The analysis cannot say who names a target (a type with no usage record): charge every importer. */
   undecided: boolean;
+  /** Per target, in order: whether any file names it. */
+  named: boolean[];
 }
 
-/** The links into a file, by target symbol — built once per question. */
-function linksInto(links: readonly SymbolLink[], files: ReadonlySet<string>): Map<string, SymbolLink[]> {
-  const out = new Map<string, SymbolLink[]>();
-  for (const l of links) {
-    if (!files.has(l.targetFile) || l.sourceFile === l.targetFile || l.navigational) continue;
+/** What `filesNaming` reads, built once per question: the links into the changed files by target symbol, and the blast rows by file. */
+export interface NamingIndex {
+  into: Map<string, SymbolLink[]>;
+  blast: Map<string, BlastRadiusInfo>;
+}
+
+/** The index for questions about `files` (the files whose members changed). */
+export function namingIndex(summary: Pick<ProjectAnalysis, "symbolLinks" | "blastRadius">, files: Iterable<string>): NamingIndex {
+  const wanted = new Set(files);
+  const into = new Map<string, SymbolLink[]>();
+  for (const l of summary.symbolLinks ?? []) {
+    if (!wanted.has(l.targetFile) || l.sourceFile === l.targetFile || l.navigational) continue;
     const key = `${l.targetFile}::${l.targetSymbol}`;
-    (out.get(key) ?? out.set(key, []).get(key)!).push(l);
+    (into.get(key) ?? into.set(key, []).get(key)!).push(l);
   }
-  return out;
+  return { into, blast: new Map((summary.blastRadius ?? []).map((b) => [b.filePath, b])) };
 }
 
 /** The files that name any of `targets`, with the reason for each. */
-export function filesNaming(summary: Pick<ProjectAnalysis, "symbolLinks" | "blastRadius">, targets: readonly MemberTarget[]): NamingFiles {
+export function filesNaming(index: NamingIndex, targets: readonly MemberTarget[]): NamingFiles {
   const files = new Map<string, string[]>();
+  let hit = false;
   const add = (file: string, reason: string) => {
+    hit = true;
     const rows = files.get(file) ?? files.set(file, []).get(file)!;
     if (!rows.includes(reason)) rows.push(reason);
   };
   let undecided = false;
-  const blast = new Map((summary.blastRadius ?? []).map((b) => [b.filePath, b]));
-  const into = linksInto(summary.symbolLinks ?? [], new Set(targets.map((t) => t.file)));
+  const named: boolean[] = [];
+  const { into, blast } = index;
   for (const t of targets) {
+    hit = false;
     if ("symbol" in t) {
       for (const l of into.get(`${t.file}::${t.symbol}`) ?? []) add(l.sourceFile, l.sourceSymbol === "(reference)" ? `imports ${t.symbol}` : `calls ${t.symbol}`);
+      named.push(hit);
       continue;
     }
     const usage = blast.get(t.file)?.typeUsages?.find((u) => u.typeName === t.type);
     if (!usage) {
       undecided = true;
+      named.push(false);
       continue;
     }
     for (const u of usage.usagesByFile) {
@@ -78,8 +92,9 @@ export function filesNaming(summary: Pick<ProjectAnalysis, "symbolLinks" | "blas
     }
     if (t.mode === "changed") for (const l of into.get(`${t.file}::${t.type}`) ?? []) add(l.sourceFile, l.sourceSymbol === "(reference)" ? `imports ${t.type}` : `constructs ${t.type}`);
     else if (t.interfaceLike || t.field) for (const l of into.get(`${t.file}::${t.type}`) ?? []) if (l.sourceSymbol !== "(reference)") add(l.sourceFile, `constructs ${t.type}`);
+    named.push(hit);
   }
-  return { files, undecided };
+  return { files, undecided, named };
 }
 
 /**
@@ -97,8 +112,8 @@ export function filesImportingNames(summary: Pick<ProjectAnalysis, "symbolLinks"
  * Targets from names a caller states for one file (`Class.method`, `function`, `Type`): a name the file's
  * type usages know is a type, anything else a symbol. `adding` says the names are new members.
  */
-export function targetsFromNames(summary: Pick<ProjectAnalysis, "blastRadius">, file: string, names: readonly string[], adding = false): MemberTarget[] {
-  const blast: BlastRadiusInfo | undefined = (summary.blastRadius ?? []).find((b) => b.filePath === file);
+export function targetsFromNames(index: NamingIndex, file: string, names: readonly string[], adding = false): MemberTarget[] {
+  const blast = index.blast.get(file);
   return names.map((n): MemberTarget => {
     const type = blast?.typeUsages?.find((u) => u.typeName === n);
     return type ? { file, type: n, mode: adding ? "added" : "changed", interfaceLike: type.definedAt.isInterface } : { file, symbol: n };

@@ -267,7 +267,8 @@ function hideTypeMacroArguments(all: Token[]): void {
     }
     // `: a_(x), SUPPRESS_WARNINGS_(4355) b_(this), SUPPRESS_END_() c_(y)`: a macro between two member initializers,
     // with no comma of its own, is no initializer — the whole call leaves.
-    if (!hide && prev === CPP14Lexer.Comma && after === CPP14Lexer.Identifier && (type(close[i + 1]! + 2) === CPP14Lexer.LeftParen || type(close[i + 1]! + 2) === CPP14Lexer.LeftBrace)) {
+    const opener = type(close[i + 1]! + 2);
+    if (!hide && prev === CPP14Lexer.Comma && after === CPP14Lexer.Identifier && (opener === CPP14Lexer.LeftParen || opener === CPP14Lexer.LeftBrace)) {
       let j = i - 2;
       // Back over the initializers before the comma to the `:` that opens the list, to see that it is a constructor's.
       for (let depth = 0; j >= 0; j--) {

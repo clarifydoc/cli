@@ -33,6 +33,14 @@ export interface InlineRouteDefinition {
   endLine: number;
 }
 
+type RouteRow = { handler?: string | null; handlerEndLine?: number | null; httpMethod?: string | null; path: string; registrar?: string | null; line: number };
+
+/** One route row's inline-handler span, or null when its handler is named or its end line comes before its start. */
+export function inlineRouteSpan(r: RouteRow): Omit<InlineRouteDefinition, "file"> | null {
+  if (!hasInlineHandler(r) || r.handlerEndLine! < r.line) return null;
+  return { symbol: routeSymbolOf(r), line: r.line, endLine: r.handlerEndLine! };
+}
+
 const INLINE_DEFINITIONS = new WeakMap<object, InlineRouteDefinition[]>();
 
 /**
@@ -40,7 +48,7 @@ const INLINE_DEFINITIONS = new WeakMap<object, InlineRouteDefinition[]>();
  * row array): the definitions a tool looks a `route:` symbol up in, where a named handler's function table
  * has no row for it. Rows without a file or with an end line before their start are no definition.
  */
-export function inlineRouteDefinitions(project: { routeMap?: ReadonlyArray<{ handler?: string | null; handlerEndLine?: number | null; httpMethod?: string | null; path: string; registrar?: string | null; filePath?: string; line: number }> }): InlineRouteDefinition[] {
+export function inlineRouteDefinitions(project: { routeMap?: ReadonlyArray<RouteRow & { filePath?: string }> }): InlineRouteDefinition[] {
   const rows = project.routeMap;
   if (!rows) return [];
   const known = INLINE_DEFINITIONS.get(rows);
@@ -48,12 +56,12 @@ export function inlineRouteDefinitions(project: { routeMap?: ReadonlyArray<{ han
   const out: InlineRouteDefinition[] = [];
   const seen = new Set<string>();
   for (const r of rows) {
-    if (!hasInlineHandler(r) || !r.filePath || r.handlerEndLine! < r.line) continue;
-    const symbol = routeSymbolOf(r);
-    const key = `${r.filePath}::${symbol}::${r.line}`;
+    const span = r.filePath ? inlineRouteSpan(r) : null;
+    if (!span) continue;
+    const key = `${r.filePath}::${span.symbol}::${r.line}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ symbol, file: r.filePath, line: r.line, endLine: r.handlerEndLine! });
+    out.push({ ...span, file: r.filePath! });
   }
   INLINE_DEFINITIONS.set(rows, out);
   return out;

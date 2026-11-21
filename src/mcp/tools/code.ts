@@ -43,7 +43,7 @@ import {
 import { fileChangedNote, mustResolveFile, nearSymbols, requireAnalysis, rowFreshness, stalenessHint, type ToolContext } from "./context.js";
 import { filterToDrop, missHeadline, noResults, type DroppableFilter } from "../empty.js";
 import { decisionsAbout } from "./decisions.js";
-import { filesNaming, rankByUse, targetsFromNames } from "../../core/member-dependents.js";
+import { filesNaming, namingIndex, rankByUse, targetsFromNames } from "../../core/member-dependents.js";
 import { boundLines, fileBound, refOf, routeBoundLine, routeLiterals, symbolBound, type CallerBound } from "./caller-bounds.js";
 
 /** ` (through the macro M)` for a link a macro's body makes, else nothing. */
@@ -1769,11 +1769,14 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
       let direct: string[] = rankByUse(b, b.affectedFiles);
       let imports: string[] = [];
       let namingReasons: Map<string, string[]> | undefined;
+      // Names nothing in the analysis names (an uncalled function, a field, a misspelling).
+      let unseen: string[] = [];
       if (members.length) {
-        const named = filesNaming(loaded.summary, targetsFromNames(loaded.summary, path, members, args.adding === true));
-        // A name nothing in the analysis names (a field, a misspelling) says nothing about its importers: when none does, list them all.
-        const known = members.filter((m) => filesNaming(loaded.summary, targetsFromNames(loaded.summary, path, [m], args.adding === true)).files.size > 0);
-        if (!named.undecided && known.length > 0) {
+        const index = namingIndex(loaded.summary, [path]);
+        const named = filesNaming(index, targetsFromNames(index, path, members, args.adding === true));
+        unseen = members.filter((_, i) => !named.named[i]);
+        // A name nothing names says nothing about its importers: when none is named, list them all.
+        if (!named.undecided && unseen.length < members.length) {
           namingReasons = named.files;
           const nameSet = new Set(named.files.keys());
           direct = direct.filter((f) => nameSet.has(f));
@@ -1828,7 +1831,6 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
       blocks.push(section(`Direct dependents (${direct.length})`, bulletList(direct, limit, (f) => `${f}${movedRow(f)}${namingReasons?.get(f)?.length ? ` — ${namingReasons.get(f)!.slice(0, 2).join("; ")}` : ""}`)));
       if (namingReasons) {
         blocks.push([`${imports.length} other file(s) import ${path} and name none of ${members.join(", ")}: nothing there breaks by name.`, ""]);
-        const unseen = members.filter((m) => !filesNaming(loaded.summary, targetsFromNames(loaded.summary, path, [m], args.adding === true)).files.size);
         if (unseen.length) blocks.push([`Nothing in the analysis names ${unseen.join(", ")} (an uncalled function, a field or a misspelling): its readers are not in this list.`, ""]);
       } else if (b.transitiveFiles.length) {
         blocks.push(

@@ -5,7 +5,7 @@ import { join } from "path";
 import { analyze } from "./analyzer.js";
 import { loadReportSummary } from "./report-payload.js";
 import { impactOfContents } from "./impact-proposed.js";
-import { filesNaming, targetsFromNames } from "./member-dependents.js";
+import { filesNaming, namingIndex, targetsFromNames } from "./member-dependents.js";
 import type { ProjectAnalysis } from "../types/analysis.js";
 
 const CLUB = [
@@ -81,9 +81,11 @@ describe("impact charges the files that name what changed", () => {
   });
 
   it("blast_radius members name the same files, an added interface member only its builders", () => {
-    const sales = filesNaming(summary, targetsFromNames(summary, "src/club.ts", ["Squad.sellPlayer"]));
+    const index = namingIndex(summary, ["src/club.ts"]);
+    const sales = filesNaming(index, targetsFromNames(index, "src/club.ts", ["Squad.sellPlayer", "Squad.unknownMember"]));
     expect([...sales.files.keys()]).toEqual(["src/sales.ts"]);
-    const added = filesNaming(summary, targetsFromNames(summary, "src/club.ts", ["Club"], true));
+    expect(sales.named).toEqual([true, false]);
+    const added = filesNaming(index, targetsFromNames(index, "src/club.ts", ["Club"], true));
     expect([...added.files.keys()].sort()).toEqual(["src/build-a.ts", "src/build-b.ts"]);
   });
 });

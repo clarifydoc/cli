@@ -4661,8 +4661,7 @@ function valueFlowLinks(links: readonly SymbolLink[], ctx: LinkContext): SymbolL
       const slash = file.lastIndexOf("/");
       return packageFilesOf(ctx, slash < 0 ? "" : file.slice(0, slash), file);
     },
-    isFunctionType: functionTypeQuestion(ctx),
-    isCallableMember: callableMemberQuestion(ctx),
+    ...callableQuestions(ctx),
     isTest: (file) => testFileAt(ctx, file),
   });
 }

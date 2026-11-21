@@ -12,7 +12,7 @@ import { declarationHeadLine } from "../../core/doc-comments.js";
 import { manifestFor } from "../../extractors/registry.js";
 import { analyzeWorkingFiles } from "../../core/changed-symbols.js";
 import { untrackedAmong } from "../../core/source-revision.js";
-import { inlineRouteDefinitions, hasInlineHandler, routeSymbolOf } from "../../core/route-symbol.js";
+import { inlineRouteDefinitions, inlineRouteSpan } from "../../core/route-symbol.js";
 
 /** Rough tokens per character of source — the usual 4-characters-per-token rule. */
 const CHARS_PER_TOKEN = 4;
@@ -213,10 +213,11 @@ export function extractTool(ctx: ToolContext): McpTool {
           const now = (await analyzeWorkingFiles(ctx.store.projectRoot, [f]).catch(() => new Map())).get(f);
           const language = analyses.get(f)?.language;
           // An inline route is found again by its symbol among the working file's own routes.
+          const known = new Set(inlineRouteDefinitions(loaded.summary).filter((d) => d.file === f).map((d) => d.symbol));
           const routesNow: Definition[] = [];
           for (const r of now?.routes ?? []) {
-            const known = inlineRouteDefinitions(loaded.summary).some((d) => d.file === f && d.symbol === routeSymbolOf(r));
-            if (known && hasInlineHandler(r) && r.handlerEndLine! >= r.line) routesNow.push({ symbol: routeSymbolOf(r), line: r.line, endLine: r.handlerEndLine!, head: { language } });
+            const span = inlineRouteSpan(r);
+            if (span && known.has(span.symbol)) routesNow.push({ ...span, head: { language } });
           }
           current.set(f, now && language ? [...definitions({ ...now, language } as FileAnalysis), ...classDefinitions({ ...now, language } as FileAnalysis), ...routesNow] : []);
         }

@@ -2,7 +2,7 @@ import { EXTENSION_TO_LANGUAGE, manifestFor } from "../extractors/registry.js";
 import type { TestTarget } from "../types/language-plugin.js";
 import { ownersOf } from "./code-owners.js";
 import { describeSignatureChange, signatureChangeTail, reverseSymbolReach, type ChangedClass, type ChangedSymbol, type ClassChange, type SignatureChange, type SymbolCaller } from "./changed-symbols.js";
-import { filesImportingNames, filesNaming, type MemberTarget } from "./member-dependents.js";
+import { filesImportingNames, filesNaming, namingIndex, type MemberTarget } from "./member-dependents.js";
 import type {
   Language,
   ProjectAnalysis,
@@ -202,7 +202,8 @@ export function computeImpactDiff(
       changed: ChangedSymbol[];
       moduleLevel: string[];
       signatureChanges?: SignatureChange[];
-      hunks?: ReadonlyMap<string, ReadonlyArray<readonly [number, number]>>;
+      /** Changed line ranges per file (new side), with the old-side `deleted`/`old` ranges of `ChangedHunks`. */
+      hunks?: ReadonlyMap<string, ReadonlyArray<readonly [number, number]>> & { old?: ReadonlyMap<string, unknown>; deleted?: ReadonlyMap<string, unknown> };
       /** Types changed outside their methods, judged before and after (`classChanges`). */
       classChanges?: ClassChange[];
       /** Files with a changed line in neither a method nor a type: only the file-level answer holds for them. */
@@ -252,8 +253,8 @@ export function computeImpactDiff(
   const queues = new Set<string>();
   const dependents = new Set<string>();
   let truncated = false;
-  // Importers per changed file, for the files whose dependents get narrowed to the members that changed.
-  const importersOf = new Map<string, Set<string>>();
+  // Everything that imports a changed file: the context a narrowed list is read against.
+  const importers = new Set<string>();
   // Files reaching a narrowed file's named dependents by imports: where its tests are looked for.
   const reached = new Set<string>();
   let dangerous: string | null = null;
@@ -264,6 +265,9 @@ export function computeImpactDiff(
   let topVerdict: { file: string; verdict: RiskVerdict } | null = null;
   const VERDICT_RANK: Record<string, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 
+  // Importee → importers: the narrowed files' test reach and the sample chains below both walk it.
+  const reverseGraph = new Map<string, string[]>();
+  for (const [source, targets] of Object.entries(summary.componentGraph ?? {})) for (const t of targets) (reverseGraph.get(t) ?? reverseGraph.set(t, []).get(t)!).push(source);
   // Which changed files the diff's lines let us judge by member, and who names what changed in them.
   const narrowing = narrowDependents(summary, changedFiles, options?.symbols);
   for (const file of changedFiles) {
@@ -271,11 +275,12 @@ export function computeImpactDiff(
     if (!b) continue;
     const named = narrowing?.byFile.get(file);
     if (named) {
-      importersOf.set(file, new Set([...b.affectedFiles, ...b.transitiveFiles]));
+      for (const f of b.affectedFiles) importers.add(f);
+      for (const f of b.transitiveFiles) importers.add(f);
       for (const f of named) dependents.add(f);
       // The file-level verdicts (dangerous, moderate, foundation file) describe the module, not this change.
       // What imports the files that name the change, however far, may still hold the test that runs it.
-      const reach = reverseReach(summary.componentGraph, [file, ...named], 8);
+      const reach = reverseReach(reverseGraph, [file, ...named], 8);
       for (const f of reach) reached.add(f);
       const t = b.traceImpact;
       if (!t) continue;
@@ -312,9 +317,7 @@ export function computeImpactDiff(
       t.queueCount > t.queues.length;
   }
   for (const f of changedSet) dependents.delete(f);
-  // Everything that imports a changed file: the context a narrowed list is read against.
-  const importers = new Set(dependents);
-  for (const set of importersOf.values()) for (const f of set) importers.add(f);
+  for (const f of dependents) importers.add(f);
   for (const f of changedSet) importers.delete(f);
 
   // ── Tests to run: test files among changed ∪ dependents ──
@@ -325,14 +328,6 @@ export function computeImpactDiff(
     .sort();
 
   // ── Sample chains: reverse-import BFS from changed files to a screen/route file ──
-  const reverseGraph = new Map<string, string[]>();
-  for (const [source, targets] of Object.entries(summary.componentGraph ?? {})) {
-    for (const t of targets) {
-      let arr = reverseGraph.get(t);
-      if (!arr) reverseGraph.set(t, (arr = []));
-      arr.push(source);
-    }
-  }
   const screenFiles = new Set((summary.screens ?? []).map((s) => s.filePath));
   const routeFiles = new Set(
     (summary.routeMap ?? [])
@@ -594,9 +589,7 @@ export function computeImpactDiff(
 }
 
 /** Files that reach `starts` by importing, up to `depth` hops. */
-function reverseReach(graph: Record<string, string[]> | undefined, starts: readonly string[], depth: number): Set<string> {
-  const reverse = new Map<string, string[]>();
-  for (const [source, targets] of Object.entries(graph ?? {})) for (const t of targets) (reverse.get(t) ?? reverse.set(t, []).get(t)!).push(source);
+function reverseReach(reverse: ReadonlyMap<string, readonly string[]>, starts: readonly string[], depth: number): Set<string> {
   const seen = new Set(starts);
   let frontier = [...starts];
   for (let d = 0; d < depth && frontier.length; d++) {
@@ -621,27 +614,29 @@ function narrowDependents(
   if (!symbols?.hunks?.size) return undefined;
   const moduleOnly = new Set(symbols.moduleOnly ?? symbols.moduleLevel);
   const classChanges = symbols.classChanges ?? [];
+  const importOnly = new Set(symbols.importOnly);
   const byFile = new Map<string, Set<string>>();
   const why = new Map<string, string[]>();
   const members: Array<{ file: string; name: string; adding?: boolean }> = [];
+  const index = namingIndex(summary, changedFiles);
   for (const file of changedFiles) {
-    const hunked = symbols.hunks.has(file) || (symbols.hunks as { old?: Map<string, unknown>; deleted?: Map<string, unknown> }).old?.has(file) || (symbols.hunks as { deleted?: Map<string, unknown> }).deleted?.has(file);
+    const hunked = symbols.hunks.has(file) || symbols.hunks.old?.has(file) || symbols.hunks.deleted?.has(file);
     if (!hunked || moduleOnly.has(file)) continue;
     const targets: MemberTarget[] = symbols.changed.filter((s) => s.file === file).map((s) => ({ file, symbol: s.symbol }));
     const types = classChanges.filter((c) => c.file === file);
     // A class-level hunk with no comparison behind it cannot be judged by member.
-    if ((symbols.moduleLevel.includes(file) && !types.length && !symbols.importOnly?.includes(file)) || (!targets.length && !types.length && !symbols.importOnly?.includes(file))) continue;
+    if ((symbols.moduleLevel.includes(file) && !types.length && !importOnly.has(file)) || (!targets.length && !types.length && !importOnly.has(file))) continue;
     // A type whose members compare equal changed in a way the comparison does not see (a default, a comment): not judged.
     if (types.some((c) => !c.added.length && !c.changed.length)) continue;
     for (const c of types) {
       targets.push({ file, type: c.name, mode: c.changed.length ? "changed" : "added", interfaceLike: c.interfaceLike, ...(c.addedField ? { field: true as const } : {}) });
     }
-    const named = filesNaming(summary, targets);
+    const named = filesNaming(index, targets);
     if (named.undecided) continue;
     // An import edited in a file that forwards names: its importers that import one of them.
     const forwards = symbols.forwarded?.[file];
-    if (forwards?.length && symbols.importOnly?.includes(file)) {
-      const importers = new Set((summary.blastRadius ?? []).find((b) => b.filePath === file)?.affectedFiles ?? []);
+    if (forwards?.length && importOnly.has(file)) {
+      const importers = new Set(index.blast.get(file)?.affectedFiles ?? []);
       for (const f of filesImportingNames(summary, importers, forwards)) {
         const rows = named.files.get(f) ?? named.files.set(f, []).get(f)!;
         rows.push(`imports a name ${file} forwards`);
