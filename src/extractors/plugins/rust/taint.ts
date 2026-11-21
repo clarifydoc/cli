@@ -5,7 +5,7 @@ import { handlerTaint, type TaintFacts, type TaintSpec } from "../shared/handler
 /** The extractor types that fill a handler parameter from the request: axum, actix-web and rocket spell them alike. */
 const EXTRACTOR = /^(?:Query|Json|Path|Form)$/;
 /** A rocket route attribute: `#[get("/clubs/<id>")]`. */
-const ROUTE_ATTRIBUTE = /^#\[\s*(?:get|post|put|patch|delete|head|options|route)\s*\(/;
+const ROUTE_ATTRIBUTE = /^#\[\s*(?:rocket::)?(?:get|post|put|patch|delete|head|options|route)\s*\(/;
 const FORMAT_MACROS = /^(?:format|format_args|write|writeln)$/;
 const INERT = /^(?:[iu](?:8|16|32|64|128|size)|f(?:32|64)|bool|char|Uuid|Duration|DateTime|NaiveDate|NaiveDateTime|SystemTime|IpAddr)$/;
 
@@ -95,6 +95,8 @@ function shapeOf(type: Node | null, root: Node, depth = 0): Shape {
   }
   const t = typeHead(type);
   if (!t) return null;
+  if (t.head === "HashMap" || t.head === "BTreeMap") return shapeOf(t.args[1] ?? null, root, depth + 1) === "inert" ? "inert" : "text";
+  if (t.head === "Cow" || t.head === "Arc" || t.head === "Rc" || t.head === "Bytes") return t.args.length ? shapeOf(t.args[0]!, root, depth + 1) : "text";
   if (t.head === "Option" || t.head === "Vec" || t.head === "Box") return shapeOf(t.args[0] ?? null, root, depth + 1);
   if (t.head === "String" || t.head === "str" || t.head === "PathBuf" || t.head === "Value") return "text";
   if (INERT.test(t.head)) return "inert";

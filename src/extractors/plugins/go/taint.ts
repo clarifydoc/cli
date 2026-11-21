@@ -158,7 +158,7 @@ function buildSpec(names: readonly string[]): TaintSpec {
       const callee = (node.childForFieldName("function")?.text ?? "").replace(/\s+/g, "");
       const args = node.childForFieldName("arguments")?.namedChildren ?? [];
       const viaContext = names.length > 0 && new RegExp(`^${recv}\\.(?:ShouldBind\\w*|Bind\\w*|MustBindWith|BodyParser|QueryParser|ParamsParser|ReqHeaderParser)$`).test(callee);
-      const viaDecoder = names.length > 0 && new RegExp(`^(?:json|jsoniter)\\.NewDecoder\\(${recv}\\.(?:Body|Request\\(\\)\\.Body)\\)\\.Decode$`).test(callee);
+      const viaDecoder = names.length > 0 && new RegExp(`^(?:json|jsoniter)\\.NewDecoder\\(${recv}\\.(?:Body|Request(?:\\(\\))?\\.Body)\\)\\.Decode$`).test(callee);
       if (!viaContext && !viaDecoder) return null;
       const target = boundTarget(args[0]);
       if (!target) return null;

@@ -204,6 +204,12 @@ func Sign(c echo.Context) error {
 	return nil
 }
 
+func Gin(c *gin.Context) {
+	var body OtherRequest
+	json.NewDecoder(c.Request.Body).Decode(&body)
+	db.Exec("DELETE FROM players WHERE name = '" + body.Name + "'")
+}
+
 func Decode(w http.ResponseWriter, r *http.Request) {
 	var body OtherRequest
 	json.NewDecoder(r.Body).Decode(&body)
@@ -220,7 +226,7 @@ func Bound(c *gin.Context) {
 	db.Exec("DELETE FROM clubs WHERE name = '" + req.Name + "'")
 }
 `;
-    expect(await findings(src)).toEqual(["23 sql-injection", "32 sql-injection", "39 sql-injection"]);
+    expect(await findings(src)).toEqual(["23 sql-injection", "32 sql-injection", "39 sql-injection", "45 sql-injection"]);
   });
 
   it("does not follow a struct bound outside a handler, or one a decoy context binds", async () => {
