@@ -1792,7 +1792,7 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
           // A file that hands this one on whole (`export * from`, `from .x import *`) names no member, yet loses what the file loses:
           // charged only when a member loses its name, never for a body edit.
           const change = args.change && typeof args.change === "object" ? (args.change as Record<string, unknown>) : {};
-          const lost = members.some((m) => typeof change[m] === "string" && change[m] !== "body");
+          const lost = args.adding !== true && members.some((m) => ["removed", "renamed", "moved", "retyped"].includes(change[m] as string));
           const forwarding = new Map<string, string>();
           if (lost) {
             const { starForwarders, STAR_REEXPORTS_STALE_NOTE } = await import("../../core/changed-symbols.js");

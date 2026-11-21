@@ -16,12 +16,36 @@ describe("parseUnifiedHunks", () => {
       "@@ -1,5 +0,0 @@",
     ].join("\n");
     const hunks = parseUnifiedHunks(diff);
-    // A file whose new side is /dev/null is keyed by its old path with every old line: its functions are removed
-    // members, as for a proposed deletion (it used to record nothing, so the file was never narrowed).
-    expect([...hunks]).toEqual([["src/a.ts", [[3, 6], [22, 22]]], ["gone.ts", [[1, 5]]]]);
+    // A file whose new side is /dev/null has no new-side lines (patch coverage reads this Map) but its old lines are
+    // recorded on `old` under its old path: its functions are removed members (it used to record nothing, so the
+    // file was never narrowed).
+    expect([...hunks]).toEqual([["src/a.ts", [[3, 6], [22, 22]]]]);
     expect([...hunks.deleted!]).toEqual([["src/a.ts", [[30, 32]]]]);
     // Old-side ranges for symbol matching (edits + the pure deletion).
     expect([...hunks.old!]).toEqual([["src/a.ts", [[3, 4], [20, 20], [30, 32]]], ["gone.ts", [[1, 5]]]]);
+  });
+});
+
+describe("parseUnifiedHunks headers", () => {
+  it("a removed `-- comment` line and an added `++ x` line are body lines, not file headers; a deleted file stays off the new-side map", () => {
+    const diff = [
+      "--- a/league.sql",
+      "+++ b/league.sql",
+      "@@ -2,2 +2,2 @@",
+      "--- note",
+      "-- old",
+      "+++ /dev/null",
+      "+++ x",
+      "@@ -9 +9 @@",
+      "-a",
+      "+b",
+      "--- a/gone.sql",
+      "+++ /dev/null",
+      "@@ -1,3 +0,0 @@",
+    ].join("\n");
+    const hunks = parseUnifiedHunks(diff);
+    expect([...hunks]).toEqual([["league.sql", [[2, 3], [9, 9]]]]);
+    expect([...hunks.old!]).toEqual([["league.sql", [[2, 3], [9, 9]]], ["gone.sql", [[1, 3]]]]);
   });
 });
 

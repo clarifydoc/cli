@@ -38,13 +38,19 @@ export function parseUnifiedHunks(diff: string, side: "new" | "old" = "new"): Ch
   let file: string | null = null;
   let oldFile: string | null = null;
   let gone = false;
-  for (const line of diff.split("\n")) {
-    if (line.startsWith("--- ")) {
+  // A `--- x` / `+++ x` pair is a file header; a lone body line that reads that way (a removed `-- x` comment) is not.
+  const lines = diff.split("\n");
+  let headerOpen = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (line.startsWith("--- ") && lines[i + 1]?.startsWith("+++ ")) {
+      headerOpen = true;
       const p = line.slice(4).trim();
       oldFile = p === "/dev/null" ? null : p.replace(/^a\//, "");
       continue;
     }
-    if (line.startsWith("+++ ")) {
+    if (headerOpen && line.startsWith("+++ ")) {
+      headerOpen = false;
       const p = line.slice(4).trim();
       gone = p === "/dev/null" && oldFile !== null && side === "new";
       file = p === "/dev/null" ? (gone ? oldFile : null) : p.replace(/^b\//, "");
@@ -67,12 +73,9 @@ export function parseUnifiedHunks(diff: string, side: "new" | "old" = "new"): Ch
           : [Math.max(1, oldStart), Math.max(1, oldStart)];
       (old.get(file) ?? old.set(file, []).get(file)!).push(match);
     }
-    // A deleted file (`+++ /dev/null`) is its whole old side removed, as a proposed deletion is: its old
-    // lines are the ranges, so its functions are removed members.
-    if (gone) {
-      (out.get(file) ?? out.set(file, []).get(file)!).push([Math.max(1, oldStart), Math.max(1, oldStart + oldCount - 1)]);
-      continue;
-    }
+    // A deleted file (`+++ /dev/null`) is keyed by its old path and carries its old lines on `old` only: they are
+    // lines of the analysed side, no new-side lines (patch coverage reads the Map itself).
+    if (gone) continue;
     if (count === 0 && side === "new") {
       if (oldCount > 0) {
         const deleted = (out.deleted ??= new Map());
@@ -803,7 +806,7 @@ export async function starForwarders(
   const analyses: Array<FileAnalysis | null> = [];
   for (let i = 0; i < closure.length; i += 32) analyses.push(...(await Promise.all(closure.slice(i, i + 32).map(analysisOf))));
   const version = summary.provenance?.extractorVersion;
-  const old = !summary.starReexports && (version === undefined || (compareExtractorVersions(version, STAR_REEXPORTS_SINCE) ?? -1) < 0);
+  const old = !summary.starReexports && version !== undefined && (compareExtractorVersions(version, STAR_REEXPORTS_SINCE) ?? 0) < 0;
   let stale = false;
   for (let k = 0; k < closure.length; k++) {
     const f = closure[k]!;
