@@ -22,6 +22,7 @@ class UseKt {
   fun a() = Position.entries.first().label()
   fun b() = Position.entries[0].label()
   fun c() = Position.values()[0].label()
+  fun d(byName: Map<String, Position>) = byName.first().value.label()
 }
 `,
       "Role.java": "package com.example.league;\npublic enum Role { COACH; public String label() { return name(); } }\n",
@@ -49,6 +50,10 @@ class UseJava {
     expect(targets(summary, "UseKt.a", "Position.entries.first().label")).toEqual(["Position.kt:Position.label"]);
     expect(targets(summary, "UseKt.b", "Position.entries[0].label")).toEqual(["Position.kt:Position.label"]);
     expect(targets(summary, "UseKt.c", "Position.values()[0].label")).toEqual(["Position.kt:Position.label"]);
+  });
+
+  it("takes no map value out of first(): a Map's first() is an entry", () => {
+    expect(targets(summary, "UseKt.d", "byName.first().value.label")).toEqual([]);
   });
 
   it("links a Java array element of values() to the enum, and a project values() of another class to that class", () => {

@@ -1,5 +1,5 @@
 import { valueOut } from "../../shared/value-out.js";
-import { jvmElementText, jvmIndexedElement, kotlinTupleElements } from "./wrapper-elements.js";
+import { jvmElementText, jvmIndexedElement, kotlinIndexedElement, kotlinTupleElements } from "./wrapper-elements.js";
 import { jvmMigrationFiles } from "./migration-files.js";
 import { jvmProjectCommands } from "./project-commands.js";
 import { jvmTestCommand } from "./test-command.js";
@@ -143,7 +143,7 @@ export const kotlinManifest: LanguagePluginManifest = {
   ownerPathTypes: true,
   callPathsFromHead: true,
   // `lazy.value` of a declared `Lazy<ClubRepo>`.
-  valueOut: valueOut({ calls: { ...JVM_UNWRAP_CALLS, await: ["Deferred"] }, members: { value: ["Lazy"] }, elementCalls: ["get", "first", "last"], elementOf: jvmIndexedElement, index: "get" }),
+  valueOut: valueOut({ calls: { ...JVM_UNWRAP_CALLS, await: ["Deferred"] }, members: { value: ["Lazy"] }, elementCalls: ["get", "first", "last"], elementOf: kotlinIndexedElement, index: "get" }),
   collectionElementOf: jvmElementText("kotlin"),
   // `val (club, player) = load()` over a declared `Pair<Club, Player>` / `Triple`; over a data class, its constructor's
   // properties in order (`componentN`).

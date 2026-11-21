@@ -10,7 +10,7 @@ export interface ValueOutTables {
   /** Calls that take ONE element out of a declared list or map. */
   elementCalls?: readonly string[];
   /** A list's element or a map's VALUE as the type is written; null for any other type. */
-  elementOf?: (type: string) => string | null;
+  elementOf?: (type: string, hop: ValueHop) => string | null;
   /** The member an index read `x[i]` calls (Kotlin `operator fun get`); its presence makes `x[i]` a step the linker reads, taking an element out of a list or map. */
   index?: string;
   /** Java: `x[i]` over a declared array `Club[]` yields `Club` (an index step the linker reads; any other type yields nothing). */
@@ -59,7 +59,7 @@ export function valueOut(tables: ValueOutTables): ValueOutHook {
       const open = written.indexOf("<");
       const wrapper = open > 0 ? written.slice(0, open).trim().split(/\.|::/).pop() ?? "" : "";
       if (wrappers?.includes(wrapper)) return { type: awaitedType(written, wrappers), wrapper, kind: "wrapper" };
-      const inner = element ? tables.elementOf?.(written) : null;
+      const inner = element ? tables.elementOf?.(written, hop) : null;
       return inner ? { type: inner, wrapper, kind: "element" } : null;
     },
   };

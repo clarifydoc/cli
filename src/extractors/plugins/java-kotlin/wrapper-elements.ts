@@ -49,3 +49,10 @@ export function jvmIndexedElement(type: string): string | null {
   const arg = LISTS.has(parts.name) && parts.args.length === 1 ? parts.args[0] : MAP_TYPES.has(parts.name) && parts.args.length === 2 ? parts.args[1] : undefined;
   return arg && /^[A-Za-z_][\w.]*$/.test(arg) ? arg : null;
 }
+
+/** Kotlin: `get`/`[i]` take a list's element or a map's value; `first()`/`last()` only a list's (a map's is an entry). */
+export function kotlinIndexedElement(type: string, hop: { name: string }): string | null {
+  if (hop.name !== "first" && hop.name !== "last") return jvmIndexedElement(type);
+  const parts = genericParts(type);
+  return parts && LISTS.has(parts.name) ? jvmIndexedElement(type) : null;
+}
