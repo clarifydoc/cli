@@ -12,6 +12,7 @@ import { RailsViewResolver } from "./rails-views.js";
 import { RubyNodeRendererResolver } from "./renderer-dispatch.js";
 import { RUBY_REGEX_CONTROL_FLOW } from "./control-flow.js";
 import { RUBY_SECURITY_RULES } from "./security-rules.js";
+import { rubyTaint } from "./taint.js";
 
 export const rubyMeta: LanguagePluginMeta = {
   securityRules: RUBY_SECURITY_RULES,
@@ -19,6 +20,8 @@ export const rubyMeta: LanguagePluginMeta = {
   reachability: rubyReachability,
   ...rubyManifest,
   regexSpec: rubySpec,
+  // Request input followed to a sink in a controller action or route block, on a tree-sitter-ruby parse (taint.ts).
+  regexTaint: { grammar: "ruby", gate: /\bparams\b|\brequest\.(?:params|query_parameters|GET|POST)|\bcookies\[/, taint: rubyTaint },
   knownPackages: rubygemsPackages,
   entities: new RubyEntityExtractor(),
   // Rails routes move from config/routes.rb onto the action that serves them.

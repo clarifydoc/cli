@@ -61,6 +61,8 @@ export const rubyManifest: LanguagePluginManifest = {
   serviceConfig: rubyServiceConfig,
   packageEcosystems: ["rubygems"],
   parsing: "regex",
+  // Read by the taint reader only (meta.regexTaint): the wasm tree-sitter-ruby ships.
+  grammar: { variants: { ruby: { pkg: "tree-sitter-ruby", wasm: "tree-sitter-ruby.wasm" } } },
   extensions: [".rb", ".rake", ".jbuilder"],
   // One type spans files here: a class can be reopened in another file of its namespace.
   typesSpanFiles: true,
