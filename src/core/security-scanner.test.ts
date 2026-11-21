@@ -365,3 +365,14 @@ describe("maskSecrets", () => {
     expect(out).not.toMatch(/PRIVATE KEY-----$/m);
   });
 });
+
+describe("scanSecurity — eval-exec", () => {
+  const evals = (src: string, file: string, lang: "python" | "typescript") => scanSecurity(src, file, lang).filter((i) => i.category === "eval-exec").length;
+  it("flags the bare builtin and eval on a global object, never a method of a value", () => {
+    expect(evals("result = eval(user_input)\n", "league/a.py", "python")).toBe(1);
+    expect(evals("result = builtins.eval(user_input)\n", "league/a.py", "python")).toBe(1);
+    expect(evals("model = Car()\nmodel.eval()\nself.engine.eval(x)\n", "league/a.py", "python")).toBe(0);
+    expect(evals("window.eval(code);\neval(code);\n", "src/a.ts", "typescript")).toBe(2);
+    expect(evals("garage.eval(code)\n", "src/a.ts", "typescript")).toBe(0);
+  });
+});

@@ -148,7 +148,8 @@ const GENERIC_RULES: SecurityRule[] = [
   {
     category: "eval-exec",
     severity: "medium",
-    pattern: /\beval\s*\(/,
+    // The bare builtin, or `eval` on a global object — never a method of some value (`model.eval()`).
+    pattern: /(?:(?<![.\w$>:])|(?<=\b(?:window|globalThis|self|global|Kernel|builtins|binding)\.))eval\s*\(/,
     message: "eval() executes arbitrary code. Avoid or validate input strictly.",
     priority: 30,
   },
