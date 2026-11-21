@@ -627,7 +627,7 @@ export function computeDataFlows(
       // runs migrations and crons) and is no part of a request.
       key = null;
     } else {
-      key = routeHandlerKey(route, spans, globalLookup);
+      key = routeHandlerKey(route, spans, globalLookup, true);
     }
     const r = key ? reachByKey.get(key) : undefined;
     const mwReach = mwOnly && key !== synthetic ? reachByKey.get(synthetic) : undefined;

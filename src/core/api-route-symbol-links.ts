@@ -115,6 +115,23 @@ export function byName(spans: SymbolSpan[], name: string): SymbolSpan[] {
 }
 
 /**
+ * The function a handler NAME stands for, when the route or entry point does not sit on it: the one match of the name
+ * in the declaring file, else the project's one function of that leaf name — a method when the handler names a
+ * receiver (`h.List` is no free `List`). Several matches in the file answer null, never the project's guess.
+ */
+export function handlerKeyByName(
+  file: string,
+  spans: SymbolSpan[],
+  handler: string,
+  globalLookup: (leaf: string) => string | null,
+): string | null {
+  const local = byName(spans, handler);
+  if (local.length >= 1) return local.length === 1 ? keyOf(file, local[0]!.symbol) : null;
+  const global = globalLookup(handler.split(".").pop()!);
+  return global && (!handler.includes(".") || global.split("::")[1]?.includes(".")) ? global : null;
+}
+
+/**
  * The symbol key of the function a route runs, read from the route and its file alone: the function the route is
  * declared ON (`innermostAt` + `declaredOn` — never the one that only registers it, a `main` calling
  * `r.GET("/clubs", h.List)`), else the handler name in the declaring file, else the project's one function of that
@@ -124,15 +141,21 @@ export function byName(spans: SymbolSpan[], name: string): SymbolSpan[] {
  * @param route - A route row with its declaring file
  * @param spans - Spans of the route's file, from `spansOf`
  * @param globalLookup - `uniqueSymbolByLeaf` over the project
+ * @param registeredElsewhere - A route the function around its line only REGISTERS (`main` calling
+ *   `r.GET("/clubs", h.List)`) is rooted at the handler's own name through `handlerKeyByName`, not at nothing
  */
 export function routeHandlerKey(
   route: { filePath: string; line: number; handler?: string | null; calls?: readonly unknown[] },
   spans: SymbolSpan[],
   globalLookup: (leaf: string) => string | null,
+  registeredElsewhere = false,
 ): string | null {
   if (!route.handler && (route.calls?.length ?? 0) > 0) return null;
   const at = innermostAt(spans, route.line);
-  if (at) return declaredOn(at, route.handler, route.line) ? keyOf(route.filePath, at.symbol) : null;
+  if (at) {
+    if (declaredOn(at, route.handler, route.line)) return keyOf(route.filePath, at.symbol);
+    return registeredElsewhere && route.handler ? handlerKeyByName(route.filePath, spans, route.handler, globalLookup) : null;
+  }
   if (!route.handler) return null;
   const local = byName(spans, route.handler);
   return local.length >= 1 ? keyOf(route.filePath, local[0]!.symbol) : globalLookup(route.handler);

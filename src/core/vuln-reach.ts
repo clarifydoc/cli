@@ -1,7 +1,7 @@
 import type { EntryPointInfo, ExternalPackage, FileAnalysis, RouteInfo, SymbolLink, VulnerableReach } from "../types/analysis.js";
 import { buildSymbolAdjacency, edgeKey, keyOf } from "./symbol-graph.js";
 import { inlineRouteDefinitions } from "./route-symbol.js";
-import { byName, routeHandlerKey, spansOf, uniqueSymbolByLeaf, type SymbolSpan } from "./api-route-symbol-links.js";
+import { handlerKeyByName, routeHandlerKey, spansOf, uniqueSymbolByLeaf, type SymbolSpan } from "./api-route-symbol-links.js";
 import { isTestFile } from "./test-file-detector.js";
 import { packageMatchingFor } from "../extractors/registry.js";
 
@@ -44,16 +44,18 @@ export function attachVulnerableReach(
   // The project's functions by leaf name, for a handler declared in another file (`intake.Handle`): the one
   // function of that name, as the data-flow pass reads it — never one of several.
   const byLeaf = uniqueSymbolByLeaf(analyses, spansFor);
-  const resolveHandler = (file: string, name: string): string | null => {
-    const leaf = name.split(".").pop()!;
-    const a = analysisOf.get(file);
-    if (a) {
-      const spans = spansFor(a);
-      if (spans.some((s) => s.symbol === name)) return keyOf(file, name);
-      const here = spans.filter((s) => s.symbol.split(".").pop() === leaf);
-      if (here.length === 1) return keyOf(file, here[0]!.symbol);
+  // A file's functions by leaf name, for a middleware the route names by its plain name.
+  const leavesCache = new Map<string, Map<string, SymbolSpan[]>>();
+  const leavesOf = (file: string, spans: SymbolSpan[]): Map<string, SymbolSpan[]> => {
+    let m = leavesCache.get(file);
+    if (!m) {
+      leavesCache.set(file, (m = new Map()));
+      for (const s of spans) {
+        const leaf = s.symbol.split(".").pop()!;
+        (m.get(leaf) ?? m.set(leaf, []).get(leaf)!).push(s);
+      }
     }
-    return byLeaf(leaf);
+    return m;
   };
 
   // Where a walk may stop: a route's handler (or its inline body), an entry point's handler.
@@ -63,23 +65,14 @@ export function attachVulnerableReach(
     // The data-flow pass's rule: the function the route is declared on, never the one that only registers it.
     const a = analysisOf.get(r.filePath);
     const spans = a ? spansFor(a) : [];
-    let key = routeHandlerKey(r, spans, byLeaf);
-    // A route registered inside another function (`r.GET("/clubs", h.List)` in `main`) has no symbol link here to
-    // name its handler, so the handler's own name finds it: the one match written in this file, else the project's one
-    // function of that leaf name — a method when the handler names a receiver (`h.List` is no free `List`).
-    if (!key && r.handler) {
-      const local = byName(spans, r.handler);
-      const global = local.length === 0 ? byLeaf(r.handler.split(".").pop()!) : null;
-      if (local.length === 1) key = keyOf(r.filePath, local[0]!.symbol);
-      else if (global && (!r.handler.includes(".") || global.split("::")[1]?.includes("."))) key = global;
-    }
+    const key = routeHandlerKey(r, spans, byLeaf, true);
     const label = `${r.httpMethod ?? "ANY"} ${r.path}`.trim();
     if (key && !roots.has(key)) roots.set(key, { label });
     // A call every request makes: the middleware the route names (its own and what its router mounts).
     const names = [...(r.middlewareCalls ?? []), ...(r.inheritedMiddleware ?? []).flatMap((m) => m.calls)].filter((n) => n !== r.handler);
     for (const name of names) {
       // Only a function this file declares by that plain name: a library's `cors` or `auth.Required` names no project function.
-      const own = /^\w+$/.test(name) ? byName(spans, name) : [];
+      const own = /^\w+$/.test(name) ? (leavesOf(r.filePath, spans).get(name) ?? []) : [];
       const mw = own.length === 1 ? keyOf(r.filePath, own[0]!.symbol) : null;
       if (mw && !roots.has(mw)) roots.set(mw, { label: `middleware ${name}` });
     }
@@ -100,7 +93,8 @@ export function attachVulnerableReach(
   }
   for (const e of entryPoints) {
     if (!e.handler) continue;
-    const key = resolveHandler(e.filePath, e.handler);
+    const ea = analysisOf.get(e.filePath);
+    const key = handlerKeyByName(e.filePath, ea ? spansFor(ea) : [], e.handler, byLeaf);
     if (key && !roots.has(key)) roots.set(key, { label: `${e.kind} ${e.name}` });
   }
 

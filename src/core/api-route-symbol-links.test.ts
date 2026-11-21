@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { moveInheritedCallsToSubclasses, synthesizeApiRouteSymbolLinks, synthesizeQueueSymbolLinks } from "./api-route-symbol-links.js";
+import { handlerKeyByName, routeHandlerKey, moveInheritedCallsToSubclasses, synthesizeApiRouteSymbolLinks, synthesizeQueueSymbolLinks } from "./api-route-symbol-links.js";
 import type { ApiRouteLink, FileAnalysis, SymbolDataAccess, SymbolLink } from "../types/analysis.js";
 
 /**
@@ -235,5 +235,28 @@ describe("synthesizeQueueSymbolLinks", () => {
       row({ file: "Db.cs", symbol: "Db.Save" }), // database access, no `access`
     ]);
     expect(out).toHaveLength(0);
+  });
+});
+
+describe("routeHandlerKey / handlerKeyByName — a route registered inside another function", () => {
+  const spans = [
+    { symbol: "main", line: 1, endLine: 20 },
+    { symbol: "Handler.List", line: 30, endLine: 40 },
+  ];
+  const lookup = (leaf: string) => (leaf === "List" ? "clubs/handler.go::Handler.List" : leaf === "Open" ? "garage/open.go::Open" : null);
+  const route = { filePath: "main.go", line: 10, handler: "h.List" };
+
+  it("roots at nothing by default and at the handler's own name when asked", () => {
+    expect(routeHandlerKey(route, spans, lookup)).toBeNull();
+    expect(routeHandlerKey(route, spans, lookup, true)).toBe("clubs/handler.go::Handler.List");
+  });
+
+  it("a handler naming a receiver is no free function of that leaf; a bare name may be", () => {
+    expect(handlerKeyByName("main.go", spans, "h.Open", lookup)).toBeNull();
+    expect(handlerKeyByName("main.go", spans, "Open", lookup)).toBe("garage/open.go::Open");
+    // Several matches in the file are a refusal, not a project-wide guess.
+    const twice = [...spans, { symbol: "Other.List", line: 50, endLine: 60 }];
+    expect(handlerKeyByName("main.go", twice, "List", lookup)).toBeNull();
+    expect(handlerKeyByName("main.go", spans, "main", lookup)).toBe("main.go::main");
   });
 });
