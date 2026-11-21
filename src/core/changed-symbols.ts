@@ -639,6 +639,7 @@ export async function symbolsOfChange(
     importOnly: found.importOnly,
     forwarded: Object.fromEntries(found.forwarded),
     boundReaders: await boundReaders(analysisDir, summary, found.bound),
+    starForwarders: await starForwarders(analysisDir, summary, files),
     signatureChanges: await judgeSignatures(analysisDir, before, after, summary, editedLines(hunks)),
     classChanges: classChanges(before, after, found.classLevel),
     hunks,
@@ -717,6 +718,45 @@ export async function boundReaders(analysisDir: string, summary: Pick<ProjectAna
       frontier = next;
     }
     out[file] = [...readers].sort(byOrdinal);
+  }
+  return out;
+}
+
+/**
+ * The files that hand a module's names on whole — Python `from .hooks import *` in a package file, JS/TS
+ * `export * from "./hooks"` / `export * as ns from` — among the files that (transitively) import `files`, each
+ * with the files it forwards. A forwarder names no member, so no call or import-by-name link reaches the module
+ * through it; what the module loses, it loses too. Importers come from `componentGraph`; the module a star
+ * export names is the importee whose file stem (or folder, for `__init__`/`index`) is the last word of its source.
+ */
+export async function starForwarders(analysisDir: string, summary: Pick<ProjectAnalysis, "componentGraph">, files: readonly string[]): Promise<Record<string, string[]>> {
+  const importers = importersOf(summary.componentGraph);
+  const seen = new Set(files);
+  const out: Record<string, string[]> = {};
+  for (let frontier = [...files]; frontier.length; ) {
+    const next: string[] = [];
+    for (const f of frontier) for (const from of importers.get(f) ?? []) if (!seen.has(from)) (seen.add(from), next.push(from));
+    frontier = next;
+  }
+  for (const f of seen) {
+    let a: FileAnalysis;
+    try {
+      a = JSON.parse(await readFile(join(analysisDir, `${f}.json`), "utf8")) as FileAnalysis;
+    } catch {
+      continue;
+    }
+    const stars = (a.exports ?? []).filter((e) => e.name === "*" && e.source);
+    if (!stars.length) continue;
+    const targets = new Set<string>();
+    for (const e of stars) {
+      const last = (e.source!.split("/").pop() ?? "").replace(/\.[cm]?[jt]sx?$/, "").split(".").filter(Boolean).pop();
+      for (const t of summary.componentGraph[f] ?? []) {
+        const parts = (t.split("/").pop() ?? t).split(".")[0] ?? "";
+        const stem = parts === "__init__" || parts === "index" ? t.split("/").slice(-2, -1)[0] : parts;
+        if (stem === last) targets.add(t);
+      }
+    }
+    if (targets.size) out[f] = [...targets].sort(byOrdinal);
   }
   return out;
 }
