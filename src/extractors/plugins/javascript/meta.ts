@@ -31,7 +31,8 @@ import { trpcRouterResolver } from "./routes/trpc.js";
 import { convexBuilderResolver } from "./routes/convex.js";
 import { extractEntryPoints } from "./entry-points.js";
 import type { Language, SecurityIssue } from "../../../types/analysis.js";
-import type { LanguagePluginMeta, SecurityRule, AstExtractorHooks } from "../../../types/language-plugin.js";
+import type { Tree } from "web-tree-sitter";
+import type { LanguagePluginManifest, LanguagePluginMeta, SecurityRule, AstExtractorHooks } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { extractTsTypeReferences } from "./type-references.js";
 import { extractInteractiveElements } from "./interactive-elements.js";
@@ -252,7 +253,7 @@ const DB_CALL_ROOTS = [
   "db", "pool", "connection", "pgClient", "redis",
 ];
 
-function astHooks(language: Language): AstExtractorHooks {
+function astHooks(language: Language, manifest: LanguagePluginManifest): AstExtractorHooks {
   return {
     taint: javascriptTaint,
     filePathReads: extractJavaScriptFilePathReads,
@@ -309,7 +310,8 @@ function astHooks(language: Language): AstExtractorHooks {
     diBindings: extractJsDiBindings,
     typeAliases: (tree) => extractTsTypeAliases(tree),
     nameAliases: (tree) => extractJsNameAliases(tree),
-    moduleNames: (tree) => extractJsModuleNames(tree),
+    // The hook exists exactly where the static manifest says the language states module names (impact asks the flag).
+    ...(manifest.statesModuleNames ? { moduleNames: (tree: Tree) => extractJsModuleNames(tree) } : {}),
     topLevelLocalTypes: (tree, sourceText) => topLevelLocalTypes(tree, sourceText),
   };
 }
@@ -350,7 +352,7 @@ export const typescriptMeta: LanguagePluginMeta = {
   knownPackages: npmPackages,
   apiCallRoots: API_CALL_ROOTS,
   dbCallRoots: DB_CALL_ROOTS,
-  ast: astHooks("typescript"),
+  ast: astHooks("typescript", typescriptManifest),
   calls: typescriptCallHooks,
   requestSchema: javascriptRequestSchema,
   grpcStubService: firstStub(jsGrpcStub, jsThriftStub),
@@ -382,7 +384,7 @@ export const javascriptMeta: LanguagePluginMeta = {
   knownPackages: npmPackages,
   apiCallRoots: API_CALL_ROOTS,
   dbCallRoots: DB_CALL_ROOTS,
-  ast: astHooks("javascript"),
+  ast: astHooks("javascript", javascriptManifest),
   calls: javascriptCallHooks,
   requestSchema: javascriptRequestSchema,
   grpcStubService: firstStub(jsGrpcStub, jsThriftStub),

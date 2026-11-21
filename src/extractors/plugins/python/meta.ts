@@ -9,6 +9,7 @@ import { extractPythonNameAliases, extractPythonTypeAliases } from "./type-alias
 import { extractPythonModuleValues } from "./module-values.js";
 import { AiosqlQueryResolver } from "./aiosql.js";
 import { extractPythonEntryPoints, extractPythonScheduledJobs } from "./entry-points.js";
+import type { Tree } from "web-tree-sitter";
 import type { LanguagePluginMeta, SecurityRule } from "../../../types/language-plugin.js";
 import { extendControlFlow } from "../../shared/control-flow-defaults.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
@@ -218,7 +219,8 @@ export const pythonMeta: LanguagePluginMeta = {
     // `httpx.Client(base_url=…)` held in a name: the base a request through it reaches (see http-clients.ts).
     httpClientRegistrations: (tree, sourceText) => extractPythonHttpClientRegistrations(tree, sourceText),
     nameAliases: (tree) => extractPythonNameAliases(tree),
-    moduleNames: (tree) => extractPythonModuleNames(tree),
+    // The hook exists exactly where the static manifest says the language states module names (impact asks the flag).
+    ...(pythonManifest.statesModuleNames ? { moduleNames: (tree: Tree) => extractPythonModuleNames(tree) } : {}),
     // A script's or module's own `repo = ClubRepo()` types the calls its top-level statements make.
     topLevelLocalTypes: (tree, sourceText) => pythonTopLevelLocalTypes(tree.rootNode, sourceText),
     // Module and class string constants another module's URL or route reads (see module-values.ts).
