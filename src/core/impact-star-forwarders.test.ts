@@ -23,6 +23,10 @@ const FILES: Record<string, string> = {
   "league/table.py": "def rank():\n    return 1\n\n\ndef relegate():\n    return 2\n",
   "league/ranks.py": "from league.table import rank\n\n\ndef top():\n    return rank()\n",
   "league/drops.py": "from league.table import relegate\n\n\ndef bottom():\n    return relegate()\n",
+  "league/sched/__init__.py": "from .clock import *\nfrom .legacy.clock import tick\n",
+  "league/sched/clock.py": "def kickoff():\n    return 1\n",
+  "league/sched/legacy/__init__.py": "",
+  "league/sched/legacy/clock.py": "def tick():\n    return 1\n\n\ndef whistle():\n    return 2\n",
   "web/decoy.ts": "import { tick } from './clock';\nexport const beat = () => tick();\n",
 };
 
@@ -63,5 +67,17 @@ describe("impact charges a file that hands a charged module on whole", () => {
   it("Python: the package file star-importing the edited module itself is charged", async () => {
     const r = await run("league/tasks/hooks.py", "from league.clock import add_job\n\n\ndef register_all():\n    return add_job('final')\n");
     expect(r.dependents).toContain("league/tasks/__init__.py");
+  });
+
+  it("a star export is followed to the file the import index resolves it to, not to every importee spelling its words", async () => {
+    // `from .clock import *` forwards league/sched/clock.py; league/sched/legacy/clock.py shares the word and is only imported by name.
+    expect(summary.starReexports?.["league/sched/__init__.py"]).toEqual({ ".clock": "league/sched/clock.py" });
+    const r = await run("league/sched/legacy/clock.py", "def tick():\n    return 1\n");
+    expect(r.dependents).not.toContain("league/sched/__init__.py");
+  });
+
+  it("a body edit that keeps every name charges no forwarder", async () => {
+    const r = await run("league/tasks/hooks.py", "from league.clock import add_job\n\n\ndef register():\n    return add_job('semi-final')\n");
+    expect(r.dependents).not.toContain("league/tasks/__init__.py");
   });
 });

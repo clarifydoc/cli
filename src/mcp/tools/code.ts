@@ -1779,8 +1779,14 @@ export function blastRadiusTool(ctx: ToolContext): McpTool {
         // A name nothing names says nothing about its importers: when none is named, list them all.
         if (!named.undecided && unseen.length < members.length) {
           namingReasons = named.files;
+          // A file that hands this one on whole (`export * from`, `from .x import *`) names no member, yet loses what it loses.
+          const [{ starForwarders }, { forwardingChain }] = await Promise.all([import("../../core/changed-symbols.js"), import("../../core/impact-diff.js")]);
+          const forwarded = args.adding === true ? new Map<string, string>() : forwardingChain(await starForwarders(ctx.store.analysisDir, loaded.summary, [path]), [...named.files.keys(), path], [path]);
+          for (const [fwd, via] of forwarded) {
+            named.files.set(fwd, [`re-exports ${via} whole`]);
+          }
           const nameSet = new Set(named.files.keys());
-          direct = direct.filter((f) => nameSet.has(f));
+          direct = [...direct.filter((f) => nameSet.has(f)), ...[...forwarded.keys()].filter((f) => !direct.includes(f))];
           imports = b.affectedFiles.filter((f) => !nameSet.has(f));
         }
       }

@@ -650,19 +650,12 @@ function narrowDependents(
     // Module-level names the change edited: the files that read them.
     for (const f of readers ?? []) (named.files.get(f) ?? named.files.set(f, []).get(f)!).push("reads a name the change edited");
     // A file that hands a charged or changed module on whole names no member of it, yet loses what the module loses — and so on up.
-    const forwarders = Object.entries(symbols.starForwarders ?? {});
-    if (forwarders.length) {
-      // The changed file itself is a seed too: a package file star-importing it holds no link to what it loses.
-      const reached = new Set([...named.files.keys(), file]);
-      for (let grew = true; grew; ) {
-        grew = false;
-        for (const [fwd, targets] of forwarders) {
-          const via = targets.find((t) => reached.has(t));
-          if (!via || reached.has(fwd) || changedFiles.includes(fwd)) continue;
-          reached.add(fwd);
-          named.files.set(fwd, [...(named.files.get(fwd) ?? []), `re-exports ${via} whole`]);
-          grew = true;
-        }
+    // Only a change that takes a name away (a removed, moved or re-typed function, a type member that changed) loses anything: a
+    // body edit keeps every name the forwarder offers. The changed file itself is a seed too: a package file star-importing it
+    // holds no link to what it loses.
+    if ((symbols.signatureChanges ?? []).some((c) => c.file === file) || types.some((c) => c.changed.length)) {
+      for (const [fwd, via] of forwardingChain(symbols.starForwarders, [...named.files.keys(), file], changedFiles)) {
+        named.files.set(fwd, [...(named.files.get(fwd) ?? []), `re-exports ${via} whole`]);
       }
     }
     byFile.set(file, new Set([...named.files.keys()].filter((f) => !changedFiles.includes(f))));
@@ -673,6 +666,28 @@ function narrowDependents(
     members.push(...targets.map((t) => ("symbol" in t ? { file, name: t.symbol } : { file, name: t.type, ...(t.mode === "added" ? { adding: true } : {}) })));
   }
   return byFile.size ? { byFile, why, members } : undefined;
+}
+
+/**
+ * The files that hand a reached module on whole, up the chain: forwarder → the reached file it forwards (`starForwarders`
+ * says which files each one forwards). `seeds` are the files already charged; `changedFiles` never are.
+ */
+export function forwardingChain(forwarders: Readonly<Record<string, readonly string[]>> | undefined, seeds: Iterable<string>, changedFiles: readonly string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const entries = Object.entries(forwarders ?? {});
+  if (!entries.length) return out;
+  const reached = new Set(seeds);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const [fwd, targets] of entries) {
+      const via = targets.find((t) => reached.has(t));
+      if (!via || reached.has(fwd) || changedFiles.includes(fwd)) continue;
+      reached.add(fwd);
+      out.set(fwd, via);
+      grew = true;
+    }
+  }
+  return out;
 }
 
 // ─── Renderers (CLI output) ─────────────────────────────────────────────────

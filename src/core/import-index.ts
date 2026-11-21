@@ -440,6 +440,14 @@ export function buildImportIndex(analyses: FileAnalysis[], subProjects?: readonl
     localFor: (file, name) => local.get(file)?.get(name) ?? null,
     sourceFor: (file, name) => source.get(file)?.get(name) ?? null,
     namespacesFor: (file) => namespaces.get(file) ?? [],
+    fileForModule: (file, src) => {
+      const key = `${file}\0${src}\0module`;
+      if (bySource.has(key)) return bySource.get(key)!;
+      // A module named as a whole (`export * from "./hooks"`, `from .hooks import *`): no name selects a member of a package.
+      const resolved = byPath.has(file) ? resolveSpecifier(file, { source: src, specifiers: [], isDefault: false, isNamespace: true, isType: false, line: 0 }, undefined) : null;
+      bySource.set(key, resolved);
+      return resolved;
+    },
     fileForSource: (file, src) => {
       const key = `${file}\0${src}`;
       if (bySource.has(key)) return bySource.get(key)!;
@@ -453,6 +461,22 @@ export function buildImportIndex(analyses: FileAnalysis[], subProjects?: readonl
       return resolved;
     },
   };
+}
+
+/**
+ * Where each file's star re-exports (`export * from "./hooks"`, `from .hooks import *`) resolve through the index:
+ * file → source as written → project file. A source that names no project file is left out.
+ */
+export function starReexportTargets(analyses: readonly FileAnalysis[], index: ImportIndex): Record<string, Record<string, string>> {
+  const out: Record<string, Record<string, string>> = {};
+  for (const a of analyses) {
+    for (const e of a.exports ?? []) {
+      if (e.name !== "*" || !e.source) continue;
+      const target = index.fileForModule?.(a.filePath, e.source);
+      if (target && target !== a.filePath) (out[a.filePath] ??= {})[e.source] = target;
+    }
+  }
+  return out;
 }
 
 /**

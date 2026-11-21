@@ -18,6 +18,8 @@ export interface ImportIndex {
   namespacesFor(file: string): string[];
   /** The project file an import of `source` in `file` loads — any import of it, bound or not. */
   fileForSource?(file: string, source: string): string | null;
+  /** The project file a module specifier names as a whole (no member picked), whether or not an import row spells it. */
+  fileForModule?(file: string, source: string): string | null;
 }
 
 /** A class as declared in one file. */

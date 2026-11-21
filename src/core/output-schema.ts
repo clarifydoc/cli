@@ -140,6 +140,7 @@ export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {
   docDrift: "optional",
   historySecrets: "optional",
   typeOnlyEdges: "optional",
+  starReexports: "optional",
   dynamicImportEdges: "optional",
   paramOrigins: "optional",
   paramColumns: "optional",

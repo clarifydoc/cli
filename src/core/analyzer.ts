@@ -180,7 +180,7 @@ import { joinMqttTopicFilters, resolveMqttTopicHoles, scopeChannelTopics } from 
 import { resolveQueueEnvTargets } from "./queue-env-targets.js";
 import type { ProjectContext } from "../types/project.js";
 import { buildComponentLaunches, buildFormLaunches, markStartupScreens } from "./component-launches.js";
-import { buildImportIndex, importResolveContext, resolveImportSource, resolveDataSourceStringConstants, type ImportIndex } from "./import-index.js";
+import { buildImportIndex, starReexportTargets, importResolveContext, resolveImportSource, resolveDataSourceStringConstants, type ImportIndex } from "./import-index.js";
 import { buildModuleValueLookup, resolveBindingConditions, resolveRouteTemplates, resolveTargetRefs } from "./module-values.js";
 import { buildImportDirectoryResolver } from "./import-directories.js";
 import { applyAttributeRequests } from "./attribute-requests.js";
@@ -1279,6 +1279,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Out-of-line definitions written through a namespace their file never opens join their class.
   placeNamespacedParts(allAnalyses);
   const importIndex = buildImportIndex(allAnalyses, subProjects);
+  const starReexports = starReexportTargets(allAnalyses, importIndex);
   const knownFiles = new Set(allAnalyses.map((a) => a.filePath));
   const analysisByPath = new Map(allAnalyses.map((a) => [a.filePath, a]));
   const subProjectRoots = new Map(subProjects.map((p) => [p.id, p.root.replace(/\\/g, "/").replace(/\/+$/, "")]));
@@ -2606,6 +2607,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
     files: allAnalyses.map((a) => a.filePath),
     componentGraph,
     ...(Object.keys(typeOnly).length ? { typeOnlyEdges: typeOnly } : {}),
+    ...(Object.keys(starReexports).length ? { starReexports } : {}),
     ...(Object.keys(dynamicImportEdges).length ? { dynamicImportEdges } : {}),
     linkGraph,
     interactiveElements: allInteractiveElements,

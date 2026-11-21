@@ -5468,6 +5468,12 @@ export interface ProjectAnalysis {
    */
   typeOnlyEdges?: Record<string, string[]>;
   /**
+   * Where each star re-export resolves, by the import index: file → the source as written (`export * from
+   * "./hooks"`, `from .hooks import *`) → the project file it names. Only resolved sources are listed; impact
+   * follows them instead of guessing from path words.
+   */
+  starReexports?: Record<string, Record<string, string>>;
+  /**
    * Edges of `componentGraph` that only dynamic imports state (`import("./x")`,
    * core/import-kinds.ts): loaded on demand, not when the importer loads, so
    * cycles are judged without them, like type-only edges.
