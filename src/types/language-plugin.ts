@@ -2224,10 +2224,8 @@ export interface ParserFrontEnd {
   extensions?: readonly string[];
 }
 
-/** A regex language's taint reader (`meta.regexTaint`). */
+/** A regex language's taint reader (`meta.regexTaint`); the file is parsed with the grammar its manifest registers. */
 export interface RegexTaint {
-  /** The registered grammar key the file is parsed with. */
-  grammar: string;
   /** Source that can hold a handler at all; a file it does not match is never parsed. */
   gate: RegExp;
   taint(tree: import("web-tree-sitter").Tree, sourceText: string, filePath: string, facts?: import("./analysis.js").TaintFacts): import("./analysis.js").SecurityIssue[];

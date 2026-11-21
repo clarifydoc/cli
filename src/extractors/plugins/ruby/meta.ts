@@ -21,7 +21,7 @@ export const rubyMeta: LanguagePluginMeta = {
   ...rubyManifest,
   regexSpec: rubySpec,
   // Request input followed to a sink in a controller action or route block, on a tree-sitter-ruby parse (taint.ts).
-  regexTaint: { grammar: "ruby", gate: /\bparams\b|\brequest\.(?:params|query_parameters|GET|POST)|\bcookies\[/, taint: rubyTaint },
+  regexTaint: { gate: /\bparams\b|\brequest\.(?:params|query_parameters|GET|POST)|\bcookies\[/, taint: rubyTaint },
   knownPackages: rubygemsPackages,
   entities: new RubyEntityExtractor(),
   // Rails routes move from config/routes.rb onto the action that serves them.

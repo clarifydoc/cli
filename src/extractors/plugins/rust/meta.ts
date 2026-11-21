@@ -39,7 +39,7 @@ export const rustMeta: LanguagePluginMeta = {
   // Functions and calls read by the grammars-v4 Rust grammar while the `antlr:rust` feature is on (antlr.ts).
   antlr: { grammar: "rust", load: () => import("./antlr.js").then((m) => m.readRust) },
   // Request input followed to a sink in an axum, actix-web or rocket handler, on a tree-sitter-rust parse of files that name the framework (taint.ts).
-  regexTaint: { grammar: "rust", gate: /\b(?:axum|actix_web|rocket|poem)\b/, taint: rustTaint },
+  regexTaint: { gate: /\b(?:axum|actix_web|rocket|poem)\b/, taint: rustTaint },
   routeResolvers: [rocketMountResolver, rustNestResolver],
   // Multi-line strings, and one-line strings declaring a Rust item, are blanked so
   // their code-shaped text is not read as functions; the data sources (SQL in

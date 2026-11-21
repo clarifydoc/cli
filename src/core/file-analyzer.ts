@@ -345,8 +345,11 @@ function mergeTaint(raw: SecurityIssue[], sourceText: string, issues: SecurityIs
 async function regexTaintOf(language: Language, sourceText: string, filePath: string, skip: () => boolean): Promise<{ issues: SecurityIssue[]; facts: TaintFacts } | null> {
   const reader = pluginFor(language)?.regexTaint;
   if (!reader || !featureEnabled("taint") || skip() || sourceText.length > FRONT_END_MAX_CHARS || !reader.gate.test(sourceText)) return null;
+  // The manifest registers the one grammar (a regex language's taint reader is its only user).
+  const grammar = Object.keys(manifestFor(language)?.grammar?.variants ?? {})[0];
+  if (!grammar) return null;
   try {
-    const parser = await getGrammarParser(reader.grammar);
+    const parser = await getGrammarParser(grammar);
     const tree = parser.parse(normalizeSource(sourceText));
     if (!tree) return null;
     try {

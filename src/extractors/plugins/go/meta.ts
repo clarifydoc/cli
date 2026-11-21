@@ -69,7 +69,7 @@ export const goMeta: LanguagePluginMeta = {
   // Functions and calls read by the grammars-v4 Go grammar, while the `antlr:go` feature is on (antlr.ts).
   antlr: { grammar: "go", load: () => import("./antlr.js").then((m) => m.readGo) },
   // Request input followed to a sink in a handler, on a tree-sitter-go parse of files that name a handler type (taint.ts).
-  regexTaint: { grammar: "go", gate: /\b(?:gin\.Context|echo\.Context|fiber\.Ctx|buffalo\.Context|http\.Request)\b/, taint: goTaint },
+  regexTaint: { gate: /\b(?:gin\.Context|echo\.Context|fiber\.Ctx|buffalo\.Context|http\.Request)\b/, taint: goTaint },
   builtinTypes: GO_BUILTINS,
   knownPackages: goPackages,
   entities: new GoEntityExtractor(),
