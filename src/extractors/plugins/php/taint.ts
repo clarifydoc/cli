@@ -76,8 +76,8 @@ const spec: TaintSpec = {
     { callee: /^pg_query$/, arg: 1, category: "sql-injection", cwe: "CWE-89", what: "the SQL text" },
     { callee: /^(?:exec|shell_exec|system|passthru|popen|proc_open|pcntl_exec)$/, category: "command-injection", cwe: "CWE-78", what: "the command" },
     { callee: /^(?:file_get_contents|fopen|readfile|file|unlink|file_put_contents|fpassthru|parse_ini_file|show_source|highlight_file)$|^(?:Storage|File)::(?:get|put|delete|download)$|^response\(\)->(?:download|file)$/, category: "path-traversal", cwe: "CWE-22", what: "the file path" },
-    { callee: /^(?:curl_init|fsockopen|get_headers)$|^Http::(?:get|post|put|patch|delete|send)$|^\$\w*(?:client|http|guzzle)\w*->(?:request|get|post|put|patch|delete)$/i, category: "ssrf", hostSensitive: true, cwe: "CWE-918", what: "the URL" },
-    { callee: /^redirect$|^redirect\(\)->(?:to|away)$|^Redirect::(?:to|away)$/, category: "open-redirect", hostSensitive: true, cwe: "CWE-601", what: "the redirect target" },
+    { callee: /^(?:curl_init|fsockopen|get_headers)$|^Http::(?:get|post|put|patch|delete|send)$|^\$\w*(?:client|http|guzzle)\w*->(?:request|get|post|put|patch|delete)$/i, category: "ssrf", cwe: "CWE-918", what: "the URL" },
+    { callee: /^redirect$|^redirect\(\)->(?:to|away)$|^Redirect::(?:to|away)$/, category: "open-redirect", cwe: "CWE-601", what: "the redirect target" },
     { callee: /^(?:eval|assert|create_function|unserialize)$/, category: "eval-exec", cwe: "CWE-95", what: "the code" },
   ],
 };

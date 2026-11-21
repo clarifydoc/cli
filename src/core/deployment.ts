@@ -697,8 +697,10 @@ const NON_ADDRESS_KEY_RE = /(?:password|passwd|user|username|name|topic|queue|db
  * credential or label contributes no bare `host:port`. A value with a placeholder in the host names nothing.
  */
 function hostsOfEnvValue(key: string, value: string): string[] {
+  // Both shapes carry a `:` (a scheme or a port): most values (flags, names, paths) carry none.
+  if (!value.includes(":")) return [];
   const hosts = new Set<string>();
-  for (const m of value.matchAll(ANY_URL_HOST_RE)) hosts.add(m[1]!.toLowerCase());
+  if (value.includes("://")) for (const m of value.matchAll(ANY_URL_HOST_RE)) hosts.add(m[1]!.toLowerCase());
   if (!NON_ADDRESS_KEY_RE.test(key)) {
     for (const part of value.split(/[,\s;]+/)) {
       const m = part.match(/^([A-Za-z][A-Za-z0-9_.-]*):\d{2,5}$/);

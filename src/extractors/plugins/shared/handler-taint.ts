@@ -147,14 +147,15 @@ const MAX_DEPTH = 2;
  */
 const GUARD_RE = /\b(?:\w*safe\w*|\w*[Vv]alid\w*|\w*[Aa]llowed\w*|\w*whitelist\w*|\w*[Ww]ithin\w*|\w*[Ii]nside\w*|startswith|startsWith|StartsWith|endswith|endsWith|EndsWith|commonpath|is_relative_to|isAbsolute|realpath|IsMatch|matches|preg_match)\s*\(|\bin\s+[A-Z_]{3,}\b|\.includes\s*\(/;
 
+/** Sinks that send the request to a host (redirect, outbound URL): a value whose host the code fixed (`TaintSpec.leadingOperand`) does not reach them. */
+const HOST_CATEGORIES: ReadonlySet<SecurityCategory> = new Set<SecurityCategory>(["open-redirect", "ssrf"]);
+
 export interface TaintSink {
   callee: RegExp;
   /** Which argument carries the danger (0 = first). */
   arg?: number;
   category: SecurityCategory;
   cwe: string;
-  /** The sink sends the request to a host (redirect, outbound URL): a value whose host the code fixed (`TaintSpec.leadingOperand`) does not reach it. */
-  hostSensitive?: true;
   /** What reaches it, for the message: "the SQL text", "the command". */
   what: string;
   /** The call's arguments must satisfy this for the sink to apply (`exec.Command("sh", "-c", x)`: a shell). */
@@ -469,7 +470,7 @@ function taintFunction(fn: Node, params: ReadonlyMap<string, Taint | null>, ctx:
         const direct = through(isTainted(codeText(arg), arg.text), arg);
         const from = direct && fixesHost(arg) ? { ...direct, hostFixed: true as const } : direct;
         if (from === null || (from.pathSafe && sink.category === "path-traversal")) continue;
-        if (from.hostFixed && sink.hostSensitive) continue;
+        if (from.hostFixed && HOST_CATEGORIES.has(sink.category)) continue;
         const line = node.startPosition.row + 1;
         const sinkNote = `reaches ${sink.what} of ${c.callee}()`;
         const flow = from.path[from.path.length - 1]?.line === line

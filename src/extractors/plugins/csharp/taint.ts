@@ -81,8 +81,8 @@ const spec: TaintSpec = {
     { callee: /^(?:Process\.Start|new ProcessStartInfo)$/, category: "command-injection", cwe: "CWE-78", what: "the command" },
     { callee: /^(?:(?:System\.IO\.)?File\.(?:ReadAllText|ReadAllTextAsync|ReadAllBytes|ReadAllBytesAsync|ReadAllLines|OpenRead|OpenWrite|Open|WriteAllText|WriteAllTextAsync|WriteAllBytes|Delete|Copy|Move)|new (?:FileStream|StreamReader|StreamWriter|FileInfo)|PhysicalFile)$/, category: "path-traversal", cwe: "CWE-22", what: "the file path" },
     // An HTTP client's verbs (a cache provider's `GetAsync(key)` is no request).
-    { callee: /^(?:this\.)?_?\w*(?:[Hh]ttp|[Cc]lient|[Ww]eb)\w*\.(?:GetAsync|GetStringAsync|GetStreamAsync|GetByteArrayAsync|PostAsync|PutAsync|DeleteAsync|SendAsync|GetFromJsonAsync|PostAsJsonAsync|DownloadString|DownloadStringTaskAsync|DownloadFileTaskAsync)$|^WebRequest\.Create$/, category: "ssrf", hostSensitive: true, cwe: "CWE-918", what: "the URL" },
-    { callee: /^(?:Redirect|RedirectPermanent|Response\.Redirect)$/, category: "open-redirect", hostSensitive: true, cwe: "CWE-601", what: "the redirect target" },
+    { callee: /^(?:this\.)?_?\w*(?:[Hh]ttp|[Cc]lient|[Ww]eb)\w*\.(?:GetAsync|GetStringAsync|GetStreamAsync|GetByteArrayAsync|PostAsync|PutAsync|DeleteAsync|SendAsync|GetFromJsonAsync|PostAsJsonAsync|DownloadString|DownloadStringTaskAsync|DownloadFileTaskAsync)$|^WebRequest\.Create$/, category: "ssrf", cwe: "CWE-918", what: "the URL" },
+    { callee: /^(?:Redirect|RedirectPermanent|Response\.Redirect)$/, category: "open-redirect", cwe: "CWE-601", what: "the redirect target" },
   ],
 };
 

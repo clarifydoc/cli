@@ -2096,6 +2096,10 @@ interface LinkMemos {
   methodLeaves?: Map<string, Array<{ file: string; symbol: string; className: string }>>;
   bindingFilesByDir?: Map<string, FileAnalysis[]>;
   globalMembers?: Map<string, Array<{ a: FileAnalysis; g: GlobalMemberDef }>>;
+  /** `ownerPathType` per (from file, sub-project, written path). */
+  ownerPathType?: Map<string, { typeName: string; typeFile: string } | null>;
+  /** The value-flow host's `classOfType` per (file, written type). */
+  classOfType?: Map<string, { file: string; name: string } | null>;
 }
 
 /** Lookup tables built once per buildSymbolLinks run, shared by every call resolution. */
@@ -3146,16 +3150,12 @@ function classNameMember(
   // body (line ranges), never a namesake nested in another class. A path no candidate holds keeps the lookup below.
   let nestedRange: Map<string, { line: number; endLine: number; bases: boolean }> | undefined;
   if (candidateFiles?.length && parts.length >= 3 && parts.slice(0, -1).every((p) => /^[A-Z]/.test(p))) {
-    ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+    const analysisByFile = analysisByFileOf(ctx);
     const found = new Map<string, { line: number; endLine: number; bases: boolean }>();
     for (const f of candidateFiles) {
-      const classes = ctx.analysisByFile.get(f)?.classes;
+      const classes = analysisByFile.get(f)?.classes;
       if (!classes) continue;
-      let owners = classes.filter((c) => c.name === declaredClass);
-      for (const name of parts.slice(1, -1)) {
-        const outer = owners;
-        owners = classes.filter((c) => c.name === name && outer.some((o) => o !== c && o.line <= c.line && c.endLine <= o.endLine && (o.line < c.line || c.endLine < o.endLine)));
-      }
+      const owners = classesNestedAlong(classes, classes.filter((c) => c.name === declaredClass), parts.slice(1, -1));
       if (owners.length === 1) found.set(f, { line: owners[0]!.line, endLine: owners[0]!.endLine, bases: !!owners[0]!.extends || owners[0]!.implements.length > 0 || !!owners[0]!.mixins?.length });
     }
     if (found.size > 0) {
@@ -4620,6 +4620,25 @@ function valueFlowLinks(links: readonly SymbolLink[], ctx: LinkContext): SymbolL
   if (!ctx.invokeSites) return [];
   const analysisAt = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a])));
   const NAME = /^[\w$]+$/;
+  const classOfTypeUncached = (file: string, type: string): { file: string; name: string } | null => {
+    const language = ctx.languageOf.get(file) as Language | undefined;
+    // An elaborated type (`const struct club_ops *`) names its class once the keywords are off.
+    const name = language ? receiverTypeName(type.replace(/\b(?:struct|union|enum|class|const|volatile)\s+/g, ""), language) : null;
+    if (!name) return null;
+    const project = ctx.projectOf.get(file) ?? "root";
+    const located = locateClass(ctx, name, file, project);
+    if (located && (ctx.classAt.get(memberKey(located, name))?.properties.length ?? 0) > 0) return { file: located, name };
+    // A typedef of a struct (`typedef struct club_ops club_ops_t`) names the class it stands for.
+    const whole = located ? name : dealias(ctx, name, file);
+    const target = !located && whole !== name ? locateClass(ctx, whole, file, project) : null;
+    if (target) return { file: target, name: whole };
+    // Forward declarations (`struct club_ops;`) are classes without a body that make the name ambiguous or hide the
+    // struct: the one declaration with fields the include closure of the file reaches is the struct, never a namesake outside it.
+    if (!importsShareScope(language)) return located ? { file: located, name } : null;
+    const seen = includeClosure(ctx, file);
+    const bodies = (ctx.classFiles.get(whole) ?? []).filter((f) => seen.has(f) && (ctx.classAt.get(memberKey(f, whole))?.properties.length ?? 0) > 0);
+    return bodies.length === 1 ? { file: bodies[0]!, name: whole } : located ? { file: located, name } : null;
+  };
   return solveValueFlow({
     analyses: ctx.analyses,
     links,
@@ -4644,23 +4663,13 @@ function valueFlowLinks(links: readonly SymbolLink[], ctx: LinkContext): SymbolL
       return link ? { file: link.targetFile, symbol: link.targetSymbol, line: link.targetLine } : null;
     },
     classOfType(file, type) {
-      const language = ctx.languageOf.get(file) as Language | undefined;
-      // An elaborated type (`const struct club_ops *`) names its class once the keywords are off.
-      const name = language ? receiverTypeName(type.replace(/\b(?:struct|union|enum|class|const|volatile)\s+/g, ""), language) : null;
-      if (!name) return null;
-      const project = ctx.projectOf.get(file) ?? "root";
-      const located = locateClass(ctx, name, file, project);
-      if (located && (ctx.classAt.get(memberKey(located, name))?.properties.length ?? 0) > 0) return { file: located, name };
-      // A typedef of a struct (`typedef struct club_ops club_ops_t`) names the class it stands for.
-      const whole = located ? name : dealias(ctx, name, file);
-      const target = !located && whole !== name ? locateClass(ctx, whole, file, project) : null;
-      if (target) return { file: target, name: whole };
-      // Forward declarations (`struct club_ops;`) are classes without a body that make the name ambiguous or hide the
-      // struct: the one declaration with fields the include closure of the file reaches is the struct, never a namesake outside it.
-      if (!pluginFor(language!)?.importsShareScope) return located ? { file: located, name } : null;
-      const seen = includeClosure(ctx, file);
-      const bodies = (ctx.classFiles.get(whole) ?? []).filter((f) => seen.has(f) && (ctx.classAt.get(memberKey(f, whole))?.properties.length ?? 0) > 0);
-      return bodies.length === 1 ? { file: bodies[0]!, name: whole } : located ? { file: located, name } : null;
+      // Asked for every cell and invoke a type holds: one answer per (file, type) a run.
+      const memo = (ctx.memos.classOfType ??= new Map());
+      const key = `${file}\0${type}`;
+      if (memo.has(key)) return memo.get(key)!;
+      const found = classOfTypeUncached(file, type);
+      memo.set(key, found);
+      return found;
     },
     parentOf(file, name) {
       const parent = parentClassOf(ctx, name, file);
@@ -9245,13 +9254,28 @@ function buildTypePaths(analyses: readonly FileAnalysis[]): Map<string, Array<{ 
  * (`declaredTypeName` asks from the file already found, where the owner's name is known to be that file's).
  */
 function ownerPathType(ctx: LinkContext, written: string, from: string, projectId: string | undefined): { typeName: string; typeFile: string } | null {
-  const analysisByFile = (ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a])));
+  const memo = (ctx.memos.ownerPathType ??= new Map());
+  const key = `${from}\0${projectId ?? ""}\0${written}`;
+  if (memo.has(key)) return memo.get(key)!;
+  const analysisByFile = analysisByFileOf(ctx);
   const lang = ctx.languageOf.get(from) ?? "";
-  return ownerPathIn(written, {
+  const found = ownerPathIn(written, {
     fileOf: (name) => typeFileFor(ctx, name, from, projectId ?? ctx.projectOf.get(from) ?? ""),
     filesNamed: (name) => (ctx.classFiles.get(name) ?? []).filter((f) => sameTypeSpace(from, lang, f, ctx.languageOf.get(f) ?? "")),
     classesOf: (f) => analysisByFile.get(f)?.classes,
   });
+  memo.set(key, found);
+  return found;
+}
+
+/** The file → analysis map of the run, built on first use. */
+function analysisByFileOf(ctx: LinkContext): Map<string, FileAnalysis> {
+  return (ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a])));
+}
+
+/** Whether `written` (`Right.Builder`) is a type named through its owner in `language` (`ownerPathTypes`). */
+function writtenThroughOwner(language: string | undefined, written: string): boolean {
+  return written.includes(".") && /^[A-Z]/.test(written) && !!manifestFor((language ?? "") as Language)?.ownerPathTypes;
 }
 
 /** What `ownerPathIn` reads of the project: where a class name is declared and the classes of a file. */
@@ -9273,8 +9297,11 @@ function ownerPathIn(written: string, env: OwnerPathEnv, depth = 0): { typeName:
   const owner = segments[0]!;
   const ownerFile = env.fileOf(owner);
   if (!ownerFile) {
-    const holders = env.filesNamed(owner).filter((f) => nestedClassByPath(env.classesOf(f) ?? [], written));
-    return holders.length === 1 ? { typeName: nestedClassByPath(env.classesOf(holders[0]!) ?? [], written)!, typeFile: holders[0]! } : null;
+    const holders = env.filesNamed(owner).flatMap((f) => {
+      const typeName = nestedClassByPath(env.classesOf(f) ?? [], written);
+      return typeName ? [{ typeName, typeFile: f }] : [];
+    });
+    return holders.length === 1 ? holders[0]! : null;
   }
   const classes = env.classesOf(ownerFile) ?? [];
   const own = nestedClassByPath(classes, written);
@@ -9299,18 +9326,24 @@ function nestedClassByPath(classes: readonly ClassInfo[], written: string): stri
   const gen = classes.find((c) => c.nestedPath === written);
   const leaf = segments[segments.length - 1]!;
   if (gen) return classes.filter((c) => c.name === gen.name).length === 1 ? gen.name : null;
-  let owners = classes.filter((c) => c.name === segments[0] && !c.synthetic);
-  for (const name of segments.slice(1)) {
-    const outer = owners;
-    owners = classes.filter((c) => c.name === name && outer.some((o) => o !== c && o.line <= c.line && c.endLine <= o.endLine && (o.line < c.line || c.endLine < o.endLine)));
-    if (owners.length === 0) return null;
-  }
+  const owners = classesNestedAlong(classes, classes.filter((c) => c.name === segments[0] && !c.synthetic), segments.slice(1));
   return owners.length === 1 && classes.filter((c) => c.name === leaf).length === 1 ? leaf : null;
+}
+
+/** The classes each next name of an owner path stands for inside the previous ones' lines (`Right` → `Builder`), within one file's `classes`. */
+function classesNestedAlong(classes: readonly ClassInfo[], owners: readonly ClassInfo[], names: readonly string[]): readonly ClassInfo[] {
+  let current = owners;
+  for (const name of names) {
+    const outer = current;
+    current = classes.filter((c) => c.name === name && outer.some((o) => o !== c && o.line <= c.line && c.endLine <= o.endLine && (o.line < c.line || c.endLine < o.endLine)));
+    if (current.length === 0) break;
+  }
+  return current;
 }
 
 /** The name `file` declares the class at path `written` under (`Club` for `League::Club` in `module League`), else `written`. */
 function declaredTypeName(ctx: LinkContext, file: string, written: string): string {
-  if (written.includes(".") && /^[A-Z]/.test(written) && manifestFor((ctx.languageOf.get(file) ?? "") as Language)?.ownerPathTypes) return ownerPathType(ctx, written, file, undefined)?.typeName ?? written;
+  if (writtenThroughOwner(ctx.languageOf.get(file), written)) return ownerPathType(ctx, written, file, undefined)?.typeName ?? written;
   if (!written.includes("::") || ctx.classAt.has(memberKey(file, written))) return written;
   // `LeagueCore::Valve` where the file declares `Valve` in namespace `LeagueCore`: the class as declared.
   const path = written.replace(/^::/, "");
@@ -9549,7 +9582,7 @@ function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, pro
 }
 
 function typeFileForUncached(ctx: LinkContext, typeName: string, sourceFile: string, projectId: string): string | null {
-  if (typeName.includes(".") && /^[A-Z]/.test(typeName) && manifestFor((ctx.languageOf.get(sourceFile) ?? "") as Language)?.ownerPathTypes) return ownerPathType(ctx, typeName, sourceFile, projectId)?.typeFile ?? null;
+  if (writtenThroughOwner(ctx.languageOf.get(sourceFile), typeName)) return ownerPathType(ctx, typeName, sourceFile, projectId)?.typeFile ?? null;
   const named = typeFileByImportedNamespace(ctx, typeName, sourceFile);
   if (named !== undefined) return named;
   const file = typeFileForInner(ctx, typeName, sourceFile, projectId);
