@@ -314,7 +314,7 @@ describe("module-level names: an edit on one is an edit of that name", () => {
       { name: "league_router", line: 6, endLine: 9 },
     ],
   };
-  const run = (ranges: Array<[number, number]>) => symbolsInHunks(new Map([["settings.py", settings]]), new Map([["settings.py", ranges]]));
+  const run = (ranges: Array<[number, number]>) => symbolsInHunks(new Map([["settings.py", settings as never]]), new Map([["settings.py", ranges]]));
 
   it("a hunk inside a name's lines names it and leaves the file out of moduleLevel", () => {
     const found = run([[4, 4]]);
