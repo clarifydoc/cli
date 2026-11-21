@@ -26,7 +26,6 @@ const PRIMITIVES = new Set([
   "intptr_t", "uintptr_t", "int8_t", "int16_t", "int32_t", "int64_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t", "_Bool", "string", "FILE",
 ]);
 const FN_TYPE = /function|\(\s*[*^]|Callback|Handler|Callable|Delegate|Listener/;
-/** A header stem or a class name as one comparable key: `Club_Squad`, `club-squad` and `ClubSquad` agree. */
 const LITERALS = new Set(["NULL", "nullptr", "true", "false", "this", "TRUE", "FALSE", "nil"]);
 /** Words that make a type's name one a callable has (`handler_t`, `ClubCallback`, `sign_fn`). */
 const TYPE_WORDS = new Set([
