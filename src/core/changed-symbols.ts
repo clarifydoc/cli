@@ -4,6 +4,7 @@ import { byOrdinal } from "./ordinal.js";
 import type { Confidence, FileAnalysis, ImportInfo, ProjectAnalysis, SymbolLink } from "../types/analysis.js";
 import { GIT_SAFE_CONFIG, GIT_SAFE_DIFF } from "./git-safe.js";
 import { importersOf } from "./importers.js";
+import { astHooksFor } from "../extractors/registry.js";
 
 /** New-side line ranges a diff changed, per project-relative file (1-based, inclusive). */
 export type ChangedHunks = Map<string, Array<[number, number]>> & {
@@ -108,6 +109,8 @@ export type HunkSpans = Pick<FileAnalysis, "functions" | "classes"> & {
   imports?: ReadonlyArray<{ line: number }>;
   /** The names the file forwards from what it imports (a re-export, or an export named like an import): an edit to its imports can change what it offers them. */
   reexports?: string[];
+  /** The file's language: whether its plugin states module-level names decides how the lines above a function are read. */
+  language?: FileAnalysis["language"];
   /** The names the file binds at its top level and the lines each owns (`FileAnalysis.moduleNames`). */
   moduleNames?: ReadonlyArray<{ name: string; line: number; endLine: number }>;
 };
@@ -172,8 +175,9 @@ export function symbolsInHunks(
         const inImports = (a.functions.length || a.classes.length) && lines.length && s >= Math.min(...lines) && e <= Math.max(...lines);
         // Lines right above a definition — a decorator written (or being written) there, the blank line before it —
         // are that definition's: the change is to it, whoever calls it. (Inside a type they stay the type's: a member
-        // added between two others is judged by the type's comparison.)
-        const below = inImports || typeSpans.some((t) => t.line <= s && e <= t.endLine) ? undefined : spans.find((sp) => sp.line === e + 1);
+        // added between two others is judged by the type's comparison.) Only where the language's plugin states its module-level
+        // names (the `moduleNames` hook): there a constant above a function is a name of its own, so the line is no constant.
+        const below = !(a.language && astHooksFor(a.language)?.moduleNames) || inImports || typeSpans.some((t) => t.line <= s && e <= t.endLine) ? undefined : spans.find((sp) => sp.line === e + 1);
         if (below) {
           symbols.set(`${file}::${below.symbol}`, below);
           continue;
@@ -296,7 +300,7 @@ export async function loadFileAnalyses(analysisDir: string, files: readonly stri
       const a = JSON.parse(await readFile(join(analysisDir, `${f}.json`), "utf8")) as FileAnalysis;
       const imported = new Set((a.imports ?? []).flatMap((i) => [...i.specifiers, ...Object.keys(i.aliases ?? {})]));
       const reexports = (a.exports ?? []).filter((e) => e.kind === "re-export" || imported.has(e.name)).flatMap((e) => (e.sourceName ? [e.name, e.sourceName] : [e.name]));
-      out.set(f, { functions: a.functions ?? [], classes: a.classes ?? [], imports: (a.imports ?? []).map((i) => ({ line: i.line })), ...(reexports.length ? { reexports } : {}), ...(a.moduleNames?.length ? { moduleNames: a.moduleNames } : {}) });
+      out.set(f, { functions: a.functions ?? [], classes: a.classes ?? [], imports: (a.imports ?? []).map((i) => ({ line: i.line })), ...(a.language ? { language: a.language } : {}), ...(reexports.length ? { reexports } : {}), ...(a.moduleNames?.length ? { moduleNames: a.moduleNames } : {}) });
     } catch {
       // Not analyzed (new since the analysis, or not a source file).
     }
@@ -758,11 +762,11 @@ export async function starForwarders(analysisDir: string, summary: Pick<ProjectA
     if (!stars.length) continue;
     const targets = new Set<string>();
     for (const e of stars) {
-      const last = (e.source!.split("/").pop() ?? "").replace(/\.[cm]?[jt]sx?$/, "").split(".").filter(Boolean).pop();
+      // The importee whose path spells the source's words (`.hooks`, `./hooks.service`, `pkg.hooks`): which row reaches which file is not resolved, so a package folder over-matches rather than misses.
+      const wanted = pathWords(e.source!);
       for (const t of summary.componentGraph[f] ?? []) {
-        const parts = (t.split("/").pop() ?? t).split(".")[0] ?? "";
-        const stem = parts === "__init__" || parts === "index" ? t.split("/").slice(-2, -1)[0] : parts;
-        if (stem === last) targets.add(t);
+        const have = new Set(pathWords(t));
+        if (wanted.length && wanted.every((w) => have.has(w))) targets.add(t);
       }
     }
     if (targets.size) out[f] = [...targets].sort(byOrdinal);

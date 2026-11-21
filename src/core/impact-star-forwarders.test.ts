@@ -59,4 +59,9 @@ describe("impact charges a file that hands a charged module on whole", () => {
     const r = await run("league/table.py", "def rank():\n    return 1\n\n\n@memoize\ndef relegate():\n    return 2\n");
     expect(r.dependents).toEqual(["league/drops.py"]);
   });
+
+  it("Python: the package file star-importing the edited module itself is charged", async () => {
+    const r = await run("league/tasks/hooks.py", "from league.clock import add_job\n\n\ndef register_all():\n    return add_job('final')\n");
+    expect(r.dependents).toContain("league/tasks/__init__.py");
+  });
 });

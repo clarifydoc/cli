@@ -273,7 +273,7 @@ export function computeImpactDiff(
   // Importee → importers: the narrowed files' test reach and the sample chains below both walk it.
   const reverseGraph = importersOf(summary.componentGraph);
   // Which changed files the diff's lines let us judge by member, and who names what changed in them.
-  const narrowing = narrowDependents(summary, changedFiles, options?.symbols, new Set((options?.removedFiles ?? []).map(normalizePath)));
+  const narrowing = narrowDependents(summary, changedFiles, options?.symbols);
   for (const file of changedFiles) {
     const b = blastByFile.get(file);
     if (!b) continue;
@@ -614,7 +614,6 @@ function narrowDependents(
   summary: ProjectAnalysis,
   changedFiles: readonly string[],
   symbols: NonNullable<Parameters<typeof computeImpactDiff>[2]>["symbols"],
-  removedFiles: ReadonlySet<string> = new Set(),
 ): { byFile: Map<string, Set<string>>; why: Map<string, string[]>; members: Array<{ file: string; name: string; adding?: boolean }> } | undefined {
   if (!symbols?.hunks?.size) return undefined;
   const moduleOnly = new Set(symbols.moduleOnly ?? symbols.moduleLevel);
@@ -650,10 +649,11 @@ function narrowDependents(
     }
     // Module-level names the change edited: the files that read them.
     for (const f of readers ?? []) (named.files.get(f) ?? named.files.set(f, []).get(f)!).push("reads a name the change edited");
-    // A file that hands a charged (or removed) module on whole names no member of it, yet loses what the module loses — and so on up.
+    // A file that hands a charged or changed module on whole names no member of it, yet loses what the module loses — and so on up.
     const forwarders = Object.entries(symbols.starForwarders ?? {});
     if (forwarders.length) {
-      const reached = new Set([...named.files.keys(), ...(removedFiles.has(file) ? [file] : [])]);
+      // The changed file itself is a seed too: a package file star-importing it holds no link to what it loses.
+      const reached = new Set([...named.files.keys(), file]);
       for (let grew = true; grew; ) {
         grew = false;
         for (const [fwd, targets] of forwarders) {
