@@ -484,15 +484,63 @@ describe("detectDeployment — broker URLs held in an env var", () => {
         "      GARAGE_API: http://garage:8080",
         "      LISTEN_ADDR: 0.0.0.0:8080",
         "      METRICS_HOST: prometheus:9090",
-        "      PULSAR_USER: pulsar:6650",
+        "      JOBS_SHADOW: sqsbox:9999",
+        "      PIT_PORT_MAP: pit:8080",
         "",
       ].join("\n"));
       const dep = await detectDeployment(root, { subProjects: [{ id: "root", name: "infra", root: "", type: "unknown" } as unknown as SubProject] });
       const busOrDb = dep!.edges.filter((e) => e.from === "cars" && (e.kind === "bus" || e.kind === "db")).map((e) => `${e.to} ${e.kind} ${e.via ?? ""}`).sort();
       expect(busOrDb.filter((e) => !e.endsWith(" "))).toEqual(["pit bus EVENTS", "pulsar bus PULSAR_URL", "sqsbox bus JOBS_ADDR"]);
       expect(busOrDb.some((e) => e.startsWith("garage") || e.startsWith("prometheus"))).toBe(false);
+      // A bare `host:port` on a port the broker does not serve is no address of it.
+      expect(busOrDb.some((e) => e.endsWith("JOBS_SHADOW") || e.endsWith("PIT_PORT_MAP"))).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("a bare host:port joins a cluster cache on a Service port that selects it, and no other", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clarifydoc-broker-k8s-"));
+    try {
+      await mkdir(join(root, "k8s"));
+      await writeFile(join(root, "k8s", "stack.yaml"), [
+        "apiVersion: apps/v1", "kind: Deployment", "metadata:", "  name: pit-cache", "spec:", "  template:", "    metadata:", "      labels:", "        app: pit-cache", "    spec:", "      containers:", "        - name: c", "          image: redis:7", "---",
+        "apiVersion: v1", "kind: Service", "metadata:", "  name: cache-front", "spec:", "  selector:", "    app: pit-cache", "  ports:", "    - port: 7000", "      targetPort: 6379", "---",
+        "apiVersion: apps/v1", "kind: Deployment", "metadata:", "  name: cars", "spec:", "  template:", "    metadata:", "      labels:", "        app: cars", "    spec:", "      containers:", "        - name: c", "          image: reg.io/cars", "          env:", "            - name: CACHE_ADDR", "              value: cache-front:7000", "---",
+        "apiVersion: apps/v1", "kind: Deployment", "metadata:", "  name: players", "spec:", "  template:", "    metadata:", "      labels:", "        app: players", "    spec:", "      containers:", "        - name: c", "          image: reg.io/players", "          env:", "            - name: CACHE_ADDR", "              value: cache-front:7001", "",
+      ].join("\n"));
+      const dep = await detectDeployment(root, { subProjects: [{ id: "root", name: "infra", root: "", type: "unknown" } as unknown as SubProject] });
+      const via = (n: string) => dep!.edges.filter((e) => e.from === n && e.to === "pit-cache" && e.via === "CACHE_ADDR").length;
+      expect(via("cars")).toBe(1);
+      expect(via("players")).toBe(0);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("a bare host:port joins a broker on a port its compose ports, expose or image state, whatever the key", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clarifydoc-broker-port-"));
+    try {
+      await writeFile(join(root, "docker-compose.yml"), [
+        "services:",
+        "  pitbus:", "    image: rabbitmq:3", "    ports:", "      - '15000:5000'", "    expose:", "      - '5001'",
+        "  a:", "    image: reg.io/a", "    environment:", "      FEED_NAME: pitbus:5000",
+        "  b:", "    image: reg.io/b", "    environment:", "      FEED: pitbus:15000",
+        "  c:", "    image: reg.io/c", "    environment:", "      FEED: pitbus:5001",
+        "  d:", "    image: reg.io/d", "    environment:", "      FEED: pitbus:5672",
+        "  e:", "    image: reg.io/e", "    environment:", "      FEED: pitbus:6000",
+        "",
+      ].join("\n"));
+      const dep = await detectDeployment(root, { subProjects: [{ id: "root", name: "infra", root: "", type: "unknown" } as unknown as SubProject] });
+      const via = (n: string) => dep!.edges.filter((e) => e.from === n && e.to === "pitbus" && e.kind === "bus" && e.via).map((e) => e.via);
+      expect(via("a")).toEqual(["FEED_NAME"]);
+      expect(via("b")).toEqual(["FEED"]);
+      expect(via("c")).toEqual(["FEED"]);
+      expect(via("d")).toEqual(["FEED"]);
+      expect(via("e")).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
 });

@@ -605,6 +605,32 @@ export interface K8sManifests {
    * Ingress rule — the caller resolves it through `aliases` onto the workload.
    */
   ingressEdges: Array<{ from: string; to: string; host?: string }>;
+  /** Workload name → the ports of the Services selecting it (`port` and a numeric `targetPort`). */
+  servicePorts: Map<string, number[]>;
+}
+
+/** Numeric ports a Service's `spec.ports` states: `port` and a numeric `targetPort`. */
+function servicePortsOf(doc: YamlMap): number[] {
+  const out: number[] = [];
+  for (const item of asList(dig(doc, "spec", "ports"))) {
+    const m = asMap(item);
+    for (const v of [m?.port, m?.targetPort]) {
+      const n = typeof v === "string" && /^\d{1,5}$/.test(v) ? Number(v) : NaN;
+      if (Number.isInteger(n) && n > 0 && n < 65536) out.push(n);
+    }
+  }
+  return out;
+}
+
+/** Numeric `containerPort`s of a container. */
+function containerPortsOf(container: YamlMap): number[] {
+  const out: number[] = [];
+  for (const item of asList(container.ports)) {
+    const v = asMap(item)?.containerPort;
+    const n = typeof v === "string" && /^\d{1,5}$/.test(v) ? Number(v) : NaN;
+    if (Number.isInteger(n) && n > 0 && n < 65536) out.push(n);
+  }
+  return out;
 }
 
 /**
@@ -673,6 +699,11 @@ export async function collectK8sManifests(
   const groups: RawService[][] = [];
   const aliases = new Map<string, string>();
   const ingressEdges: Array<{ from: string; to: string; host?: string }> = [];
+  const servicePorts = new Map<string, number[]>();
+  const addServicePorts = (workload: string, ports: number[]): void => {
+    const list = servicePorts.get(workload) ?? servicePorts.set(workload, []).get(workload)!;
+    for (const p of ports) if (!list.includes(p)) list.push(p);
+  };
   // ConfigMaps pool across all manifests — envFrom references resolve by name.
   const configMaps = new Map<string, Record<string, string>>();
   const pending: Array<{ file: string; docs: K8sDoc[] }> = [];
@@ -726,7 +757,9 @@ export async function collectK8sManifests(
       const env: Record<string, string> = {};
       let image: string | undefined;
       let entrypoint: string | undefined;
+      const servedPorts: number[] = [];
       for (const c of containers) {
+        servedPorts.push(...containerPortsOf(c));
         const ref = asString(c.image);
         if (isImageRef(ref)) image ??= ref;
         entrypoint ??= [...asList(c.command), ...asList(c.args)]
@@ -738,7 +771,7 @@ export async function collectK8sManifests(
         for (const [k, v] of Object.entries(containerEnv(c))) env[k] = v;
       }
 
-      group.push({ name, file, image, entrypoint, env, dependsOn: [] });
+      group.push({ name, file, image, entrypoint, env, dependsOn: [], ...(servedPorts.length ? { servedPorts } : {}) });
       workloadsByFile.push({ name, labels: podLabels(kind, doc) });
     }
 
@@ -778,6 +811,7 @@ export async function collectK8sManifests(
         entries.every(([k, v]) => labels[k] === v),
       );
       if (target && target.name !== name) aliases.set(name, target.name);
+      if (target) addServicePorts(target.name, servicePortsOf(doc));
     }
 
     if (group.length > 0) {
@@ -803,8 +837,9 @@ export async function collectK8sManifests(
       if (entries.length === 0) continue;
       const target = allWorkloads.find(({ labels }) => entries.every(([k, v]) => labels[k] === v));
       if (target && target.name !== name) aliases.set(name, target.name);
+      if (target) addServicePorts(target.name, servicePortsOf(doc));
     }
   }
 
-  return groups.length > 0 ? { files, groups, aliases, ingressEdges } : undefined;
+  return groups.length > 0 ? { files, groups, aliases, ingressEdges, servicePorts } : undefined;
 }

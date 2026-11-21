@@ -268,6 +268,8 @@ export interface RawService {
   dependsOn: string[];
   /** Host ports published onto the service (`"5101:8080"` → 5101). */
   ports?: number[];
+  /** Every port the service listens on, as the source states it: both sides of a compose `ports:` item, `expose:`, a k8s `containerPort` and the ports of the Services that select it. */
+  servedPorts?: number[];
   /** Other names the service answers to: `hostname`, `container_name`, network aliases. */
   aliases?: string[];
   /** Compose `build:` — the context directory and Dockerfile, repo-relative. */
@@ -306,6 +308,31 @@ function hostPorts(v: YamlValue | undefined): number[] {
     }
   }
   return out;
+}
+
+/**
+ * Every port a compose service listens on: both sides of each `ports:` item (a lone `"8080"` is the container
+ * side; a range or an unresolved `${X}` states none), the long form's `target`/`published`, and `expose:`.
+ */
+function servedPortsOf(ports: YamlValue | undefined, expose: YamlValue | undefined): number[] {
+  const out = new Set<number>();
+  const add = (v: string | undefined): void => {
+    const n = v !== undefined && /^\d{1,5}$/.test(v) ? Number(v) : NaN;
+    if (Number.isInteger(n) && n > 0 && n < 65536) out.add(n);
+  };
+  if (Array.isArray(ports)) {
+    for (const item of ports) {
+      if (typeof item === "string") for (const part of composeDefaults(unquote(item)).split("/")[0]!.split(":")) add(part);
+      else if (item && typeof item === "object" && !Array.isArray(item)) {
+        for (const k of ["target", "published"]) {
+          const v = (item as YamlMap)[k];
+          add(typeof v === "string" ? composeDefaults(unquote(v)) : undefined);
+        }
+      }
+    }
+  }
+  for (const e of asStringArray(expose)) add(composeDefaults(unquote(e)).split("/")[0]);
+  return [...out];
 }
 
 /** `hostname`, `container_name` and every `networks.<n>.aliases` entry. */
@@ -407,6 +434,7 @@ function collectRawServices(doc: YamlMap, file: string): RawService[] {
       env: envMap(b.environment),
       dependsOn: asStringArray(b.depends_on),
       ports: hostPorts(b.ports),
+      servedPorts: servedPortsOf(b.ports, b.expose),
       aliases: serviceAliases(b),
       ...(build ? { build } : {}),
     });
@@ -458,6 +486,23 @@ const INFRA_FAMILIES: Array<{ re: RegExp; kind: DeployedServiceKind; family: str
   { re: /traefik|haproxy|envoy|nginx|ingress/i, kind: "proxy", family: "proxy" },
   { re: /graylog|grafana|prometheus|jaeger|zipkin|kibana|loki/i, kind: "observability", family: "observability" },
 ];
+
+/**
+ * The ports a queue or cache image listens on when nothing declares them — the client ports its own documentation
+ * names. An image matching none states no default: a bare `host:port` joins it only on a declared port.
+ */
+const DEFAULT_SERVICE_PORTS: Array<{ re: RegExp; ports: number[] }> = [
+  { re: /rabbitmq/i, ports: [5672, 5671] },
+  { re: /kafka|redpanda/i, ports: [9092, 9093, 9094] },
+  { re: /redis|keydb|valkey/i, ports: [6379, 6380] },
+  { re: /memcached/i, ports: [11211] },
+  { re: /nats(?![a-z])/i, ports: [4222] },
+  { re: /mosquitto|emqx/i, ports: [1883, 8883] },
+  { re: /activemq|artemis/i, ports: [61616, 61613, 5672, 1883] },
+  { re: /pulsar/i, ports: [6650, 6651] },
+  { re: /elasticmq/i, ports: [9324] },
+];
+
 
 /** Last image path segment without registry/tag: `reg.io/org/rabbitmq:3.8` → `rabbitmq`. */
 function imageTail(image: string | undefined): string | undefined {
@@ -688,26 +733,28 @@ function hostOf(value: string): string | undefined {
 }
 
 const ANY_URL_HOST_RE = /\b[a-z][a-z0-9+.-]*:\/\/(?:[^@/\s'"]*@)?([A-Za-z0-9_.-]+)/gi;
-/** A key naming a credential, a person, a topic or a label, whose `host:port`-looking value is no address. */
-const NON_ADDRESS_KEY_RE = /(?:password|passwd|user|username|name|topic|queue|db|database|secret|token|image|tag|version)(?:_file)?$/i;
+/** An address an env value names: a URL's host (any port) or a bare `host:port` item with its port. */
+interface EnvAddress {
+  host: string;
+  /** Set for a bare `host:port` item, which names an address only on a port the service listens on. */
+  port?: number;
+}
 
 /**
- * Every host an env value names: the host of each `scheme://[user@]host` URL (any scheme — the target
- * service's kind decides, not the scheme) and each `host:port` item of a comma/space list. A key naming a
- * credential or label contributes no bare `host:port`. A value with a placeholder in the host names nothing.
+ * Every address an env value names: the host of each `scheme://[user@]host` URL (any scheme — the target
+ * service's kind decides, not the scheme) and each `host:port` item of a comma/space list, which the caller
+ * accepts only on a port its service serves. A value with a placeholder in the host names nothing.
  */
-function hostsOfEnvValue(key: string, value: string): string[] {
+function addressesOfEnvValue(value: string): EnvAddress[] {
   // Both shapes carry a `:` (a scheme or a port): most values (flags, names, paths) carry none.
   if (!value.includes(":")) return [];
-  const hosts = new Set<string>();
-  if (value.includes("://")) for (const m of value.matchAll(ANY_URL_HOST_RE)) hosts.add(m[1]!.toLowerCase());
-  if (!NON_ADDRESS_KEY_RE.test(key)) {
-    for (const part of value.split(/[,\s;]+/)) {
-      const m = part.match(/^([A-Za-z][A-Za-z0-9_.-]*):\d{2,5}$/);
-      if (m) hosts.add(m[1]!.toLowerCase());
-    }
+  const out: EnvAddress[] = [];
+  if (value.includes("://")) for (const m of value.matchAll(ANY_URL_HOST_RE)) out.push({ host: m[1]!.toLowerCase() });
+  for (const part of value.split(/[,\s;]+/)) {
+    const m = part.match(/^([A-Za-z][A-Za-z0-9_.-]*):(\d{2,5})$/);
+    if (m) out.push({ host: m[1]!.toLowerCase(), port: Number(m[2]) });
   }
-  return [...hosts];
+  return out;
 }
 
 // ─── Main entry ─────────────────────────────────────────────────────────────
@@ -809,6 +856,7 @@ export async function detectDeployment(
       if (!existing.entrypoint) existing.entrypoint = svc.entrypoint;
       for (const dep of svc.dependsOn) if (!existing.dependsOn.includes(dep)) existing.dependsOn.push(dep);
       for (const p of svc.ports ?? []) if (!(existing.ports ??= []).includes(p)) existing.ports.push(p);
+      for (const p of svc.servedPorts ?? []) if (!(existing.servedPorts ??= []).includes(p)) existing.servedPorts.push(p);
       for (const a of svc.aliases ?? []) if (!(existing.aliases ??= []).includes(a)) existing.aliases.push(a);
     }
   }
@@ -1073,6 +1121,20 @@ export async function detectDeployment(
     if (t && (t.kind === "queue" || t.kind === "cache") && !brokerByHost.has(alias.toLowerCase())) brokerByHost.set(alias.toLowerCase(), t);
   }
 
+  // The ports a broker or cache listens on: what its manifests state, the Services selecting it, its image's defaults.
+  const servedCache = new Map<DeployedService, Set<number>>();
+  const servedPorts = (b: DeployedService): Set<number> => {
+    let set = servedCache.get(b);
+    if (!set) {
+      set = new Set(rawMerged.find((r) => r.name.toLowerCase() === b.name.toLowerCase())?.servedPorts);
+      for (const p of k8s?.servicePorts.get(b.name) ?? []) set.add(p);
+      const probe = b.image ?? b.name;
+      for (const d of DEFAULT_SERVICE_PORTS) if (d.re.test(probe)) for (const p of d.ports) set.add(p);
+      servedCache.set(b, set);
+    }
+    return set;
+  };
+
   for (const svc of rawMerged) {
     const s = svcByLower.get(svc.name.toLowerCase());
     if (!s || s.kind !== "app") continue;
@@ -1080,10 +1142,10 @@ export async function detectDeployment(
 
     for (const [k, v] of Object.entries(svc.env)) {
       // A broker or cache URL held in a variable: an edge to the service of that host.
-      for (const target of hostsOfEnvValue(k, v)) {
+      for (const { host: target, port } of addressesOfEnvValue(v)) {
         const label = clusterServiceLabel(target);
         const b = brokerByHost.get(target) ?? (label !== undefined ? brokerByHost.get(label) : undefined);
-        if (!b) continue;
+        if (!b || (port !== undefined && !servedPorts(b).has(port))) continue;
         addEdge({ from: svc.name, to: b.name, kind: b.kind === "queue" ? "bus" : "db", via: k });
         if (b.kind === "queue") brokerEdges++;
       }
