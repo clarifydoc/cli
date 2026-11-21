@@ -11,6 +11,7 @@ import { goRequestSchema } from "./request-schema.js";
 import { goReachability } from "./reachability.js";
 import { humaBaseResolver } from "./huma-resolver.js";
 import { GO_SECURITY_RULES } from "./security-rules.js";
+import { goTaint } from "./taint.js";
 import { goGrpcStub, goGrpcService } from "../shared/grpc-stubs.js";
 import { firstStub, goThriftStub } from "../shared/thrift-stubs.js";
 
@@ -67,6 +68,8 @@ export const goMeta: LanguagePluginMeta = {
   regexSpec: goSpec,
   // Functions and calls read by the grammars-v4 Go grammar, while the `antlr:go` feature is on (antlr.ts).
   antlr: { grammar: "go", load: () => import("./antlr.js").then((m) => m.readGo) },
+  // Request input followed to a sink in a handler, on a tree-sitter-go parse of files that name a handler type (taint.ts).
+  regexTaint: { grammar: "go", gate: /\b(?:gin\.Context|echo\.Context|fiber\.Ctx|buffalo\.Context|http\.Request)\b/, taint: goTaint },
   builtinTypes: GO_BUILTINS,
   knownPackages: goPackages,
   entities: new GoEntityExtractor(),

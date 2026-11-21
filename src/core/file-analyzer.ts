@@ -7,7 +7,8 @@ import { computeRegexComplexity } from "./complexity-regex.js";
 import { splitLines } from "../extractors/shared/source-lines.js";
 import type { DiscoveredFile } from "./file-discovery.js";
 import { serializeFileAnalysis, writeFileAnalysis, type OutputOptions } from "./output-writer.js";
-import { parseSource } from "../parsers/parser-manager.js";
+import { getGrammarParser, parseSource } from "../parsers/parser-manager.js";
+import { normalizeSource } from "../parsers/normalize-source.js";
 import { extractImports, extractExports } from "../extractors/imports-exports/index.js";
 import { extractFunctions, extractClasses } from "../extractors/functions-classes/index.js";
 import { extractRoutes } from "../extractors/routes/index.js";
@@ -320,6 +321,51 @@ function computeImportRewriteStamp(file: Pick<DiscoveredFile, "absolutePath" | "
   return parts.length ? createHash("sha256").update(parts.join("\0")).digest("hex").slice(0, 16) : undefined;
 }
 
+/**
+ * The taint findings merged into a file's regex findings: one a suppression comment on the sink's line (or the line
+ * before) silences is dropped, and the regex finding of the same kind on the same line it replaces is dropped too
+ * (a silenced one must not come back as the regex finding); the rest replace the regex findings they cover.
+ */
+function mergeTaint(raw: SecurityIssue[], sourceText: string, issues: SecurityIssue[]): SecurityIssue[] {
+  if (raw.length === 0) return issues;
+  let sourceLines: string[] | null = null;
+  const tainted = raw.filter((t) => {
+    sourceLines ??= sourceText.split(/\r?\n/);
+    return !isSuppressed(t.category, sourceLines[t.line - 1] ?? "", sourceLines[t.line - 2] ?? "");
+  });
+  const silenced = new Set(raw.filter((t) => !tainted.includes(t)).map((t) => `${t.line}\u0000${t.category}`));
+  if (silenced.size) issues = issues.filter((i) => !silenced.has(`${i.line}\u0000${i.category}`));
+  if (tainted.length > 0) {
+    const covered = new Set(tainted.map((t) => `${t.line}\u0000${t.category}`));
+    issues = [...issues.filter((i) => !covered.has(`${i.line}\u0000${i.category}`)), ...tainted];
+  }
+  return issues;
+}
+
+/**
+ * A regex language's taint findings (`meta.regexTaint`): the file parsed with the plugin's tree-sitter grammar and
+ * walked by its `handlerTaint` spec. Nothing for a file the gate does not match, a test or generated file, one past
+ * the front ends' size limit, or a tree with syntax errors; a grammar that fails to load only costs the findings.
+ */
+async function regexTaintOf(language: Language, sourceText: string, filePath: string, skip: boolean): Promise<{ issues: SecurityIssue[]; facts: TaintFacts } | null> {
+  const reader = pluginFor(language)?.regexTaint;
+  if (!reader || skip || !featureEnabled("taint") || sourceText.length > FRONT_END_MAX_CHARS || !reader.gate.test(sourceText)) return null;
+  try {
+    const parser = await getGrammarParser(reader.grammar);
+    const tree = parser.parse(normalizeSource(sourceText));
+    if (!tree) return null;
+    try {
+      if (tree.rootNode.hasError) return null;
+      const facts: TaintFacts = { summaries: [], calls: [] };
+      return { issues: reader.taint(tree, sourceText, filePath, facts), facts };
+    } finally {
+      tree.delete();
+    }
+  } catch {
+    return null;
+  }
+}
+
 /** Analyze one file and write its JSON; null when it fails or its plugin refuses it. */
 export async function analyzeFile(task: FileTask): Promise<FileResult | null> {
   const outcome = await analyzeFileOutcome({ ...task, reportSkips: false });
@@ -461,7 +507,12 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       if (generated) analysis.generated = true;
       applyTsconfigAliasesToImports(analysis);
       attachDocComments(analysis, rawSource, manifestFor(analysis.language)?.docComments);
-      const fileSecurityIssues = scanSecurity(rawSource, file.relativePath, file.language);
+      let fileSecurityIssues = scanSecurity(rawSource, file.relativePath, file.language);
+      const regexTaint = await regexTaintOf(regexLanguage, regexSource, file.relativePath, generated || minified || isTestFile(file.relativePath, regexLanguage));
+      if (regexTaint) {
+        fileSecurityIssues = mergeTaint(regexTaint.issues, regexSource, fileSecurityIssues);
+        if (regexTaint.facts.summaries.length || regexTaint.facts.calls.length) analysis.taintFacts = regexTaint.facts;
+      }
       if (fileSecurityIssues.length > 0) analysis.securityIssues = fileSecurityIssues;
       const regexTypeRefs = extractTypeReferences(analysis, file.language);
       if (regexTypeRefs.length > 0) analysis.typeReferences = regexTypeRefs;
@@ -902,19 +953,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     const rawTainted = isTest || isMinifiedSource(sourceText) ? [] : hooks?.taint?.(tree, sourceText, file.relativePath, taintFacts) ?? [];
     // What another file's handler may pass request input into, and what this file's handlers pass on.
     if (taintFacts.summaries.length || taintFacts.calls.length) analysis.taintFacts = taintFacts;
-    // A suppression on the sink's line (or the line before) holds for the taint finding too.
-    let sourceLines: string[] | null = null;
-    const tainted = rawTainted.filter((t) => {
-      sourceLines ??= sourceText.split(/\r?\n/);
-      return !isSuppressed(t.category, sourceLines[t.line - 1] ?? "", sourceLines[t.line - 2] ?? "");
-    });
-    // A finding suppressed as taint must not come back as the regex finding it replaces.
-    const silenced = new Set(rawTainted.filter((t) => !tainted.includes(t)).map((t) => `${t.line}\u0000${t.category}`));
-    if (silenced.size) fileSecurityIssues = fileSecurityIssues.filter((i) => !silenced.has(`${i.line}\u0000${i.category}`));
-    if (tainted.length > 0) {
-      const covered = new Set(tainted.map((t) => `${t.line}\u0000${t.category}`));
-      fileSecurityIssues = [...fileSecurityIssues.filter((i) => !covered.has(`${i.line}\u0000${i.category}`)), ...tainted];
-    }
+    fileSecurityIssues = mergeTaint(rawTainted, sourceText, fileSecurityIssues);
 
     // Attach to the analysis itself so an incremental run can read both back
     // from disk and reconstruct the project-level aggregates without re-parsing.

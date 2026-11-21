@@ -36,7 +36,7 @@ export interface TaintSpec {
   /** An expression that reads request input (`request.args[…]`, `req.body.x`). */
   source: RegExp;
   /** Assignments in a body: the names bound, the value expression. */
-  assignment(node: Node): { names: string[]; value: Node } | null;
+  assignment(node: Node): { names: string[]; value: Node; keep?: boolean } | null;
   /** A call in a body: callee text and its arguments in order. */
   call(node: Node): { callee: string; args: Node[] } | null;
   /** A value wrapped whole in a sanitizer call: clean for every sink. */
@@ -73,13 +73,29 @@ export interface TaintSpec {
   returnTypes?: ReadonlySet<string>;
   /** An `if`'s condition (default: its `condition` field). */
   condition?(ifNode: Node): Node | null;
+  /** The text a guard is looked for in, where the condition node alone is not it (Go's `if _, ok := allowed[x]; !ok`). */
+  conditionText?(ifNode: Node): string | null;
+  /**
+   * The first operand of a concatenation (`dest + r.URL.Path` → `dest`), null for any other expression. A value that
+   * starts with something the request does not control (a configured base URL, a literal host) keeps its host: it is
+   * no open redirect and no server-side request forgery, whatever follows (`hostFixed`; a bare `"/"` leads nowhere).
+   */
+  leadingOperand?(value: Node): Node | null;
+  /**
+   * The whole read of a request value inside a text (`params[:id]`, `c.Query("sort")`), global. A condition that checks
+   * such a read (`ALLOWED.include?(params[:sort])`) clears the same read for the rest of the handler, as it clears a
+   * checked local; without it only names are cleared, and a handler that checks and re-reads the input stays accused.
+   */
+  sourceReads?: RegExp;
+  /** Further condition shapes that check a value, beside the shared ones (Ruby `start_with?`, Go `strings.HasPrefix`). */
+  guard?: RegExp;
 }
 
 type Step = { line: number; note: string };
 
 export type { TaintFacts } from "../../../types/analysis.js";
 /** `pathSafe`: a file-name sanitizer on the way made this value safe for path-traversal sinks. */
-type Taint = { line: number; path: Step[]; pathSafe?: true };
+type Taint = { line: number; path: Step[]; pathSafe?: true; hostFixed?: true };
 /** How deep calls into the file's own functions are followed. */
 const MAX_DEPTH = 2;
 
@@ -100,6 +116,8 @@ export interface TaintSink {
   cwe: string;
   /** What reaches it, for the message: "the SQL text", "the command". */
   what: string;
+  /** The call's arguments must satisfy this for the sink to apply (`exec.Command("sh", "-c", x)`: a shell). */
+  when?(args: Node[]): boolean;
 }
 
 /** Every request handler in `tree`, followed from its request input to the sinks. */
@@ -231,9 +249,22 @@ function taintFunction(fn: Node, params: ReadonlyMap<string, Taint | null>, ctx:
   const issues: SecurityIssue[] = [];
   // The line of the statement being read: a request read counts from there.
   let sourceLine = 0;
-  /** Where the taint in `text` comes from and how it got here, or null when it carries none. */
-  const isTainted = (text: string): Taint | null => {
-    if (spec.source.test(text)) return { line: sourceLine, path: [{ line: sourceLine, note: "request input read here" }] };
+  /** The request reads a condition checked (`spec.sourceReads`), keyed by `readKey`. */
+  const guardedReads = new Set<string>();
+  /** Whether every request input in `raw` is a read a condition checked, so no other source is left. */
+  const checkedOnly = (raw: string): boolean => {
+    if (!guardedReads.size || !spec.sourceReads) return false;
+    const reads = raw.match(spec.sourceReads);
+    return !!reads && reads.length > 0 && reads.every((r) => guardedReads.has(readKey(r))) && !spec.source.test(raw.replace(spec.sourceReads, ""));
+  };
+  /**
+   * Where the taint in `text` (a node's `codeText`, `raw` its source) comes from and how it got here, or null when it
+   * carries none.
+   */
+  const isTainted = (text: string, raw?: string): Taint | null => {
+    if (spec.source.test(text) && !(raw !== undefined && checkedOnly(raw))) {
+      return { line: sourceLine, path: [{ line: sourceLine, note: "request input read here" }] };
+    }
     for (const [name, t] of tainted) if (mentions(text, name)) return t;
     return null;
   };
@@ -291,6 +322,15 @@ function taintFunction(fn: Node, params: ReadonlyMap<string, Taint | null>, ctx:
     return out;
   };
 
+  /** Whether `value` is a concatenation led by something the request does not control (`TaintSpec.leadingOperand`). */
+  const fixesHost = (value: Node): boolean => {
+    const lead = spec.leadingOperand?.(value);
+    if (!lead) return false;
+    if (isTainted(codeText(lead)) !== null) return false;
+    // A literal that ends before the host (`""`, `"/"`, `"//"`, `"https://"`) leaves the host to the request.
+    return !/^(?:[a-z][a-z0-9+.-]*:)?[/\\]{0,2}$/i.test(lead.text.replace(/^["'`]|["'`]$/g, "").trim());
+  };
+
   /** The one function of this file a call names, and how its arguments map onto its parameters. */
   const calleeOf = (call: { callee: string; args: Node[] }): { fn: Node; params: string[]; offset: number } | null => {
     if (depth >= MAX_DEPTH) return null;
@@ -311,7 +351,7 @@ function taintFunction(fn: Node, params: ReadonlyMap<string, Taint | null>, ctx:
     call.args.forEach((arg, i) => {
       const param = target.params[i + target.offset];
       if (!param || spec.sanitizer.test(arg.text)) return;
-      const from = through(isTainted(codeText(arg)), arg);
+      const from = through(isTainted(codeText(arg), arg.text), arg);
       if (from) into.set(param, { ...from, path: [...from.path, { line, note: `passed to ${call.callee}() as ${param}` }] });
     });
     if (into.size === 0) return null;
@@ -342,11 +382,12 @@ function taintFunction(fn: Node, params: ReadonlyMap<string, Taint | null>, ctx:
     // Nested handlers are their own.
     if (node.id !== fn.id && spec.functionTypes.has(node.type) && spec.handler(node)) return;
     if (spec.ifTypes.has(node.type)) {
-      const cond = (spec.condition ? spec.condition(node) : node.childForFieldName("condition"))?.text ?? "";
-      if (GUARD_RE.test(cond)) {
+      const cond = spec.conditionText?.(node) ?? (spec.condition ? spec.condition(node) : node.childForFieldName("condition"))?.text ?? "";
+      if (GUARD_RE.test(cond) || spec.guard?.test(cond)) {
         for (const name of [...tainted.keys()]) {
           if (mentions(cond, name)) tainted.delete(name);
         }
+        if (spec.sourceReads) for (const read of cond.match(spec.sourceReads) ?? []) guardedReads.add(readKey(read));
       }
     }
     const a = spec.assignment(node);
@@ -354,10 +395,12 @@ function taintFunction(fn: Node, params: ReadonlyMap<string, Taint | null>, ctx:
       // The value is evaluated before the names are bound: calls inside it first.
       walk(a.value);
       sourceLine = node.startPosition.row + 1;
-      const from = spec.sanitizer.test(a.value.text) ? null : through(isTainted(codeText(a.value)), a.value);
+      const raw = spec.sanitizer.test(a.value.text) ? null : through(isTainted(codeText(a.value), a.value.text), a.value);
+      const from = raw && fixesHost(a.value) ? { ...raw, hostFixed: true as const } : raw;
       for (const n of a.names) {
         if (from === null) {
-          tainted.delete(n);
+          // `q += clean` keeps what `q` carried.
+          if (!a.keep) tainted.delete(n);
           continue;
         }
         const last = from.path[from.path.length - 1];
@@ -372,9 +415,11 @@ function taintFunction(fn: Node, params: ReadonlyMap<string, Taint | null>, ctx:
       for (const sink of spec.sinks) {
         if (!sink.callee.test(c.callee)) continue;
         const arg = c.args[sink.arg ?? 0];
-        if (!arg || spec.sanitizer.test(arg.text)) continue;
-        const from = through(isTainted(codeText(arg)), arg);
+        if (!arg || spec.sanitizer.test(arg.text) || (sink.when && !sink.when(c.args))) continue;
+        const direct = through(isTainted(codeText(arg), arg.text), arg);
+        const from = direct && fixesHost(arg) ? { ...direct, hostFixed: true as const } : direct;
         if (from === null || (from.pathSafe && sink.category === "path-traversal")) continue;
+        if (from.hostFixed && (sink.category === "open-redirect" || sink.category === "ssrf")) continue;
         const line = node.startPosition.row + 1;
         const sinkNote = `reaches ${sink.what} of ${c.callee}()`;
         const flow = from.path[from.path.length - 1]?.line === line
@@ -401,7 +446,7 @@ function taintFunction(fn: Node, params: ReadonlyMap<string, Taint | null>, ctx:
           const line = node.startPosition.row + 1;
           const args = c.args.flatMap((arg, index) => {
             if (spec.sanitizer.test(arg.text) || partialOf(arg)) return [];
-            const from = isTainted(codeText(arg));
+            const from = isTainted(codeText(arg), arg.text);
             return from ? [{ index, from: from.line, path: from.path }] : [];
           });
           if (args.length) ctx.facts.calls.push({ line, callee: c.callee, args });
@@ -428,6 +473,11 @@ const INTERPOLATIONS: ReadonlySet<string> = new Set(["interpolation", "template_
 function mentions(text: string, name: string): boolean {
   const before = name.startsWith("$") ? "(?<![\\w$])" : "(?<![\\w$.])";
   return new RegExp(`${before}${escape(name)}(?![\\w$])`).test(text);
+}
+
+/** A request read as text, one spelling of the quotes (`params["id"]` and `params['id']` are one read, `params["name"]` another). */
+function readKey(read: string): string {
+  return read.replace(/["'`]/g, "'").replace(/\s+/g, "");
 }
 
 function escape(s: string): string {

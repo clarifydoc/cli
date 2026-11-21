@@ -33,6 +33,8 @@ export const goManifest: LanguagePluginManifest = {
   packageManagers: [goPackageManager],
   packageEcosystems: ["go"],
   parsing: "regex",
+  // Read by the taint reader only (meta.regexTaint): the wasm tree-sitter-go ships.
+  grammar: { variants: { go: { pkg: "tree-sitter-go", wasm: "tree-sitter-go.wasm" } } },
   extensions: [".go"],
   // One type spans files here: a type's methods sit in any file of its package directory.
   typesSpanFiles: true,

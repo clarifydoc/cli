@@ -2195,6 +2195,15 @@ export interface ParserFrontEnd {
   extensions?: readonly string[];
 }
 
+/** A regex language's taint reader (`meta.regexTaint`). */
+export interface RegexTaint {
+  /** The registered grammar key the file is parsed with. */
+  grammar: string;
+  /** Source that can hold a handler at all; a file it does not match is never parsed. */
+  gate: RegExp;
+  taint(tree: import("web-tree-sitter").Tree, sourceText: string, filePath: string, facts?: import("./analysis.js").TaintFacts): import("./analysis.js").SecurityIssue[];
+}
+
 /** An ANTLR front end (`meta.antlr`). */
 export type AntlrFrontEnd = ParserFrontEnd;
 
@@ -2297,6 +2306,13 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
    * `grammar`, which registers it with parser-manager without moving the language off the regex path.
    */
   treeSitter?: ParserFrontEnd;
+  /**
+   * Request-input taint for a language read by regex or ANTLR, which has no `ast.taint` hook: the file is parsed once
+   * more with a tree-sitter grammar (the manifest's `grammar`, registered under `grammar` here) and the same
+   * `handlerTaint` walk runs on that tree. Only while the `taint` feature is on, never on a test file, a generated
+   * one or a tree with syntax errors (a recovered tree can join a statement to the next one's).
+   */
+  regexTaint?: RegexTaint;
 
   /** Language-specific security rules (see SecurityRule.priority). */
   securityRules?: readonly SecurityRule[];
