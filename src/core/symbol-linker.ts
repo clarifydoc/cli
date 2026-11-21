@@ -4634,12 +4634,7 @@ function valueFlowLinks(links: readonly SymbolLink[], ctx: LinkContext): SymbolL
     const whole = located ? name : dealias(ctx, name, file);
     const target = !located && whole !== name ? locateClass(ctx, whole, file, project) : null;
     if (target) return { file: target, name: whole };
-    // Forward declarations (`struct club_ops;`) are classes without a body that make the name ambiguous or hide the
-    // struct: the one declaration with fields the include closure of the file reaches is the struct, never a namesake outside it.
-    if (!importsShareScope(language)) return located ? { file: located, name } : null;
-    const seen = includeClosure(ctx, file);
-    const bodies = (ctx.classFiles.get(whole) ?? []).filter((f) => seen.has(f) && (ctx.classAt.get(memberKey(f, whole))?.properties.length ?? 0) > 0);
-    return bodies.length === 1 ? { file: bodies[0]!, name: whole } : located ? { file: located, name } : null;
+    return located ? { file: located, name } : null;
   };
   return solveValueFlow({
     analyses: ctx.analyses,
@@ -9619,9 +9614,28 @@ function typeFileFor(ctx: LinkContext, typeName: string, sourceFile: string, pro
   const key = `${typeName}\0${sourceFile}\0${projectId}`;
   const hit = memo.get(key);
   if (hit !== undefined) return hit;
-  const found = typeFileForUncached(ctx, typeName, sourceFile, projectId);
+  const found = preferBody(ctx, typeFileForUncached(ctx, typeName, sourceFile, projectId), typeName, sourceFile);
   memo.set(key, found);
   return found;
+}
+
+/**
+ * Where includes share scope, a forward declaration (`struct club_ops;`, `class Club;`) is a class without members that
+ * must neither hide nor tie with the declaration that has them: when the file found has no body (or none was found),
+ * the ONE declaration with fields or methods in the caller's include closure is the type, never a namesake outside it.
+ */
+function preferBody(ctx: LinkContext, found: string | null, typeName: string, sourceFile: string): string | null {
+  if (!importsShareScope(ctx.languageOf.get(sourceFile))) return found;
+  const hasBody = (f: string): boolean => {
+    const c = ctx.classAt.get(memberKey(f, typeName));
+    return !!c && !c.extension && ((c.properties?.length ?? 0) > 0 || (c.methods?.length ?? 0) > 0);
+  };
+  if (found && hasBody(found)) return found;
+  const files = ctx.classFiles.get(typeName);
+  if (!files || files.length < (found ? 2 : 1)) return found;
+  const seen = includeClosure(ctx, sourceFile);
+  const bodies = files.filter((f) => seen.has(f) && hasBody(f));
+  return bodies.length === 1 ? bodies[0]! : found;
 }
 
 function typeFileForUncached(ctx: LinkContext, typeName: string, sourceFile: string, projectId: string): string | null {
