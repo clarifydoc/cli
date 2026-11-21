@@ -3,7 +3,7 @@ import { parseUnifiedHunks, reverseSymbolReach, symbolsInHunks } from "./changed
 import type { SymbolLink } from "../types/analysis.js";
 
 describe("parseUnifiedHunks", () => {
-  it("reads new-side ranges; a pure deletion is kept apart as the old-side lines removed", () => {
+  it("reads new-side ranges; a pure deletion is kept apart as the old-side lines removed; a deleted file is its whole old side", () => {
     const diff = [
       "diff --git a/src/a.ts b/src/a.ts",
       "--- a/src/a.ts",
@@ -16,10 +16,12 @@ describe("parseUnifiedHunks", () => {
       "@@ -1,5 +0,0 @@",
     ].join("\n");
     const hunks = parseUnifiedHunks(diff);
-    expect([...hunks]).toEqual([["src/a.ts", [[3, 6], [22, 22]]]]);
+    // A file whose new side is /dev/null is keyed by its old path with every old line: its functions are removed
+    // members, as for a proposed deletion (it used to record nothing, so the file was never narrowed).
+    expect([...hunks]).toEqual([["src/a.ts", [[3, 6], [22, 22]]], ["gone.ts", [[1, 5]]]]);
     expect([...hunks.deleted!]).toEqual([["src/a.ts", [[30, 32]]]]);
     // Old-side ranges for symbol matching (edits + the pure deletion).
-    expect([...hunks.old!]).toEqual([["src/a.ts", [[3, 4], [20, 20], [30, 32]]]]);
+    expect([...hunks.old!]).toEqual([["src/a.ts", [[3, 4], [20, 20], [30, 32]]], ["gone.ts", [[1, 5]]]]);
   });
 });
 

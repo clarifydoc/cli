@@ -35,10 +35,18 @@ export type ChangedHunks = Map<string, Array<[number, number]>> & {
 export function parseUnifiedHunks(diff: string, side: "new" | "old" = "new"): ChangedHunks {
   const out: ChangedHunks = new Map();
   let file: string | null = null;
+  let oldFile: string | null = null;
+  let gone = false;
   for (const line of diff.split("\n")) {
+    if (line.startsWith("--- ")) {
+      const p = line.slice(4).trim();
+      oldFile = p === "/dev/null" ? null : p.replace(/^a\//, "");
+      continue;
+    }
     if (line.startsWith("+++ ")) {
       const p = line.slice(4).trim();
-      file = p === "/dev/null" ? null : p.replace(/^b\//, "");
+      gone = p === "/dev/null" && oldFile !== null && side === "new";
+      file = p === "/dev/null" ? (gone ? oldFile : null) : p.replace(/^b\//, "");
       continue;
     }
     const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
@@ -57,6 +65,12 @@ export function parseUnifiedHunks(diff: string, side: "new" | "old" = "new"): Ch
           ? [oldStart, oldStart + oldCount - 1]
           : [Math.max(1, oldStart), Math.max(1, oldStart)];
       (old.get(file) ?? old.set(file, []).get(file)!).push(match);
+    }
+    // A deleted file (`+++ /dev/null`) is its whole old side removed, as a proposed deletion is: its old
+    // lines are the ranges, so its functions are removed members.
+    if (gone) {
+      (out.get(file) ?? out.set(file, []).get(file)!).push([Math.max(1, oldStart), Math.max(1, oldStart + oldCount - 1)]);
+      continue;
     }
     if (count === 0 && side === "new") {
       if (oldCount > 0) {
