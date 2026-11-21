@@ -303,3 +303,85 @@ describe("what a signature change leaves broken besides its callers", () => {
     }
   });
 });
+
+describe("module-level names: an edit on one is an edit of that name", () => {
+  const settings = {
+    functions: [{ name: "table", line: 10, endLine: 12 }],
+    classes: [],
+    imports: [{ line: 1 }, { line: 8 }],
+    moduleNames: [
+      { name: "SEASON_LIMIT", line: 3, endLine: 5 },
+      { name: "league_router", line: 6, endLine: 9 },
+    ],
+  };
+  const run = (ranges: Array<[number, number]>) => symbolsInHunks(new Map([["settings.py", settings]]), new Map([["settings.py", ranges]]));
+
+  it("a hunk inside a name's lines names it and leaves the file out of moduleLevel", () => {
+    const found = run([[4, 4]]);
+    expect([...found.bound]).toEqual([["settings.py", ["SEASON_LIMIT"]]]);
+    expect(found.moduleLevel).toEqual([]);
+    expect(found.moduleOnly).toEqual([]);
+  });
+
+  it("a constant written between two top-level imports is a constant, not an import edit", () => {
+    const found = run([[4, 4]]);
+    expect(found.importOnly).toEqual([]);
+  });
+
+  it("a hunk spanning two names names both; one reaching a line no name owns keeps the file moduleOnly", () => {
+    expect([...run([[4, 7]]).bound]).toEqual([["settings.py", ["SEASON_LIMIT", "league_router"]]]);
+    const loose = run([[4, 4], [13, 14]]);
+    expect(loose.moduleOnly).toEqual(["settings.py"]);
+    const hole = run([[13, 14]]);
+    expect(hole.bound.size).toBe(0);
+    expect(hole.moduleOnly).toEqual(["settings.py"]);
+    expect(run([[1, 1]]).importOnly).toEqual(["settings.py"]);
+  });
+});
+
+describe("boundReaders", () => {
+  const imp = (source: string, specifiers: string[], extra: object = {}) => ({ source, specifiers, isDefault: false, isNamespace: false, isType: false, line: 1, ...extra });
+  const write = async (dir: string, files: Record<string, object>) => {
+    const { mkdir, writeFile } = await import("fs/promises");
+    const { dirname, join } = await import("path");
+    for (const [f, a] of Object.entries(files)) {
+      await mkdir(dirname(join(dir, `${f}.json`)), { recursive: true });
+      await writeFile(join(dir, `${f}.json`), JSON.stringify(a));
+    }
+  };
+
+  it("charges importers that name the edited name or take the module whole, never one that imports another name", async () => {
+    const { mkdtemp, rm } = await import("fs/promises");
+    const { tmpdir } = await import("os");
+    const { join } = await import("path");
+    const { boundReaders } = await import("./changed-symbols.js");
+    const dir = await mkdtemp(join(tmpdir(), "bound-readers-"));
+    try {
+      await write(dir, {
+        "pkg/named.py": { imports: [imp("pkg.settings", ["SEASON_LIMIT"])] },
+        "pkg/whole.py": { imports: [imp("pkg", ["settings"])] },
+        "pkg/other.py": { imports: [imp("pkg.settings", ["OTHER_LIMIT"])] },
+        "pkg/fn.py": { imports: [imp("pkg.settings", ["table"]), imp("os", [])] },
+        "pkg/star.py": { imports: [imp("pkg.settings", ["*"])] },
+        "pkg/__init__.py": { imports: [imp("pkg.settings", ["SEASON_LIMIT"])], exports: [{ name: "SEASON_LIMIT", kind: "re-export", line: 1 }] },
+        "app/user.py": { imports: [imp("pkg", ["SEASON_LIMIT"])] },
+        "app/decoy.py": { imports: [imp("pkg", ["table"])] },
+      });
+      const graph = {
+        "pkg/named.py": ["pkg/settings.py"],
+        "pkg/whole.py": ["pkg/settings.py"],
+        "pkg/other.py": ["pkg/settings.py"],
+        "pkg/fn.py": ["pkg/settings.py"],
+        "pkg/star.py": ["pkg/settings.py"],
+        "pkg/__init__.py": ["pkg/settings.py"],
+        "app/user.py": ["pkg/__init__.py"],
+        "app/decoy.py": ["pkg/__init__.py"],
+      };
+      const out = await boundReaders(dir, { componentGraph: graph }, new Map([["pkg/settings.py", ["SEASON_LIMIT"]]]));
+      // The two-hop reader (through the package's re-export) is charged; the decoys are not.
+      expect(out["pkg/settings.py"]).toEqual(["app/user.py", "pkg/__init__.py", "pkg/named.py", "pkg/star.py", "pkg/whole.py"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

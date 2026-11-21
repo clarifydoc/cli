@@ -92,6 +92,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   macros: "optional",
   nameAliases: "optional",
   moduleBindings: "optional",
+  moduleNames: "optional",
   declaredNamespace: "optional",
   facadeClass: "optional",
   packageName: "optional",

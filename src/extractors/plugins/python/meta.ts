@@ -4,6 +4,7 @@ import { DjangoTemplateUrlResolver } from "./django/template-links.js";
 import { DjangoCommandResolver } from "./django/commands.js";
 import { DrfViewSetActionResolver } from "./django/viewset-actions.js";
 import { DrfSerializerResolver } from "./django/serializer-dispatch.js";
+import { extractPythonModuleNames } from "./module-names.js";
 import { extractPythonNameAliases, extractPythonTypeAliases } from "./type-aliases.js";
 import { extractPythonModuleValues } from "./module-values.js";
 import { AiosqlQueryResolver } from "./aiosql.js";
@@ -217,6 +218,7 @@ export const pythonMeta: LanguagePluginMeta = {
     // `httpx.Client(base_url=…)` held in a name: the base a request through it reaches (see http-clients.ts).
     httpClientRegistrations: (tree, sourceText) => extractPythonHttpClientRegistrations(tree, sourceText),
     nameAliases: (tree) => extractPythonNameAliases(tree),
+    moduleNames: (tree) => extractPythonModuleNames(tree),
     // A script's or module's own `repo = ClubRepo()` types the calls its top-level statements make.
     topLevelLocalTypes: (tree, sourceText) => pythonTopLevelLocalTypes(tree.rootNode, sourceText),
     // Module and class string constants another module's URL or route reads (see module-values.ts).

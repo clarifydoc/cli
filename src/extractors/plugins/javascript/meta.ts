@@ -5,6 +5,7 @@ import { extractBrowserNavigations } from "./browser-navigations.js";
 import { extractAppMount } from "./app-mounts.js";
 import { withImportTypeArgs } from "./import-type-args.js";
 import { templateEscapePreprocess } from "./template-escapes.js";
+import { extractJsModuleNames } from "./module-names.js";
 import { extractTsTypeAliases, extractJsNameAliases } from "./type-aliases.js";
 import { markupCalls, markupFunctions } from "./markup-calls.js";
 import { jsxFunctionProps, jsxPropElements, propBindings, unreadPropBindings } from "./prop-bindings.js";
@@ -307,6 +308,7 @@ function astHooks(language: Language): AstExtractorHooks {
     diBindings: extractJsDiBindings,
     typeAliases: (tree) => extractTsTypeAliases(tree),
     nameAliases: (tree) => extractJsNameAliases(tree),
+    moduleNames: (tree) => extractJsModuleNames(tree),
     topLevelLocalTypes: (tree, sourceText) => topLevelLocalTypes(tree, sourceText),
   };
 }

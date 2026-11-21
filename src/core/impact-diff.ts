@@ -212,6 +212,8 @@ export function computeImpactDiff(
       importOnly?: string[];
       /** Of those, the names a file forwards from what it imports (`export { x }`, a Python import): the importers naming one are charged. */
       forwarded?: Record<string, string[]>;
+      /** Of the files whose changed lines all fall on module-level names, the files that read those names. */
+      boundReaders?: Record<string, string[]>;
     };
   },
 ): ImpactDiffResult {
@@ -624,8 +626,9 @@ function narrowDependents(
     if (!hunked || moduleOnly.has(file)) continue;
     const targets: MemberTarget[] = symbols.changed.filter((s) => s.file === file).map((s) => ({ file, symbol: s.symbol }));
     const types = classChanges.filter((c) => c.file === file);
+    const readers = symbols.boundReaders?.[file];
     // A class-level hunk with no comparison behind it cannot be judged by member.
-    if ((symbols.moduleLevel.includes(file) && !types.length && !importOnly.has(file)) || (!targets.length && !types.length && !importOnly.has(file))) continue;
+    if ((symbols.moduleLevel.includes(file) && !types.length && !importOnly.has(file)) || (!targets.length && !types.length && !importOnly.has(file) && !readers)) continue;
     // A type whose members compare equal changed in a way the comparison does not see (a default, a comment): not judged.
     if (types.some((c) => !c.added.length && !c.changed.length)) continue;
     for (const c of types) {
@@ -642,6 +645,8 @@ function narrowDependents(
         rows.push(`imports a name ${file} forwards`);
       }
     }
+    // Module-level names the change edited: the files that read them.
+    for (const f of readers ?? []) (named.files.get(f) ?? named.files.set(f, []).get(f)!).push("reads a name the change edited");
     byFile.set(file, new Set([...named.files.keys()].filter((f) => !changedFiles.includes(f))));
     for (const [f, reasons] of named.files) {
       const rows = why.get(f) ?? why.set(f, []).get(f)!;

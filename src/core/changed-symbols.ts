@@ -1,7 +1,7 @@
 import { readFile } from "fs/promises";
 import { dirname, join } from "path";
 import { byOrdinal } from "./ordinal.js";
-import type { Confidence, FileAnalysis, ProjectAnalysis, SymbolLink } from "../types/analysis.js";
+import type { Confidence, FileAnalysis, ImportInfo, ProjectAnalysis, SymbolLink } from "../types/analysis.js";
 import { GIT_SAFE_CONFIG, GIT_SAFE_DIFF } from "./git-safe.js";
 
 /** New-side line ranges a diff changed, per project-relative file (1-based, inclusive). */
@@ -107,6 +107,8 @@ export type HunkSpans = Pick<FileAnalysis, "functions" | "classes"> & {
   imports?: ReadonlyArray<{ line: number }>;
   /** The names the file forwards from what it imports (a re-export, or an export named like an import): an edit to its imports can change what it offers them. */
   reexports?: string[];
+  /** The names the file binds at its top level and the lines each owns (`FileAnalysis.moduleNames`). */
+  moduleNames?: ReadonlyArray<{ name: string; line: number; endLine: number }>;
 };
 
 /**
@@ -121,7 +123,8 @@ export type HunkSpans = Pick<FileAnalysis, "functions" | "classes"> & {
 export function symbolsInHunks(
   analyses: ReadonlyMap<string, HunkSpans>,
   hunks: ChangedHunks,
-): { symbols: ChangedSymbol[]; moduleLevel: string[]; classLevel: ChangedClass[]; moduleOnly: string[]; importOnly: string[]; forwarded: Map<string, string[]> } {
+): { symbols: ChangedSymbol[]; moduleLevel: string[]; classLevel: ChangedClass[]; moduleOnly: string[]; importOnly: string[]; forwarded: Map<string, string[]>; bound: Map<string, string[]> } {
+  const bound = new Map<string, Set<string>>();
   const importOnly = new Set<string>();
   const forwarded = new Map<string, string[]>();
   const symbols = new Map<string, ChangedSymbol>();
@@ -152,6 +155,14 @@ export function symbolsInHunks(
         .sort((x, y) => (x.endLine - x.line) - (y.endLine - y.line))[0];
       if (hit) symbols.set(`${file}::${hit.symbol}`, hit);
       else {
+        // A range wholly inside the lines of module-level names changes those names: the files that import them are
+        // the ones to look at. This is judged before the import block, so a constant between two imports is a constant.
+        const owned = ownedNames(a.moduleNames, s, e);
+        if (owned) {
+          const set = bound.get(file) ?? bound.set(file, new Set()).get(file)!;
+          for (const n of owned) set.add(n);
+          continue;
+        }
         moduleLevel.add(file);
         // Edits inside the file's import block change what IT imports, not what it offers its importers —
         // unless the file declares nothing and is only a barrel of imports.
@@ -176,7 +187,24 @@ export function symbolsInHunks(
     moduleOnly: [...moduleOnly].sort(byOrdinal),
     importOnly: [...importOnly].sort(byOrdinal),
     forwarded,
+    bound: new Map([...bound].map(([f, names]) => [f, [...names].sort(byOrdinal)])),
   };
+}
+
+/**
+ * The names whose lines contain all of `s..e`, or null when a line of the range belongs to none of them (a statement
+ * that binds no name, a gap the extractor did not state). Lines must be covered without a hole.
+ */
+function ownedNames(spans: HunkSpans["moduleNames"], s: number, e: number): string[] | null {
+  if (!spans?.length) return null;
+  const hit = spans.filter((n) => n.line <= e && n.endLine >= s).sort((x, y) => x.line - y.line);
+  if (!hit.length) return null;
+  let covered = s - 1;
+  for (const n of hit) {
+    if (n.line > covered + 1) return null;
+    covered = Math.max(covered, n.endLine);
+  }
+  return covered >= e ? [...new Set(hit.map((n) => n.name))] : null;
 }
 
 const RANK: Record<Confidence, number> = { EXTRACTED: 2, INFERRED: 1, AMBIGUOUS: 0 };
@@ -258,7 +286,7 @@ export async function loadFileAnalyses(analysisDir: string, files: readonly stri
       const a = JSON.parse(await readFile(join(analysisDir, `${f}.json`), "utf8")) as FileAnalysis;
       const imported = new Set((a.imports ?? []).flatMap((i) => [...i.specifiers, ...Object.keys(i.aliases ?? {})]));
       const reexports = (a.exports ?? []).filter((e) => e.kind === "re-export" || imported.has(e.name)).flatMap((e) => (e.sourceName ? [e.name, e.sourceName] : [e.name]));
-      out.set(f, { functions: a.functions ?? [], classes: a.classes ?? [], imports: (a.imports ?? []).map((i) => ({ line: i.line })), ...(reexports.length ? { reexports } : {}) });
+      out.set(f, { functions: a.functions ?? [], classes: a.classes ?? [], imports: (a.imports ?? []).map((i) => ({ line: i.line })), ...(reexports.length ? { reexports } : {}), ...(a.moduleNames?.length ? { moduleNames: a.moduleNames } : {}) });
     } catch {
       // Not analyzed (new since the analysis, or not a source file).
     }
@@ -595,7 +623,7 @@ export function editedLines(hunks: ChangedHunks): (file: string, line: number) =
 export async function symbolsOfChange(
   root: string,
   analysisDir: string,
-  summary: Pick<ProjectAnalysis, "symbolLinks" | "classGraph">,
+  summary: Pick<ProjectAnalysis, "symbolLinks" | "classGraph" | "componentGraph">,
   files: readonly string[],
   hunks: ChangedHunks,
   contents?: ReadonlyMap<string, string | null>,
@@ -609,10 +637,89 @@ export async function symbolsOfChange(
     moduleOnly: found.moduleOnly,
     importOnly: found.importOnly,
     forwarded: Object.fromEntries(found.forwarded),
+    boundReaders: await boundReaders(analysisDir, summary, found.bound),
     signatureChanges: await judgeSignatures(analysisDir, before, after, summary, editedLines(hunks)),
     classChanges: classChanges(before, after, found.classLevel),
     hunks,
   };
+}
+
+/** The last name of an import source or a file path, without extension (`pkg.settings` / `./settings.ts` → `settings`; `pkg/__init__.py` → `pkg`). */
+function moduleStem(path: string): string {
+  const parts = path.replace(/\.(?:[cm]?[jt]sx?|py)$/, "").split(/[./\\]+/).filter(Boolean);
+  const last = parts.pop() ?? "";
+  return last === "__init__" || last === "index" ? (parts.pop() ?? last) : last;
+}
+
+/**
+ * Whether a file's imports can read one of `names` from the module at `target`: a row that lists a name, a row that
+ * takes the whole module (a namespace, a default, a bare `import m`, `from p import module`, a star) and spells the
+ * module's own name, or a star import. Which row reaches `target` is not resolved here, so any row naming the
+ * name counts — never fewer files than the ones that import it.
+ */
+function mayRead(imports: readonly ImportInfo[], target: string, names: ReadonlySet<string>): boolean {
+  const stem = moduleStem(target);
+  return imports.some((i) => {
+    if (i.executes) return false;
+    const listed = [...i.specifiers, ...Object.values(i.aliases ?? {})];
+    if (listed.some((n) => names.has(n))) return true;
+    if (i.specifiers.includes("*")) return true;
+    const whole = i.isNamespace || i.isDefault || i.specifiers.length === 0 || i.specifiers.includes(stem);
+    return whole && (i.specifiers.includes(stem) || moduleStem(i.source) === stem);
+  });
+}
+
+/**
+ * For files whose edit changed module-level names (`bound`: file → names), the files that read them: importers whose
+ * imports name one, or take the module whole — and, through an importer that forwards the name (a re-export), the
+ * importers of that file in turn. An importer the analysis has no record of stays. Importers come from
+ * `componentGraph` (every importing file, whatever the length of `affectedFiles`).
+ */
+export async function boundReaders(analysisDir: string, summary: Pick<ProjectAnalysis, "componentGraph">, bound: ReadonlyMap<string, readonly string[]>): Promise<Record<string, string[]>> {
+  if (!bound.size) return {};
+  const importers = new Map<string, string[]>();
+  for (const [from, tos] of Object.entries(summary.componentGraph ?? {})) for (const to of tos) (importers.get(to) ?? importers.set(to, []).get(to)!).push(from);
+  const loaded = new Map<string, FileAnalysis | null>();
+  const analysisOf = async (f: string): Promise<FileAnalysis | null> => {
+    if (!loaded.has(f)) {
+      try {
+        loaded.set(f, JSON.parse(await readFile(join(analysisDir, `${f}.json`), "utf8")) as FileAnalysis);
+      } catch {
+        loaded.set(f, null);
+      }
+    }
+    return loaded.get(f)!;
+  };
+  const out: Record<string, string[]> = {};
+  for (const [file, names] of bound) {
+    const readers = new Set<string>();
+    const seen = new Set<string>([file]);
+    let frontier: Array<{ file: string; names: ReadonlySet<string> }> = [{ file, names: new Set(names) }];
+    for (let depth = 0; depth < 4 && frontier.length; depth++) {
+      const next: typeof frontier = [];
+      for (const hop of frontier) {
+        for (const importer of importers.get(hop.file) ?? []) {
+          if (seen.has(importer)) continue;
+          const a = await analysisOf(importer);
+          if (a && !mayRead(a.imports ?? [], hop.file, hop.names)) continue;
+          seen.add(importer);
+          readers.add(importer);
+          // A file that hands the names on — a re-export or export of one, a star re-export, a package `__init__` or an
+          // `index` — offers them to its own importers (under the name it gives them).
+          const handed = new Set<string>();
+          for (const e of a?.exports ?? []) {
+            if (e.name === "*") for (const n of hop.names) handed.add(n);
+            else if (hop.names.has(e.name) || (e.sourceName && hop.names.has(e.sourceName))) handed.add(e.name), e.sourceName && handed.add(e.sourceName);
+          }
+          if (!a || /(?:^|\/)(?:__init__\.py|index\.[cm]?[jt]sx?)$/.test(importer)) for (const n of hop.names) handed.add(n);
+          if (handed.size) next.push({ file: importer, names: handed });
+        }
+      }
+      frontier = next;
+    }
+    out[file] = [...readers].sort(byOrdinal);
+  }
+  return out;
 }
 
 /**

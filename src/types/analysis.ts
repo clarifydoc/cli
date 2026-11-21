@@ -747,6 +747,13 @@ export interface FileAnalysis {
    */
   moduleBindings?: ModuleBindingInfo[];
   /**
+   * The names the module binds at its top level to a value (Python `SCHEDULER_DB = "…"`, `router = APIRouter(…)`; JS/TS
+   * `export const LIMIT = 5`), each with the 1-based lines it owns: the statement, the comments written directly above it
+   * and the blank lines below it up to the next statement. What an edit to such a line changes is that name — the
+   * impact pass charges the files that import it, not every importer. Omitted when the file binds none.
+   */
+  moduleNames?: ModuleNameSpan[];
+  /**
    * The namespace the file's free functions are declared in, as the language
    * writes it (PHP `namespace App\Support;` → `App\Support`). A call reaching
    * a function by its qualified name (`use function App\Support\money`,
@@ -1058,6 +1065,13 @@ export interface ModuleBindingInfo {
    * (`League::SERVICE`); within the 1-based line span of that namespace's body the bare `name` stands for it too.
    */
   lexical?: { name: string; line: number; endLine: number };
+}
+
+/** A name a module binds at its top level and the lines it owns (`FileAnalysis.moduleNames`). */
+export interface ModuleNameSpan {
+  name: string;
+  line: number;
+  endLine: number;
 }
 
 /** A module-level name bound to another: `name` stands for `target`, as written (`s = attrs`). */
