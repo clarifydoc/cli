@@ -325,23 +325,13 @@ program
       );
       const author = options.author ?? (options.files?.length ? undefined : await gitUserName(projectRoot));
       // The diff's lines, so the change is also judged function by function.
-      let symbols: { changed: import("./core/changed-symbols.js").ChangedSymbol[]; moduleLevel: string[]; boundReaders?: Record<string, string[]>; starForwarders?: Record<string, string[]>; signatureChanges?: import("./core/changed-symbols.js").SignatureChange[]; hunks?: import("./core/changed-symbols.js").ChangedHunks } | undefined;
+      let symbols: Awaited<ReturnType<typeof import("./core/changed-symbols.js").symbolsOfChange>> | undefined;
       if (!options.files?.length) {
         try {
-          const { symbolsInHunks, loadFileAnalyses, analyzeWorkingFiles, judgeSignatures, boundReaders, starForwarders, analysisReader } = await import("./core/changed-symbols.js");
+          const { symbolsOfChange } = await import("./core/changed-symbols.js");
           const hunks = await gitChangedHunks(projectRoot, { base: options.base, staged: options.staged });
-          const touched = [...new Set([...hunks.keys(), ...changed])];
-          const before = await loadFileAnalyses(analysisDir, touched);
-          const found = symbolsInHunks(before, hunks);
-          // Every touched file, new ones too: a function that left one file may have moved into another.
-          const after = await analyzeWorkingFiles(projectRoot, touched);
-          const read = analysisReader(analysisDir);
-          symbols = {
-            changed: found.symbols, moduleLevel: found.moduleLevel,
-            boundReaders: await boundReaders(analysisDir, summary, found.bound, read),
-            starForwarders: await starForwarders(analysisDir, summary, touched, read),
-            signatureChanges: await judgeSignatures(analysisDir, before, after, summary), hunks,
-          };
+          // The files the diff's lines and the changed list touch, as the MCP tools judge them.
+          symbols = await symbolsOfChange(projectRoot, analysisDir, summary, [...new Set([...hunks.keys(), ...changed])], hunks);
         } catch (e) {
           // No line ranges: the file-level impact stands alone.
           if (process.env.CLARIFYDOC_DEBUG) console.error(e);

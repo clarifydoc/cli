@@ -637,14 +637,15 @@ export function editedLines(hunks: ChangedHunks): (file: string, line: number) =
 export async function symbolsOfChange(
   root: string,
   analysisDir: string,
-  summary: Pick<ProjectAnalysis, "symbolLinks" | "classGraph" | "componentGraph">,
+  summary: Pick<ProjectAnalysis, "symbolLinks" | "classGraph" | "componentGraph" | "starReexports">,
   files: readonly string[],
   hunks: ChangedHunks,
   contents?: ReadonlyMap<string, string | null>,
 ) {
   const before = await loadFileAnalyses(analysisDir, files);
   const found = symbolsInHunks(before, hunks);
-  const after = await analyzeWorkingFiles(root, contents ? files : [...before.keys()], contents);
+  // Every touched file, new ones too: a function that left one file may have moved into another.
+  const after = await analyzeWorkingFiles(root, files, contents);
   const read = analysisReader(analysisDir);
   return {
     changed: found.symbols,
@@ -748,11 +749,12 @@ export async function boundReaders(
  * `export * from "./hooks"` / `export * as ns from` — among the files that (transitively) import `files`, each
  * with the files it forwards. A forwarder names no member, so no call or import-by-name link reaches the module
  * through it; what the module loses, it loses too. Importers come from `componentGraph`; the module a star
- * export names is the importee whose file stem (or folder, for `__init__`/`index`) is the last word of its source.
+ * export names is the file the analysis resolved it to (`starReexports`), else — an old summary, an unresolved
+ * source — the importee whose path spells the source's words.
  */
 export async function starForwarders(
   analysisDir: string,
-  summary: Pick<ProjectAnalysis, "componentGraph">,
+  summary: Pick<ProjectAnalysis, "componentGraph" | "starReexports">,
   files: readonly string[],
   analysisOf = analysisReader(analysisDir),
 ): Promise<Record<string, string[]>> {
@@ -775,6 +777,12 @@ export async function starForwarders(
     if (!stars.length) continue;
     const targets = new Set<string>();
     for (const e of stars) {
+      // Where the import index resolved this source, when the analysis recorded it.
+      const resolved = summary.starReexports?.[f]?.[e.source!];
+      if (resolved) {
+        targets.add(resolved);
+        continue;
+      }
       // The importee whose path spells the source's words (`.hooks`, `./hooks.service`, `pkg.hooks`): which row reaches which file is not resolved, so a package folder over-matches rather than misses.
       const wanted = pathWords(e.source!);
       for (const t of summary.componentGraph[f] ?? []) {
