@@ -164,6 +164,10 @@ class ProjectIndex {
   private readonly supers = new Map<ClassInfo, Array<{ fqn: string; cls: ClassInfo }>>();
   /** Named pointcuts parsed once per run, by their text. */
   readonly parsedPointcuts = new Map<string, Node | null>();
+  /** `execution(...)` atoms compiled once per run, by their text. */
+  readonly executions = new Map<string, CompiledExecution | null>();
+  /** Dotted type patterns split into segments once per run. */
+  readonly segments = new Map<string, string[]>();
 
   constructor(analyses: readonly FileAnalysis[]) {
     for (const file of analyses) {
@@ -224,19 +228,33 @@ class ProjectIndex {
   }
 }
 
-function fqnOf(file: FileAnalysis, cls: ClassInfo): string {
-  return file.packageName ? `${file.packageName}.${cls.name}` : cls.name;
+/** A bare name written in `file`'s own package, fully qualified. */
+function qualify(file: FileAnalysis, name: string): string {
+  return file.packageName ? `${file.packageName}.${name}` : name;
 }
 
-/** A bare type name → its fully qualified name through the file's imports (single or wildcard) or its own package; null when unknown. */
+function fqnOf(file: FileAnalysis, cls: ClassInfo): string {
+  return qualify(file, cls.name);
+}
+
+/**
+ * A bare type name → its fully qualified name through the file's imports (single or wildcard) or, with `index`, its own
+ * package when exactly that class is declared there; null when unknown. A single import names its type by the name it
+ * binds: the last segment, or the alias (`ImportInfo.aliases`, Kotlin `import a.Mechanic as Fixer` — the original name is
+ * then no longer in scope); a static import (`inScope`) binds a member, never a type.
+ */
 function resolveSimpleName(file: FileAnalysis, name: string, index?: ProjectIndex): string | null {
   for (const imp of file.imports) {
-    if (!imp.isNamespace && simpleName(imp.source) === name) return imp.source;
+    if (imp.isNamespace || imp.inScope) continue;
+    const aliased = imp.aliases && Object.keys(imp.aliases).length > 0;
+    if (aliased ? imp.aliases![name] === simpleName(imp.source) : simpleName(imp.source) === name) return imp.source;
   }
   // A wildcard import names the type only when exactly one imported package of the project declares it.
   if (index) {
     const hits = file.imports.filter((i) => i.isNamespace && index.classByFqn(`${i.source}.${name}`));
     if (hits.length === 1) return `${hits[0]!.source}.${name}`;
+    const own = qualify(file, name);
+    if (index.classByFqn(own)) return own;
   }
   return null;
 }
@@ -404,35 +422,52 @@ function evalNamed(name: string, ctx: EvalContext): Tri {
 
 const MODIFIERS = new Set(["public", "protected", "private", "static", "final", "abstract", "synchronized", "native", "!public", "!protected", "!private", "!static", "!final"]);
 
-function matchExecution(arg: string, ctx: EvalContext): Tri {
+/** An `execution(...)` atom read once: its modifiers, name glob, return, parameter patterns and declaring type. */
+interface CompiledExecution {
+  modifiers: string[];
+  namePattern: string;
+  ret: string;
+  params: string;
+  typePattern: string | null;
+  plus: boolean;
+}
+
+/** The atom's text taken apart once per run (shared by every advice and join point); null when it is not a form this reads. */
+function compileExecution(arg: string): CompiledExecution | null {
   const open = arg.indexOf("(");
-  if (open < 0) return undefined;
+  if (open < 0) return null;
   const close = matchingParen(arg, open);
-  if (close < 0) return undefined;
-  if (arg.slice(close + 1).trim() !== "") return undefined; // `throws …`
+  if (close < 0) return null;
+  if (arg.slice(close + 1).trim() !== "") return null; // `throws …`
   const head = arg.slice(0, open).trim().split(/\s+/);
-  const params = arg.slice(open + 1, close);
-  let modifierOk: Tri = true;
+  const modifiers: string[] = [];
   while (head.length > 2) {
     const mod = head.shift()!;
-    if (mod === "public") modifierOk = ctx.jp.method.isExported || ctx.jp.cls.kind === "interface" ? modifierOk : false;
-    else if (MODIFIERS.has(mod)) modifierOk = modifierOk === false ? false : undefined;
-    else return undefined;
+    if (!MODIFIERS.has(mod)) return null;
+    modifiers.push(mod);
   }
-  if (head.length !== 2) return undefined;
+  if (head.length !== 2) return null;
   const [ret, decl] = head as [string, string];
   const dot = decl.lastIndexOf(".");
-  const namePattern = decl.slice(dot + 1);
   const typePattern = dot < 0 ? null : decl.slice(0, dot);
-  if (typePattern !== null && typePattern.endsWith(".")) return undefined;
-  const results: Tri[] = [modifierOk];
-  results.push(globMatch(namePattern, ctx.jp.method.name));
-  results.push(matchReturn(ret, ctx.jp.method.returnType));
-  results.push(matchParams(params, ctx.jp.method));
-  if (typePattern !== null) {
-    const names = declaringNames(ctx, typePattern.endsWith("+"));
-    results.push(matchTypePattern(typePattern, names, ctx));
+  if (typePattern !== null && typePattern.endsWith(".")) return null;
+  return { modifiers, namePattern: decl.slice(dot + 1), ret, params: arg.slice(open + 1, close), typePattern, plus: typePattern?.endsWith("+") ?? false };
+}
+
+function matchExecution(arg: string, ctx: EvalContext): Tri {
+  let atom = ctx.index.executions.get(arg);
+  if (atom === undefined) ctx.index.executions.set(arg, (atom = compileExecution(arg)));
+  if (!atom) return undefined;
+  // The name glob settles most join points: fail on it before any other work.
+  if (!globMatch(atom.namePattern, ctx.jp.method.name)) return false;
+  let modifierOk: Tri = true;
+  for (const mod of atom.modifiers) {
+    if (mod === "public") modifierOk = ctx.jp.method.isExported || ctx.jp.cls.kind === "interface" ? modifierOk : false;
+    else modifierOk = modifierOk === false ? false : undefined;
   }
+  if (modifierOk === false) return false;
+  const results: Tri[] = [modifierOk, matchReturn(atom.ret, ctx.jp.method.returnType), matchParams(atom.params, ctx.jp.method)];
+  if (atom.typePattern !== null) results.push(matchTypePattern(atom.typePattern, declaringNames(ctx, atom.plus), ctx));
   if (results.includes(false)) return false;
   return results.every((r) => r === true) ? true : undefined;
 }
@@ -474,8 +509,7 @@ function matchAnnotation(arg: string, ctx: EvalContext, on: "method" | "class"):
     if (!type) return undefined;
     // Only a type the aspect's imports or its own package certainly name; a guess would make `!@annotation(x)` true.
     const written = type.trim();
-    const own = ctx.aspect.file.packageName ? `${ctx.aspect.file.packageName}.${written}` : written;
-    const resolved = resolveSimpleName(ctx.aspect.file, written, ctx.index) ?? (ctx.index.classByFqn(own) ? own : null);
+    const resolved = resolveSimpleName(ctx.aspect.file, written, ctx.index);
     if (!resolved) return undefined;
     fqn = resolved;
   }
@@ -553,11 +587,12 @@ function matchTypePattern(pattern: string, names: readonly string[], ctx: EvalCo
   if (!p.includes(".")) {
     // A bare class name is resolved where the aspect is written; a wildcard without a package says nothing certain.
     if (/\*/.test(p)) return undefined;
-    const fqn = resolveSimpleName(ctx.aspect.file, p, ctx.index) ?? (ctx.index.classByFqn(ctx.aspect.file.packageName ? `${ctx.aspect.file.packageName}.${p}` : p) ? (ctx.aspect.file.packageName ? `${ctx.aspect.file.packageName}.${p}` : p) : null);
+    const fqn = resolveSimpleName(ctx.aspect.file, p, ctx.index);
     if (!fqn) return undefined;
     p = fqn;
   }
-  const segments = patternSegments(p);
+  let segments = ctx.index.segments.get(p);
+  if (!segments) ctx.index.segments.set(p, (segments = patternSegments(p)));
   return names.some((name) => matchSegments(segments, name.split("."))) ? true : false;
 }
 

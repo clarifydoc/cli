@@ -162,4 +162,30 @@ describe("Spring AOP advice on its join points", () => {
     // `Audited` is in the aspect's explicit import; `Ghost` is no project type, so the negation says nothing.
     expect(out).toEqual(["league/Bench.java#Bench.sit -> LeagueAspect.guarded INFERRED"]);
   });
+
+  it("reads a Kotlin import alias as its type, and a static import as a member, never a type", async () => {
+    const aliased = await analyze(`package com.example.aspect
+import com.example.league.ClubService as Roster
+import org.aspectj.lang.annotation.Aspect
+import org.aspectj.lang.annotation.Before
+@Aspect
+class LeagueAspect {
+  @Before("within(Roster)")
+  fun checkAuth() { }
+}`, `src/main/kotlin/com/example/aspect/LeagueAspect.kt`, "kotlin");
+    const service = await analyze(clubService("league"), `${base}/league/ClubService.java`);
+    const resolved = new AopAdviceResolver().resolve([aliased, service]).map((l) => `${l.sourceSymbol} -> ${l.targetSymbol}`).sort();
+    expect(resolved).toEqual(["ClubService.idle -> LeagueAspect.checkAuth", "ClubService.release -> LeagueAspect.checkAuth", "ClubService.sign -> LeagueAspect.checkAuth"]);
+
+    // `ClubService` here is a static member of Helper: the negation must stay unknown, not become true.
+    const statics = await analyze(`package com.example.aspect;
+import static com.example.other.Helper.ClubService;
+import org.aspectj.lang.annotation.*;
+@Aspect
+public class LeagueAspect {
+  @Before("!within(ClubService)")
+  public void checkAuth() { }
+}`, `${base}/aspect/LeagueAspect.java`);
+    expect(new AopAdviceResolver().resolve([statics, service])).toEqual([]);
+  });
 });
