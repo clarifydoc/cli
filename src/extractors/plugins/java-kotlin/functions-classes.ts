@@ -20,7 +20,7 @@ import { anonymousBaseOf, anonymousClassName, anonymousRefinesDeclared, isAnonym
 import { kotlinDelegationCall, kotlinSuperConstruction } from "./kotlin-delegation.js";
 import { jvmElementFacts, kotlinInvokeCalls, outerFieldLocals } from "./element-types.js";
 import { classFlowOf, constructorFieldFlow, libraryContextOf, methodValueFlow, type ClassFlow, type LibraryContext } from "./value-flow.js";
-import { synthesizeJavaMembers, synthesizeKotlinAccessors, synthesizeKotlinDataMembers } from "./synthesized-members.js";
+import { synthesizeEnumMembers, synthesizeGeneratedValueClasses, synthesizeJavaMembers, synthesizeKotlinAccessors, synthesizeKotlinDataMembers } from "./synthesized-members.js";
 
 type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
 
@@ -140,6 +140,7 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
   private pushClass(node: Node, classes: ClassInfo[], lang: JkLang): void {
     const cls = this.parseClass(node, lang);
     classes.push(cls);
+    synthesizeEnumMembers(cls, lang);
     if (lang === "kotlin") {
       synthesizeKotlinDataMembers(node, cls);
       synthesizeKotlinAccessors(cls);
@@ -153,8 +154,8 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
         if (name) nested.add(name);
       }
     }
-    const builder = synthesizeJavaMembers(node, cls, body, nested);
-    if (builder) classes.push(builder);
+    classes.push(...synthesizeJavaMembers(node, cls, body, nested));
+    classes.push(...synthesizeGeneratedValueClasses(node, cls, body));
   }
 
   private parseClass(node: Node, lang: JkLang): ClassInfo {

@@ -281,7 +281,7 @@ public class Car {
   @Nested class WhenEmpty { void rejects() {} }
   enum Status { OPEN, CLOSED }
 }`, "java");
-    expect(classes.map((c) => `${c.name}[${c.methods.map((m) => m.name)}]`)).toEqual(["Car[]", "Builder[build]", "WhenEmpty[rejects]", "Status[]"]);
+    expect(classes.map((c) => `${c.name}[${c.methods.map((m) => m.name)}]`)).toEqual(["Car[]", "Builder[build]", "WhenEmpty[rejects]", "Status[values,valueOf]"]);
   });
 
   it("reads a Java enum's fields, constructor and methods after its constants, and an interface's constants", async () => {
@@ -300,7 +300,7 @@ interface LeagueTables {
   int MAX_CLUBS = 20;
 }`, "java");
     const position = classes.find((c) => c.name === "Position")!;
-    expect(position.methods.map((m) => m.name)).toEqual(["Position", "getCode", "byCode"]);
+    expect(position.methods.map((m) => m.name)).toEqual(["Position", "getCode", "byCode", "values", "valueOf"]);
     expect(position.properties.map((p) => p.name)).toEqual(["code", "shirt", "KEEPER", "STRIKER"]);
     const tables = classes.find((c) => c.name === "LeagueTables")!;
     expect(tables.properties.map((p) => [p.name, p.type, p.isStatic, p.isReadonly])).toEqual([
