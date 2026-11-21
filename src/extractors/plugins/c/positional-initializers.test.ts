@@ -137,8 +137,8 @@ describe("C structs of function pointers filled by a positional initializer", ()
     expect(found).toContain("run_sell pops.on_sell -> src/impl.c::player_sell");
   });
   it("reads a typedef alias closing the body inside extern C, and a tagless typedef struct", () => {
-    expect(found).toContain("drive shift -> src/gear.c::car_shift");
-    expect(found).toContain("drive honk -> src/gear.c::car_honk");
+    expect(found).toContain("drive gear.shift -> src/gear.c::car_shift");
+    expect(found).toContain("drive horn.honk -> src/gear.c::car_honk");
   });
   it("takes fewer elements than fields, and an object-like macro of one value", () => {
     expect(found).toContain("run_scout ops.scout -> src/impl.c::club_flagged");

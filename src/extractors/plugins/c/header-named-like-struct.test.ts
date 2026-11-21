@@ -56,11 +56,11 @@ describe("a C struct declared in a header named like it", () => {
     .sort();
   });
   it("seeds its fields from a designated initializer", () => {
-    expect(found).toContain("run scout -> src/impl.c::club_scout");
+    expect(found).toContain("run ops.scout -> src/impl.c::club_scout");
   });
   it("never reaches the namesake struct of another folder", () => {
-    expect(found).not.toContain("run scout -> src/rival/rival.c::rival_scout");
-    expect(found).not.toContain("rival_run scout -> src/impl.c::club_scout");
-    expect(found).toContain("rival_run scout -> src/rival/rival.c::rival_scout");
+    expect(found).not.toContain("run ops.scout -> src/rival/rival.c::rival_scout");
+    expect(found).not.toContain("rival_run ops.scout -> src/impl.c::club_scout");
+    expect(found).toContain("rival_run ops.scout -> src/rival/rival.c::rival_scout");
   });
 });
