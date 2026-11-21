@@ -74,6 +74,9 @@ describe("notebookPython", () => {
   it("blanks magics, keeps cell order and skips other kernels and oversized code", () => {
     const r = notebookPython(nb([{ cell_type: "code", source: ["%%time\n", "a = 1\n", "%load_ext sql\n", "b = 2"] }, { cell_type: "code", source: "c = 3" }]));
     expect("sourceText" in r && r.sourceText).toBe("\na = 1\n\nb = 2\n\nc = 3\n");
+    const kept = notebookPython(nb([{ cell_type: "code", source: ["!pip install a \\\n", "   b\n", "x = (1\n", "  % 2)\n", "s = '''\n", "% not a magic\n", "'''\n", "df?\n", "y = 4"] }]));
+    expect("sourceText" in kept && kept.sourceText).toBe("\n\nx = (1\n  % 2)\ns = '''\n% not a magic\n'''\n\ny = 4\n");
+    expect(notebookPython(nb([], { kernelspec: { name: "conda-env-club-py" } }))).toHaveProperty("sourceText");
     expect(notebookPython(nb([], { language_info: { name: "julia" } }))).toEqual({ skip: "notebook kernel is julia, not Python" });
     expect(notebookPython("{ not json")).toEqual({ skip: "not valid notebook JSON" });
     expect(notebookPython(nb([{ cell_type: "code", source: "x = 1\n".repeat(400_000) }]))).toEqual({ skip: "notebook code past the size limit" });

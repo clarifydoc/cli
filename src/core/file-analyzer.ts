@@ -859,7 +859,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     analysis.frameworks = inferFileFrameworks(analysis.imports, file.relativePath);
 
     // Merge container-format data back in (e.g. Vue template elements/components)
-    postExtract?.(analysis, rawSource);
+    postExtract?.(analysis, lineSource);
     // What the markup's handlers call, in the component scope the template closes over.
     const declared = new Set([...analysis.functions.map((f) => f.name), ...analysis.classes.flatMap((c) => c.methods.map((m) => m.name))]);
     const markupCalls = hooks?.markupCalls?.(analysis.interactiveElements, file.relativePath, declared) ?? [];
@@ -874,7 +874,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       const own = setup.calls;
       setup.calls.push(...classified.filter((c) => !own.some((x) => x.line === c.line && x.name === c.name)));
     }
-    const propBindings = hooks?.propBindings?.(tree, sourceText, rawSource, file.relativePath);
+    const propBindings = hooks?.propBindings?.(tree, sourceText, lineSource, file.relativePath);
     if (propBindings && propBindings.length > 0) analysis.propBindings = propBindings;
     const unreadBindings = hooks?.unreadPropBindings?.(tree);
     if (unreadBindings && unreadBindings.length > 0) analysis.unreadPropBindings = unreadBindings;
@@ -894,7 +894,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     }
     if (hooks?.propFlows) {
       const flowFns = [...analysis.functions.filter((f) => f.name !== "<setup>"), ...analysis.classes.flatMap((c) => c.methods.map((m) => ({ name: `${c.name}.${m.name}`, line: m.line, endLine: m.endLine })))];
-      const flows = hooks.propFlows(tree, sourceText, rawSource, file.relativePath, flowFns);
+      const flows = hooks.propFlows(tree, sourceText, lineSource, file.relativePath, flowFns);
       if (flows) analysis.propFlows = flows;
     }
     if (hooks?.subjectFlows) {
@@ -974,8 +974,9 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     const astLevelTypeRefs = hooks?.typeReferences?.(tree, file.relativePath) ?? [];
     const combinedTypeRefs = mergeTypeRefs(fileLevelTypeRefs, astLevelTypeRefs);
     if (combinedTypeRefs.length > 0) analysis.typeReferences = combinedTypeRefs;
-    // Read from the source as written: a container's preprocess keeps its lines in place.
-    attachDocComments(analysis, rawSource, manifestFor(language)?.docComments);
+    // Read from the source as written: a container's preprocess keeps its lines in place; a `codeOnly` one
+    // (a notebook) hands the facts' lines of its own text, so that is what is read.
+    attachDocComments(analysis, lineSource, manifestFor(language)?.docComments);
 
     const stored = await store(analysis);
 
