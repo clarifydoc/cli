@@ -3155,7 +3155,7 @@ function classNameMember(
     for (const f of candidateFiles) {
       const classes = analysisByFile.get(f)?.classes;
       if (!classes) continue;
-      const owners = classesNestedAlong(classes, classes.filter((c) => c.name === declaredClass), parts.slice(1, -1));
+      const owners = classesAtOwnerPath(classes, declaredClass, parts.slice(1, -1));
       if (owners.length === 1) found.set(f, { line: owners[0]!.line, endLine: owners[0]!.endLine, bases: !!owners[0]!.extends || owners[0]!.implements.length > 0 || !!owners[0]!.mixins?.length });
     }
     if (found.size > 0) {
@@ -9326,8 +9326,13 @@ function nestedClassByPath(classes: readonly ClassInfo[], written: string): stri
   const gen = classes.find((c) => c.nestedPath === written);
   const leaf = segments[segments.length - 1]!;
   if (gen) return classes.filter((c) => c.name === gen.name).length === 1 ? gen.name : null;
-  const owners = classesNestedAlong(classes, classes.filter((c) => c.name === segments[0] && !c.synthetic), segments.slice(1));
+  const owners = classesAtOwnerPath(classes, segments[0]!, segments.slice(1));
   return owners.length === 1 && classes.filter((c) => c.name === leaf).length === 1 ? leaf : null;
+}
+
+/** The classes at owner path `owner` + `rest` within one file's `classes`: the non-synthetic class `owner`, then each next name inside the previous one's lines — the one lookup of the C# call-chain walk and of `ownerPathTypes`. */
+function classesAtOwnerPath(classes: readonly ClassInfo[], owner: string, rest: readonly string[]): readonly ClassInfo[] {
+  return classesNestedAlong(classes, classes.filter((c) => c.name === owner && !c.synthetic), rest);
 }
 
 /** The classes each next name of an owner path stands for inside the previous ones' lines (`Right` → `Builder`), within one file's `classes`. */
