@@ -19,10 +19,20 @@ const advisories: Record<string, unknown> = {
     summary: "Pit radio leaks",
     affected: [{ package: { name: "example.com/radiokit", ecosystem: "Go" }, ecosystem_specific: { imports: [{ path: "example.com/radiokit", symbols: ["Server.Serve"] }] } }],
   },
+  "GO-2026-0004": {
+    summary: "Flag waving", affected: [{ package: { name: "example.com/flagkit", ecosystem: "Go" }, ecosystem_specific: { imports: [{ path: "example.com/flagkit", symbols: ["Wave"] }] } }],
+  },
+  "GO-2026-0005": {
+    summary: "Pit door", affected: [{ package: { name: "example.com/pitkit", ecosystem: "Go" }, ecosystem_specific: { imports: [{ path: "example.com/pitkit", symbols: ["Open"] }] } }],
+  },
+  "GO-2026-0006": {
+    summary: "Team sheet parser", affected: [{ package: { name: "gopkg.in/sheet.v3", ecosystem: "Go" }, ecosystem_specific: { imports: [{ path: "gopkg.in/sheet.v3", symbols: ["Load"] }] } }],
+  },
   "GHSA-pkg-only": { summary: "Package level only", affected: [{ package: { name: "example.com/paintkit", ecosystem: "Go" } }] },
 };
 const byPackage: Record<string, string> = {
   "example.com/garagekit": "GO-2026-0001", "example.com/tyrekit": "GO-2026-0002", "example.com/radiokit": "GO-2026-0003", "example.com/paintkit": "GHSA-pkg-only",
+  "example.com/flagkit": "GO-2026-0004", "example.com/pitkit": "GO-2026-0005", "gopkg.in/sheet.v3": "GO-2026-0006",
 };
 const fakeFetch = (async (url: string, init?: { body?: string }) => {
   if (url.endsWith("/v1/querybatch")) {
@@ -50,13 +60,26 @@ require (
 	example.com/tyrekit v0.4.1
 	example.com/radiokit v2.0.0
 	example.com/paintkit v1.0.0
+	example.com/flagkit v1.0.0
+	example.com/pitkit v1.0.0
+	gopkg.in/sheet.v3 v3.0.1
 	github.com/gin-gonic/gin v1.9.1
 )
 `);
     mkdirSync(join(root, "garage"));
     writeFileSync(join(root, "garage", "intake.go"), `package garage
 
-import "example.com/garagekit"
+import (
+	"example.com/flagkit"
+	"example.com/garagekit"
+	"github.com/gin-gonic/gin"
+)
+
+type Intake struct{}
+
+func (i *Intake) Handle(c *gin.Context) {
+	flagkit.Wave()
+}
 
 // Register is called from the route handler below.
 func Register(raw []byte) any {
@@ -67,10 +90,14 @@ func Register(raw []byte) any {
 
 import (
 	"example.com/league/garage"
+	"example.com/pitkit"
 	"example.com/radiokit"
 	"example.com/tyrekit"
 	"github.com/gin-gonic/gin"
+	"gopkg.in/sheet.v3"
 )
+
+func sheetOf(raw []byte) any { return sheet.Load(raw) }
 
 func addCar(c *gin.Context) {
 	raw, _ := c.GetRawData()
@@ -86,8 +113,15 @@ func startRadio() {
 	radiokit.Listen()
 }
 
+func openPit() { pitkit.Open() }
+
 func main() {
 	r := gin.Default()
+	intake := &garage.Intake{}
+	r.POST("/intake", intake.Handle)
+	r.GET("/pit", func(c *gin.Context) {
+		openPit()
+	})
 	r.POST("/cars", addCar)
 	r.GET("/pump", pumpStatus)
 	r.Run()
@@ -102,6 +136,13 @@ func main() {
     expect(garage.reach?.calls?.[0]).toMatchObject({ symbol: "ParseCar", from: "POST /cars" });
     expect(garage.reach?.calls?.[0]?.path?.map((k) => k.split("::")[1])).toEqual(["addCar", "Register"]);
 
+    // A receiver method that is the route's handler, and a helper called from an inline route body.
+    expect(adv("example.com/flagkit")?.reach?.status).toBe("reachable");
+    expect(adv("example.com/flagkit")?.reach?.calls?.[0]?.from).toBe("POST /intake");
+    expect(adv("example.com/pitkit")?.reach?.status).toBe("reachable");
+    expect(adv("example.com/pitkit")?.reach?.calls?.[0]?.from).toBe("GET /pit");
+    // The import line gives `sheet.v3`; the call says `sheet`: matching it is a guess, so nothing is claimed.
+    expect(adv("gopkg.in/sheet.v3")?.reach?.status).toBe("not-judged");
     // The decoy calls Gauge, not the vulnerable Inflate.
     expect(adv("example.com/tyrekit")?.reach).toEqual({ status: "not-called" });
     // Only a method is named: a package-qualified call cannot be told from other receivers.

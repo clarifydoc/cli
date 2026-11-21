@@ -40,13 +40,29 @@ export function attachVulnerableReach(
     return s;
   };
   const analysisOf = new Map(analyses.map((a) => [a.filePath, a] as const));
+  // The project's functions by leaf name, for a handler declared in another file (`intake.Handle`): the one
+  // function of that name, as the data-flow pass reads it — never one of several.
+  let byLeaf: Map<string, string[]> | null = null;
   const resolveHandler = (file: string, name: string): string | null => {
+    const leaf = name.split(".").pop()!;
     const a = analysisOf.get(file);
-    if (!a) return null;
-    const spans = spansFor(a);
-    if (spans.some((s) => s.symbol === name)) return keyOf(file, name);
-    const leaf = spans.filter((s) => s.symbol.split(".").pop() === name.split(".").pop());
-    return leaf.length === 1 ? keyOf(file, leaf[0]!.symbol) : null;
+    if (a) {
+      const spans = spansFor(a);
+      if (spans.some((s) => s.symbol === name)) return keyOf(file, name);
+      const here = spans.filter((s) => s.symbol.split(".").pop() === leaf);
+      if (here.length === 1) return keyOf(file, here[0]!.symbol);
+    }
+    if (!byLeaf) {
+      byLeaf = new Map();
+      for (const x of analyses) {
+        for (const s of spansFor(x)) {
+          const l = s.symbol.split(".").pop()!;
+          (byLeaf.get(l) ?? byLeaf.set(l, []).get(l)!).push(keyOf(x.filePath, s.symbol));
+        }
+      }
+    }
+    const all = byLeaf.get(leaf) ?? [];
+    return all.length === 1 ? all[0]! : null;
   };
 
   // Where a walk may stop: a route's handler (or its inline body), an entry point's handler.
@@ -57,10 +73,18 @@ export function attachVulnerableReach(
     if (key && !roots.has(key)) roots.set(key, { label: `${r.httpMethod ?? "ANY"} ${r.path}`.trim() });
   }
   const inlineByFile = new Map<string, Array<{ symbol: string; line: number; endLine: number; label: string }>>();
+  const routeAt = new Map(routes.map((r) => [`${r.filePath}\0${r.line}`, r] as const));
   for (const d of inlineRouteDefinitions({ routeMap: routes })) {
-    const route = routes.find((r) => r.filePath === d.file && r.line === d.line);
+    const route = routeAt.get(`${d.file}\0${d.line}`);
     const label = route ? `${route.httpMethod ?? "ANY"} ${route.path}`.trim() : d.symbol;
     (inlineByFile.get(d.file) ?? inlineByFile.set(d.file, []).get(d.file)!).push({ symbol: d.symbol, line: d.line, endLine: d.endLine, label });
+  }
+  for (const [file, defs] of inlineByFile) for (const d of defs) roots.set(keyOf(file, d.symbol), { label: d.label });
+  // A route whose handler body is written inline anchors its links on its own `route:<METHOD> <path>` symbol.
+  for (const l of symbolLinks) {
+    if (!l.sourceSymbol.startsWith("route:") || l.relation === "reference" || l.navigational) continue;
+    const key = keyOf(l.sourceFile, l.sourceSymbol);
+    if (!roots.has(key)) roots.set(key, { label: l.sourceSymbol.slice("route:".length) });
   }
   for (const e of entryPoints) {
     if (!e.handler) continue;
@@ -103,6 +127,9 @@ export function attachVulnerableReach(
       const hasMethods = adv.functions.some((f) => f.symbols.some((s) => s.includes(".")));
       const calls: NonNullable<VulnerableReach["calls"]> = [];
       let reachable = false;
+      // An import the call head cannot be matched to: a dot import, or a specifier that is no plain package
+      // name (`yaml.v3`, `v2`, `go-yaml`) because the language names it by the path's last segment.
+      let unreadable = false;
       for (const a of analyses) {
         if (isTestFile(a.filePath, a.language)) continue;
         // The local names this file gives each vulnerable import path.
@@ -110,6 +137,7 @@ export function attachVulnerableReach(
         for (const imp of a.imports ?? []) {
           const symbols = symbolsByPath.get(imp.source);
           if (!symbols?.size || imp.isType) continue;
+          if (imp.inScope || (imp.specifiers ?? []).some((n) => n !== "_" && !/^[\p{L}_][\p{L}\p{N}_]*$/u.test(n) || /^v\d+$/.test(n))) unreadable = true;
           for (const name of imp.specifiers ?? []) {
             if (name !== "_" && name !== ".") heads.set(name, symbols);
           }
@@ -145,7 +173,7 @@ export function attachVulnerableReach(
         }
       }
       calls.sort((x, y) => Number(!!y.from) - Number(!!x.from) || (x.path?.length ?? 0) - (y.path?.length ?? 0));
-      const status: VulnerableReach["status"] = reachable ? "reachable" : calls.length ? "called" : hasMethods ? "not-judged" : "not-called";
+      const status: VulnerableReach["status"] = reachable ? "reachable" : calls.length ? "called" : hasMethods || unreadable ? "not-judged" : "not-called";
       adv.reach = { status, ...(calls.length ? { calls } : {}) };
       judged++;
     }

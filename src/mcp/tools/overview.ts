@@ -146,19 +146,20 @@ export function analyzeTool(ctx: ToolContext): McpTool {
 
 const SEARCH_KINDS: readonly SearchKind[] = ["route", "screen", "file", "symbol", "entity", "api-call"];
 
-/** One ranked row: a symbol found by a name it is imported under says which. */
 /** What the call graph says about an advisory's vulnerable functions, as a suffix of its line; nothing for a package-level advisory. */
 function reachNote(reach: VulnerableReach | undefined): string {
   if (!reach) return "";
   const c = reach.calls?.[0];
-  switch (reach.status) {
-    case "reachable": return ` — REACHABLE: ${c!.symbol} called at ${c!.file}:${c!.line}, from ${c!.from} (${c!.path!.map((k) => k.slice(k.indexOf("::") + 2)).join(" -> ")})`;
+  switch (c ? reach.status : reach.status === "reachable" || reach.status === "called" ? "unknown" : reach.status) {
+    case "unknown": return ` — ${reach.status}`;
+    case "reachable": return ` — REACHABLE: ${c!.symbol} called at ${c!.file}:${c!.line}, from ${c!.from} (${(c!.path ?? []).map((k) => k.slice(k.indexOf("::") + 2)).join(" -> ")})`;
     case "called": return ` — vulnerable function ${c!.symbol} called at ${c!.file}:${c!.line}, no route or entry point traced to it`;
     case "not-called": return " — vulnerable functions not called";
     default: return " — reach not judged (the advisory names methods)";
   }
 }
 
+/** One ranked row: a symbol found by a name it is imported under says which. */
 function hitLine(hit: RankedCandidate, query: string): string {
   const importedAs = hit.kind === "symbol" && hit.via === "aka" ? hit.aka?.find((a) => normalize(a) === normalize(query)) ?? hit.aka?.[0] : undefined;
   return `${kindTag(hit.kind)} ${hit.text}${hit.via === "doc" ? ` · doc: ${hit.doc}` : ""}${importedAs ? ` · imported as ${importedAs}` : ""}`;
