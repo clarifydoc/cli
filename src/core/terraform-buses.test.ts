@@ -191,7 +191,7 @@ module "worker" {
   handler       = "index.handler"
   environment_variables = {
     QUEUE_URL = module.jobs.queue_url
-    TABLE     = module.table.dynamodb_table_id
+    TABLE     = module.table.dynamodb_table_id,
     NET       = module.net.vpc_id
     DECOY     = module.decoy.queue_url
   }
@@ -227,6 +227,11 @@ module "b" { source = "registry.terraform.io/clubs/league/aws//modules/x" }
 module "c" { source = "./modules/club" }
 module "d" { source = "git::https://example.com/club.git?ref=v1" }
 module "e" { source = "github.com/clubs/terraform-aws-league" }
+module "f" { source = var.src }
+resource "aws_s3_object" "o" {
+  source  = "x/y/z"
+  version = "9"
+}
 `;
     const got = await terraformPackageManager.manifests[0]!.parse(text, { declaredIn: "main.tf", path: "main.tf", readSibling: async () => null });
     expect(got.map((p) => `${p.name} ${p.version ?? ""}`.trim())).toEqual(["terraform-aws-modules/sqs/aws ~> 4.0", "clubs/league/aws"]);

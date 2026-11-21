@@ -451,13 +451,15 @@ describe("detectDeployment — broker URLs held in an env var", () => {
         "    environment:",
         "      AMQP_URL: amqp://broker.example.com:5672",
         "      KAFKA_BROKERS: broker-two:9092",
+        "      REDIS_URL: redis://cache.prod.example.com:6379",
+        "      REDIS_PASSWORD: cache",
         "",
       ].join("\n"));
       const dep = await detectDeployment(root, { subProjects: [{ id: "root", name: "infra", root: "", type: "unknown" } as unknown as SubProject] });
       const from = (n: string) => dep!.edges.filter((e) => e.from === n).map((e) => `${e.to} ${e.kind} ${e.via ?? ""}`).sort();
       expect(from("clubs")).toEqual(["cache db REDIS_URL", "kafka bus KAFKA_BROKERS", "nats bus NATS_URL", "rabbitmq bus AMQP_URL"]);
       // A host no service answers to is no edge to a namesake-looking broker; the one-queue guess may remain.
-      expect(from("players").filter((e) => e.includes("kafka") || e.includes("nats") || e.includes("other-queue"))).toEqual([]);
+      expect(from("players").filter((e) => e.includes("kafka") || e.includes("nats") || e.includes("other-queue") || e.startsWith("cache"))).toEqual([]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

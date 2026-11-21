@@ -10,10 +10,16 @@ function parseTerraform(text: string, declaredIn: string): DeclaredPackage[] {
   if (!/\bmodule\s+"/.test(text)) return [];
   const out: DeclaredPackage[] = [];
   const seen = new Set<string>();
-  const heads = [...text.matchAll(/^\s*module\s+"[^"]+"\s*\{/gm)];
-  for (const [i, m] of heads.entries()) {
-    // The block's text runs to the next `module` block: its own `source` and `version` come first.
-    const body = text.slice(m.index! + m[0].length, heads[i + 1]?.index ?? text.length);
+  for (const m of text.matchAll(/^\s*module\s+"[^"]+"\s*\{/gm)) {
+    // The block's own text, to its balanced closing brace.
+    let depth = 1;
+    let end = m.index! + m[0].length;
+    for (; end < text.length && depth > 0; end++) {
+      const c = text[end];
+      if (c === "{") depth++;
+      else if (c === "}") depth--;
+    }
+    const body = text.slice(m.index! + m[0].length, end);
     const source = /(?:^|\s)source\s*=\s*"([^"$]+)"/.exec(body)?.[1];
     if (!source || /^(?:\.|\/|[a-z0-9+.-]+::|[a-z]+:\/\/)/i.test(source) || /^(?:github\.com|bitbucket\.org)\//i.test(source)) continue;
     const parts = source.replace(/\?.*$/, "").replace(/\/\/.*$/, "").split("/");

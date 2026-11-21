@@ -697,9 +697,9 @@ const BROKER_KEY_RE = /(?:broker|bootstrap|amqp|rabbit|kafka|redis|nats|valkey|m
 function brokerHostsOf(key: string, value: string): string[] {
   const hosts = new Set<string>();
   for (const m of value.matchAll(BROKER_URL_RE)) hosts.add(m[1]!.toLowerCase());
-  if (hosts.size === 0 && BROKER_KEY_RE.test(key)) {
+  if (hosts.size === 0 && BROKER_KEY_RE.test(key) && !/(?:password|passwd|user|username|name|topic|queue|db|database|secret|token)$/i.test(key)) {
     for (const part of value.split(",")) {
-      const m = part.trim().match(/^([A-Za-z][A-Za-z0-9_.-]*)(?::\d{1,5})?$/);
+      const m = part.trim().match(/^([A-Za-z][A-Za-z0-9_.-]*):\d{1,5}$/);
       if (m) hosts.add(m[1]!.toLowerCase());
     }
   }
@@ -1063,6 +1063,7 @@ export async function detectDeployment(
   // Broker and cache services by the names the network knows them under (compose name, k8s Service aliases).
   const brokerByHost = new Map<string, DeployedService>();
   for (const s of services) if (s.kind === "queue" || s.kind === "cache") brokerByHost.set(s.name.toLowerCase(), s);
+  for (const s of services) for (const alias of s.aliases ?? []) if ((s.kind === "queue" || s.kind === "cache") && !brokerByHost.has(alias.toLowerCase())) brokerByHost.set(alias.toLowerCase(), s);
   for (const [alias, target] of k8s?.aliases ?? []) {
     const t = svcByLower.get(target.toLowerCase());
     if (t && (t.kind === "queue" || t.kind === "cache") && !brokerByHost.has(alias.toLowerCase())) brokerByHost.set(alias.toLowerCase(), t);
@@ -1076,7 +1077,7 @@ export async function detectDeployment(
     for (const [k, v] of Object.entries(svc.env)) {
       // A broker or cache URL held in a variable: an edge to the service of that host.
       for (const target of brokerHostsOf(k, v)) {
-        const b = brokerByHost.get(target) ?? (target.includes(".") ? brokerByHost.get(target.split(".")[0]!) : undefined);
+        const b = brokerByHost.get(target) ?? (/\.svc(?:\.cluster\.local)?$/.test(target) ? brokerByHost.get(target.split(".")[0]!) : undefined);
         if (!b) continue;
         addEdge({ from: svc.name, to: b.name, kind: b.kind === "queue" ? "bus" : "db", via: k });
         if (b.kind === "queue") brokerEdges++;
@@ -1164,7 +1165,7 @@ export async function detectDeployment(
     }
 
     // Bus attachment → edge to the (first) queue service.
-    if (s.bus && queues.length > 0 && brokerEdges === 0) {
+    if (s.bus && queues.length > 0 && !(brokerEdges > 0 && edgeSeen.has(`${svc.name.toLowerCase()}|${queues[0].name.toLowerCase()}|bus|`))) {
       addEdge({ from: svc.name, to: queues[0].name, kind: "bus" });
     }
   }

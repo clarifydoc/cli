@@ -186,13 +186,14 @@ export async function collectTerraform(projectRoot: string, ignore: readonly str
       if (spec.kind === "app") {
         const envExpr = call.block.attrs.get("environment_variables") ?? "";
         const env: Record<string, string> = {};
-        for (const m of envExpr.matchAll(/^\s*([A-Za-z_][\w]*)\s*=\s*(.+?)\s*$/gm)) env[m[1]!] = hclString(m[2]) ?? m[2]!;
+        const entries = [...envExpr.matchAll(/(?:^|[\s{,])([A-Za-z_]\w*)\s*=\s*([^\s,}]+)/g)].map((m) => [m[1]!, m[2]!] as const);
+        for (const [k, v] of entries) env[k] = hclString(v) ?? v;
         const handler = arg("handler");
         const src = hclPath(call.block.attrs.get("source_path"), dir);
         const context = src ? posix.normalize(src).replace(/^\.\/?/, "").replace(/\/$/, "") : undefined;
         const svc: RawService = { name, file: call.file, entrypoint: handler, env, dependsOn: [], ports: [], ...(context !== undefined && !context.startsWith("..") && !/\.[a-z]+$/i.test(context) ? { build: { context } } : {}) };
         services.push(svc);
-        for (const m of envExpr.matchAll(/^\s*([A-Za-z_][\w]*)\s*=\s*(.+?)\s*$/gm)) pending.push({ dir, from: `module.${label}`, expr: m[2]!, via: m[1]!, how: "env" });
+        for (const [k, v] of entries) pending.push({ dir, from: `module.${label}`, expr: v, via: k, how: "env" });
         const mapping = call.block.attrs.get("event_source_mapping");
         if (mapping) pending.push({ dir, from: `module.${label}`, expr: mapping, via: "event source", how: "event" });
       } else services.push({ name, file: call.file, env: {}, dependsOn: [], ports: [], kind: spec.kind, family: spec.family(call.block), ...(spec.kind === "queue" ? { destination: true } : {}) });
