@@ -236,7 +236,7 @@ export function resolveCallOrigins(input: {
     if (found.ref.kind === "service") return { baseRef: found.ref, host: found.ref.key.toLowerCase(), confidence: "INFERRED", evidence };
     // A fallback literal is the code's own guess, not evidence of another system: with the variable unvalued, a host no
     // address, deployment or `listen` names and no third party owns keeps the unresolved base (the candidate stays in the evidence).
-    if (allFallback && outside.length > 0 && outside.every((o) => !serviceForHost(o.host))) {
+    if (allFallback && outside.length > 0 && outside.every((o) => !(serviceForHost(o.host) ?? (o.host.startsWith("localhost:") ? serviceForLoopbackPort(o.host.slice("localhost:".length)) : undefined)))) {
       const envNames = envNamesOf(found.ref, a.projectId, a.language);
       return { baseRef: found.ref, ...(envNames.length ? { envNames } : {}), confidence: "INFERRED", evidence };
     }
