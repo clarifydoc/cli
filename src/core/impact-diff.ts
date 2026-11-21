@@ -615,7 +615,9 @@ function narrowDependents(
   changedFiles: readonly string[],
   symbols: NonNullable<Parameters<typeof computeImpactDiff>[2]>["symbols"],
 ): { byFile: Map<string, Set<string>>; why: Map<string, string[]>; members: Array<{ file: string; name: string; adding?: boolean }> } | undefined {
-  if (!symbols?.hunks?.size) return undefined;
+  // A diff of pure deletions has no new-side ranges: its lines are in `old` and `deleted`.
+  const h = symbols?.hunks;
+  if (!h || !(h.size || h.old?.size || h.deleted?.size)) return undefined;
   const moduleOnly = new Set(symbols.moduleOnly ?? symbols.moduleLevel);
   const classChanges = symbols.classChanges ?? [];
   const importOnly = new Set(symbols.importOnly);
@@ -624,7 +626,7 @@ function narrowDependents(
   const members: Array<{ file: string; name: string; adding?: boolean }> = [];
   const index = namingIndex(summary, changedFiles);
   for (const file of changedFiles) {
-    const hunked = symbols.hunks.has(file) || symbols.hunks.old?.has(file) || symbols.hunks.deleted?.has(file);
+    const hunked = h.has(file) || h.old?.has(file) || h.deleted?.has(file);
     if (!hunked || moduleOnly.has(file)) continue;
     const targets: MemberTarget[] = symbols.changed.filter((s) => s.file === file).map((s) => ({ file, symbol: s.symbol }));
     const types = classChanges.filter((c) => c.file === file);

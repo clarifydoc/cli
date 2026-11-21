@@ -5,6 +5,8 @@ import { join } from "path";
 import { analyze } from "./analyzer.js";
 import { loadReportSummary } from "./report-payload.js";
 import { impactOfContents } from "./impact-proposed.js";
+import { parseUnifiedHunks, symbolsOfChange } from "./changed-symbols.js";
+import { computeImpactDiff } from "./impact-diff.js";
 import type { ProjectAnalysis } from "../types/analysis.js";
 
 const CLOCK_PY = ["def add_job(name):", "    return name", "", "", "def tick():", "    return 1", ""].join("\n");
@@ -79,5 +81,14 @@ describe("impact charges a file that hands a charged module on whole", () => {
   it("a body edit that keeps every name charges no forwarder", async () => {
     const r = await run("league/tasks/hooks.py", "from league.clock import add_job\n\n\ndef register():\n    return add_job('semi-final')\n");
     expect(r.dependents).not.toContain("league/tasks/__init__.py");
+  });
+
+  it("a diff of pure deletions still narrows to the files naming what was cut", async () => {
+    // git's own diff of a working tree that dropped `relegate` (old lines 4-6): no new-side range at all.
+    const hunks = parseUnifiedHunks(["--- a/league/table.py", "+++ b/league/table.py", "@@ -4,3 +3,0 @@"].join("\n"));
+    expect(hunks.size).toBe(0);
+    const symbols = await symbolsOfChange(root, join(dir, "out"), summary, ["league/table.py"], hunks);
+    const r = computeImpactDiff(summary, ["league/table.py"], { symbols });
+    expect(r.dependents).toEqual(["league/drops.py"]);
   });
 });
