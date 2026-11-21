@@ -44,6 +44,7 @@ import {
   inferTrpcEndpointFacts,
 } from "../extractors/plugins/javascript/routes/file-routes.js";
 import { inferNextMiddlewareFacts } from "../extractors/plugins/javascript/routes/next-middleware.js";
+import { inferRenderModeFacts } from "../extractors/plugins/javascript/routes/render-mode.js";
 import { inferAstroMiddlewareFacts } from "../extractors/plugins/javascript/routes/astro-middleware.js";
 import { restoreTypedReceiverCalls } from "./typed-receivers.js";
 import {
@@ -931,6 +932,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
         ...inferTrpcEndpointFacts(routePath, sourceText, routeFrameworks),
         ...inferNextMiddlewareFacts(routePath, sourceText, routeFrameworks),
         ...inferAstroMiddlewareFacts(routePath, sourceText, routeFrameworks),
+        ...inferRenderModeFacts(routePath, sourceText, rawSource, routeFrameworks),
       ];
       if (endpoints.length > 0) analysis.routeFacts = [...(analysis.routeFacts ?? []), ...endpoints];
     }

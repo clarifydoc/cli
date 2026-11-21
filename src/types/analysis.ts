@@ -2229,6 +2229,13 @@ export interface RouteInfo {
    */
   webhook?: { provider?: string; verified?: boolean; via?: string };
   /**
+   * Frontend routes only: how the page is rendered, as the framework's own settings state it — `ssr` (per
+   * request), `ssg` (at build), `isr` (at build, refreshed on a timer or on demand), `csr` (a shell the browser
+   * fills). Set by a route resolver from Next.js data functions and segment config, SvelteKit page options and
+   * Nuxt `routeRules`; absent when nothing states it.
+   */
+  renderMode?: "ssr" | "ssg" | "isr" | "csr";
+  /**
    * API-contract rows only (a WSDL, an OpenAPI document): the project only
    * CALLS this operation — through a client proxy of the contract's type
    * (`getPort(X.class)`, a generated client) that no class of the project
@@ -4036,6 +4043,8 @@ export interface ScreenInfo {
    * The screen reaches what their functions reach, as it does its own.
    */
   codeFiles?: string[];
+  /** How the page is rendered (`RouteInfo.renderMode` of its route), when the framework's settings state it. */
+  renderMode?: "ssr" | "ssg" | "isr" | "csr";
 }
 
 /**

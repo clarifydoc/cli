@@ -3415,13 +3415,16 @@ function buildScreensFromRoutes(
     const screenName = primary.handler ?? screenNameFromFile(analysis);
     const built = buildScreen(analysis, screenName, primary.path, rawSources);
     if (others.length > 0) built.otherRoutes = others;
+    if (primary.renderMode) built.renderMode = primary.renderMode;
     screens.push(built);
   }
 
   for (const { analysis, route } of inline) {
     // Routes declared inline in the page file: name the screen after the file
     // (unchanged from the original behaviour for React-style/single-file pages).
-    screens.push(buildScreen(analysis, screenNameFromFile(analysis), route.path, rawSources));
+    const built = buildScreen(analysis, screenNameFromFile(analysis), route.path, rawSources);
+    if (route.renderMode) built.renderMode = route.renderMode;
+    screens.push(built);
   }
 
   // A view that declares where it navigates (`navigation` routes) opens those screens — in a file of several

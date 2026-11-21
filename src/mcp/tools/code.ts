@@ -407,6 +407,7 @@ export function screensTool(ctx: ToolContext): McpTool {
           `    ${facts([
             ["type", screen.formType],
             ["startup", screen.startup],
+            ["rendering", screen.renderMode],
             ["components", screen.components.length],
             ["navigates to", screen.navigatesTo.length ? screen.navigatesTo.slice(0, 6).join(", ") : undefined],
           ])}`,

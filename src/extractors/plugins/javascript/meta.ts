@@ -22,6 +22,7 @@ import { subjectFlows, JsSubjectResolver } from "./subject-flows.js";
 import { extractCdkResources } from "./cdk-resources.js";
 import { cdkRouteResolver } from "./routes/cdk.js";
 import { nextMiddlewareGuards } from "./routes/next-middleware.js";
+import { renderModeResolver } from "./routes/render-mode.js";
 import { astroMiddlewareGuards } from "./routes/astro-middleware.js";
 import { nestGlobalGuards, nestGlobalInterceptors, nestInheritedGuards } from "./routes/nestjs.js";
 import { koaAppMiddleware } from "./routes/koa-middleware.js";
@@ -321,7 +322,7 @@ const dataSources = new JavaScriptDataSourceExtractor();
 const dataMutations = new JavaScriptMutationExtractor();
 const entities = new JavaScriptEntityExtractor();
 const dispatchResolvers = ([new JsComponentEmitResolver(), new VuexDispatchResolver(), new VuexStateWatchResolver(), new JsPropCallbackResolver(), new JsComponentRenderResolver(), new JsComponentRenderResolver(true), new JsProvideInjectResolver(), new JsPropFlowResolver(), new JsStoreWatchResolver(), new JsContextTypeResolver(), new JsParamTypeResolver(), new JsSlotScopeResolver(), new JsLoopItemCallbackResolver(), new JsEventBusResolver(), new JsSubjectResolver(), new JsTemplateRefResolver(), new DomBindingResolver(), new JobEventResolver()]).map(seeingNamespaceTags);
-const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, convexBuilderResolver, cdkRouteResolver, nestInheritedGuards, nestGlobalGuards, nestGlobalInterceptors, koaAppMiddleware, nextMiddlewareGuards, astroMiddlewareGuards, screenTableResolver, pathHelperResolver];
+const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, convexBuilderResolver, cdkRouteResolver, nestInheritedGuards, nestGlobalGuards, nestGlobalInterceptors, koaAppMiddleware, nextMiddlewareGuards, renderModeResolver, astroMiddlewareGuards, screenTableResolver, pathHelperResolver];
 
 export const typescriptMeta: LanguagePluginMeta = {
   ...typescriptManifest,
