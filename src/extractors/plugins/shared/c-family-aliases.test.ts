@@ -64,4 +64,17 @@ struct car* make_car(int seats) {
 `)).toEqual(["Table::Ptr = std::shared_ptr<Table>"]);
   });
 
+  it("reads a typedef inside an extern \"C\" block as one at file scope", () => {
+    expect(aliases(`#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct club_gear {
+  int (*shift)(int,
+              int);
+} club_gear_t;
+#ifdef __cplusplus
+}
+#endif
+`)).toEqual(["club_gear_t = club_gear"]);
+  });
 });
