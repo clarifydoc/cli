@@ -1038,14 +1038,18 @@ export function extractCFamilyValueFlow(lines: readonly string[], analysis: File
     }
     return out.length > 0 ? out : null;
   };
-  /** Whether the file defines `name` as an object-like macro of one value. */
+  /** The macros the file defines (comments stripped): `name` → whether it is object-like with one value. */
+  let singleValueMacros: Map<string, boolean> | null = null;
   const singleValueMacro = (name: string): boolean => {
-    for (const line of lines) {
-      const m = new RegExp(`^\\s*#\\s*define\\s+${name}(\\(?)\\s*(.*)$`).exec(line);
-      if (!m) continue;
-      return m[1] === "" && m[2]!.trim() !== "" && !m[2]!.includes(",") && !m[2]!.trim().endsWith("\\");
+    if (!singleValueMacros) {
+      singleValueMacros = new Map();
+      for (const raw of lines) {
+        const line = raw.replace(/\/\/.*$|\/\*.*?\*\//g, "");
+        const m = /^\s*#\s*define\s+([A-Z_][A-Z0-9_]*)(\(?)\s*(.*)$/.exec(line);
+        if (m && !singleValueMacros.has(m[1]!)) singleValueMacros.set(m[1]!, m[2] === "" && m[3]!.trim() !== "" && !m[3]!.includes(",") && !m[3]!.trim().endsWith("\\"));
+      }
     }
-    return false;
+    return singleValueMacros.get(name) === true;
   };
 
   /** A table initializer: `{ .sign = club_sign }` fills the struct type's members, `{ a, b }` an array of handlers. */

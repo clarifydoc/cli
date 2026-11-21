@@ -283,13 +283,13 @@ export interface DataAccessGraph {
   edges: DataAccessEdge[];
 }
 
-/** Per-file analysis result */
 /** One C struct's field order (`FileAnalysis.structLayouts`). */
 export interface StructLayout {
   names: string[];
   fields: string[];
 }
 
+/** Per-file analysis result */
 export interface FileAnalysis {
   /** Value-flow facts of the file's module-level code (see `ValueFlowFact`); omitted when it states none. */
   moduleValueFlow?: ValueFlowFact[];
