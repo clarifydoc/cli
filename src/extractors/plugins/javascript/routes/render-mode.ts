@@ -31,11 +31,16 @@ const RENDER_MODE = "render-mode";
 
 type RenderMode = NonNullable<RouteInfo["renderMode"]>;
 
-interface RenderOptions {
+/** The segment config of a Next app-router `page` / `layout`. */
+interface NextOptions {
   dynamic?: "force-dynamic" | "force-static" | "error";
   /** A number of seconds (0 = every request) or `false` (never). */
   revalidate?: number | false;
   staticParams?: true;
+}
+
+/** The page options of a SvelteKit `+page` / `+layout` module. */
+interface SvelteOptions {
   ssr?: boolean;
   prerender?: boolean;
 }
@@ -45,8 +50,8 @@ type RenderFact =
   | { fw: "next-pages"; mode: RenderMode }
   /** `pages/_app`: whether it defines `getInitialProps` (every page then renders per request); null when it hides its exports. */
   | { fw: "next-shell"; initialProps: boolean | null }
-  | { fw: "next-app"; role: "page" | "layout"; opts: RenderOptions }
-  | { fw: "sveltekit"; role: "page" | "layout"; opts: RenderOptions }
+  | { fw: "next-app"; role: "page" | "layout"; opts: NextOptions }
+  | { fw: "sveltekit"; role: "page" | "layout"; opts: SvelteOptions }
   | { fw: "nuxt-page"; mode: RenderMode }
   | { fw: "nuxt-config"; ssr?: false; rules: Array<{ pattern: string; rule: NuxtRule }> };
 
@@ -116,10 +121,10 @@ function nextPagesMode(text: string): RenderMode | null {
 }
 
 /** The segment config a Next app-router `page` / `layout` exports; empty when none is a literal. */
-function nextSegmentConfig(text: string): RenderOptions {
-  const opts: RenderOptions = {};
+function nextSegmentConfig(text: string): NextOptions {
+  const opts: NextOptions = {};
   const dyn = /\bexport\s+const\s+dynamic\s*(?::[^=]+)?=\s*(['"`])(force-dynamic|force-static|error|auto)\1/.exec(text);
-  if (dyn && dyn[2] !== "auto") opts.dynamic = dyn[2] as RenderOptions["dynamic"];
+  if (dyn && dyn[2] !== "auto") opts.dynamic = dyn[2] as NextOptions["dynamic"];
   const rev = /\bexport\s+const\s+revalidate\s*(?::[^=]+)?=\s*(false|\d+)\b/.exec(text);
   if (rev) opts.revalidate = rev[1] === "false" ? false : Number(rev[1]);
   if (exportsName(text, "generateStaticParams")) opts.staticParams = true;
@@ -127,7 +132,7 @@ function nextSegmentConfig(text: string): RenderOptions {
 }
 
 /** The mode a Next app-router config states, or null. */
-function nextAppMode(o: RenderOptions): RenderMode | null {
+function nextAppMode(o: NextOptions): RenderMode | null {
   if (o.dynamic === "force-dynamic") return "ssr";
   const timed = typeof o.revalidate === "number" && o.revalidate > 0;
   // A static page that also revalidates is incremental; `revalidate = 0` makes a page that states no static mode dynamic.
@@ -139,8 +144,8 @@ function nextAppMode(o: RenderOptions): RenderMode | null {
 
 // ---- SvelteKit -----------------------------------------------------------------------------------------
 
-function svelteOptions(text: string): RenderOptions {
-  const opts: RenderOptions = {};
+function svelteOptions(text: string): SvelteOptions {
+  const opts: SvelteOptions = {};
   for (const m of text.matchAll(/\bexport\s+const\s+(ssr|csr|prerender)\s*(?::[^=]+)?=\s*(true|false)\b/g)) {
     const v = m[2] === "true";
     if (m[1] === "ssr") opts.ssr = v;
@@ -150,7 +155,7 @@ function svelteOptions(text: string): RenderOptions {
 }
 
 /** The mode of merged SvelteKit options, or null. */
-function svelteMode(o: RenderOptions): RenderMode | null {
+function svelteMode(o: SvelteOptions): RenderMode | null {
   // A page that does not render on the server is a shell the browser fills, prerendered or not.
   if (o.ssr === false) return "csr";
   if (o.prerender === true) return "ssg";
@@ -331,6 +336,35 @@ export const renderModeResolver: RouteResolver = {
   },
 };
 
+/**
+ * The facts of the files up a folder chain, deepest folder first: in each folder every stem in order, each tried
+ * with every extension in order. `rel` is the page's path below its project root; the chain stops above folder
+ * depth `floor`. `stemsAt(own)` says which stems count in the page's own folder (`own`) and in those above it.
+ */
+function* layoutChain(
+  facts: Map<string, RenderFact>,
+  fileRoot: string,
+  rel: string,
+  floor: number,
+  stemsAt: (own: boolean) => string[],
+  extensions: string[],
+): Generator<RenderFact> {
+  const dir = dirOf(rel);
+  const segs = dir ? dir.split("/") : [];
+  for (let n = segs.length; n > floor; n--) {
+    const folder = `${fileRoot}${segs.slice(0, n).join("/")}`;
+    for (const stem of stemsAt(n === segs.length)) {
+      for (const ext of extensions) {
+        const f = facts.get(`${folder}/${stem}.${ext}`);
+        if (f) yield f;
+      }
+    }
+  }
+}
+
+const NEXT_EXTENSIONS = ["tsx", "ts", "jsx", "js"];
+const SVELTE_EXTENSIONS = ["ts", "js"];
+
 /** The mode of the page file's routes, as a function of the route (a Nuxt rule matches on the path), or null. */
 function pageMode(
   a: FileAnalysis,
@@ -339,34 +373,26 @@ function pageMode(
   configs: Array<{ project: string | undefined; fact: Extract<RenderFact, { fw: "nuxt-config" }> }>,
 ): ((r: RouteInfo) => RenderMode | null) | null {
   const own = facts.get(a.filePath);
-  if (inferFileBasedRoute(rel, ["nextjs"])?.kind === "frontend" && /^(?:src\/)?pages\//.test(rel)) {
-    if (own?.fw !== "next-pages") return null;
+  const fileRoot = a.filePath.slice(0, a.filePath.length - rel.length);
+  // A pages-router page states its mode (`csr` included) whenever it states anything; no fact, no mode.
+  if (own?.fw === "next-pages") {
     if (own.mode !== "csr") return () => own.mode;
     // No data function: client-fetched, unless `_app` fetches initial props for every page (or hides what it does).
-    const fileRoot = a.filePath.slice(0, a.filePath.length - rel.length);
     const dir = rel.startsWith("src/") ? "src/pages" : "pages";
     let shell: boolean | null = false;
-    for (const ext of ["tsx", "ts", "jsx", "js"]) {
+    for (const ext of NEXT_EXTENSIONS) {
       const f = facts.get(`${fileRoot}${dir}/_app.${ext}`);
       if (f?.fw === "next-shell") shell = f.initialProps;
     }
     return shell === null ? null : () => (shell ? "ssr" : "csr");
   }
-  const app = NEXT_APP_FILE.exec(rel);
-  if (app && app[1] === "page") {
+  if (NEXT_APP_FILE.exec(rel)?.[1] === "page") {
     // The page's own config wins; a key it leaves out comes from the nearest layout above that states it.
-    const merged: RenderOptions = { ...(own?.fw === "next-app" ? own.opts : {}) };
-    const layoutRel = (dir: string) => `${dir ? `${dir}/` : ""}layout`;
-    const fileRoot = a.filePath.slice(0, a.filePath.length - rel.length);
-    const segs = dirOf(rel).split("/");
-    for (let n = segs.length; n >= 1; n--) {
-      const dir = segs.slice(0, n).join("/");
-      for (const ext of ["tsx", "ts", "jsx", "js"]) {
-        const f = facts.get(`${fileRoot}${layoutRel(dir)}.${ext}`);
-        if (f?.fw !== "next-app") continue;
-        merged.dynamic ??= f.opts.dynamic;
-        merged.revalidate ??= f.opts.revalidate;
-      }
+    const merged: NextOptions = { ...(own?.fw === "next-app" ? own.opts : {}) };
+    for (const f of layoutChain(facts, fileRoot, rel, 0, () => ["layout"], NEXT_EXTENSIONS)) {
+      if (f.fw !== "next-app") continue;
+      merged.dynamic ??= f.opts.dynamic;
+      merged.revalidate ??= f.opts.revalidate;
     }
     const mode = nextAppMode(merged);
     return mode ? () => mode : null;
@@ -386,23 +412,17 @@ function pageMode(
       return nuxtRuleMode(rule);
     };
   }
-  const relDir = dirOf(rel);
-  const segs = relDir ? relDir.split("/") : [];
+  const segs = dirOf(rel).split("/");
   // The routes folder is `routes/` or `src/routes/` at the project's root.
   const rootAt = segs[0] === "routes" ? 0 : segs[0] === "src" && segs[1] === "routes" ? 1 : -1;
   if (baseOf(rel) === "+page.svelte" && rootAt >= 0) {
-    const merged: RenderOptions = {};
-    const take = (f: RenderFact | undefined) => {
-      if (f?.fw !== "sveltekit") return;
+    const merged: SvelteOptions = {};
+    // The page's own modules first (universal before server), then each layout up to the routes folder.
+    const stemsAt = (own: boolean) => (own ? ["+page", "+page.server", "+layout", "+layout.server"] : ["+layout", "+layout.server"]);
+    for (const f of layoutChain(facts, fileRoot, rel, rootAt, stemsAt, SVELTE_EXTENSIONS)) {
+      if (f.fw !== "sveltekit") continue;
       merged.ssr ??= f.opts.ssr;
       merged.prerender ??= f.opts.prerender;
-    };
-    // The page's own modules first (universal before server), then each layout up to the routes folder.
-    const fileRoot = a.filePath.slice(0, a.filePath.length - rel.length);
-    for (let n = segs.length; n > rootAt; n--) {
-      const d = `${fileRoot}${segs.slice(0, n).join("/")}`;
-      const kinds = n === segs.length ? ["+page", "+page.server", "+layout", "+layout.server"] : ["+layout", "+layout.server"];
-      for (const k of kinds) for (const ext of ["ts", "js"]) take(facts.get(`${d}/${k}.${ext}`));
     }
     const mode = svelteMode(merged);
     return mode ? () => mode : null;
