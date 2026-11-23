@@ -283,3 +283,65 @@ func leagueWire() {
     expect(found).toContain("LeagueTaker.fire: onKick -> league/Sources/Own.swift::scoreGoal");
   });
 });
+
+describe("Swift value flow: an alias in another SwiftPM target", () => {
+  const files = {
+    "Sources/LeagueCore/Kick.swift": `public typealias Kick = (Player) -> Void
+public final class Player {}
+`,
+    "Sources/Cup/Kick.swift": `public final class Kick {
+    func callAsFunction(_ p: Player) {}
+}
+`,
+    "Sources/LeagueApp/Board.swift": `import LeagueCore
+func scoreGoal(_ p: Player) {}
+final class Board {
+    var onKick: Kick
+    init(onKick: @escaping Kick) { self.onKick = onKick }
+    func run(_ p: Player) {
+        onKick(p)
+    }
+}
+func start() {
+    Board(onKick: scoreGoal).run(Player())
+}
+`,
+    "Sources/CupApp/Stand.swift": `import Cup
+func cheer(_ p: Player) {}
+final class Stand {
+    var onKick: Kick
+    init(onKick: Kick) { self.onKick = onKick }
+    func run(_ p: Player) {
+        onKick(p)
+    }
+}
+func open() {
+    Stand(onKick: Kick()).run(Player())
+}
+`,
+    "Sources/Loose/Loose.swift": `func scoreGoal(_ p: Player) {}
+final class Loose {
+    var onKick: Kick
+    init(onKick: @escaping Kick) { self.onKick = onKick }
+    func run(_ p: Player) {
+        onKick(p)
+    }
+}
+func wire() {
+    Loose(onKick: scoreGoal).run(Player())
+}
+`,
+  };
+  it("reads the name in the module the file imports, never a namesake of a target it does not", async () => {
+    const found = flow(await analyzeAll(files));
+    expect(found).toContain("Board.run: onKick -> Sources/LeagueApp/Board.swift::scoreGoal");
+    expect(found.filter((l) => l.startsWith("Stand.run:"))).toEqual([]);
+    // A file importing nothing, in a package where the name is both an alias and a class, keeps today's answer.
+    expect(found.filter((l) => l.startsWith("Loose.run:"))).toEqual([]);
+  });
+  it("sees the module across SwiftPM packages", async () => {
+    const found = flow(await analyzeAll(files, (rel) => (rel.startsWith("Sources/LeagueCore") ? "core" : "app")));
+    expect(found).toContain("Board.run: onKick -> Sources/LeagueApp/Board.swift::scoreGoal");
+    expect(found.filter((l) => l.startsWith("Loose.run:"))).toEqual([]);
+  });
+});
