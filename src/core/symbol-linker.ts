@@ -3127,7 +3127,8 @@ function classNameMember(
   // A name the caller binds by an import or `require` is that module, not a class the container registers under the name.
   if (candidateFiles && !imported && analysis.imports.some((i) => i.specifiers.includes(className) || i.aliases?.[className] !== undefined)) {
     const own = candidateFiles.filter((f) => !ctx.classAt.get(memberKey(f, declaredClass))?.registered);
-    candidateFiles = own.length > 0 ? own : undefined;
+    if (own.length === 0) return null;
+    candidateFiles = own;
   }
   // A class called by name is one of the caller's own language family: a Swift
   // or Ruby `Coach.train()` never reaches a Python `Coach` (unknown families stay eligible).

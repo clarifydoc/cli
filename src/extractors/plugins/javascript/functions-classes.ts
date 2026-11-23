@@ -2439,9 +2439,9 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           }
           if (value.type === "call_expression" || value.type === "new_expression") this.extractStoreCallActions(value, functions);
         }
-        // `export default function clubForm() { return { save() {…} } }`: a component factory (Alpine's `Alpine.data("clubForm", clubForm)`
+        // `export default function clubForm() { return { save() {…} } }` — a default export, as a module hands its component to the page script —: a component factory (Alpine's `Alpine.data("clubForm", clubForm)`
         // is written in another module) — its methods are the template's handlers, named `clubForm.save`.
-        const decl = moduleLevel ? child.childForFieldName("declaration") : null;
+        const decl = moduleLevel && child.children.some((c) => c.type === "default") ? child.childForFieldName("declaration") : null;
         const factoryName = decl?.type === "function_declaration" ? decl.childForFieldName("name")?.text : undefined;
         const factory = factoryName && !/^use[A-Z]/.test(factoryName) ? componentFactoryObject(decl!) : null;
         if (factory) this.extractObjectMembers(factoryName!, factory, functions, true, 0);

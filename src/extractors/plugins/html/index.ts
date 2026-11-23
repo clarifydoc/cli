@@ -387,6 +387,8 @@ export function extractHtmlInteractiveElements(lines: string[], opts: { requests
       const tag = m[1]!.toLowerCase();
       if (m[0][1] === "/") {
         if (tag === "form") forms.pop();
+        // The document ends every scope still open (an element that closes implicitly leaves its frame).
+        if (tag === "body" || tag === "html") scopes.length = 0;
         const top = scopes[scopes.length - 1];
         if (top?.tag === tag) {
           if (top.depth === 0) scopes.pop();
@@ -405,7 +407,7 @@ export function extractHtmlInteractiveElements(lines: string[], opts: { requests
         }
       }
       const scoped = SCOPE_HINT.test(tagText) ? scopeOf(tagText) : null;
-      const closed = VOID_TAGS.has(tag) || attrs.trimEnd().endsWith("/");
+      const closed = VOID_TAGS.has(tag) || tagText.trimEnd().endsWith("/");
       const top = scopes[scopes.length - 1];
       let ownScope: string | undefined;
       if (scoped !== null) {

@@ -48,8 +48,8 @@ interface TreeFacts {
   byFunction: Map<number, Registration>;
 }
 
-let memoTree: Tree | null = null;
-let memo: TreeFacts | null = null;
+/** The facts of each tree, read once; the map lets a freed tree go. */
+const memos = new WeakMap<Tree, TreeFacts>();
 
 const FUNCTIONS: ReadonlySet<string> = new Set(["function_expression", "arrow_function", "function_declaration", "function"]);
 
@@ -101,12 +101,13 @@ function declaredFunction(root: Node, name: string): Node | null {
 }
 
 function factsOf(tree: Tree): TreeFacts {
-  if (tree === memoTree && memo) return memo;
-  memoTree = tree;
+  const known = memos.get(tree);
+  if (known) return known;
   const registrations: Registration[] = [];
   const byFunction = new Map<number, Registration>();
-  memo = { registrations, byFunction };
-  // The cheap gate: a file with no `.module(` call registers nothing.
+  const memo: TreeFacts = { registrations, byFunction };
+  memos.set(tree, memo);
+  // The cheap gate: a file with no such call registers nothing.
   if (!REGISTRATION_GATE.test(tree.rootNode.text)) return memo;
   const variables = moduleVariables(tree);
   for (const call of tree.rootNode.descendantsOfType("call_expression")) {

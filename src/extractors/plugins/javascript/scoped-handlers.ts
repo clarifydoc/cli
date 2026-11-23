@@ -38,6 +38,7 @@ function resolveScoped(analyses: FileAnalysis[]): Resolved {
   const hasScopes = pages.some((p) => p.interactiveElements.some((e) => e.componentScope)) || registrations.some((r) => r.kind === "template");
   if (!hasScopes) return out;
   const resolveImport = importResolver(analyses);
+  const projectOf = new Map(analyses.map((a) => [a.filePath, a.projectId]));
   const templates = registrations.filter((r) => r.kind === "template");
   const components = registrations.filter((r) => r.kind === "component");
 
@@ -94,10 +95,12 @@ function resolveScoped(analyses: FileAnalysis[]): Resolved {
       const member = memberOf(el.handler);
       const targets = targetsOf(scope, member);
       // Two components of one name stay unjoined: which one this page runs is not stated.
-      const files = new Set(targets.map((t) => t.file));
-      if (targets.length === 0 || files.size > 1) continue;
+      // Several apps declaring one name: the page's own sub-project decides, else nothing does.
+      let chosen = targets;
+      if (new Set(targets.map((t) => t.file)).size > 1) chosen = targets.filter((t) => projectOf.get(t.file) === page.projectId);
+      if (chosen.length === 0 || new Set(chosen.map((t) => t.file)).size > 1) continue;
       out.handled.add(el);
-      for (const t of targets) {
+      for (const t of chosen) {
         const key = `${member}@${el.line}::${t.file}::${t.symbol}`;
         if (seen.has(key)) continue;
         seen.add(key);
