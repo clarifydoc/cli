@@ -53,3 +53,30 @@ describe("calls through a nested type's owner path", () => {
     });
   }
 });
+
+describe("calls through a nested type's owner path: generated classes and inherited owners", () => {
+  for (const [language, ext, method] of [["java", "java", "build"], ["csharp", "cs", "Build"]] as const) {
+    const garage = (callName: string) => file(`Garage.${ext}`, language, [cls("Garage", 1, 9, [fn("go", 3, [call(callName, 4)])])]);
+    const derby = file(`Derby.${ext}`, language, [{ ...cls("Derby", 1, 2), extends: "Match" }]);
+    const match = file(`Match.${ext}`, language, [cls("Match", 1, 12), cls("Result", 3, 10, [fn(method, 5)])]);
+    const other = file(`Other.${ext}`, language, [cls("Other", 1, 12), cls("Result", 3, 10, [fn(method, 5)])]);
+
+    it(`${language}: a nested type the owner inherits from its base is reached, not a namesake of an unrelated class`, () => {
+      expect(links([derby, match, other, garage(`Derby.Result.${method}`)]))
+        .toEqual([`Derby.Result.${method} -> Match.${ext}:Result.${method}:5 [class-name]`]);
+    });
+
+    it(`${language}: a path neither the owner nor its bases bear out links nowhere`, () => {
+      expect(links([derby, match, other, garage(`Derby.Missing.${method}`)])).toEqual([]);
+    });
+  }
+
+  it("java: a generated class's stated owner path is reached through the call-chain walk", () => {
+    const club = file("Club.java", "java", [
+      cls("Club", 1, 2),
+      { ...cls("Club_Builder", 2, 2, [fn("build", 2)]), nestedPath: "Club.Builder", synthetic: true },
+    ]);
+    const garage = file("Garage.java", "java", [cls("Garage", 1, 9, [fn("go", 3, [call("Club.Builder.build", 4)])])]);
+    expect(links([club, garage])).toEqual(["Club.Builder.build -> Club.java:Club_Builder.build:2 [class-name]"]);
+  });
+});

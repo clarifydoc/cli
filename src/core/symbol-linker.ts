@@ -3173,10 +3173,21 @@ function classNameMember(
       const owners = classesAtOwnerPath(classes, declaredClass, parts.slice(1, -1));
       if (owners.length === 1) found.set(f, { line: owners[0]!.line, endLine: owners[0]!.endLine, bases: !!owners[0]!.extends || owners[0]!.implements.length > 0 || !!owners[0]!.mixins?.length });
     }
+    let viaName: string | undefined;
+    // Not nested in the head's own lines: the class a generated file states under that path (`ImmutableClub.Builder`),
+    // or one the owner inherits from its bases (`Derby.Result` declared in `Derby`'s base) — the lookup types use.
+    if (found.size === 0) {
+      const viaOwner = ownerPathType(ctx, parts.slice(0, -1).join("."), sourceFile, analysis.projectId);
+      const nested = viaOwner ? analysisByFile.get(viaOwner.typeFile)?.classes?.find((c) => c.name === viaOwner.typeName) : undefined;
+      if (viaOwner && nested) {
+        found.set(viaOwner.typeFile, { line: nested.line, endLine: nested.endLine, bases: !!nested.extends || nested.implements.length > 0 || !!nested.mixins?.length });
+        viaName = nested.name;
+      }
+    }
     if (found.size > 0) {
       candidateFiles = [...found.keys()];
       nestedRange = found;
-      declaredClass = parts[parts.length - 2]!;
+      declaredClass = viaName ?? parts[parts.length - 2]!;
       methodName = parts[parts.length - 1]!;
     }
   }
