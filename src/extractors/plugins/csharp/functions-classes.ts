@@ -16,6 +16,7 @@ import { csharpArgKinds, typeCsharpVariableArgs } from "./arg-kinds.js";
 import { csharpElementFacts } from "./element-types.js";
 import { classValueContext, csharpFieldInitFacts, csharpValueFlow, fileDelegateNames } from "./value-flow.js";
 import type { ClassValueContext } from "./value-flow.js";
+import { csharpMemberEffects } from "./member-effects.js";
 import {
   FileScopeNodes,
   injectionKey,
@@ -419,6 +420,8 @@ export class CSharpExtractor extends FunctionClassExtractor {
       const flow = csharpValueFlow(body, params, returnType, this.valueCtx);
       if (flow.length > 0) fn.valueFlow = flow;
     }
+    const effects = csharpMemberEffects(node, body, params, (fn.localTypes ?? []).filter((l) => l.type).map((l) => l.name));
+    if (effects) Object.assign(fn, effects);
     return fn;
   }
 

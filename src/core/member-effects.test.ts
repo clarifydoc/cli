@@ -71,6 +71,27 @@ describe("member effects, end to end", () => {
       "class Closed : Exception()",
       'class Hall { var status = ""; fun open() { status = "open" } }',
     ].join("\n"));
+    await mkdir(join(dir, "cs"), { recursive: true });
+    await writeFile(join(dir, "cs", "Club.cs"), [
+      "namespace League {",
+      "public class Overdrawn : System.Exception {}",
+      "public class Club {",
+      "  public string Status { get; set; }",
+      "  public int Points;",
+      '  public Club() { Status = "new"; }',
+      '  public void Close() { this.Status = "closed"; Points++; throw new Overdrawn(); }',
+      '  public void Same(string Status) { Status = "param"; }',
+      "  public void Again() { try { Close(); } catch (System.Exception e) { throw; } }",
+      "}",
+      'public class Garage { public string Status; public void Open() { Status = "open"; } }',
+      'public class Elite : Club { public void Promote() { Status = "elite"; } }',
+      "public class Division {",
+      "  private Club club;",
+      '  public void Rename(Club c, Garage g, Other o) { c.Status = "r"; this.club.Status = "lead"; g.Status = "g"; o.Status = "o"; var u = Make(); u.Status = "u"; }',
+      "}",
+      "public class Other { public string Status; }",
+      "}",
+    ].join("\n"));
     await analyze({ projectRoot: dir, outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
     summary = await loadReportSummary(join(dir, "out"));
   }, 60_000);
@@ -109,6 +130,14 @@ describe("member effects, end to end", () => {
     expect(writers("Hall", "status", "jvm/Cup.kt")).toEqual(["Hall.open:8"]);
   });
 
+  it("resolves C# writes through this, bare members, inherited members and typed receivers", () => {
+    expect(writers("Club", "Status", "cs/Club.cs")).toEqual(["Club.Close:7", "Division.Rename:15", "Division.Rename:15", "Elite.Promote:12"]);
+    expect(writers("Club", "Points", "cs/Club.cs")).toEqual(["Club.Close:7"]);
+    expect(writers("Garage", "Status", "cs/Club.cs")).toEqual(["Division.Rename:15", "Garage.Open:11"]);
+    expect(writers("Other", "Status", "cs/Club.cs")).toEqual(["Division.Rename:15"]);
+    expect((summary.fieldWrites ?? []).some((w) => w.function === "Club.Same" || w.function === "Club.Club")).toBe(false);
+  });
+
   it("lists thrown types with the project class they name and what the signature declares", () => {
     const rows = (summary.thrownTypes ?? []).map((t) => `${t.function} ${t.type}${t.declared ? " declared" : ""}${t.classFile ? ` -> ${t.classFile}` : ""}`).sort();
     expect(rows).toEqual([
@@ -119,6 +148,7 @@ describe("member effects, end to end", () => {
       "Cup.close Closed -> jvm/Cup.kt",
       "Cup.close Closed declared -> jvm/Cup.kt",
       "Cup.close java.io.IOException declared",
+      "Club.Close Overdrawn -> cs/Club.cs",
       "League.plain Error",
     ].sort());
   });
