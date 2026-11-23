@@ -98,6 +98,7 @@ import { nimManifest } from "./plugins/nim/manifest.js";
 import { dManifest } from "./plugins/dlang/manifest.js";
 import { vManifest } from "./plugins/vlang/manifest.js";
 import { fortranManifest } from "./plugins/fortran/manifest.js";
+import { apexManifest } from "./plugins/apex/manifest.js";
 
 /** All plugin manifests, in registration order (order is observable — keep stable). */
 const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
@@ -138,6 +139,7 @@ const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
   dManifest,
   vManifest,
   fortranManifest,
+  apexManifest,
 ];
 
 const MANIFEST_BY_LANGUAGE = new Map<Language, LanguagePluginManifest>();
@@ -229,6 +231,7 @@ const LOADERS: readonly PluginLoader[] = [
   { languages: ["dlang"], load: () => import("./plugins/dlang/meta.js").then((m) => [m.dMeta]) },
   { languages: ["vlang"], load: () => import("./plugins/vlang/meta.js").then((m) => [m.vMeta]) },
   { languages: ["fortran"], load: () => import("./plugins/fortran/meta.js").then((m) => [m.fortranMeta]) },
+  { languages: ["apex"], load: () => import("./plugins/apex/meta.js").then((m) => [m.apexMeta]) },
 ];
 
 const LOADER_BY_LANGUAGE = new Map<Language, PluginLoader>();

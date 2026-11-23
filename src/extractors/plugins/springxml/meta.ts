@@ -8,6 +8,7 @@ import { isOrmMappingXml } from "./orm-mappings.js";
 import { isLiquibaseChangelog, LiquibaseChangelogEntities } from "./liquibase.js";
 import { isAndroidNavGraph } from "../shared/android-nav-graph.js";
 import { isAndroidManifest } from "../shared/android-manifest.js";
+import { isSalesforceMetadata } from "../apex/entities.js";
 
 /**
  * Spring XML (Web Flow definitions + bean definitions), MyBatis mapper XML and Android navigation graphs. Claims the whole
@@ -23,7 +24,9 @@ export const springxmlMeta: LanguagePluginMeta = {
   skipSecurityScan: true,
   dispatchResolvers: [new WebflowUiBridgeResolver(), new MyBatisMapperResolver()],
   entities: new LiquibaseChangelogEntities(),
-  preprocess(rawSource) {
+  preprocess(rawSource, relativePath) {
+    // SFDX object and field metadata: the Apex plugin reads the SObjects they declare.
+    if (isSalesforceMetadata(relativePath, rawSource)) return { sourceText: rawSource, language: "apex" };
     // A WSDL contract saved as `.xml` (`Idemos.xml`): read by the WSDL plugin, as a `.wsdl` would be.
     if (/<(?:\w+:)?definitions\b[^>]*schemas\.xmlsoap\.org\/wsdl\//.test(rawSource)) return { sourceText: rawSource, language: "wsdl" };
     const isFlow = rawSource.includes("springframework.org/schema/webflow") && /<flow[\s>]/.test(rawSource);

@@ -22,7 +22,7 @@ export const LANGUAGE_NAMES: Record<Language, string> = {
   wsdl: "WSDL", groovy: "Groovy, with Jenkinsfiles", powershell: "PowerShell", batch: "Windows batch", coffeescript: "CoffeeScript",
   crystal: "Crystal", raku: "Raku", racket: "Racket", scheme: "Scheme", commonlisp: "Common Lisp", haxe: "Haxe", mojo: "Mojo",
   scss: "SCSS", sass: "Sass", less: "Less", autohotkey: "AutoHotkey", autoit: "AutoIt", applescript: "AppleScript", nim: "Nim",
-  dlang: "D", vlang: "V", fortran: "Fortran", serverless: "Serverless / AWS SAM", coredata: "Core Data models",
+  dlang: "D", vlang: "V", apex: "Apex (Salesforce; classes arrive through `.cls`, SObjects through `*-meta.xml`)", fortran: "Fortran", serverless: "Serverless / AWS SAM", coredata: "Core Data models",
 };
 
 /** A named file as the README shows it, where the bare name would mislead. */

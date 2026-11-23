@@ -44,6 +44,8 @@ const MARKER_GLOBS: { pattern: string; kind: SubProjectKind }[] = [
   { pattern: "**/pubspec.yaml", kind: "dart" },
   { pattern: "**/mix.exs", kind: "elixir" },
   { pattern: "**/build.sbt", kind: "sbt" },
+  // An SFDX project: its `package.json` (LWC test tooling) is not the project.
+  { pattern: "**/sfdx-project.json", kind: "salesforce" },
   // Only a CMakeLists.txt containing a project() call marks a project root —
   // most CMakeLists are per-directory source lists (add_subdirectory targets)
   // and treating them as markers would fragment the repo under innermost-wins.
@@ -94,6 +96,7 @@ const KIND_PRIORITY: SubProjectKind[] = [
   "php",
   "ruby",
   "swift",
+  "salesforce",
   "node",
 ];
 
