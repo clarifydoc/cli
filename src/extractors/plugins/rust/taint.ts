@@ -147,20 +147,18 @@ function routeAttribute(fn: Node): string {
  * parameter list holds another axum extractor, or whose lone parameter comes with an axum response type — a plain
  * `fn load(db: &Db, name: String)` is a helper, never a handler.
  */
-function isAxumHandler(fn: Node, param: Node): boolean {
-  if (!fn.children.some((c) => c.type === "function_modifiers" && /\basync\b/.test(c.text))) return false;
+function isAxumHandler(fn: Node, param: Node, usesAxum: boolean): boolean {
+  if (!usesAxum || !fn.children.some((c) => c.type === "function_modifiers" && /\basync\b/.test(c.text))) return false;
   const params = (fn.childForFieldName("parameters")?.namedChildren ?? []).filter((p) => p.type === "parameter");
   // A body extractor must be last.
   if (params[params.length - 1]?.id !== param.id) return false;
-  // The file text crosses into WASM: read it last, after the cheap checks.
-  if (!/\buse\s+axum\b|\baxum::/.test(fn.tree.rootNode.text)) return false;
   const others = params.filter((p) => p.id !== param.id);
   if (others.some((p) => AXUM_EXTRACTOR.test(typeHead(p.childForFieldName("type"))?.head ?? ""))) return true;
   return others.length === 0 && AXUM_RESPONSE.test(fn.childForFieldName("return_type")?.text ?? "");
 }
 
 /** The parameters of a handler that carry request input: names, or `name.field` for each text field of a struct. */
-function requestParams(fn: Node): string[] {
+function requestParams(fn: Node, usesAxum: boolean): string[] {
   const root = fn.tree.rootNode;
   const attribute = routeAttribute(fn);
   const out: string[] = [];
@@ -177,7 +175,7 @@ function requestParams(fn: Node): string[] {
         if (shape === "text") out.push(name);
         else if (Array.isArray(shape)) out.push(...shape.map((f) => `${name}.${f}`));
       });
-    } else if (head && AXUM_TEXT.test(head.head) && head.args.length === 0 && type?.type !== "reference_type" && isAxumHandler(fn, p)) {
+    } else if (head && AXUM_TEXT.test(head.head) && head.args.length === 0 && type?.type !== "reference_type" && isAxumHandler(fn, p, usesAxum)) {
       // axum: the last parameter `String` / `Bytes` is the whole request body.
       out.push(...names);
     } else if (attribute && names.length === 1 && new RegExp(`<${names[0]}(?:\\.\\.)?>`).test(attribute)) {
@@ -201,7 +199,7 @@ function requestObjects(root: Node): string[] {
 }
 
 /** The identifiers a `let` or `if let` pattern binds. */
-function buildSpec(requests: readonly string[], usesReqwest: boolean): TaintSpec {
+function buildSpec(requests: readonly string[], usesReqwest: boolean, usesAxum: boolean): TaintSpec {
   const recv = requests.length ? `(?:${requests.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})` : "(?!)";
   const source = new RegExp(`(?<![\\w.])${recv}\\.(?:query_string|match_info|uri|path|headers|cookie|cookies|query)\\b`);
   const clientCall = usesReqwest ? "|(?:^|\\.)(?:http_?client|client|reqwest_client|http)\\.(?:get|post|put|delete|head|patch)$|^reqwest::(?:blocking::)?Client::new\\(\\)\\.(?:get|post|put|delete|head|patch)$" : "";
@@ -209,7 +207,7 @@ function buildSpec(requests: readonly string[], usesReqwest: boolean): TaintSpec
   return {
     functionTypes: new Set(["function_item"]),
     handler(fn) {
-      const params = requestParams(fn);
+      const params = requestParams(fn, usesAxum);
       if (params.length) return { taintedParams: params };
       const reads = requests.length > 0 && (fn.childForFieldName("parameters")?.namedChildren ?? []).some((p) => p.type === "parameter" && patternNames(p.childForFieldName("pattern")).some((n) => requests.includes(n)));
       return reads ? { taintedParams: [] } : null;
@@ -302,5 +300,5 @@ function buildSpec(requests: readonly string[], usesReqwest: boolean): TaintSpec
 
 /** Request input reaching a sink inside an axum, actix-web or rocket handler (see `handlerTaint`). */
 export function rustTaint(tree: Tree, sourceText: string, filePath: string, facts?: TaintFacts): SecurityIssue[] {
-  return handlerTaint(tree, buildSpec(requestObjects(tree.rootNode), /\breqwest\b/.test(sourceText)), filePath, facts);
+  return handlerTaint(tree, buildSpec(requestObjects(tree.rootNode), /\breqwest\b/.test(sourceText), /\buse\s+axum\b|\baxum::/.test(sourceText)), filePath, facts);
 }
