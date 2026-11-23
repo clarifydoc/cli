@@ -2571,7 +2571,7 @@ export interface ReachabilityModel {
   declaredNames?(analysis: FileAnalysis, source: string | undefined): readonly string[];
   /**
    * The declared names are case-insensitive (Apex): a mention matches whatever its case, so
-   * `clubservice.promote()` reaches `ClubService`. Only this model's names are folded.
+   * `clubservice.promote()` reaches `ClubService`, and `configMentions` holds lower-case names. Only this model's names are folded.
    */
   foldNames?: boolean;
   /**

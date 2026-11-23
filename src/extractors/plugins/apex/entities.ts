@@ -110,10 +110,14 @@ export class SalesforceEntityExtractor extends EntityExtractor {
       file.classes = file.classes.filter((c) => c !== cls);
     }
     // A child relationship a subquery names: the lookup field of another object that declares it from the parent.
-    const children = new Map<string, string>();
+    const children = new Map<string, string | null>();
     for (const file of apex) {
       for (const r of file.entityRelations ?? []) {
-        if (r.orm === ORM && r.inverseField) children.set(`${r.toEntity.toLowerCase()}\0${r.inverseField.toLowerCase()}`, r.fromEntity);
+        if (r.orm !== ORM || !r.inverseField) continue;
+        const key = `${r.toEntity.toLowerCase()}\0${r.inverseField.toLowerCase()}`;
+        // Two objects declaring one relationship name on a parent: no answer is a guess.
+        const known = children.get(key);
+        children.set(key, known === undefined || known === r.fromEntity ? r.fromEntity : null);
       }
     }
     for (const file of apex) {

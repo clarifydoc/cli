@@ -421,7 +421,7 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
           const list = nameIndex.get(key);
           if (list) list.push(a.filePath);
           else nameIndex.set(key, [a.filePath]);
-          if (!configured && model.configMentions?.has(n)) configured = n;
+          if (!configured && model.configMentions?.has(model.foldNames ? n.toLowerCase() : n)) configured = n;
         }
         if (configured && !entryReason.has(a.filePath)) {
           entryReason.set(a.filePath, `named in configuration (${configured})`);
@@ -439,6 +439,7 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
       }
     }
   }
+  const hasFolded = [...new Set(models.values())].some((m) => m.foldNames);
   /** Files whose declared names `file`'s text mentions. Read once per file. */
   const nameTargets = (file: string): string[] => {
     if (nameIndex.size === 0) return [];
@@ -450,7 +451,7 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
       if (seen.has(tok)) continue;
       seen.add(tok);
       for (const t of nameIndex.get(tok) ?? []) if (t !== file) out.push(t);
-      for (const t of nameIndex.get(FOLDED + tok.toLowerCase()) ?? []) if (t !== file) out.push(t);
+      if (hasFolded) for (const t of nameIndex.get(FOLDED + tok.toLowerCase()) ?? []) if (t !== file) out.push(t);
     }
     return out;
   };

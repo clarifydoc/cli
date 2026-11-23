@@ -1,5 +1,6 @@
 import type { FileAnalysis } from "../../../types/analysis.js";
 import type { ReachabilityHooks, ReachabilityModel } from "../../../types/language-plugin.js";
+import { splitTopLevelCommas } from "../shared/text-scan.js";
 import { conventionReachability, typeLeaf } from "../shared/reachability-kit.js";
 
 /**
@@ -64,7 +65,8 @@ function dynamicNames(text: string): { prefixes: string[]; any: boolean } {
   const prefixes: string[] = [];
   let any = false;
   for (const m of text.matchAll(/\bType\s*\.\s*forName\s*\(([^;]*?)\)\s*(?:\.|;|\))/gi)) {
-    const arg = m[1]!.trim();
+    // `forName('namespace', 'Handler_' + x)` names the class by its last argument.
+    const arg = splitTopLevelCommas(m[1]!).pop()?.trim() ?? "";
     const lit = /^'([^']*)'\s*(\+)?/.exec(arg);
     if (!lit) { any = true; continue; }
     // A whole literal names exactly that class (an identifier mention already keeps it); only `'Prefix' + x` is open,
@@ -83,7 +85,7 @@ export const apexReachability: ReachabilityHooks = conventionReachability({
   async extend(_ctx, kit, base): Promise<Partial<ReachabilityModel>> {
     const mentions = new Set<string>();
     // Everything a configuration file names was collected by the kit; `*.cls-meta.xml` and the like name no class.
-    for (const n of base.configMentions ?? []) mentions.add(n);
+    for (const n of base.configMentions ?? []) mentions.add(n.toLowerCase());
     const stems = new Map<string, string>();
     const open: string[] = [];
     let everything = false;
@@ -97,13 +99,13 @@ export const apexReachability: ReachabilityHooks = conventionReachability({
       if (d.any) everything = true;
       open.push(...d.prefixes);
     }
-    for (const p of open) for (const [low, s] of stems) if (low.startsWith(p.toLowerCase())) mentions.add(s);
+    for (const p of open) for (const [low, s] of stems) if (low.startsWith(p.toLowerCase())) mentions.add(low);
     // A name read at run time (`Type.forName(row.Handler__c)`) can be any class that has a base to be loaded through.
     if (everything) {
       for (const f of kit.files) {
         if (!/\.cls$/i.test(f)) continue;
         const text = await kit.readText(f);
-        if (text && /\bclass\s+\w+[^{;]*\b(?:extends|implements)\s/i.test(text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, ""))) mentions.add(f.slice(f.lastIndexOf("/") + 1).replace(/\.[^.]+$/, ""));
+        if (text && /\bclass\s+\w+[^{;]*\b(?:extends|implements)\s/i.test(text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, ""))) mentions.add(f.slice(f.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "").toLowerCase());
       }
     }
     // Source outside every `packageDirectories` path of its `sfdx-project.json` is deployed by a manifest, not by the project.
