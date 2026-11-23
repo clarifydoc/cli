@@ -16,7 +16,7 @@ Optional enhancement that starts language servers in Docker containers and queri
 ## Flow
 
 1. `analyzer.ts` calls `enhanceWithLsp(options)` after text-based `buildSymbolLinks`
-2. `LspManager.initialize(languages, files)` — returns at once when no language has a configured server; otherwise reads the Docker probe (`docker info`, seconds against a stopped daemon) that `analyzer.ts` started before `buildSymbolLinks` so the wait overlaps linking (`dockerProbe`); for each language present, builds the Docker image if missing, starts a container, opens all relevant files
+2. `LspManager.initialize(languages, files)` — returns at once when no language has a configured server; otherwise reads the Docker probe (`isDockerAvailable`: a socket `/_ping` on the endpoint `DOCKER_HOST` or the current context names, `docker info` bounded to 1.5 s only for tcp/ssh/unknown ones) that `analyzer.ts` started before `buildSymbolLinks` so the wait overlaps linking (`dockerProbe`); for each language present, builds the Docker image if missing, starts a container, opens all relevant files
 3. **Phase A**: for each unresolved call (kind=cross-file with no text-based target), query `textDocument/definition` and create `SymbolLink`
 4. **Phase B**: for each exported symbol, query `textDocument/references` and create reference links
 5. `LspManager.shutdownAll()` — stops containers
