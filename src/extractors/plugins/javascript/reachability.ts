@@ -528,6 +528,30 @@ async function loadJsReachability(ctx: ReachabilityLoadContext): Promise<Reachab
   }
   const isGeneratedOutput = (file: string): boolean =>
     generatedOutputs.some((g) => (g.endsWith("/") ? file.startsWith(g) : file === g));
+  // Salesforce: the platform loads a Lightning Web Component's `lwc/<name>/<name>.js` and an Aura bundle's
+  // `aura/<name>/<name>{Controller,Helper,Renderer}.js` by folder name, so no import reaches them. Only inside an
+  // SFDX project, below one of its `packageDirectories`.
+  const sfdxPackages = new Map<string, string[]>();
+  for (const root of roots) {
+    const text = await readText(join(ctx.projectRoot, root, "sfdx-project.json"));
+    if (!text) continue;
+    try {
+      const dirs = (JSON.parse(stripJsonc(text)) as { packageDirectories?: Array<{ path?: string }> } | null)?.packageDirectories;
+      sfdxPackages.set(root, (dirs ?? []).map((d) => (d.path ?? "").replace(/^\.?\/+|\/+$/g, "")).filter(Boolean));
+    } catch { sfdxPackages.set(root, []); }
+  }
+  const platformBundle = (file: string): string | null => {
+    if (sfdxPackages.size === 0) return null;
+    const root = rootOf(file);
+    const paths = sfdxPackages.get(root);
+    if (!paths) return null;
+    const rel = root ? file.slice(root.length + 1) : file;
+    if (paths.length > 0 && !paths.some((p) => rel === p || rel.startsWith(`${p}/`))) return null;
+    const m = /(?:^|\/)(lwc|aura)\/([^/]+)\/([^/]+)\.(?:js|ts)$/.exec(rel);
+    if (!m) return null;
+    if (m[1] === "lwc") return m[3] === m[2] ? "Lightning web component (loaded by the platform from its folder)" : null;
+    return m[3] === `${m[2]}Controller` || m[3] === `${m[2]}Helper` || m[3] === `${m[2]}Renderer` ? "Aura bundle (loaded by the platform from its folder)" : null;
+  };
   manifestEntries.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.reason < b.reason ? -1 : 1));
 
   return {
@@ -548,6 +572,10 @@ async function loadJsReachability(ctx: ReachabilityLoadContext): Promise<Reachab
 
     passiveReason(analysis: FileAnalysis, relPath: string): string | null {
       for (const [re, reason] of TOOL_LOADED) if (re.test(relPath)) return reason;
+      // Passive, not an entry: the platform loads a bundle, but that starts no program of this project, so it must
+      // not anchor one (a project with no other entry stays unjudged, its static resources unaccused).
+      const bundle = platformBundle(analysis.filePath);
+      if (bundle) return bundle;
       if (generatedOutputs.length > 0 && isGeneratedOutput(analysis.filePath)) return "code generator output";
       // No import, no export: a classic browser script, loaded by URL from
       // markup — often server-rendered (Razor, JSP, PHP, Delphi templates)

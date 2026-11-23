@@ -234,3 +234,39 @@ describe("JS reachability — tool-run folders, generators and output subpaths",
     expect(m.resolve("app/main.ts", "@club/web/types/server/routers/app")).toEqual(["packages/web/src/routers/app.ts"]);
   });
 });
+
+describe("JS reachability — Lightning and Aura bundles", () => {
+  const sfdx = { "sfdx-project.json": { packageDirectories: [{ path: "force-app" }] } };
+  const lwc = "force-app/main/default/lwc/clubList/clubList.js";
+  const aura = "force-app/main/default/aura/clubBoard/clubBoardController.js";
+  const passive = (m: Awaited<ReturnType<typeof model>>, p: string) => m.passiveReason?.(analysis(p, { imports: [{}], exports: [{}] } as never), p, new Set());
+
+  it("keeps a bundle's main file alive (passive, not an entry) inside an SFDX project", async () => {
+    const m = await model([lwc, aura], sfdx);
+    expect(passive(m, lwc)).toMatch(/Lightning web component/);
+    expect(passive(m, aura)).toMatch(/Aura bundle/);
+    expect(m.entryReason?.(analysis(lwc), lwc, new Set())).toBeNull();
+  });
+
+  it("names Helper and Renderer too, and leaves a stray file of the folder to the import graph", async () => {
+    const base = "force-app/main/default/";
+    const m = await model([], sfdx);
+    expect(passive(m, `${base}aura/clubBoard/clubBoardHelper.js`)).toMatch(/Aura/);
+    expect(passive(m, `${base}aura/clubBoard/clubBoardRenderer.js`)).toMatch(/Aura/);
+    expect(passive(m, `${base}lwc/clubList/formatClub.js`)).toBeNull();
+    expect(passive(m, `${base}aura/clubBoard/stray.js`)).toBeNull();
+  });
+
+  it("does not apply outside an SFDX project, nor outside its package directories", async () => {
+    const plain = await model(["src/lwc/clubList/clubList.js"]);
+    expect(passive(plain, "src/lwc/clubList/clubList.js")).toBeNull();
+    const m = await model([], sfdx);
+    expect(passive(m, "unpackaged/lwc/clubList/clubList.js")).toBeNull();
+  });
+
+  it("finds sfdx-project.json at a sub-project root", async () => {
+    const m = await model([], { "apps/sf/sfdx-project.json": { packageDirectories: [{ path: "force-app" }] } }, ["apps/sf"]);
+    expect(passive(m, "apps/sf/force-app/main/default/lwc/clubList/clubList.js")).toMatch(/Lightning/);
+    expect(passive(m, "src/lwc/clubList/clubList.js")).toBeNull();
+  });
+});
