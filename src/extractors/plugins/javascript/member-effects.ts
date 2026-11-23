@@ -72,3 +72,15 @@ export function memberEffectsOf(
   if (writes.length === 0 && throws.length === 0) return null;
   return { ...(writes.length > 0 ? { fieldWrites: writes } : {}), ...(throws.length > 0 ? { throws } : {}) };
 }
+
+/**
+ * `effects` with the exception types a JSDoc `@throws {T}` declares, kept as `declared` beside what the body throws:
+ * the tag is the function's stated contract (as a Java `throws` clause is), not a `throw` site, so it is stated even
+ * when the body also throws the type, and a function that only delegates still lists what it promises.
+ */
+export function withJsDocThrows(effects: Effects | null, names: readonly string[], line: number): Effects | null {
+  if (names.length === 0) return effects;
+  const throws = [...(effects?.throws ?? [])];
+  for (const type of names) if (throws.length < MAX_FACTS && !throws.some((t) => t.declared && t.type === type)) throws.push({ type, line, declared: true });
+  return { ...(effects ?? {}), throws };
+}

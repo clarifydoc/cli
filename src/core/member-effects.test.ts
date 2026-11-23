@@ -141,6 +141,19 @@ describe("member effects, end to end", () => {
       "    g.status = 'free'",
       "",
     ].join("\n"));
+    await writeFile(join(dir, "ts", "doc.js"), [
+      "export class Offside extends Error {}",
+      "/**",
+      " * @param {number} n",
+      " * @throws {Offside} when late",
+      " * @throws {Object<string>} nothing",
+      " */",
+      "export function flag(n) { return helper(n); }",
+      "export class Referee {",
+      "  /** @throws {Offside|Foul} */",
+      "  call() { throw new Offside(); }",
+      "}",
+    ].join("\n"));
     await analyze({ projectRoot: dir, outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
     summary = await loadReportSummary(join(dir, "out"));
   }, 60_000);
@@ -194,6 +207,11 @@ describe("member effects, end to end", () => {
     expect((summary.fieldWrites ?? []).some((w) => w.file === "py/club.py" && (w.function === "Club.same" || w.line === 39 || w.line === 40))).toBe(false);
   });
 
+  it("reads a JSDoc @throws as a declared thrown type, beside the body's own throws", () => {
+    const rows = (summary.thrownTypes ?? []).filter((t) => t.file === "ts/doc.js").map((t) => `${t.function} ${t.type}${t.declared ? " declared" : ""}:${t.line}`).sort();
+    expect(rows).toEqual(["Referee.call Foul declared:10", "Referee.call Offside declared:10", "Referee.call Offside:10", "flag Offside declared:7"]);
+  });
+
   it("lists thrown types with the project class they name and what the signature declares", () => {
     const rows = (summary.thrownTypes ?? []).map((t) => `${t.function} ${t.type}${t.declared ? " declared" : ""}${t.classFile ? ` -> ${t.classFile}` : ""}`).sort();
     expect(rows).toEqual([
@@ -209,6 +227,10 @@ describe("member effects, end to end", () => {
       "Club.fail Overdrawn -> py/club.py",
       "Division.rename errors.Overdrawn -> py/club.py",
       "League.plain Error",
+      "Referee.call Foul declared",
+      "Referee.call Offside -> ts/doc.js",
+      "Referee.call Offside declared -> ts/doc.js",
+      "flag Offside declared -> ts/doc.js",
     ].sort());
   });
 });

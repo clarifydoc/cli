@@ -81,6 +81,24 @@ export function jsDocReturnType(doc: string): string | null {
   return braced ? normalizeJsDocType(braced.type) : null;
 }
 
+/**
+ * Every `@throws {T}` / `@exception {T}` → the exception class names (`{A|B}` states both; anything that is no plain
+ * or qualified name — `{*}`, `{Object<string>}`, a function type — states nothing).
+ */
+export function jsDocThrows(doc: string): string[] {
+  const out: string[] = [];
+  const re = /@(?:throws|exception)\b/g;
+  for (let m = re.exec(doc); m; m = re.exec(doc)) {
+    const braced = bracedType(doc, m.index + m[0].length);
+    if (!braced) continue;
+    for (const part of braced.type.split("|")) {
+      const name = part.trim();
+      if (/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(name) && !out.includes(name)) out.push(name);
+    }
+  }
+  return out;
+}
+
 /** `@type {T}` → T. */
 export function jsDocTypeTag(doc: string): string | null {
   const m = /@type\b/.exec(doc);

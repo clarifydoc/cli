@@ -13,7 +13,7 @@ import { callChainText, extractCalls } from "../../shared/call-graph.js";
 import { testCaseFunctions } from "./test-cases.js";
 import { heldFunctionNodes } from "./held-functions.js";
 import { fieldValueFlow, valueFlowOf } from "./value-flow.js";
-import { memberEffectsOf } from "./member-effects.js";
+import { memberEffectsOf, withJsDocThrows } from "./member-effects.js";
 import { contractHandlerObjects } from "./contract-handlers.js";
 import { foldValue, type ValueExpr } from "../../shared/value-resolver.js";
 import { astToValueExpr } from "./value-capture.js";
@@ -25,7 +25,7 @@ import {
   restatesType,
   type InjectedType,
 } from "./di.js";
-import { jsDocImplements, jsDocIsInterface, jsDocParamTypes, jsDocReturnType, jsDocTypeTag, precedingJsDoc } from "./jsdoc.js";
+import { jsDocImplements, jsDocIsInterface, jsDocParamTypes, jsDocReturnType, jsDocThrows, jsDocTypeTag, precedingJsDoc } from "./jsdoc.js";
 import { FUNCTION_EXPRESSIONS, handlerOf, wrappedCalleeName, wrappedFunction } from "./wrapped-functions.js";
 import { optionsWatchers } from "./reactive-cells.js";
 import { isMemberLoaderBody, loadedDefaultSource, loadedMemberCall } from "./loaded-members.js";
@@ -1922,7 +1922,7 @@ function piniaStateObject(member: Node): Node | null {
 }
 
 /** Any JSDoc tag this extractor reads — the per-file gate before looking at comments at all. */
-const JSDOC_TAG_RE = /@(?:param|arg|argument|returns?|type|implements|interface)\b/;
+const JSDOC_TAG_RE = /@(?:param|arg|argument|returns?|type|implements|interface|throws|exception)\b/;
 
 /** A constructor function read as a class (see `JavaScriptExtractor.prototypeClasses`). */
 interface PrototypeClass {
@@ -2618,7 +2618,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const responses = responsesOf(params, body);
     const { calls, localTypes, returnedSpreads, returnedMembers, returnedFrom, valueFlow } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx, params);
     const derivedLocals = composableLocals(node, returnedMembers);
-    const effects = memberEffectsOf(body, params, typedLocalNames(localTypes));
+    const effects = withJsDocThrows(memberEffectsOf(body, params, typedLocalNames(localTypes)), doc ? jsDocThrows(doc) : [], node.startPosition.row + 1);
     return {
       name,
       params,
@@ -2689,7 +2689,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const responses = responsesOf(params, body);
     const { calls, localTypes, returnedSpreads, returnedMembers, returnedFrom, valueFlow } = finishBody(extractCalls(body, "typescript", skip), body, paramNames, this.ctx, params, skip);
     const derivedLocals = composableLocals(funcNode, returnedMembers);
-    const effects = memberEffectsOf(body, params, typedLocalNames(localTypes), { skip });
+    const effects = withJsDocThrows(memberEffectsOf(body, params, typedLocalNames(localTypes), { skip }), doc ? jsDocThrows(doc) : [], funcNode.startPosition.row + 1);
     return {
       name,
       params,
@@ -3240,7 +3240,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           const segment = templates.length === 0 && params.length === 0 && RESOURCE_METHOD.test(methodName) ? returnedSegment(methodBody) : null;
           if (segment) templates.push(segment);
           const { calls, localTypes, returnedSpreads, returnedFrom, valueFlow } = finishBody(extractCalls(methodBody, "typescript"), methodBody, paramNames, this.ctx, params);
-          const effects = memberEffectsOf(methodBody, params, typedLocalNames(localTypes), { initializer: methodName === "constructor" });
+          const effects = withJsDocThrows(memberEffectsOf(methodBody, params, typedLocalNames(localTypes), { initializer: methodName === "constructor" }), memberDoc ? jsDocThrows(memberDoc) : [], member.startPosition.row + 1);
           methods.push({
             name: methodName,
             params,
