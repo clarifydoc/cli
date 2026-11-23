@@ -289,7 +289,68 @@ export function csharpTopLevelValueFlow(root: Node): ValueFlowFact[] {
   return statementsFlow(statements, statements.map((n) => n.text).join("\n"), [], null, ctx);
 }
 
+/** The nodes that open a scope for the locals declared inside (a sibling block may declare the same name again). */
+const SCOPE_NODES: ReadonlySet<string> = new Set(["block", "for_statement", "foreach_statement", "using_statement", "switch_section", "catch_clause", "fixed_statement", "lock_statement"]);
+
+/**
+ * Two sibling scopes of one member declaring the same local (`{ Action h = Corner; h(); } { Action h = Foul; h(); }`,
+ * most often the blocks of a top-level `Program.cs`) are two cells: a fact whose line lies in one scope's lines takes
+ * the name `h@<first line of the scope>`. A line two same-sized scopes share (both blocks written on it) keeps the
+ * plain name, as before. Names declared in one scope only are left alone.
+ */
+function splitSiblingLocals(roots: readonly Node[], facts: ValueFlowFact[]): ValueFlowFact[] {
+  if (facts.length === 0) return facts;
+  const scopes = new Map<string, Map<number, { from: number; to: number }>>();
+  const declare = (name: string | undefined, at: Node, own?: Node): void => {
+    if (!name) return;
+    let scope: Node | null = own ?? at.parent;
+    while (scope && !SCOPE_NODES.has(scope.type)) scope = scope.parent;
+    const from = scope ? scope.startPosition.row + 1 : -1;
+    const to = scope ? scope.endPosition.row + 1 : Number.MAX_SAFE_INTEGER;
+    let held = scopes.get(name);
+    if (!held) scopes.set(name, (held = new Map()));
+    held.set(scope ? scope.id : -1, { from, to });
+  };
+  const walk = (node: Node): void => {
+    if (node.type === "local_function_statement") return;
+    if (node.type === "variable_declarator") declare(node.childForFieldName("name")?.text, node);
+    else if (node.type === "foreach_statement") { const l = node.childForFieldName("left"); if (l?.type === "identifier") declare(l.text, node, node); }
+    else if (node.type === "declaration_expression") declare(node.childForFieldName("name")?.text, node);
+    for (const c of node.namedChildren) walk(c);
+  };
+  for (const r of roots) walk(r);
+  const split = new Map([...scopes].filter(([, held]) => held.size > 1));
+  if (split.size === 0) return facts;
+  const rename = (cell: ValueCell, line: number): ValueCell => {
+    const held = split.get(cell.name);
+    if (!held) return cell;
+    const inside = [...held.values()].filter((r) => r.from <= line && line <= r.to).sort((x, y) => (x.to - x.from) - (y.to - y.from));
+    if (inside.length === 0 || (inside.length > 1 && inside[0]!.to - inside[0]!.from === inside[1]!.to - inside[1]!.from)) return cell;
+    return { ...cell, name: `${cell.name}@${inside[0]!.from}` };
+  };
+  return facts.map((f): ValueFlowFact => {
+    switch (f.kind) {
+      case "seed": return { ...f, to: rename(f.to, f.line) };
+      case "copy": return { ...f, from: rename(f.from, f.line), to: rename(f.to, f.line) };
+      case "arg": return { ...f, from: rename(f.from, f.line) };
+      case "result": return { ...f, to: rename(f.to, f.line) };
+      case "return": return { ...f, from: rename(f.from, f.line) };
+      case "invoke": return { ...f, cell: rename(f.cell, f.line) };
+    }
+  });
+}
+
 function statementsFlow(
+  roots: readonly Node[],
+  text: string,
+  params: readonly ParamInfo[],
+  returnType: string | null,
+  ctx: ClassValueContext | null,
+): ValueFlowFact[] {
+  return splitSiblingLocals(roots, flowOfStatements(roots, text, params, returnType, ctx));
+}
+
+function flowOfStatements(
   roots: readonly Node[],
   text: string,
   params: readonly ParamInfo[],

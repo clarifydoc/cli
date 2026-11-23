@@ -836,3 +836,38 @@ describe("C# value flow: a delegate in a referenced sub-project", () => {
   });
 });
 
+describe("C# value flow: same-named locals in sibling scopes", () => {
+  it("keeps each block's local apart at top level and in a method", async () => {
+    const links = flowLinks(await analyzeAll({
+      "League/Program.cs": lines(
+        "{",
+        "  Action h = Corner;",
+        "  h();",
+        "}",
+        "{",
+        "  Action h = Foul;",
+        "  h();",
+        "}",
+        "void Corner() {}",
+        "void Foul() {}",
+      ),
+      "League/Ref.cs": lines(
+        "namespace League;",
+        "class Ref {",
+        "  void Main() {",
+        "    { Action act = A; act(); }",
+        "    { Action act = B; act(); }",
+        "  }",
+        "  void A() {}",
+        "  void B() {}",
+        "}",
+      ),
+    }));
+    expect(links).toEqual([
+      "<setup>@3 h -> League/Program.cs::Corner",
+      "<setup>@7 h -> League/Program.cs::Foul",
+      "Ref.Main@4 act -> League/Ref.cs::Ref.A",
+      "Ref.Main@5 act -> League/Ref.cs::Ref.B",
+    ]);
+  });
+});
