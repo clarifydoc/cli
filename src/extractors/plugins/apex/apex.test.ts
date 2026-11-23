@@ -253,7 +253,8 @@ describe("sample-salesforce — Apex to SObject", () => {
       "<setup> -> ClubController.getClubs",
     ]) expect(l).toContain(want);
     // A decorator in a comment wires nothing: the one `<setup>` call is the live `@wire`.
-    expect(l.filter((x) => x.startsWith("<setup> -> ClubController.")).sort()).toEqual(["<setup> -> ClubController.getClubs"]);
+    const lwc = summary.symbolLinks!.filter((x) => x.sourceFile.includes("/lwc/")).map((x) => `${x.sourceSymbol} -> ${x.targetSymbol}`);
+    expect(lwc.filter((x) => x.startsWith("<setup> -> ClubController.")).sort()).toEqual(["<setup> -> ClubController.getClubs"]);
     // The namesake method of the other class is no target.
     expect(l.some((x) => x.endsWith("-> ClubCache.getClubs"))).toBe(false);
   });

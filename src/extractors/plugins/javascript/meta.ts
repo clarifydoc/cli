@@ -68,6 +68,7 @@ import { vuePreprocess, withMixinScope } from "./vue-hooks.js";
 import { sveltePreprocess } from "./svelte-hooks.js";
 import { LwcTemplateResolver } from "./lwc-template.js";
 import { withWiredAdapters } from "./apex-imports.js";
+import { auraScriptPreprocess } from "./aura-controllers.js";
 import { astroPreprocess } from "./astro-hooks.js";
 import { markdownPagesPreprocess } from "./markdown-pages.js";
 import { bundlePreprocess } from "./bundles.js";
@@ -379,7 +380,7 @@ export const javascriptMeta: LanguagePluginMeta = {
   autoImports: nuxtAutoImports,
   // A committed build (`public/js/app.js` from webpack) is skipped: its
   // modules are the project's own, bundled, and their facts come from the source.
-  preprocess: (raw, path) => withMixinScope(withWiredAdapters(bundlePreprocess(raw) ?? templateEscapePreprocess(raw, "javascript"), raw, "javascript"), raw, "javascript", path),
+  preprocess: (raw, path) => withMixinScope(withWiredAdapters(auraScriptPreprocess(raw, path) ?? bundlePreprocess(raw) ?? templateEscapePreprocess(raw, "javascript"), raw, "javascript"), raw, "javascript", path),
   builtinTypes: TS_BUILTINS,
   complexity: COMPLEXITY,
   controlFlow: CONTROL_FLOW,

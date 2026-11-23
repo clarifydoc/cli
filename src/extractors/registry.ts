@@ -102,6 +102,7 @@ import { dManifest } from "./plugins/dlang/manifest.js";
 import { vManifest } from "./plugins/vlang/manifest.js";
 import { fortranManifest } from "./plugins/fortran/manifest.js";
 import { apexManifest } from "./plugins/apex/manifest.js";
+import { sfmarkupManifest } from "./plugins/sfmarkup/manifest.js";
 
 /** All plugin manifests, in registration order (order is observable — keep stable). */
 const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
@@ -143,6 +144,7 @@ const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
   vManifest,
   fortranManifest,
   apexManifest,
+  sfmarkupManifest,
 ];
 
 const MANIFEST_BY_LANGUAGE = new Map<Language, LanguagePluginManifest>();
@@ -235,6 +237,7 @@ const LOADERS: readonly PluginLoader[] = [
   { languages: ["vlang"], load: () => import("./plugins/vlang/meta.js").then((m) => [m.vMeta]) },
   { languages: ["fortran"], load: () => import("./plugins/fortran/meta.js").then((m) => [m.fortranMeta]) },
   { languages: ["apex"], load: () => import("./plugins/apex/meta.js").then((m) => [m.apexMeta]) },
+  { languages: ["sfmarkup"], load: () => import("./plugins/sfmarkup/meta.js").then((m) => [m.sfmarkupMeta]) },
 ];
 
 const LOADER_BY_LANGUAGE = new Map<Language, PluginLoader>();
