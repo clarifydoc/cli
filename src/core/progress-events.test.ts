@@ -27,6 +27,25 @@ describe("analyze --progress json", () => {
     }
   });
 
+  it("names the passes inside a wide stage as sub-steps that keep the stage ids", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "clarifydoc-substeps-"));
+    try {
+      await mkdir(join(dir, "app", "src"), { recursive: true });
+      await writeFile(join(dir, "app", "package.json"), JSON.stringify({ name: "app" }));
+      await writeFile(join(dir, "app", "src", "club.ts"), "export const club = () => 1;\n");
+      const events: AnalyzeProgressEvent[] = [];
+      await analyze({ projectRoot: join(dir, "app"), outputDir: join(dir, "out"), lsp: false, gitHistory: false, incremental: true, onProgress: (e) => events.push(e) });
+      const steps = events.filter((e) => e.event === "step") as { stage: string; label: string }[];
+      const labels = steps.map((e) => e.label);
+      const order = ["Reading cached results and analyzing changed files", "Resolving routes and imports across files", "Building screens and navigation", "Linking API calls to routes", "Building entity and data-access graphs", "Computing data flows, migrations and findings", "Finding unreachable code"];
+      expect(order.map((l) => labels.indexOf(l)).every((i, k, all) => i >= 0 && (k === 0 || i > all[k - 1]))).toBe(true);
+      expect(steps.find((e) => e.label === "Linking API calls to routes")?.stage).toBe("link");
+      expect(steps.find((e) => e.label === "Computing data flows, migrations and findings")?.stage).toBe("advanced");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("stops at the next step when its signal aborts, writing no summary and releasing the lock", async () => {
     const dir = await mkdtemp(join(tmpdir(), "clarifydoc-abort-"));
     try {

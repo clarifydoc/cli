@@ -931,6 +931,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // The commit the source is at — provenance, and what freshness compares HEAD to.
   const revisionPromise = options.gitHistory === false ? null : readSourceRevision(projectRoot).catch(() => null);
 
+  progress.status("Checking what changed since the last run...");
   // A fresh git worktree starts from the main checkout's analysis.
   if (options.incremental && !dryRun) {
     const seed = await seedFromMainWorktree(projectRoot, outputDir).catch(() => null);
@@ -1057,6 +1058,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
     return { relativePath: rel.slice(root.length + 1), frameworkIds: own?.length ? own : frameworkIds };
   };
 
+  progress.status("Reading cached results and analyzing changed files...");
   let results: (FileResult | null)[];
   try {
     results = await runWithConcurrency(
@@ -1217,6 +1219,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
     }
   }
 
+  progress.status("Resolving routes and imports across files...");
   // File-based ("auto") frontend routes: plugins like unplugin-vue-router /
   // vite-plugin-pages generate the route table from a page-file directory, so
   // the routes are not present as source. Synthesize them from the file tree
@@ -1409,6 +1412,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
       progress.detail(`LSP enhancement skipped: ${(err as Error).message}`);
     }
   }
+  progress.status("Enriching graphs, reading deployment and the route map...");
   // Drop same-name definition-collision "references" (e.g. three microservices
   // each defining `InternalsController.Ping` get cross-linked by LSP/text
   // reference resolution into a false clique → bogus circular dependency). Must
@@ -1501,6 +1505,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
       allApiCalls.length = w;
     }
   }
+  progress.status("Resolving API call targets and origins...");
   // Calls through REST client proxies (`personRepository.getPerson(…)` on a
   // JAX-RS proxy a Spring bean builds): outbound calls named by the interface
   // operation they invoke, which the linker joins to the route declaring it.
@@ -1564,6 +1569,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   });
   if (originCount > 0) progress.detail(`  Call origins resolved: ${originCount}`);
   const thirdParty = externalServices(allApiCalls);
+  progress.status("Building screens and navigation...");
   // MCP tools, editor and CLI commands: entry points that are not routes.
   // How each sub-project is built, tested and started, as its own files say.
   const projectCommands = collectProjectCommands(projectRoot, subProjects);
@@ -1707,6 +1713,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
     related: (a, b) => a === b || !!projectImports.get(a ?? "root")?.has(b ?? "root") || !!projectImports.get(b ?? "root")?.has(a ?? "root"),
   });
 
+  progress.status("Linking API calls to routes...");
   // Cross-tier join: match each outbound api-call to the inbound route serving
   // it (by HTTP method + normalized path). Connects the two halves of the
   // screen→API→DB chain that the extractors produce independently.
@@ -1734,6 +1741,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
     progress.detail(`  API↔route links: ${apiRouteLinks.length}`);
   }
 
+  progress.status("Attaching request schemas and parameter origins...");
   // Request schema per endpoint: the body parameter's class, flattened through
   // its bases and mapped to JSON by the route's language plugin. In-memory on
   // the aggregated rows (like the mounts/URL-builder passes); a consumer that
@@ -2100,6 +2108,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   for (const a of allAnalyses) if (a.lineCount !== undefined) lineCounts.set(a.filePath, a.lineCount);
   const blastRadius = analyzeBlastRadius(componentGraph, symbolLinks, allAnalyses.length, { lineCounts });
 
+  progress.status("Building entity and data-access graphs...");
   // Per-class type-usage blast — attach to the BlastRadiusInfo for the file
   // that defines each class. Empty entries are dropped to keep the JSON lean.
   const typeBlastMap = aggregateTypeBlast(allAnalyses, importIndex);
@@ -2202,6 +2211,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // populates the Data Model tab and lets the DB accesses below match (green).
   if (hasDbAccess) synthesizeReferencedTableEntities(allAnalyses, entityGraph);
 
+  progress.status("Tracing data access and queues...");
   // Bridge Call Traces ↔ Data Model: attribute each DB access to its containing
   // function and match the touched entity to an ER node. Drives the entity
   // badges on traces and the "Accessed by" list on entities. Only DB/queue
@@ -2255,6 +2265,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
     progress.detail(`  Project dependencies (HTTP/bus): ${projectDependencies.length}`);
   }
 
+  progress.status("Computing trace impact, tests and coverage...");
   // Cross-tier blast: project each file's symbol-graph reach onto the UI and
   // data tiers — which screens/API routes transitively reach it, and which
   // entities/queues it ultimately touches. Runs AFTER the HTTP + MQ synthetic
@@ -2307,6 +2318,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
     progress.detail(`  Risk verdicts: ${verdictCount} of ${blastRadius.length} file(s) classified`);
   }
 
+  progress.status("Computing data flows, migrations and findings...");
   // Transitive data-access reach ("dataflow-lite"): propagate each DIRECT data
   // effect (DB / queue / outbound api-call) to every function that reaches it
   // through the call graph, so a controller that calls a repository that writes
