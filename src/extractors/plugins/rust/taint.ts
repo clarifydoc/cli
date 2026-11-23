@@ -4,6 +4,13 @@ import { handlerTaint, type TaintFacts, type TaintSpec } from "../shared/handler
 
 /** The extractor types that fill a handler parameter from the request: axum, actix-web and rocket spell them alike. */
 const EXTRACTOR = /^(?:Query|Json|Path|Form)$/;
+/** axum extractors that are no request payload of their own: a handler takes one beside a body of text. */
+const AXUM_EXTRACTOR = /^(?:State|Extension|Path|Query|Json|Form|HeaderMap|TypedHeader|ConnectInfo|Request|Multipart|OriginalUri|Host|CookieJar|MatchedPath)$/;
+/** An axum body extractor that is the raw request text. (`HeaderMap` is no source: its values are checked by name in practice — a corpus handler validated one through a helper no sanitizer name covers.) */
+const AXUM_TEXT = /^(?:String|Bytes)$/;
+/** What only an axum handler returns. */
+const AXUM_RESPONSE = /\bIntoResponse\b/;
+
 /** A rocket route attribute: `#[get("/clubs/<id>")]`. */
 const ROUTE_ATTRIBUTE = /^#\[\s*(?:rocket::)?(?:get|post|put|patch|delete|head|options|route)\s*\(/;
 const FORMAT_MACROS = /^(?:format|format_args|write|writeln)$/;
@@ -135,6 +142,22 @@ function routeAttribute(fn: Node): string {
   return "";
 }
 
+/**
+ * Whether `fn` is an axum handler and `param` one of its extractors: an `async fn` in a file that names axum, whose
+ * parameter list holds another axum extractor, or whose lone parameter comes with an axum response type — a plain
+ * `fn load(db: &Db, name: String)` is a helper, never a handler.
+ */
+function isAxumHandler(fn: Node, param: Node): boolean {
+  if (!/\buse\s+axum\b|\baxum::/.test(fn.tree.rootNode.text)) return false;
+  if (!fn.children.some((c) => c.type === "function_modifiers" && /\basync\b/.test(c.text))) return false;
+  const params = (fn.childForFieldName("parameters")?.namedChildren ?? []).filter((p) => p.type === "parameter");
+  // A body extractor must be last.
+  if (params[params.length - 1]?.id !== param.id) return false;
+  const others = params.filter((p) => p.id !== param.id);
+  if (others.some((p) => AXUM_EXTRACTOR.test(typeHead(p.childForFieldName("type"))?.head ?? ""))) return true;
+  return others.length === 0 && AXUM_RESPONSE.test(fn.childForFieldName("return_type")?.text ?? "");
+}
+
 /** The parameters of a handler that carry request input: names, or `name.field` for each text field of a struct. */
 function requestParams(fn: Node): string[] {
   const root = fn.tree.rootNode;
@@ -153,6 +176,9 @@ function requestParams(fn: Node): string[] {
         if (shape === "text") out.push(name);
         else if (Array.isArray(shape)) out.push(...shape.map((f) => `${name}.${f}`));
       });
+    } else if (head && AXUM_TEXT.test(head.head) && head.args.length === 0 && type?.type !== "reference_type" && isAxumHandler(fn, p)) {
+      // axum: the last parameter `String` / `Bytes` is the whole request body.
+      out.push(...names);
     } else if (attribute && names.length === 1 && new RegExp(`<${names[0]}(?:\\.\\.)?>`).test(attribute)) {
       // Rocket: a path or query segment named in the attribute, filled from the request as text.
       // (a rocket `PathBuf` segment is checked by rocket itself: no `..`, no hidden or special segment)
@@ -224,7 +250,7 @@ function buildSpec(requests: readonly string[], usesReqwest: boolean): TaintSpec
     },
     sanitizer: SANITIZER,
     fileNameSanitizers: [{ call: /^\s*(?:std::path::)?Path::new\s*\([^()]*\)\s*\.file_name\s*\(/ }],
-    propagator: /^(?:format|format_args|write|writeln)!$|^(?:(?:std::path::)?Path(?:Buf)?::(?:new|from)|String::from|(?:std::)?format)$|\.(?:join|push|push_str|replace|replacen|concat|to_string|to_owned|to_lowercase|to_uppercase|trim|trim_matches|trim_start|trim_end|as_str|as_ref|clone|into|unwrap|unwrap_or|unwrap_or_default|expect|cloned|borrow|display|to_str|to_string_lossy|into_inner|as_deref)$/,
+    propagator: /^(?:format|format_args|write|writeln)!$|^(?:(?:std::path::)?Path(?:Buf)?::(?:new|from)|String::from|(?:std::)?format|(?:std::)?(?:String|str)::from_utf8(?:_lossy|_unchecked)?)$|\.(?:to_vec|join|push|push_str|replace|replacen|concat|to_string|to_owned|to_lowercase|to_uppercase|trim|trim_matches|trim_start|trim_end|as_str|as_ref|clone|into|unwrap|unwrap_or|unwrap_or_default|expect|cloned|borrow|display|to_str|to_string_lossy|into_inner|as_deref)$/,
     ifTypes: new Set(["if_expression"]),
     guard: GUARD,
     stringTypes: new Set(["string_literal", "raw_string_literal"]),

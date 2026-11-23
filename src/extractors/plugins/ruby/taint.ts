@@ -76,9 +76,20 @@ function heredocBody(node: Node): Node | null {
   return body?.type === "heredoc_body" ? body : null;
 }
 
+/** Methods that hand the heredoc's text back unchanged in kind (`<<~SQL.strip`): the chain is still the text. */
+const TEXT_KEEPING = /^(?:strip|lstrip|rstrip|chomp|chop|squish|freeze|dup|to_s|strip_heredoc)$/;
+
+/** The heredoc opening a chain of text-keeping, argument-less calls starts from (`<<~SQL.strip.freeze`), or null. */
+function chainedHeredoc(node: Node): Node | null {
+  let n: Node | null = node;
+  while (n?.type === "call" && !n.childForFieldName("arguments") && !n.childForFieldName("block") && TEXT_KEEPING.test(n.childForFieldName("method")?.text ?? "")) n = n.childForFieldName("receiver");
+  return n && n !== node && n.type === "heredoc_beginning" ? n : null;
+}
+
 /** A heredoc opening stands for its body, so interpolations in it are what the statement reads. */
 function withBody(node: Node): Node {
-  return node.type === "heredoc_beginning" ? (heredocBody(node) ?? node) : node;
+  const opening = node.type === "heredoc_beginning" ? node : chainedHeredoc(node);
+  return opening ? (heredocBody(opening) ?? node) : node;
 }
 
 function buildSpec(filePath: string): TaintSpec {

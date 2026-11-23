@@ -167,4 +167,33 @@ end
 end
 `)).toEqual(["3 sql-injection", "12 sql-injection", "13 sql-injection"]);
   });
+  it("reads a heredoc chained into text-keeping calls, never one a conversion ends", async () => {
+    expect(await findings(`class ClubsController < ApplicationController
+  def index
+    ActiveRecord::Base.connection.execute(<<~SQL.strip)
+      SELECT * FROM clubs WHERE name = '#{params[:name]}'
+    SQL
+  end
+
+  def squished
+    Club.find_by_sql(<<~SQL.squish.freeze)
+      SELECT * FROM clubs WHERE name = '#{params[:name]}'
+    SQL
+  end
+
+  def safe
+    name = params[:name]
+    ActiveRecord::Base.connection.execute(<<~SQL.strip)
+      SELECT * FROM clubs WHERE id = #{Integer(name)}
+    SQL
+    ActiveRecord::Base.connection.execute(<<~SQL.strip)
+      SELECT * FROM clubs WHERE active = 1
+    SQL
+    Club.find_by_sql(<<~SQL.to_i)
+      #{params[:name]}
+    SQL
+  end
+end
+`)).toEqual(["3 sql-injection", "9 sql-injection"]);
+  });
 });

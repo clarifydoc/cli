@@ -148,4 +148,44 @@ fn file(name: PathBuf) {
 async fn list(Query(q): Query<Search>) { std::fs::read(&q.name
 `)).toEqual([]);
   });
+
+  it("takes an axum String or Bytes body as request input, and no HeaderMap, only in an axum handler", async () => {
+    expect(await findings(`use axum::{extract::State, http::HeaderMap, body::Bytes};
+
+async fn by_text(State(db): State<Db>, body: String) {
+    sqlx::query(&format!("SELECT * FROM clubs WHERE name = '{}'", body)).fetch_all(&db).await;
+}
+
+async fn by_bytes(State(db): State<Db>, raw: Bytes) {
+    let name = String::from_utf8(raw.to_vec()).unwrap();
+    sqlx::query(&format!("DELETE FROM clubs WHERE name = '{}'", name)).execute(&db).await;
+}
+
+async fn by_header(State(db): State<Db>, headers: HeaderMap) {
+    let who = headers.get("x-club").unwrap().to_str().unwrap();
+    sqlx::query(&format!("SELECT * FROM clubs WHERE name = '{}'", who)).fetch_all(&db).await;
+}
+
+async fn bound(State(db): State<Db>, body: String) {
+    sqlx::query("SELECT * FROM clubs WHERE name = $1").bind(body).fetch_all(&db).await;
+}
+
+async fn parsed(State(db): State<Db>, headers: HeaderMap) {
+    let n: i64 = headers.get("x-n").unwrap().to_str().unwrap().parse().unwrap();
+    sqlx::query(&format!("SELECT * FROM clubs LIMIT {}", n)).fetch_all(&db).await;
+}
+
+async fn not_last(body: String, State(db): State<Db>) {
+    sqlx::query(&format!("SELECT '{}'", body)).fetch_all(&db).await;
+}
+
+fn helper(db: &Db, name: String) {
+    sqlx::query(&format!("SELECT * FROM clubs WHERE name = '{}'", name));
+}
+
+async fn async_helper(db: &Db, name: String) {
+    sqlx::query(&format!("SELECT * FROM clubs WHERE name = '{}'", name));
+}
+`)).toEqual(["4 sql-injection", "9 sql-injection"]);
+  });
 });
