@@ -2093,9 +2093,10 @@ interface LinkMemos {
   callableMembers: Map<string, boolean>;
   /** `importPath` per (importing file, source); the answer reads nothing the run changes. */
   importPath: Map<string, string | null>;
-  /** `forwardedDefinition` / `definitionIn` of a lookup that starts at depth 0 with nothing seen, per (file, name[, forwards]). */
+  /** `forwardedDefinition` of a lookup that starts at depth 0 with nothing seen, per (file, name); `definitionIn` is not cached. */
   forwarded?: Map<string, ForwardedDefinition | null>;
-  definition?: Map<string, ForwardedDefinition | null>;
+  /** `moduleMembers` per (caller file, scope's file, module, name); the arrays are shared, so callers only read them. */
+  moduleMembers?: Map<string, Array<{ file: string; def: SymbolDef }>>;
   codeHandlers?: Map<string, Array<{ file: string; handler: string; line: number }>>;
   codeContracts?: Map<string, Array<{ file: string; symbol: string; line: number }>>;
   methodLeaves?: Map<string, Array<{ file: string; symbol: string; className: string }>>;
@@ -7169,6 +7170,22 @@ function scopeLibraries(ctx: LinkContext, file: string): string[] {
  * dot-import, a Kotlin package's top-level function).
  */
 function moduleMembers(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  module: string,
+  from: string,
+  name: string,
+): Array<{ file: string; def: SymbolDef }> {
+  const memo = (ctx.memos.moduleMembers ??= new Map());
+  const key = `${analysis.filePath}\0${from}\0${module}\0${name}`;
+  const known = memo.get(key);
+  if (known) return known;
+  const found = moduleMembersUncached(ctx, analysis, module, from, name);
+  memo.set(key, found);
+  return found;
+}
+
+function moduleMembersUncached(
   ctx: LinkContext,
   analysis: FileAnalysis,
   module: string,
