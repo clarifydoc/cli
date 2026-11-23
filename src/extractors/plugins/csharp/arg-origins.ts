@@ -83,19 +83,35 @@ function paramIndex(member: Node, name: string): number {
   return -1;
 }
 
+/** Per tree, then member id: a memo the next file's tree never sees. */
+function memberMemo<T>(memos: WeakMap<object, Map<number, T>>, member: Node, build: () => T): T {
+  let perTree = memos.get(member.tree);
+  if (!perTree) memos.set(member.tree, (perTree = new Map()));
+  let held = perTree.get(member.id);
+  if (held === undefined) perTree.set(member.id, (held = build()));
+  return held;
+}
+
+const ASSIGNED_NAMES = new WeakMap<object, Map<number, Set<string>>>();
+
 /** A name the member assigns anywhere in its body (`id = …`, `id++`): no longer the value it was called with. */
 function reassigned(member: Node, name: string): boolean {
   const body = member.childForFieldName("body");
   if (!body || !body.text.includes(name)) return false;
-  let found = false;
-  const visit = (n: Node): void => {
-    if (found) return;
-    if ((n.type === "assignment_expression" && n.childForFieldName("left")?.text === name)
-      || ((n.type === "postfix_unary_expression" || n.type === "prefix_unary_expression") && /^(?:\+\+|--)?\s*\w+\s*(?:\+\+|--)?$/.test(n.text) && n.text.replace(/[+-]/g, "").trim() === name)) found = true;
-    for (const c of n.namedChildren) visit(c);
-  };
-  visit(body);
-  return found;
+  return memberMemo(ASSIGNED_NAMES, member, () => {
+    const names = new Set<string>();
+    const visit = (n: Node): void => {
+      if (n.type === "assignment_expression") {
+        const left = n.childForFieldName("left")?.text;
+        if (left !== undefined) names.add(left);
+      } else if ((n.type === "postfix_unary_expression" || n.type === "prefix_unary_expression") && /^(?:\+\+|--)?\s*\w+\s*(?:\+\+|--)?$/.test(n.text)) {
+        names.add(n.text.replace(/[+-]/g, "").trim());
+      }
+      for (const c of n.namedChildren) visit(c);
+    };
+    visit(body);
+    return names;
+  }).has(name);
 }
 
 function valueOrigin(v: Node): Origin | null {
@@ -251,23 +267,30 @@ function predicate(lambda: Node, add: (field: string, value: Node) => void): voi
   visit(body);
 }
 
+const LOCAL_VALUES = new WeakMap<object, Map<number, Map<string, Node[]>>>();
+
 /** The values `member` gives the local `name`: its declaration's initializer and every assignment. */
 function localValues(member: Node, name: string): Node[] {
   const body = member.childForFieldName("body");
   if (!body || !body.text.includes(name)) return [];
-  const out: Node[] = [];
-  const visit = (n: Node): void => {
-    if (n.type === "local_function_statement" || n.type === "lambda_expression") return;
-    if (n.type === "variable_declarator" && n.childForFieldName("name")?.text === name) {
-      const value = n.namedChildren.find((c) => c.type !== "identifier" && c.type !== "bracketed_argument_list") ?? null;
-      if (value) out.push(value.type === "equals_value_clause" ? value.namedChildren[0] ?? value : value);
-    }
-    if (n.type === "assignment_expression" && n.childForFieldName("left")?.text === name) {
-      const right = n.childForFieldName("right");
-      if (right) out.push(right);
-    }
-    for (const c of n.namedChildren) visit(c);
-  };
-  visit(body);
-  return out;
+  return memberMemo(LOCAL_VALUES, member, () => {
+    const byName = new Map<string, Node[]>();
+    const put = (key: string | undefined, value: Node): void => {
+      if (key !== undefined) (byName.get(key) ?? byName.set(key, []).get(key)!).push(value);
+    };
+    const visit = (n: Node): void => {
+      if (n.type === "local_function_statement" || n.type === "lambda_expression") return;
+      if (n.type === "variable_declarator") {
+        const value = n.namedChildren.find((c) => c.type !== "identifier" && c.type !== "bracketed_argument_list") ?? null;
+        if (value) put(n.childForFieldName("name")?.text, value.type === "equals_value_clause" ? value.namedChildren[0] ?? value : value);
+      }
+      if (n.type === "assignment_expression") {
+        const right = n.childForFieldName("right");
+        if (right) put(n.childForFieldName("left")?.text, right);
+      }
+      for (const c of n.namedChildren) visit(c);
+    };
+    visit(body);
+    return byName;
+  }).get(name) ?? [];
 }
