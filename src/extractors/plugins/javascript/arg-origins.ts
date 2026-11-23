@@ -774,38 +774,61 @@ function declares(pattern: Node | null, name: string): boolean {
  * initializer (`kind: "value"`), or the object it is destructured from and
  * the key it takes (`kind: "member"`).
  */
-function bindingOf(at: Node, name: string): { kind: "value"; value: Node } | { kind: "member"; key: string; value: Node } | null {
-  for (let scope: Node | null = at.parent; scope; scope = scope.parent) {
-    // A function's own parameter of that name (a destructured one, which `paramOf` does not follow) hides every outer binding.
-    if (FUNCTION_NODE.test(scope.type) && parametersDeclare(scope, name)) return null;
-    if (!SCOPE_NODES.has(scope.type)) continue;
-    for (const stmt of scope.namedChildren) {
-      const decl = stmt?.type === "export_statement" ? stmt.childForFieldName("declaration") : stmt;
-      if (decl?.type !== "lexical_declaration" && decl?.type !== "variable_declaration") continue;
-      for (const d of decl.namedChildren) {
-        if (d?.type !== "variable_declarator") continue;
-        const target = d.childForFieldName("name");
-        const value = d.childForFieldName("value");
-        if (!target || !value) continue;
-        if (target.type === "identifier" && target.text === name) return { kind: "value", value };
-        // `const [searchParams] = useSearchParams()`: the hook's first element stands for the hook.
-        if (target.type === "array_pattern" && target.namedChildren[0]?.type === "identifier" && target.namedChildren[0].text === name) return { kind: "value", value };
-        if (target.type === "object_pattern") {
-          for (const prop of target.namedChildren) {
-            if (prop?.type === "shorthand_property_identifier_pattern" && prop.text === name) return { kind: "member", key: name, value };
-            if (prop?.type === "pair_pattern") {
-              const local = prop.childForFieldName("value");
-              const local2 = local?.type === "assignment_pattern" ? local.childForFieldName("left") : local;
-              if (local2?.type === "identifier" && local2.text === name) return { kind: "member", key: prop.childForFieldName("key")?.text ?? name, value };
-            }
-            if (prop?.type === "object_assignment_pattern") {
-              const left = prop.childForFieldName("left");
-              if (left?.text === name) return { kind: "member", key: name, value };
-            }
+type Binding = { kind: "value"; value: Node } | { kind: "member"; key: string; value: Node };
+
+let bindingIndexTree: unknown = null;
+const bindingIndexes = new Map<number, Map<string, Binding>>();
+
+/** The first binding of each name the declarations directly in `scope` state, in statement order. */
+function bindingIndexOf(scope: Node): Map<string, Binding> {
+  if (bindingIndexTree !== scope.tree) {
+    bindingIndexTree = scope.tree;
+    bindingIndexes.clear();
+  }
+  const hit = bindingIndexes.get(scope.id);
+  if (hit) return hit;
+  const index = new Map<string, Binding>();
+  const add = (name: string, binding: Binding): void => {
+    if (!index.has(name)) index.set(name, binding);
+  };
+  for (const stmt of scope.namedChildren) {
+    const decl = stmt?.type === "export_statement" ? stmt.childForFieldName("declaration") : stmt;
+    if (decl?.type !== "lexical_declaration" && decl?.type !== "variable_declaration") continue;
+    for (const d of decl.namedChildren) {
+      if (d?.type !== "variable_declarator") continue;
+      const target = d.childForFieldName("name");
+      const value = d.childForFieldName("value");
+      if (!target || !value) continue;
+      if (target.type === "identifier") add(target.text, { kind: "value", value });
+      // `const [searchParams] = useSearchParams()`: the hook's first element stands for the hook.
+      if (target.type === "array_pattern" && target.namedChildren[0]?.type === "identifier") add(target.namedChildren[0].text, { kind: "value", value });
+      if (target.type === "object_pattern") {
+        for (const prop of target.namedChildren) {
+          if (prop?.type === "shorthand_property_identifier_pattern") add(prop.text, { kind: "member", key: prop.text, value });
+          if (prop?.type === "pair_pattern") {
+            const local = prop.childForFieldName("value");
+            const local2 = local?.type === "assignment_pattern" ? local.childForFieldName("left") : local;
+            if (local2?.type === "identifier") add(local2.text, { kind: "member", key: prop.childForFieldName("key")?.text ?? local2.text, value });
+          }
+          if (prop?.type === "object_assignment_pattern") {
+            const left = prop.childForFieldName("left");
+            if (left) add(left.text, { kind: "member", key: left.text, value });
           }
         }
       }
     }
+  }
+  bindingIndexes.set(scope.id, index);
+  return index;
+}
+
+function bindingOf(at: Node, name: string): Binding | null {
+  for (let scope: Node | null = at.parent; scope; scope = scope.parent) {
+    // A function's own parameter of that name (a destructured one, which `paramOf` does not follow) hides every outer binding.
+    if (FUNCTION_NODE.test(scope.type) && parametersDeclare(scope, name)) return null;
+    if (!SCOPE_NODES.has(scope.type)) continue;
+    const found = bindingIndexOf(scope).get(name);
+    if (found) return found;
   }
   return null;
 }
