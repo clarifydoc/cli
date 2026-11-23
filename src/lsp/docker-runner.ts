@@ -87,26 +87,29 @@ export function resolveDockerEndpoint(ctx: EndpointEnv): DockerEndpoint {
   if (!metaRaw) return { kind: "other" };
   try {
     const host = (JSON.parse(metaRaw) as { Endpoints?: { docker?: { Host?: unknown } } }).Endpoints?.docker?.Host;
-    if (typeof host !== "string" || !host) return defaults();
+    if (typeof host !== "string" || !host) return { kind: "other" };
     return fromHost(host);
   } catch {
     return { kind: "other" };
   }
 }
 
-/** `GET /_ping` on one socket: true when the daemon answers 200 within the timeout; false at once on a refused or missing socket. */
-export function pingDockerSocket(path: string, timeoutMs = PING_TIMEOUT_MS): Promise<boolean> {
+/**
+ * `GET /_ping` on one socket: true when the daemon answers 200, false at once on a refused or missing socket or
+ * another answer, `undefined` when it accepted the connection and stayed silent (busy, not absent: the caller asks the CLI).
+ */
+export function pingDockerSocket(path: string, timeoutMs = PING_TIMEOUT_MS): Promise<boolean | undefined> {
   return new Promise((resolve) => {
     let settled = false;
     const sock = connect({ path });
-    const done = (ok: boolean): void => {
+    const done = (ok: boolean | undefined): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       sock.destroy();
       resolve(ok);
     };
-    const timer = setTimeout(() => done(false), timeoutMs);
+    const timer = setTimeout(() => done(sock.connecting ? false : undefined), timeoutMs);
     let head = "";
     sock.on("connect", () => sock.write("GET /_ping HTTP/1.0\r\nHost: docker\r\n\r\n"));
     sock.on("data", (chunk: Buffer) => {
@@ -155,8 +158,13 @@ function readTextOrUndefined(path: string): string | undefined {
 export async function isDockerAvailable(): Promise<boolean> {
   const endpoint = resolveDockerEndpoint({ env: process.env, home: homedir(), platform: process.platform, readText: readTextOrUndefined });
   if (endpoint.kind === "other") return dockerInfoBounded();
-  for (const path of endpoint.candidates) if (await pingDockerSocket(path)) return true;
-  return false;
+  let busy = false;
+  for (const path of endpoint.candidates) {
+    const answer = await pingDockerSocket(path);
+    if (answer) return true;
+    if (answer === undefined) busy = true;
+  }
+  return busy ? dockerInfoBounded() : false;
 }
 
 /**

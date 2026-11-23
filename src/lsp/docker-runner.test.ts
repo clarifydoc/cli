@@ -39,7 +39,7 @@ describe("resolveDockerEndpoint", () => {
 });
 
 describe("pingDockerSocket", () => {
-  it("answers false at once for a missing socket and true for a daemon that says 200", async () => {
+  it("answers false at once for a missing socket, true for a daemon that says 200 and undefined for a silent one", async () => {
     const dir = mkdtempSync(join(tmpdir(), "ping-"));
     try {
       expect(await pingDockerSocket(join(dir, "none.sock"))).toBe(false);
@@ -51,7 +51,7 @@ describe("pingDockerSocket", () => {
       const mute = createServer(() => undefined);
       const mutePath = join(dir, "m.sock");
       await new Promise<void>((r) => mute.listen(mutePath, r));
-      expect(await pingDockerSocket(mutePath, 100)).toBe(false);
+      expect(await pingDockerSocket(mutePath, 100)).toBeUndefined();
       mute.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
