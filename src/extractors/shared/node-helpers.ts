@@ -168,24 +168,15 @@ export function getCallName(node: Node): string | null {
 /** Extract JS/TS decorators from preceding siblings. */
 export function extractJsDecorators(node: Node): string[] {
   const decorators: string[] = [];
-  const parent = node.parent;
-  if (!parent) return decorators;
-
-  for (const sibling of parent.children) {
-    // web-tree-sitter mints a new wrapper per access, so `===` never matched
-    // and the loop swept every decorator in the class body onto every method.
-    if (sibling.id === node.id) break;
+  // A decorator run belongs to the member right after it: read backwards from the node and stop at the first other
+  // named sibling (a comment inside the run, like `// legacy index` between two decorators, is part of it).
+  for (let sibling = node.previousSibling; sibling; sibling = sibling.previousSibling) {
     if (sibling.type === "decorator") {
       const expr = sibling.child(1);
       decorators.push(expr?.text ?? sibling.text.replace(/^@/, ""));
-    } else if (sibling.isNamed && sibling.type !== "comment") {
-      // (A comment inside the run — `// legacy index` between two decorators — is part of it.)
-      // A decorator run belongs to the member right after it; passing another
-      // member (not a `;`/`,` token) starts a new run.
-      decorators.length = 0;
-    }
+    } else if (sibling.isNamed && sibling.type !== "comment") break;
   }
-  return decorators;
+  return decorators.reverse();
 }
 
 /** Extract Java/Kotlin annotations from a node's children and modifiers block. */
