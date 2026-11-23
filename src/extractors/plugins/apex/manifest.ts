@@ -13,9 +13,10 @@ export const apexManifest: LanguagePluginManifest = {
   // Java-like, but its classes live in the organisation's one namespace and call nothing a JVM library offers.
   family: "apex",
   parsing: "regex",
-  // `.cls` is VB6's extension: the VB plugin's preprocess hands an Apex class over. `.object-meta.xml` and
-  // `.field-meta.xml` reach this plugin the same way, from the XML plugin.
   extensions: [".trigger"],
+  // `.cls` is VB6's extension and `.xml` is Spring XML's: this plugin's `adopt` reads the Apex classes and the SFDX
+  // object and field metadata among them.
+  adoptsSuffixes: [".cls", ".object-meta.xml", ".field-meta.xml"],
   caseInsensitiveNames: true,
   testFilePatterns: [/(?:[a-z0-9]Tests?|_[Tt]ests?)\.(?:cls|trigger)$/],
   testSubjectAffixes: { suffixes: ["Test", "_Test", "Tests"] },

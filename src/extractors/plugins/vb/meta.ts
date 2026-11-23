@@ -5,7 +5,6 @@ import { vbManifest } from "./manifest.js";
 import { vbRequestSchema } from "./request-schema.js";
 import { vbReachability } from "./reachability.js";
 import { VB_REGEX_CONTROL_FLOW } from "./control-flow.js";
-import { apexClassSource } from "../apex/preprocess.js";
 
 const VB_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -26,8 +25,4 @@ export const vbMeta: LanguagePluginMeta = {
   regexControlFlow: VB_REGEX_CONTROL_FLOW,
   builtinTypes: VB_BUILTINS,
   requestSchema: vbRequestSchema,
-  // `.cls` is also the extension of an Apex class: the Apex plugin reads those.
-  preprocess(rawSource, relativePath) {
-    return /\.cls$/i.test(relativePath) ? apexClassSource(rawSource) : null;
-  },
 };

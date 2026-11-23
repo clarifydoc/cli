@@ -28,6 +28,11 @@ export function attrOf(attrs: string, name: string): string | null {
   return m ? (m[1] ?? m[2] ?? null) : null;
 }
 
+/** The trimmed text of the first `<name>…</name>` element holding plain text (case-sensitive, no prefix); null when absent or empty. */
+export function elementText(xml: string, name: string): string | null {
+  return new RegExp(String.raw`<${name}>\s*([^<]*?)\s*</${name}>`).exec(xml)?.[1]?.trim() || null;
+}
+
 /** `xml` without its `<!-- … -->` comments; an unclosed one is kept, as it stands. */
 export function withoutXmlComments(xml: string): string {
   let out = "";

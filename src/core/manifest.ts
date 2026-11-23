@@ -7,7 +7,7 @@ import { headCommit, listGitFiles } from "./source-revision.js";
 import { featureStamp } from "./feature-flags.js";
 import { byOrdinal } from "./ordinal.js";
 import type { Language } from "../types/analysis.js";
-import type { LanguagePluginMeta } from "../types/language-plugin.js";
+import type { PreprocessContext } from "../types/language-plugin.js";
 
 /**
  * Bump whenever extractor logic changes in a way that would produce different
@@ -339,7 +339,8 @@ function discoveryReads(projectRoot: string): (rel: string, language: Language |
     script: (rel: string) => Language | null;
     sensitive: (rel: string, language: Language) => boolean;
     ignored: (abs: string) => boolean;
-    pluginFor: (language: Language) => { preprocess?: LanguagePluginMeta["preprocess"] } | undefined;
+    applies: (language: Language, rel: string) => boolean;
+    preprocess: (language: Language, raw: string, rel: string, context: PreprocessContext) => ReturnType<typeof import("../extractors/registry.js").preprocessFile>;
   }> | undefined;
   return async (rel, byExtension) => {
     rules ??= Promise.all([import("./file-discovery.js"), import("./clarifydoc-ignore.js"), import("../extractors/registry.js")]).then(
@@ -349,20 +350,20 @@ function discoveryReads(projectRoot: string): (rel: string, language: Language |
           script: (path: string) => discovery.shebangScriptAt(root, path),
           sensitive: discovery.isSensitive,
           ignored: (abs: string) => ignore.isIgnored(abs, root, patterns),
-          pluginFor: registry.pluginFor,
+          applies: registry.preprocessApplies,
+          preprocess: registry.preprocessFile,
         };
       },
     );
-    const { script, sensitive, ignored, pluginFor } = await rules;
+    const { script, sensitive, ignored, applies, preprocess } = await rules;
     const language = byExtension ?? script(rel);
     if (!language) return false;
     if (sensitive(rel, language)) return false;
     const abs = join(root, rel);
     if (ignored(abs)) return false;
-    const preprocess = pluginFor(language)?.preprocess;
-    if (!preprocess) return true;
+    if (!applies(language, rel)) return true;
     try {
-      const pre = preprocess(await readFile(abs, "utf-8"), rel, { absolutePath: abs, projectRoot: root });
+      const pre = await preprocess(language, await readFile(abs, "utf-8"), rel, { absolutePath: abs, projectRoot: root });
       return !(pre && "skip" in pre);
     } catch {
       return true;

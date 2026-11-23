@@ -21,7 +21,7 @@ import { dirname, relative } from "path";
 import { applyAliases, type AliasMap, applyPackageImports, applySourceRoot, loadTsconfigAliasesForDir, packageImportsStamp, sourceRootStamp } from "../extractors/shared/tsconfig-aliases.js";
 import { applyWorkspacePackages, loadWorkspacePackages, type WorkspacePackage } from "../extractors/shared/workspace-packages.js";
 import { extensionFamily } from "../extractors/plugins/shared/path-utils.js";
-import { pluginFor, astHooksFor, inferFileFrameworks, ensureLanguagesLoaded, manifestFor, regexSpecFor } from "../extractors/registry.js";
+import { pluginFor, preprocessFile, astHooksFor, inferFileFrameworks, ensureLanguagesLoaded, manifestFor, regexSpecFor } from "../extractors/registry.js";
 import { computeComplexity } from "./complexity-analyzer.js";
 import { attachDocComments } from "./doc-comments.js";
 import { scanSecurity, isMinifiedSource, isVendoredSource } from "./security-scanner.js";
@@ -477,7 +477,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       // Content-sniffing preprocess, mirroring the tree-sitter path below: a
       // plugin that claims a broad extension (springxml claims `.xml`) skips
       // the files that aren't its format instead of emitting empty analyses.
-      const pre = filePlugin.preprocess?.(rawSource, file.relativePath, { absolutePath: file.absolutePath, projectRoot: task.projectRoot });
+      const pre = await preprocessFile(file.language, rawSource, file.relativePath, { absolutePath: file.absolutePath, projectRoot: task.projectRoot });
       if (pre && "skip" in pre) {
         if (verbose) console.log(`    Skipping ${file.relativePath}: ${pre.skip}`);
         return task.reportSkips ? { skipped: pre.skip } : null;

@@ -1605,6 +1605,12 @@ export interface LanguagePluginManifest {
    */
   extensions: readonly string[];
   /**
+   * Path suffixes of files ANOTHER plugin owns by extension (`.cls`, `.object-meta.xml`) that this plugin may read:
+   * the registry offers each such file to this plugin's `adopt` before the owner's `preprocess`. A file it takes is
+   * read as this plugin's language; the owner keeps the extension. A suffix has one adopter.
+   */
+  adoptsSuffixes?: readonly string[];
+  /**
    * Language family: languages whose files resolve each other's bare-name
    * imports (`jvm` = Java/Kotlin/Scala, `dotnet` = C#/VB/XAML/Razor, `cfam` =
    * C/C++/Objective-C, `script` = JS/TS/Vue/Svelte). Bare-name resolution only
@@ -2302,6 +2308,11 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
    * Return null to proceed with the file as-is.
    */
   preprocess?(rawSource: string, relativePath: string, context?: PreprocessContext): PreprocessOutcome | { skip: string } | null;
+  /**
+   * A file of one of the manifest's `adoptsSuffixes`, owned by another plugin: the outcome that reads it as this
+   * plugin's language, or null to leave it to its owner's `preprocess`.
+   */
+  adopt?(rawSource: string, relativePath: string): PreprocessOutcome | null;
   /**
    * A fingerprint of what `preprocess` reads besides the file (a dbt project file and its schema YAMLs), or
    * undefined when none applies: an incremental run reuses a cached analysis only while it is unchanged.

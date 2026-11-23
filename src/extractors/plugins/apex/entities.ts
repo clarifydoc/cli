@@ -1,4 +1,5 @@
 import type { ClassInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
+import { elementText, withoutXmlComments } from "../shared/xml-scan.js";
 import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } from "../../entities/base.js";
 
 /**
@@ -24,8 +25,6 @@ export function isSalesforceMetadata(relativePath: string, raw: string): boolean
   return /\.(?:object|field)-meta\.xml$/i.test(relativePath) && raw.includes(METADATA_NS);
 }
 
-const tag = (xml: string, name: string): string | null => new RegExp(String.raw`<${name}>\s*([^<]*?)\s*</${name}>`).exec(xml)?.[1]?.trim() || null;
-
 /** The object folder a metadata path sits in: `…/objects/Club__c/fields/X.field-meta.xml` → `Club__c`. */
 function objectOfPath(path: string): string | null {
   return /(?:^|\/)objects\/([^/]+)\//.exec(path)?.[1] ?? null;
@@ -34,10 +33,10 @@ function objectOfPath(path: string): string | null {
 interface FieldDef { name: string; type: string | null; referenceTo: string | null; required: boolean }
 
 function fieldDefOf(xml: string, fallbackName: string | null): FieldDef | null {
-  const name = tag(xml, "fullName") ?? fallbackName;
+  const name = elementText(xml, "fullName") ?? fallbackName;
   if (!name) return null;
-  const type = tag(xml, "type");
-  return { name, type, referenceTo: tag(xml, "referenceTo"), required: tag(xml, "required") === "true" || type === "MasterDetail" };
+  const type = elementText(xml, "type");
+  return { name, type, referenceTo: elementText(xml, "referenceTo"), required: elementText(xml, "required") === "true" || type === "MasterDetail" };
 }
 
 function relationOf(object: string, f: FieldDef): EntityRelation | null {
@@ -53,8 +52,8 @@ export class SalesforceEntityExtractor extends EntityExtractor {
 
   extract(ctx: EntityExtractContext): EntityExtractResult {
     const path = ctx.analysis.filePath;
-    const xml = ctx.sourceText;
-    if (!isSalesforceMetadata(path, xml)) return { entities: [], relations: [] };
+    if (!isSalesforceMetadata(path, ctx.sourceText)) return { entities: [], relations: [] };
+    const xml = withoutXmlComments(ctx.sourceText);
     const fileName = /([^/]+)\.(?:object|field)-meta\.xml$/i.exec(path)?.[1] ?? null;
     const relations: EntityRelation[] = [];
     const column = (f: FieldDef): PropertyInfo => ({ ...this.column(f.name, f.type), ...(f.referenceTo ? { references: f.referenceTo } : {}) } as PropertyInfo);
@@ -65,7 +64,7 @@ export class SalesforceEntityExtractor extends EntityExtractor {
       if (!object || !field) return { entities: [], relations: [] };
       const rel = relationOf(object, field);
       if (rel) relations.push(rel);
-      const fragment = this.entity({ name: object, orm: ORM, properties: [column(field)], extraDecorators: [FRAGMENT] });
+      const fragment = this.entity({ name: object, orm: ORM, properties: [column(field)] });
       fragment.decorators = [FRAGMENT];
       return { entities: [fragment], relations };
     }
@@ -96,13 +95,12 @@ export class SalesforceEntityExtractor extends EntityExtractor {
       }
     }
     for (const { file, cls } of fragments) {
-      let host = hosts.get(cls.name.toLowerCase());
+      const host = hosts.get(cls.name.toLowerCase());
       if (!host) {
         // Fields of an object the project declares no file for: the first fragment becomes its entity.
         cls.decorators = ["entity", ORM];
         cls.properties = [{ ...this.column("Id", "Id"), primaryKey: true } as PropertyInfo, ...cls.properties];
         hosts.set(cls.name.toLowerCase(), cls);
-        host = cls;
         continue;
       }
       const have = new Set(host.properties.map((p) => p.name));

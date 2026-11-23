@@ -5,16 +5,15 @@ import { join, resolve } from "path";
 import { analyze } from "../../../core/analyzer.js";
 import { loadReportSummary } from "../../../core/report-payload.js";
 import { extractWithRegex } from "../../../core/regex-extractor.js";
-import { pluginFor } from "../../registry.js";
+import { loadAllPlugins, preprocessFile } from "../../registry.js";
 import type { FileAnalysis, ProjectAnalysis } from "../../../types/analysis.js";
 import { elementType, isSObjectType, queryObjects } from "./soql.js";
 import { restPath } from "./routes.js";
 import { apexClassSource } from "./preprocess.js";
 
 /** One file through the plugin as the analyzer runs it (`.cls` goes through the VB plugin's hand-over). */
-function read(src: string, path = "classes/ClubService.cls"): FileAnalysis {
-  const plugin = pluginFor(path.endsWith(".trigger") ? "apex" : "vb")!;
-  const pre = plugin.preprocess!(src, path);
+async function read(src: string, path = "classes/ClubService.cls"): Promise<FileAnalysis> {
+  const pre = await preprocessFile(path.endsWith(".trigger") ? "apex" : "vb", src, path);
   if (!pre || "skip" in pre) throw new Error("not read");
   const analysis = extractWithRegex(pre.sourceText, path, pre.language);
   pre.postExtract?.(analysis, src);
@@ -23,6 +22,8 @@ function read(src: string, path = "classes/ClubService.cls"): FileAnalysis {
 const rows = (a: FileAnalysis) => a.dataSources.filter((d) => d.kind === "database").map((d) => `${d.name} ${d.entity} ${d.access ?? "-"} @${d.line}`);
 
 describe("SOQL, DML and type reading", () => {
+  beforeAll(loadAllPlugins);
+
   it("reads the object a query names, never a relationship subquery", () => {
     expect(queryObjects("[SELECT Id, (SELECT Id FROM Players__r) FROM Club__c WHERE Name = 'FROM Other__c']")).toEqual(["Club__c"]);
     expect(queryObjects("SELECT COUNT() FROM Player__c")).toEqual(["Player__c"]);
@@ -39,8 +40,8 @@ describe("SOQL, DML and type reading", () => {
     expect(isSObjectType("ClubDto") || isSObjectType("Id") || isSObjectType("String")).toBe(false);
   });
 
-  it("writes the type the operand declares, in every DML form", () => {
-    const a = read([
+  it("writes the type the operand declares, in every DML form", async () => {
+    const a = await read([
       "public class ClubService {",
       "    private List<Player__c> squad;",
       "    public void run(Club__c club, Map<Id, Club__c> byId, Set<Id> ids, ClubDto dto) {",
@@ -70,8 +71,8 @@ describe("SOQL, DML and type reading", () => {
     ]);
   });
 
-  it("reads queries held in strings, joined across `+`, and ignores comments and prose", () => {
-    const a = read([
+  it("reads queries held in strings, joined across `+`, and ignores comments and prose", async () => {
+    const a = await read([
       "public class Q {",
       "    // [SELECT Id FROM Ghost__c]",
       "    /* Database.query('SELECT Id FROM Ghost2__c') */",
@@ -86,8 +87,8 @@ describe("SOQL, DML and type reading", () => {
     expect(rows(a)).toEqual(["SELECT Club__c read @5"]);
   });
 
-  it("states a callout's verb from the same variable and keeps a Named Credential as an external base", () => {
-    const a = read([
+  it("states a callout's verb from the same variable and keeps a Named Credential as an external base", async () => {
+    const a = await read([
       "public class C {",
       "    public void run(String id) {",
       "        HttpRequest one = new HttpRequest();",
@@ -103,20 +104,20 @@ describe("SOQL, DML and type reading", () => {
     expect(calls.map((c) => [c.name, c.baseRef?.key])).toEqual([["GET /clubs/{id}", "callout:League"], ["DELETE https://api.example.com/x", undefined]]);
   });
 
-  it("does not take a credential named by a variable for a Named Credential", () => {
-    const a = read("public class C {\n  public void run(String cred, String path) {\n    HttpRequest r = new HttpRequest();\n    r.setEndpoint('callout:' + cred + path);\n    r.setMethod('GET');\n  }\n}\n");
+  it("does not take a credential named by a variable for a Named Credential", async () => {
+    const a = await read("public class C {\n  public void run(String cred, String path) {\n    HttpRequest r = new HttpRequest();\n    r.setEndpoint('callout:' + cred + path);\n    r.setMethod('GET');\n  }\n}\n");
     expect(a.dataSources.map((d) => [d.target, d.baseRef])).toEqual([["callout:{cred}{path}", undefined]]);
   });
 
-  it("joins the pieces of a query across a variable", () => {
-    const a = read("public class C {\n  public void run(String fields) {\n    String q = 'SELECT ' + fields + ' FROM Club__c WHERE Id != null';\n    Database.query(q);\n  }\n}\n");
+  it("joins the pieces of a query across a variable", async () => {
+    const a = await read("public class C {\n  public void run(String fields) {\n    String q = 'SELECT ' + fields + ' FROM Club__c WHERE Id != null';\n    Database.query(q);\n  }\n}\n");
     expect(rows(a)).toEqual(["SELECT Club__c read @3"]);
   });
 });
 
 describe("Apex structure", () => {
-  it("reads classes, inner classes, annotations with arguments and the owner of each method", () => {
-    const a = read([
+  it("reads classes, inner classes, annotations with arguments and the owner of each method", async () => {
+    const a = await read([
       "@RestResource(urlMapping='/clubs/*')",
       "global with sharing class ClubApi extends Base implements Database.Batchable<SObject>, Schedulable {",
       "    @TestVisible private static final String NAME = 'x{y';",
@@ -143,8 +144,8 @@ describe("Apex structure", () => {
     expect(a.routes.map((r) => `${r.httpMethod} ${r.path} ${r.handler}`)).toEqual(["GET /services/apexrest/clubs/{wildcard} ClubApi.get"]);
   });
 
-  it("reads a trigger as a function on its object", () => {
-    const a = read("trigger ClubTrigger on Club__c (before insert, after update) {\n    ClubService.promote(Trigger.new[0]);\n}\n", "triggers/ClubTrigger.trigger");
+  it("reads a trigger as a function on its object", async () => {
+    const a = await read("trigger ClubTrigger on Club__c (before insert, after update) {\n    ClubService.promote(Trigger.new[0]);\n}\n", "triggers/ClubTrigger.trigger");
     expect(a.functions.map((f) => [f.name, f.decorators])).toEqual([["ClubTrigger", ["Trigger(Club__c; before insert, after update)"]]]);
     expect(rows(a)).toEqual(["TRIGGER before insert, after update Club__c - @1"]);
   });

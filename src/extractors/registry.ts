@@ -3,6 +3,8 @@ import type {
   CompilationDatabaseSpec,
   LanguagePluginMeta,
   LanguagePluginManifest,
+  PreprocessContext,
+  PreprocessOutcome,
   PackageManagerSpec,
   ConfigSourceSpec,
   ProxySourceSpec,
@@ -336,6 +338,39 @@ export const ACTIVATION_FILE_LANGUAGES: ReadonlyMap<string, readonly Language[]>
  */
 export const NAMED_FILE_LANGUAGE: ReadonlyMap<string, Language> =
   claimTable(ALL_MANIFESTS, (m) => m.namedFiles ?? [], "Named file");
+
+const ADOPTER_BY_SUFFIX: ReadonlyMap<string, Language> = claimTable(ALL_MANIFESTS, (m) => m.adoptsSuffixes ?? [], "Adopted suffix");
+
+/** The language whose plugin may adopt a file by its path suffix (`.cls` → apex), when it is not that language's own file. */
+function adopterOf(relativePath: string, owner: Language): Language | undefined {
+  const lower = relativePath.toLowerCase();
+  for (const [suffix, language] of ADOPTER_BY_SUFFIX) if (language !== owner && lower.endsWith(suffix)) return language;
+  return undefined;
+}
+
+/** Whether `preprocessFile` has anything to ask about this file (so a caller reads it only then). */
+export function preprocessApplies(language: Language, relativePath: string): boolean {
+  return adopterOf(relativePath, language) !== undefined || pluginFor(language)?.preprocess !== undefined;
+}
+
+/**
+ * What a file's plugin makes of its content before it is read: a plugin that adopts the file's suffix is asked first
+ * (loaded on that first file), then the owner's own `preprocess`.
+ */
+export async function preprocessFile(
+  language: Language,
+  rawSource: string,
+  relativePath: string,
+  context?: PreprocessContext,
+): Promise<PreprocessOutcome | { skip: string } | null> {
+  const adopter = adopterOf(relativePath, language);
+  if (adopter) {
+    await ensureLanguagesLoaded([adopter]);
+    const adopted = pluginFor(adopter)?.adopt?.(rawSource, relativePath);
+    if (adopted) return adopted;
+  }
+  return pluginFor(language)?.preprocess?.(rawSource, relativePath, context) ?? null;
+}
 
 /**
  * Build the shebang-interpreter list, refusing a second claim on any name a

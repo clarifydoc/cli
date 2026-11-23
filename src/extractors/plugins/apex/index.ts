@@ -1,6 +1,7 @@
 import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
-import { findEndLine, type CallPattern, type RegexLangSpec } from "../shared/regex-base.js";
+import { findEndLine, type RegexLangSpec } from "../shared/regex-base.js";
 import { splitTopLevelCommas } from "../shared/text-scan.js";
+import { ANNOTATION, ANNOTATIONS, CLASS_MODIFIERS, innermost, KEYWORD_TYPE, NEW_CALL, STATIC_CALL, TRIGGER_FN, TRIGGER_HEAD } from "./patterns.js";
 import { extractApexRoutes } from "./routes.js";
 
 /**
@@ -14,26 +15,27 @@ import { extractApexRoutes } from "./routes.js";
  */
 
 const MODIFIERS = String.raw`(?:(?:global|public|private|protected|static|virtual|abstract|override|final|testmethod|webservice|transient|with\s+sharing|without\s+sharing|inherited\s+sharing)\s+)`;
-const ANNOTATIONS = String.raw`(?:@\w+(?:\([^)]*\))?\s+)*`;
-const KEYWORD_TYPE = String.raw`(?!(?:return|new|else|throw|insert|update|upsert|delete|undelete|merge|if|for|while|catch|switch|do|try|when|case|and|or|not|instanceof|trigger|class|interface|enum)\b)`;
 const TYPE = String.raw`[\w.]+(?:\s*<[^()=;{}]*>)?(?:\s*\[\s*\])*`;
 
 /** With a modifier the type is optional (a constructor); without one a type is required — `foo(x);` is a call. */
 const METHOD_WITH_MODIFIER = new RegExp(String.raw`^\s*${ANNOTATIONS}${MODIFIERS}+(?:${KEYWORD_TYPE}${TYPE}\s+)?([A-Za-z_]\w*)\s*\(`, "i");
 const METHOD_TYPED = new RegExp(String.raw`^\s*${ANNOTATIONS}${KEYWORD_TYPE}${TYPE}\s+([A-Za-z_]\w*)\s*\(`, "i");
-const TRIGGER_HEAD = /^\s*trigger\s+([A-Za-z_]\w*)\s+on\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/i;
-const TRIGGER_FN = /^\s*trigger\s+([A-Za-z_]\w*)\s+on\s+\w+\s*\(/i;
 
 const CLASS_HEAD = new RegExp(
-  String.raw`^\s*(${ANNOTATIONS})((?:(?:global|public|private|protected|virtual|abstract|static|final|with\s+sharing|without\s+sharing|inherited\s+sharing)\s+)*)(class|interface|enum)\s+([A-Za-z_]\w*)\b(.*)$`,
+  String.raw`^\s*(${ANNOTATIONS})(${CLASS_MODIFIERS})(class|interface|enum)\s+([A-Za-z_]\w*)\b(.*)$`,
   "i",
 );
 
 /** The annotations leading a declaration line, as written minus the `@`. */
 function inlineAnnotations(line: string): string[] {
-  const head = /^\s*((?:@\w+(?:\([^)]*\))?\s+)+)/.exec(line)?.[1];
-  return head ? [...head.matchAll(/@(\w+(?:\([^)]*\))?)/g)].map((m) => m[1]!) : [];
+  const head = new RegExp(String.raw`^\s*((?:${ANNOTATION}\s+)+)`).exec(line)?.[1];
+  return head ? [...head.matchAll(ANNOTATION_NAME)].map((m) => m[1]!) : [];
 }
+
+const ANNOTATION_ONLY = new RegExp(String.raw`^(?:${ANNOTATION}\s*)+$`);
+const ANNOTATION_NAME = new RegExp(`@(${ANNOTATION.slice(1)})`, "g");
+const ANNOTATION_TEXT = new RegExp(`${ANNOTATION}\\s*`, "g");
+const MODIFIER_WORDS = new RegExp(MODIFIERS, "gi");
 
 /** Annotation-only lines stacked right above line `i` (nearest last). */
 function annotationsAbove(lines: readonly string[], i: number): string[] {
@@ -41,9 +43,9 @@ function annotationsAbove(lines: readonly string[], i: number): string[] {
   for (let j = i - 1; j >= 0; j--) {
     const t = lines[j]!.trim();
     if (t === "") break;
-    const m = /^(?:@\w+(?:\([^)]*\))?\s*)+$/.exec(t);
+    const m = ANNOTATION_ONLY.exec(t);
     if (!m) break;
-    out.unshift(...[...t.matchAll(/@(\w+(?:\([^)]*\))?)/g)].map((x) => x[1]!));
+    out.unshift(...[...t.matchAll(ANNOTATION_NAME)].map((x) => x[1]!));
   }
   return out;
 }
@@ -59,7 +61,7 @@ function parseApexParam(raw: string): ParamInfo | null {
 function parseReturnType(line: string, nameColumn?: number): string | null {
   if (TRIGGER_FN.test(line)) return null;
   const at = nameColumn ?? line.search(/\w+\s*\(/);
-  const before = line.slice(0, at).replace(/@\w+(?:\([^)]*\))?\s*/g, "").replace(new RegExp(String.raw`${MODIFIERS}`, "gi"), "").trim();
+  const before = line.slice(0, at).replace(ANNOTATION_TEXT, "").replace(MODIFIER_WORDS, "").trim();
   return before || null;
 }
 
@@ -69,12 +71,12 @@ const FIELD = new RegExp(
 );
 
 /** Fields at the class's own brace depth. */
-function fieldsOf(lines: readonly string[], cls: ClassInfo, inMethod: (line: number) => boolean): PropertyInfo[] {
+function fieldsOf(lines: readonly string[], cls: ClassInfo, methodLines: ReadonlySet<number>): PropertyInfo[] {
   const props: PropertyInfo[] = [];
   let depth = 0;
   for (let i = cls.line - 1; i < Math.min(cls.endLine, lines.length); i++) {
     const line = lines[i]!;
-    if (depth === 1 && i > cls.line - 1 && !inMethod(i + 1)) {
+    if (depth === 1 && i > cls.line - 1 && !methodLines.has(i + 1)) {
       const m = FIELD.exec(line);
       if (m && !/\(/.test(line.slice(0, line.indexOf(m[3]!) + m[3]!.length + 1))) {
         const mods = m[1]!.toLowerCase();
@@ -123,14 +125,14 @@ function apexClasses(lines: string[], fns: FunctionInfo[]): ClassInfo[] {
   }
   // Each method belongs to the innermost class around it; same-line annotations join the stacked ones.
   for (const fn of fns) {
-    const owner = classes
-      .filter((c) => c.line <= fn.line && fn.line <= c.endLine && !(c.line === fn.line && c.endLine === fn.endLine))
-      .sort((a, b) => (a.endLine - a.line) - (b.endLine - b.line))[0];
+    const owner = innermost(classes.filter((c) => !(c.line === fn.line && c.endLine === fn.endLine)), fn.line);
     const inline = inlineAnnotations(lines[fn.line - 1] ?? "");
     for (const d of inline) if (!fn.decorators.includes(d)) fn.decorators.push(d);
     if (owner) owner.methods.push(fn);
   }
-  for (const cls of classes) if (cls.kind !== "enum" && cls.kind !== "interface") cls.properties = fieldsOf(lines, cls, (line) => fns.some((f) => f.line <= line && line <= f.endLine));
+  const methodLines = new Set<number>();
+  for (const f of fns) for (let l = f.line; l <= f.endLine; l++) methodLines.add(l);
+  for (const cls of classes) if (cls.kind !== "enum" && cls.kind !== "interface") cls.properties = fieldsOf(lines, cls, methodLines);
   return classes;
 }
 
@@ -138,16 +140,7 @@ function apexClasses(lines: string[], fns: FunctionInfo[]): ClassInfo[] {
 const LOCAL = new RegExp(String.raw`^\s*(?:final\s+)?${KEYWORD_TYPE}(${TYPE})\s+([A-Za-z_]\w*)\s*(?:=|;|,)`, "i");
 const FOR_EACH = new RegExp(String.raw`\bfor\s*\(\s*(?:final\s+)?(${TYPE})\s+([A-Za-z_]\w*)\s*:`, "i");
 
-const STATIC_CALL: CallPattern = {
-  // `ClubService.promote(club)`: a capitalized receiver is a class, so a static call on it.
-  pattern: /(?<![\w.])([A-Z]\w*)\.([A-Za-z_]\w*)\s*\(/,
-  buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2]!, receiverType: m[1]! }),
-};
-const NEW_CALL: CallPattern = {
-  // `new ClubService().promote(club)`: the method of the class just constructed.
-  pattern: /\bnew\s+([A-Za-z_]\w*)\s*(?:<[^()]*>)?\s*\((?:[^()]|\([^()]*\))*\)\s*\.\s*([A-Za-z_]\w*)\s*\(/i,
-  buildName: (m) => ({ name: `${m[1]}.${m[2]}`, leafName: m[2]!, receiverType: m[1]! }),
-};
+const PRIVATE_METHOD = new RegExp(String.raw`^\s*${ANNOTATIONS}(?:(?:static|final|virtual|override)\s+)*(?:private\b)`, "i");
 
 export const apexSpec: RegexLangSpec = {
   language: "apex",
@@ -155,7 +148,7 @@ export const apexSpec: RegexLangSpec = {
   lineCommentPrefixes: ["//"],
   functionPatterns: [
     { pattern: TRIGGER_HEAD, isExported: () => true },
-    { pattern: METHOD_WITH_MODIFIER, isExported: (line) => !/^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:(?:static|final|virtual|override)\s+)*(?:private\b)/i.test(line) },
+    { pattern: METHOD_WITH_MODIFIER, isExported: (line) => !PRIVATE_METHOD.test(line) },
     { pattern: METHOD_TYPED, isExported: () => false },
   ],
   // Built by `apexClasses` (inner classes, same-line annotations).

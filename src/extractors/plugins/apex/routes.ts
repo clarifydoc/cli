@@ -1,4 +1,6 @@
 import type { ClassInfo, RouteInfo } from "../../../types/analysis.js";
+import { HTTP_VERBS } from "../../shared/http-verbs.js";
+import { joinRoutePath } from "../../shared/route-paths.js";
 
 /**
  * Apex REST resources: `@RestResource(urlMapping='/clubs/*')` on a class, and one of `@HttpGet`, `@HttpPost`,
@@ -11,12 +13,10 @@ import type { ClassInfo, RouteInfo } from "../../../types/analysis.js";
  */
 export const APEX_REST_BASE = "/services/apexrest";
 
-const VERBS = new Map([["httpget", "GET"], ["httppost", "POST"], ["httpput", "PUT"], ["httppatch", "PATCH"], ["httpdelete", "DELETE"]]);
-
 /** The path a `urlMapping` serves. */
 export function restPath(mapping: string): string {
   const segments = mapping.replace(/^\/+/, "").split("/").filter((s, i, all) => s !== "" || i === all.length - 1);
-  return `${APEX_REST_BASE}/${segments.map((s) => (s === "*" ? "{wildcard}" : s)).join("/")}`.replace(/\/+$/, "") || APEX_REST_BASE;
+  return joinRoutePath(APEX_REST_BASE, segments.map((s) => (s === "*" ? "{wildcard}" : s)).join("/")).replace(/\/+$/, "") || APEX_REST_BASE;
 }
 
 export function extractApexRoutes(classes: readonly ClassInfo[]): RouteInfo[] {
@@ -28,8 +28,8 @@ export function extractApexRoutes(classes: readonly ClassInfo[]): RouteInfo[] {
     if (mapping === undefined) continue;
     for (const method of cls.methods) {
       for (const deco of method.decorators) {
-        const verb = VERBS.get(/^(\w+)/.exec(deco)?.[1]?.toLowerCase() ?? "");
-        if (!verb) continue;
+        const verb = /^http([a-z]+)\b/i.exec(deco)?.[1]?.toUpperCase();
+        if (!verb || !HTTP_VERBS.has(verb)) continue;
         routes.push({
           path: restPath(mapping),
           httpMethod: verb,

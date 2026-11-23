@@ -1,5 +1,8 @@
 import type { ClassInfo, DataSourceInfo, FunctionInfo } from "../../../types/analysis.js";
-import { balancedArgs, lineOfOffset, lineStarts, splitTopLevelCommas } from "../shared/text-scan.js";
+import { splitTopLevel } from "../../shared/split-top-level.js";
+import { statementAccesses } from "../shared/sql-string-sources.js";
+import { balancedArgs, blankStringAwareComments, lineIndex, lineStarts, splitTopLevelCommas } from "../shared/text-scan.js";
+import { innermost, queryOpensAt, TRIGGER_HEAD } from "./patterns.js";
 import { queryEnd, stringEnd } from "./source.js";
 
 /**
@@ -47,23 +50,13 @@ export function elementType(type: string): string | null {
 }
 
 /** Text with the inside of every string literal blanked (quotes and newlines kept). */
-function blankStrings(text: string): string {
-  const out = text.split("");
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] !== "'") continue;
-    const end = stringEnd(text, i);
-    for (let k = i + 1; k < end - 1; k++) out[k] = " ";
-    i = end - 1;
-  }
-  return out.join("");
-}
+const blankStrings = (text: string): string => blankStringAwareComments(text, { quotes: "'", strings: "blank", stringsEndAtLine: true, lineComments: [] });
 
 /** Depth-0 view of a query: parenthesised parts and string contents blanked, so only its own clauses remain. */
 function topLevel(query: string): string {
-  const s = blankStrings(query);
   let depth = 0;
   let out = "";
-  for (const c of s) {
+  for (const c of blankStrings(query)) {
     if (c === "(") { depth++; out += c; }
     else if (c === ")") { depth = Math.max(0, depth - 1); out += c; }
     else out += depth > 0 && c !== "\n" ? " " : c;
@@ -71,20 +64,23 @@ function topLevel(query: string): string {
   return out;
 }
 
-/** The objects a SOQL query reads (its own `FROM`) or a SOSL search returns. */
+/**
+ * The objects a SOQL query reads (its own `FROM`, then the objects its semi-joins read) or a SOSL search returns. A
+ * relationship subquery (`FROM Players__r`) names a relationship, which is no SObject type: it is left out.
+ */
 export function queryObjects(query: string): string[] {
-  const q = topLevel(query.trim().replace(/^\[/, "").replace(/\]$/, ""));
-  if (/^\s*FIND\b/i.test(q)) {
-    const returning = /\bRETURNING\b([\s\S]*)$/i.exec(q)?.[1];
+  const text = query.trim().replace(/^\[/, "").replace(/\]$/, "");
+  if (/^\s*FIND\b/i.test(text)) {
+    // SOSL is no SQL: the objects follow `RETURNING`, each with its field list.
+    const returning = /\bRETURNING\b([\s\S]*)$/i.exec(topLevel(text))?.[1];
     if (!returning) return [];
     return splitTopLevelCommas(returning).map((part) => /^\s*([A-Za-z_]\w*)/.exec(part)?.[1]).filter((n): n is string => !!n);
   }
-  const from = /\bFROM\s+([A-Za-z_][\w.]*)/i.exec(q)?.[1];
-  const found = from ? [from.split(".").pop()!] : [];
-  // A semi-join or anti-join in a WHERE clause (`Id IN (SELECT Club__c FROM Player__c)`) reads an object too; a
-  // relationship subquery (`FROM Players__r`) names a relationship, which is no SObject type.
-  for (const m of blankStrings(query).matchAll(/\(\s*SELECT\b[^()]*?\bFROM\s+([A-Za-z_]\w*)/gi)) {
-    if (isSObjectType(m[1]!) && !found.includes(m[1]!)) found.push(m[1]!);
+  const found: string[] = [];
+  for (const hit of statementAccesses(text)) {
+    if (hit.routine) continue;
+    const name = hit.table.split(".").pop()!;
+    if ((!hit.joined || isSObjectType(name)) && !found.includes(name)) found.push(name);
   }
   return found;
 }
@@ -97,41 +93,27 @@ const SOQL_STRING = /^\s*SELECT\b[\s\S]*?\bFROM\s+[A-Za-z_]/i;
 const DML_VERBS = "insert|update|upsert|delete|undelete|merge";
 const DML = new RegExp(String.raw`(?<=^|[;{}\)]|\belse\b)[ \t\r\n]*\b(${DML_VERBS})\b[ \t\r\n]*(?:as[ \t]+(?:user|system)\b[ \t\r\n]*)?([^;]*);`, "gim");
 const DATABASE_DML = /\bDatabase\.(insert|update|upsert|delete|undelete|merge|insertImmediate|deleteImmediate|insertAsync|updateAsync|upsertAsync|deleteAsync)\s*\(/gi;
-const TRIGGER = /^\s*trigger\s+([A-Za-z_]\w*)\s+on\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/im;
-const NOT_A_TYPE = /^(?:return|new|else|throw|insert|update|upsert|delete|undelete|merge|if|for|while|catch|switch|do|try|when|case|as|and|or|not|instanceof)$/i;
-
-/** One scope that can declare a variable: a method with its lines, or a class with its fields. */
-interface Scope { fn?: FunctionInfo; cls: ClassInfo }
-
-/** Every method of the file, innermost class owning each. */
-function methodsOf(classes: readonly ClassInfo[]): Scope[] {
-  return classes.flatMap((cls) => cls.methods.map((fn) => ({ fn, cls })));
-}
+const TRIGGER = new RegExp(TRIGGER_HEAD.source, "im");
 
 /**
- * The declared type of variable `name` at `line`: a declaration inside the method that holds the line (the last one
- * before it, else the first), then a field of the class that declares the method and of the classes around it.
+ * The declared type of variable `name` at `line`: a local or parameter of the method that holds the line (Apex names
+ * are case-insensitive), then a field of the class that declares the method and of the classes around it.
  */
-function declaredType(name: string, line: number, lines: readonly string[], classes: readonly ClassInfo[], methods: readonly Scope[]): string | null {
-  const owner = methods.filter((s) => s.fn!.line <= line && line <= s.fn!.endLine).sort((a, b) => (a.fn!.endLine - a.fn!.line) - (b.fn!.endLine - b.fn!.line))[0];
-  if (owner) {
-    const re = new RegExp(String.raw`(?<![\w.])([A-Za-z_][\w.]*(?:\s*<[^;=(){}]*>)?(?:\s*\[\s*\])?)\s+${name}\b\s*(?=[=;,):])`, "gi");
-    const body = lines.slice(owner.fn!.line - 1, owner.fn!.endLine).join("\n");
-    const hits = [...body.matchAll(re)].filter((m) => !NOT_A_TYPE.test(m[1]!) && !/\b(?:merge|as)\s*$/i.test(body.slice(Math.max(0, m.index! - 8), m.index!)));
-    const before = hits.filter((m) => owner.fn!.line + body.slice(0, m.index!).split("\n").length - 1 <= line);
-    const hit = before[before.length - 1] ?? hits[0];
-    if (hit) return hit[1]!;
-  }
+function declaredType(name: string, line: number, classes: readonly ClassInfo[], methods: readonly FunctionInfo[]): string | null {
+  const key = name.toLowerCase();
+  const owner = innermost(methods, line);
+  const local = owner?.localTypes?.find((l) => l.name.toLowerCase() === key) ?? owner?.params.find((p) => p.name.toLowerCase() === key);
+  if (local?.type) return local.type;
   const around = classes.filter((c) => c.line <= line && line <= c.endLine).sort((a, b) => (a.endLine - a.line) - (b.endLine - b.line));
   for (const cls of around) {
-    const field = cls.properties.find((p) => p.name.toLowerCase() === name.toLowerCase());
+    const field = cls.properties.find((p) => p.name.toLowerCase() === key);
     if (field?.type) return field.type;
   }
   return null;
 }
 
 /** The SObject type a DML operand holds, from its text; null when the text states none. */
-function operandObject(operand: string, line: number, lines: readonly string[], classes: readonly ClassInfo[], methods: readonly Scope[]): string | null {
+function operandObject(operand: string, line: number, classes: readonly ClassInfo[], methods: readonly FunctionInfo[]): string | null {
   const text = operand.trim();
   if (text === "") return null;
   let type: string | null = null;
@@ -143,7 +125,7 @@ function operandObject(operand: string, line: number, lines: readonly string[], 
     const bare = /^([A-Za-z_]\w*)(?=\s|$)(?!\s*[.(])/.exec(text)?.[1];
     if (fresh) type = elementType(fresh);
     else if (values ?? bare) {
-      const declared = declaredType((values ?? bare)!, line, lines, classes, methods);
+      const declared = declaredType((values ?? bare)!, line, classes, methods);
       type = declared ? elementType(declared) : null;
     }
   }
@@ -164,7 +146,7 @@ function literalsOf(text: string): Literal[] {
       const end = stringEnd(text, i);
       found.push({ start: i, end, value: text.slice(i + 1, end - 1) });
       i = end;
-    } else if (c === "[" && /^\[\s*(?:SELECT|FIND)\b/i.test(text.slice(i, i + 24))) i = queryEnd(text, i);
+    } else if (c === "[" && queryOpensAt(text, i)) i = queryEnd(text, i);
     else i++;
   }
   const merged: Literal[] = [];
@@ -180,7 +162,7 @@ function literalsOf(text: string): Literal[] {
 
 /** `'callout:League/clubs/' + id` → `callout:League/clubs/{id}`; null when the expression does not start with a literal. */
 function endpointOf(expr: string): string | null {
-  const parts = expr.split(/\+(?=(?:[^']*'[^']*')*[^']*$)/).map((p) => p.trim()).filter(Boolean);
+  const parts = splitTopLevel(expr, { sep: "+", quotes: "'", escapes: "'", brackets: "", trim: true, dropBlank: true });
   if (parts.length === 0 || !/^'/.test(parts[0]!)) return null;
   let out = "";
   for (const part of parts) {
@@ -197,20 +179,17 @@ function endpointOf(expr: string): string | null {
 /** Every data access the file's text states (see the file header). */
 export function apexDataSources(dataText: string, classes: readonly ClassInfo[], functions: readonly FunctionInfo[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
-  const starts = lineStarts(dataText);
-  const lineOf = (offset: number): number => lineOfOffset(starts, offset);
-  const lines = dataText.split("\n");
-  const methods = methodsOf(classes);
-  // Free functions (a trigger) scope their variables like methods.
-  for (const fn of functions) if (!methods.some((s) => s.fn === fn)) methods.push({ fn, cls: classes[0] ?? ({ name: "", methods: [], properties: [], line: 0, endLine: 0 } as unknown as ClassInfo) });
+  const lineOf = lineIndex(dataText);
+  // Methods and free functions (a trigger) scope their variables alike.
+  const methods = [...new Set([...classes.flatMap((c) => c.methods), ...functions])];
 
   // Inline queries.
   for (let i = 0; i < dataText.length; i++) {
     const c = dataText[i]!;
     if (c === "'") i = stringEnd(dataText, i) - 1;
-    else if (c === "[" && /^\[\s*(?:SELECT|FIND)\b/i.test(dataText.slice(i, i + 24))) {
+    else if (c === "[" && queryOpensAt(dataText, i)) {
       const end = queryEnd(dataText, i);
-      const verb = /^\[\s*FIND\b/i.test(dataText.slice(i, i + 24)) ? "FIND" : "SELECT";
+      const verb = queryOpensAt(dataText, i)!;
       for (const object of queryObjects(dataText.slice(i, end))) out.push(row(verb, object, "read", lineOf(i)));
       i = end - 1;
     }
@@ -230,7 +209,7 @@ export function apexDataSources(dataText: string, classes: readonly ClassInfo[],
     if (/^\s*[(=.]/.test(operand)) continue;
     const at = m.index! + m[0].search(new RegExp(String.raw`\b${m[1]!}\b`, "i"));
     const line = lineOf(at);
-    const type = operandObject(operand, line, lines, classes, methods);
+    const type = operandObject(operand, line, classes, methods);
     if (type) out.push(row(verb, type, "write", line));
   }
   for (const m of code.matchAll(DATABASE_DML)) {
@@ -238,7 +217,7 @@ export function apexDataSources(dataText: string, classes: readonly ClassInfo[],
     const args = balancedArgs(code, open);
     if (!args) continue;
     const line = lineOf(m.index!);
-    const type = operandObject(splitTopLevelCommas(args.args)[0] ?? "", line, lines, classes, methods);
+    const type = operandObject(splitTopLevelCommas(args.args)[0] ?? "", line, classes, methods);
     if (type) out.push(row(`Database.${m[1]!.toLowerCase()}`, type, "write", line));
   }
 
@@ -249,23 +228,23 @@ export function apexDataSources(dataText: string, classes: readonly ClassInfo[],
     out.push(row(`TRIGGER ${trigger[3]!.replace(/\s+/g, " ").trim()}`, trigger[2]!, undefined, line));
   }
 
-  out.push(...callouts(dataText, starts, methods));
-  return out.sort((a, b) => a.line - b.line);
+  out.push(...callouts(dataText, lineOf, methods));
+  return out;
 }
 
 /** `req.setEndpoint(…)` calls with the verb `req.setMethod('…')` states in the same method. */
-function callouts(text: string, starts: number[], methods: readonly Scope[]): DataSourceInfo[] {
+function callouts(text: string, lineOf: (offset: number) => number, methods: readonly FunctionInfo[]): DataSourceInfo[] {
   const out: DataSourceInfo[] = [];
-  const lines = text.split("\n");
+  const starts = lineStarts(text);
   for (const m of text.matchAll(/\b([A-Za-z_]\w*)\s*\.\s*setEndpoint\s*\(/gi)) {
     const open = m.index! + m[0].length - 1;
     const args = balancedArgs(text, open);
     if (!args) continue;
     const endpoint = endpointOf(args.args);
     if (endpoint === null) continue;
-    const at = lineOfOffset(starts, m.index!);
-    const owner = methods.filter((s) => s.fn!.line <= at && at <= s.fn!.endLine).sort((a, b) => (a.fn!.endLine - a.fn!.line) - (b.fn!.endLine - b.fn!.line))[0];
-    const scope = owner ? lines.slice(owner.fn!.line - 1, owner.fn!.endLine).join("\n") : text;
+    const at = lineOf(m.index!);
+    const owner = innermost(methods, at);
+    const scope = owner ? text.slice(starts[owner.line - 1], starts[owner.endLine] ?? text.length) : text;
     const verb = new RegExp(String.raw`\b${m[1]!}\s*\.\s*setMethod\s*\(\s*'(\w+)'`, "i").exec(scope)?.[1]?.toUpperCase();
     // A credential named by a variable (`'callout:' + name + path`) is unknown: the endpoint stays as written.
     const named = /^callout:([\w.-]+)(?=[/?]|$)(.*)$/i.exec(endpoint);
