@@ -58,14 +58,14 @@ export function joinMemberEffects(
       return { ...home, parts };
     }
     const sep = from ? manifestFor(from.language as LanguageName)?.classNamesByEvidence?.separator : undefined;
-    let all = byName.get(sep ? leaf(name, sep) : name) ?? byName.get(leaf(name));
-    if (!all) return null;
     // Only the writer's language family: a TypeScript `Error` is never a Go struct of that name.
-    if (from) {
-      const family = familyOf(from.language);
-      all = all.filter((c) => familyOf(analysisByFile.get(c.file)?.language ?? "") === family);
-      if (all.length === 0) return null;
-    }
+    const family = from ? familyOf(from.language) : null;
+    const inFamily = (list: ClassRef[] | undefined): ClassRef[] | undefined => {
+      const kept = family === null ? list : list?.filter((c) => familyOf(analysisByFile.get(c.file)?.language ?? "") === family);
+      return kept && kept.length > 0 ? kept : undefined;
+    };
+    let all = inFamily(byName.get(sep ? leaf(name, sep) : name)) ?? inFamily(byName.get(leaf(name)));
+    if (!all) return null;
     if (sep && from) {
       const simple = leaf(name, sep).toLowerCase();
       const full = evidenceFullName(from, sep, name, line);
