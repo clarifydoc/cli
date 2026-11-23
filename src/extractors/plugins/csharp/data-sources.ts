@@ -1751,18 +1751,41 @@ const REDIS_READ_RE = /^(?:String|Hash|List|Set|SortedSet|Key|Stream|Geo|HyperLo
 /** Contexts ASP.NET and friends hand to a callback: never a `DbContext`. */
 const FRAMEWORK_CONTEXT_TYPE = /(?:Http|Action|Filter|Factory|Binding|Executing|Executed|Exception|Result|View|Page|Controller|Validated|Validation|Token\w*|Message|Endpoint|Authorization|Hub|Execution|Logging|Rewrite|Redirect)Context$/;
 
+/**
+ * Per member: name → declared type of its parameters and locals, first declaration in document order winning.
+ * Keyed by tree, then member id, so nothing survives into the next file's tree.
+ */
+const MEMBER_LOCAL_TYPES = new WeakMap<object, Map<number, Map<string, string | null>>>();
+
+function localTypesOfMember(member: Node): Map<string, string | null> {
+  let perTree = MEMBER_LOCAL_TYPES.get(member.tree);
+  if (!perTree) MEMBER_LOCAL_TYPES.set(member.tree, (perTree = new Map()));
+  let types = perTree.get(member.id);
+  if (types) return types;
+  types = new Map();
+  for (const p of member.descendantsOfType(["parameter", "variable_declaration"])) {
+    if (!p) continue;
+    if (p.type === "parameter") {
+      const name = p.childForFieldName("name")?.text;
+      if (name !== undefined && !types.has(name)) types.set(name, p.childForFieldName("type")?.text ?? null);
+    } else {
+      const type = p.childForFieldName("type")?.text ?? null;
+      for (const d of p.namedChildren) {
+        if (d?.type !== "variable_declarator") continue;
+        const name = (d.childForFieldName("name") ?? d.namedChildren[0])?.text;
+        if (name !== undefined && !types.has(name)) types.set(name, type);
+      }
+    }
+  }
+  perTree.set(member.id, types);
+  return types;
+}
+
 /** The declared type of a parameter or local named `name` in the member around `node`, as written. */
 function parameterType(node: Node, name: string): string | null {
   const member = enclosingMember(node);
   if (!member) return null;
-  for (const p of member.descendantsOfType(["parameter", "variable_declaration"])) {
-    if (!p) continue;
-    if (p.type === "parameter" && p.childForFieldName("name")?.text === name) return p.childForFieldName("type")?.text ?? null;
-    if (p.type === "variable_declaration" && p.namedChildren.some((d) => d?.type === "variable_declarator" && (d.childForFieldName("name") ?? d.namedChildren[0])?.text === name)) {
-      return p.childForFieldName("type")?.text ?? null;
-    }
-  }
-  return null;
+  return localTypesOfMember(member).get(name) ?? null;
 }
 
 /**
