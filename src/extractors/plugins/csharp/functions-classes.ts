@@ -53,7 +53,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
   /** The file being extracted's declaration/assignment nodes (one query per file). */
   private scope: FileScopeNodes | null = null;
   /** The delegate types of the file being extracted, when it says anything about delegates (else null: no value-flow facts). */
-  private fileDelegates: Set<string> | null = null;
+  private fileDelegates: ReadonlySet<string> | null = null;
   /** What the class being extracted declares (for its members' value-flow facts). */
   private valueCtx: ClassValueContext | null = null;
 

@@ -111,10 +111,10 @@ function unwrapTask(type: string | null): string | null {
 }
 
 /** Delegate types per tree: the four readers of one file share one walk, and nothing outlives its tree. */
-const DELEGATE_NAMES = new WeakMap<object, Set<string>>();
+const DELEGATE_NAMES = new WeakMap<object, ReadonlySet<string>>();
 
 /** Delegate types a file declares (read-only: the set is shared by the file's readers). */
-export function fileDelegateNames(root: Node): Set<string> {
+export function fileDelegateNames(root: Node): ReadonlySet<string> {
   const known = DELEGATE_NAMES.get(root.tree);
   if (known) return known;
   const out = new Set<string>();

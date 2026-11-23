@@ -97,7 +97,7 @@ const ASSIGNED_NAMES = new WeakMap<object, Map<number, Set<string>>>();
 /** A name the member assigns anywhere in its body (`id = …`, `id++`): no longer the value it was called with. */
 function reassigned(member: Node, name: string): boolean {
   const body = member.childForFieldName("body");
-  if (!body || !body.text.includes(name)) return false;
+  if (!body) return false;
   return memberMemo(ASSIGNED_NAMES, member, () => {
     const names = new Set<string>();
     const visit = (n: Node): void => {
@@ -270,9 +270,9 @@ function predicate(lambda: Node, add: (field: string, value: Node) => void): voi
 const LOCAL_VALUES = new WeakMap<object, Map<number, Map<string, Node[]>>>();
 
 /** The values `member` gives the local `name`: its declaration's initializer and every assignment. */
-function localValues(member: Node, name: string): Node[] {
+function localValues(member: Node, name: string): readonly Node[] {
   const body = member.childForFieldName("body");
-  if (!body || !body.text.includes(name)) return [];
+  if (!body) return [];
   return memberMemo(LOCAL_VALUES, member, () => {
     const byName = new Map<string, Node[]>();
     const put = (key: string | undefined, value: Node): void => {
