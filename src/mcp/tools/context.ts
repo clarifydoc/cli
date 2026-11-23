@@ -10,6 +10,7 @@ import { contextIndex } from "./decisions.js";
 import type { ToolCallRecord } from "../usage.js";
 import { commitRelation, describeCommitRelation } from "../../core/source-revision.js";
 import { isTestFile } from "../../core/test-file-detector.js";
+import { unreadCodeLine } from "../../core/unread-code.js";
 import { ignoreSuggestionLines, ignoreSuggestions } from "../../core/ignore-suggestions.js";
 
 export interface ToolContext {
@@ -302,6 +303,8 @@ export async function statusReport(loaded: LoadedAnalysis, store: AnalysisStore)
         : `lsp: ${summary.lspStats.serversUsed.join(", ") || "none"} (${summary.lspStats.lspResolvedCount} extra links)`,
     );
   }
+  const unread = unreadCodeLine(summary.unreadCode);
+  if (unread) lines.push(`not read: ${unread}${summary.unreadCode!.slice(0, 2).map((u) => `\n  e.g. ${u.examples[0]}`).join("")}`);
   const toIgnore = ignoreSuggestionLines(ignoreSuggestions(summary.files ?? [], summary.generatedRoots), 3);
   if (toIgnore.length) lines.push("", ...toIgnore);
   lines.push("", `analysis dir: ${store.analysisDir}`);

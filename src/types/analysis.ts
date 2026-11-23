@@ -5164,6 +5164,16 @@ export interface RefactorPressureInfo {
   };
 }
 
+/** One extension of code no plugin reads (`ProjectAnalysis.unreadCode`). */
+export interface UnreadCode {
+  /** Lower-case, with the dot (`.sol`). */
+  extension: string;
+  /** The language's name (`Solidity`). */
+  language: string;
+  files: number;
+  examples: string[];
+}
+
 export type SubProjectKind =
   | "node"
   | "dotnet"
@@ -5556,6 +5566,12 @@ export interface ProjectAnalysis {
   deadCode?: DeadCodeReport;
   /** Aggregate provenance counts across symbolLinks for at-a-glance quality assessment. */
   confidenceCounts?: { extracted: number; inferred: number; ambiguous: number };
+  /**
+   * Code files no plugin reads, counted by extension (`UNCLAIMED_CODE_EXTENSIONS`): files of a language ClarifyDoc has
+   * no plugin for, outside vendored and ignored folders. Names only, no content read. Largest first, at most 10
+   * extensions with 3 example paths each; omitted when there are none.
+   */
+  unreadCode?: UnreadCode[];
   /** Paths the discovery layer silently skipped because their names look like credentials. */
   skippedSensitive?: string[];
   /**

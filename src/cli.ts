@@ -138,6 +138,11 @@ program
         if (result.suggestionCount != null) {
           console.log(`  Suggestions: ${String(result.suggestionCount).padStart(4)}`);
         }
+        {
+          const { unreadCodeLine } = await import("./core/unread-code.js");
+          const unread = unreadCodeLine(result.unreadCode);
+          if (unread) console.log(`  Not read:    ${unread}`);
+        }
         console.log(`  Output: ${outputDir}`);
 
         let failed = 0;

@@ -4,7 +4,7 @@ import { basename, dirname, relative, resolve, sep } from "path";
 import { glob, LinkedFiles } from "./glob.js";
 import type { Language } from "../types/analysis.js";
 import { EXTENSION_TO_LANGUAGE, getLanguageForFile, getLanguageForShebang } from "../parsers/language-map.js";
-import { CODE_LANGUAGES, NAMED_FILE_LANGUAGE, PACKAGE_ROOTS, PATH_SCOPED_EXTENSIONS, READMIT_FILES, SHEBANG_INTERPRETERS, SOURCE_DIRS } from "../extractors/registry.js";
+import { CODE_LANGUAGES, NAMED_FILE_LANGUAGE, PACKAGE_ROOTS, PATH_SCOPED_EXTENSIONS, READMIT_FILES, SHEBANG_INTERPRETERS, SOURCE_DIRS, UNCLAIMED_CODE_EXTENSIONS } from "../extractors/registry.js";
 import { loadIgnorePatterns, isIgnored, ignoredDirectories } from "./clarifydoc-ignore.js";
 
 /**
@@ -148,6 +148,8 @@ export interface DiscoveryResult {
    * root, dangles, or names something other than a regular file.
    */
   skippedSymlinks: string[];
+  /** Files of a known code language no plugin claims, by path (see `core/unread-code.ts`); filtered for ignored folders. */
+  unreadCode: string[];
 }
 
 /**
@@ -227,6 +229,8 @@ export async function discoverFiles(
     // `.bashrc`). A leading-dot name is path-scoped: the pattern is `**/.bashrc`,
     // which beats glob's default `dot: false`, without admitting every hidden file.
     ...[...NAMED_FILE_LANGUAGE.keys()].map((name) => `**/${name}`),
+    // Code no plugin reads: matched by the same walk, only to be counted.
+    ...[...UNCLAIMED_CODE_EXTENSIONS.keys()].map((ext) => `**/*${ext}`),
   ];
   const patterns = options.include?.length ? options.include : sourcePatterns;
   // `build/` is decided per directory (`buildOutput`), not by name: a Java package or a
@@ -355,6 +359,7 @@ export async function discoverFiles(
   const packageTexts = new Map<string, string>();
   let results: DiscoveredFile[] = [];
   const skippedSensitive: string[] = [];
+  const unreadCode: string[] = [];
 
   for (const relativePath of entries) {
     const absolutePath = resolve(root, relativePath);
@@ -367,7 +372,10 @@ export async function discoverFiles(
     }
 
     const language = getLanguageForFile(relativePath) ?? shebangLanguage.get(relativePath) ?? null;
-    if (!language) continue;
+    if (!language) {
+      if (UNCLAIMED_CODE_EXTENSIONS.has(getExtension(relativePath)) && !isIgnored(absolutePath, root, ignorePatterns)) unreadCode.push(relativePath);
+      continue;
+    }
     if (!pathScopedAdmitted(root, relativePath, language, packageTexts)) continue;
 
     if (isSensitive(relativePath, language)) {
@@ -393,7 +401,7 @@ export async function discoverFiles(
     results = results.slice(0, options.maxFiles);
   }
 
-  return { files: results, skippedSensitive, skippedSymlinks };
+  return { files: results, skippedSensitive, skippedSymlinks, unreadCode: unreadCode.sort(byOrdinal) };
 }
 
 /** Where an extension-less script is admitted: the root and the usual script directories at any depth. */

@@ -306,6 +306,8 @@ export interface AnalyzeResult {
   linkCount: number;
   screenCount: number;
   symbolLinkCount: number;
+  /** Code files no plugin reads, by extension (`ProjectAnalysis.unreadCode`). */
+  unreadCode?: UnreadCode[];
   healthGrade?: string;
   patternCount?: number;
   securityIssueCount?: number;
@@ -518,6 +520,7 @@ function resultOf(summary: ProjectAnalysis, outputDir: string): AnalyzeResult {
     linkCount: summary.linkGraph?.length ?? 0,
     screenCount: summary.screens?.length ?? 0,
     symbolLinkCount: summary.symbolLinks?.length ?? 0,
+    ...(summary.unreadCode ? { unreadCode: summary.unreadCode } : {}),
     ...(summary.healthScore?.grade ? { healthGrade: summary.healthScore.grade } : {}),
     patternCount: summary.patterns?.length ?? 0,
     securityIssueCount: summary.securityIssues?.length ?? 0,
@@ -767,6 +770,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   if (externalSpecs.length) progress.detail(`  External specs: ${externalSpecs.map((s) => s.absolutePath).join(", ")}`);
   const skippedSensitive = discovery.skippedSensitive;
   const skippedSymlinks = discovery.skippedSymlinks;
+  const unreadCode = summarizeUnreadCode(discovery.unreadCode);
 
   progress.detail(`Found ${files.length} source files`);
   if (skippedSensitive.length > 0) {
@@ -2685,6 +2689,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
     ...(Object.keys(layerSplit.alternates).length ? { fileLayerAlternates: layerSplit.alternates } : {}),
     ...(layerSplit.conflicts.length ? { fileLayerConflicts: layerSplit.conflicts } : {}),
     confidenceCounts,
+    unreadCode: unreadCode.length > 0 ? unreadCode : undefined,
     skippedSensitive: skippedSensitive.length > 0 ? skippedSensitive : undefined,
     skippedSymlinks: skippedSymlinks.length > 0 ? skippedSymlinks : undefined,
     failedFiles: failedFiles.length > 0 ? failedFiles : undefined,
@@ -2830,6 +2835,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
     linkCount: linkGraph.length,
     screenCount: allScreens.length,
     symbolLinkCount: symbolLinks.length,
+    ...(unreadCode.length > 0 ? { unreadCode } : {}),
     healthGrade: healthScore.grade,
     patternCount: patterns.length,
     securityIssueCount: allSecurityIssues.length,
@@ -4340,7 +4346,8 @@ export function enrichLinkGraphFromComponentGraph(
   }
 }
 
-import type { FunctionInfo, ImportInfo, RouteInfo, SubProject } from "../types/analysis.js";
+import type { FunctionInfo, ImportInfo, RouteInfo, SubProject, UnreadCode } from "../types/analysis.js";
+import { summarizeUnreadCode } from "./unread-code.js";
 import { ignoreSuggestionLines, ignoreSuggestions } from "./ignore-suggestions.js";
 import { anonymousWriteFindings, attachFindingEntries, attachPatternEntries, filterGapFindings, rankPerformanceByReach, safeMethodWriteFindings } from "./finding-entries.js";
 import { attachOsvAdvisories } from "./osv.js";

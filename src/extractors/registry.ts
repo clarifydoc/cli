@@ -16,6 +16,7 @@ import type {
   MigrationFileRule,
 } from "../types/language-plugin.js";
 import type { RegexLangSpec } from "./plugins/shared/regex-base.js";
+import { KNOWN_CODE_EXTENSIONS } from "./shared/known-code-extensions.js";
 import { registerBuiltinTypes } from "./shared/builtin-types.js";
 import { registerNestedTypePaths, registerOwnerPathTypes, registerTransparentTypeWrappers } from "./shared/type-parser.js";
 import { registerCallPatterns } from "./shared/call-patterns.js";
@@ -553,6 +554,14 @@ export function regexSpecFor(language: Language): RegexLangSpec | undefined {
  */
 export const EXTENSION_TO_LANGUAGE: Readonly<Record<string, Language>> = Object.fromEntries(
   claimTable(ALL_MANIFESTS, (m) => m.extensions, "Extension"),
+);
+
+/**
+ * Code extensions (`KNOWN_CODE_EXTENSIONS`, with the language's name) no plugin claims — derived from the claims
+ * above, so a plugin that takes one over removes it. What the "code no plugin reads" warning counts.
+ */
+export const UNCLAIMED_CODE_EXTENSIONS: ReadonlyMap<string, string> = new Map(
+  Object.entries(KNOWN_CODE_EXTENSIONS).filter(([ext]) => !(ext in EXTENSION_TO_LANGUAGE)),
 );
 
 /**
