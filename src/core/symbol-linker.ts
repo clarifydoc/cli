@@ -4762,7 +4762,7 @@ function callableMember(ctx: LinkContext, q: Parameters<CallableMemberQuestion>[
  * The one question for a type name a plugin cannot judge in its file (`invoke.ifFnType`: a Dart `typedef` or a Swift
  * `typealias` of a function type another file declares): is it a function type there? The name means what the
  * nearest scope that declares it says, never a pool across files or sub-projects — the file's own declarations, then
- * the files it imports (through barrels) and, where imports name packages, the packages it imports and its own, then its own sub-project (a module whose files see each other), then the
+ * the files it imports (through barrels) and, where imports name directory packages, the packages it imports, then its own sub-project (a module whose files see each other), then the
  * sub-projects it imports as packages, then those its build declares it references. A scope declaring the name as an alias only is a function type; as a class
  * only, a class; both, or neither anywhere, no answer is claimed (never a function type).
  */
@@ -4827,11 +4827,12 @@ function judgeFunctionType(ctx: LinkContext, file: string, type: string): boolea
   const importedProjects = importedProjectsOf(analysis, ctx);
   // The sub-projects its build declares (a .NET `ProjectReference`): their types are in scope with no import line.
   const references = project === undefined ? undefined : ctx.declaredReferences.get(project);
-  // Where imports name packages (a Swift module, a SwiftPM target), the files of the packages it imports and of its own.
-  const seenByPackage = manifestFor(language as Language)?.importsNamePackages ? packageScopeOf(analysis, ctx) : undefined;
+  // Where imports name packages that are directories (a Swift module, a SwiftPM target), the packages it imports; its own package is the sub-project's business. A namespace spanning projects (C#) is no such scope.
+  const manifest = manifestFor(language as Language);
+  const seenByPackage = manifest?.importsNamePackages && manifest.directoryScope ? packageScopeOf(analysis, ctx) : undefined;
   return decide((f) => f === file)
     ?? decide((f) => imported.has(f))
-    ?? (seenByPackage === undefined ? undefined : decide((f) => seenByPackage.has(f)))
+    ?? (seenByPackage === undefined ? undefined : decide((f) => seenByPackage.has(f) && (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(f)?.packageName !== analysis.packageName))
     ?? (project === undefined ? undefined : decide((f) => ctx.projectOf.get(f) === project))
     ?? decide((f) => importedProjects.has(ctx.projectOf.get(f) ?? ""))
     ?? (references === undefined ? undefined : decide((f) => references.has(ctx.projectOf.get(f) ?? "")))
