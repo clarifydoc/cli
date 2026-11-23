@@ -230,7 +230,7 @@ export async function discoverFiles(
     // which beats glob's default `dot: false`, without admitting every hidden file.
     ...[...NAMED_FILE_LANGUAGE.keys()].map((name) => `**/${name}`),
     // Code no plugin reads: matched by the same walk, only to be counted.
-    ...[...UNCLAIMED_CODE_EXTENSIONS.keys()].map((ext) => `**/*${ext}`),
+    ...(UNCLAIMED_CODE_EXTENSIONS.size > 0 ? [`**/*{${[...UNCLAIMED_CODE_EXTENSIONS.keys()].join(",")}}`] : []),
   ];
   const patterns = options.include?.length ? options.include : sourcePatterns;
   // `build/` is decided per directory (`buildOutput`), not by name: a Java package or a

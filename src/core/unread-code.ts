@@ -9,7 +9,7 @@ const MAX_EXAMPLES = 3;
 /**
  * Code files no plugin reads, counted by extension from their paths alone (discovery already matched them by name;
  * nothing is opened). Files under a vendored root (`third_party/`, `vendored/`…) and minified or generated names
- * are left out. Largest first, capped at 10 extensions with 3 example paths each; empty when there are none.
+ * are left out. `paths` come sorted (discovery sorts them), so each extension's examples are its first three. Largest first, capped at 10 extensions with 3 example paths each; empty when there are none.
  */
 export function summarizeUnreadCode(paths: readonly string[]): UnreadCode[] {
   const posix = paths.map((p) => p.replace(/\\/g, "/"));
@@ -27,7 +27,7 @@ export function summarizeUnreadCode(paths: readonly string[]): UnreadCode[] {
     byExtension.set(ext, list);
   }
   return [...byExtension]
-    .map(([extension, files]) => ({ extension, language: UNCLAIMED_CODE_EXTENSIONS.get(extension)!, files: files.length, examples: files.sort(byOrdinal).slice(0, MAX_EXAMPLES) }))
+    .map(([extension, files]) => ({ extension, language: UNCLAIMED_CODE_EXTENSIONS.get(extension)!, files: files.length, examples: files.slice(0, MAX_EXAMPLES) }))
     .sort((a, b) => b.files - a.files || byOrdinal(a.extension, b.extension))
     .slice(0, MAX_EXTENSIONS);
 }
