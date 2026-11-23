@@ -10,6 +10,7 @@ import type { FileAnalysis, ProjectAnalysis } from "../../../types/analysis.js";
 import { elementType, isSObjectType, queryObjects } from "./soql.js";
 import { restPath } from "./routes.js";
 import { apexClassSource } from "./preprocess.js";
+import { apexImportTarget } from "../javascript/apex-imports.js";
 
 /** One file through the plugin as the analyzer runs it (`.cls` goes through the VB plugin's hand-over). */
 async function read(src: string, path = "classes/ClubService.cls"): Promise<FileAnalysis> {
@@ -165,6 +166,16 @@ describe("Apex structure", () => {
   });
 });
 
+describe("LWC Apex import targets", () => {
+  it("names the class and the method after the last two segments", () => {
+    expect(apexImportTarget("@salesforce/apex/ClubController.getClubs")).toEqual({ language: "apex", type: "ClubController", member: "getClubs" });
+    expect(apexImportTarget("@salesforce/apex/league.ClubController.getClubs")).toMatchObject({ type: "ClubController", member: "getClubs" });
+    expect(apexImportTarget("@salesforce/apex/ClubController")).toBeNull();
+    expect(apexImportTarget("./ClubController.getClubs")).toBeNull();
+    expect(apexImportTarget("@salesforce/schema/Club__c")).toBeNull();
+  });
+});
+
 describe("sample-salesforce — Apex to SObject", () => {
   let out: string;
   let summary: ProjectAnalysis;
@@ -178,7 +189,7 @@ describe("sample-salesforce — Apex to SObject", () => {
   const links = () => summary.symbolLinks!.map((l) => `${l.sourceSymbol} -> ${l.targetSymbol}`);
 
   it("serves the REST resource under the platform base, one route per verb", () => {
-    expect(summary.routeMap!.map((r) => `${r.httpMethod} ${r.path} ${r.handler}`).sort()).toEqual([
+    expect(summary.routeMap!.filter((r) => r.httpMethod).map((r) => `${r.httpMethod} ${r.path} ${r.handler}`).sort()).toEqual([
       "DELETE /services/apexrest/clubs/{wildcard} ClubResource.deleteClub",
       "GET /services/apexrest/clubs/{wildcard} ClubResource.getClub",
       "POST /services/apexrest/clubs/{wildcard} ClubResource.createClub",
@@ -231,5 +242,33 @@ describe("sample-salesforce — Apex to SObject", () => {
     expect(edges).toHaveLength(1);
     expect([edges[0]!.source, edges[0]!.target].map((id) => String(id).split("::").pop())).toEqual(["Club__c", "Player__c"]);
     expect(edges[0]).toMatchObject({ sourceCardinality: "one", targetCardinality: "many", fields: ["Club__c"], orm: "salesforce", confidence: "EXTRACTED" });
+  });
+
+  it("joins a Lightning Web Component to the Apex methods it imports, imperative or wired", () => {
+    const l = links();
+    for (const want of [
+      "ClubList.refresh -> ClubController.getClubs",
+      "ClubList.handlePromote -> ClubController.promoteClub",
+      // The wired adapter runs when the component connects: the file's own `<setup>`.
+      "<setup> -> ClubController.getClubs",
+    ]) expect(l).toContain(want);
+    // The namesake method of the other class is no target.
+    expect(l.some((x) => x.endsWith("-> ClubCache.getClubs"))).toBe(false);
+  });
+
+  it("keeps a namesake imported from a local module on that module", () => {
+    const board = summary.symbolLinks!.filter((x) => x.sourceFile.endsWith("clubBoard/clubBoard.js"));
+    expect(board.map((x) => `${x.sourceSymbol} -> ${x.targetFile.split("/").pop()} ${x.targetSymbol}`)).toEqual(["ClubBoard.load -> clubSource.js getClubs", "(reference) -> clubSource.js getClubs"]);
+  });
+
+  it("carries the screen to the table: the template's handler, the Apex method, its SOQL and DML", () => {
+    const flows = summary.dataFlows!.filter((f) => f.entryKind === "screen" && f.entryFile.endsWith("clubList/clubList.html"));
+    const reaches = (effect: string, resource: string) => flows.some((f) => f.effect === effect && f.resource === resource);
+    expect(reaches("db-read", "Club__c")).toBe(true);
+    expect(reaches("db-write", "Club__c")).toBe(true);
+    const viaMethod = flows.find((f) => f.effect === "db-write" && f.resource === "Club__c")!;
+    expect(viaMethod.via!.map((v) => v.symbol)).toEqual(["<component>", "ClubList.handlePromote", "ClubController.promoteClub", "ClubService.promote"]);
+    // The screen with the local namesake reaches no Apex class.
+    expect(summary.dataFlows!.some((f) => f.entryFile.endsWith("clubBoard/clubBoard.html"))).toBe(false);
   });
 });

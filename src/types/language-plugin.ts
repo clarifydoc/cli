@@ -1424,6 +1424,14 @@ export interface LanguagePluginManifest {
    */
   importedFile?(importingFile: string, source: string, packages: readonly PackageRoot[]): string | null | undefined;
   /**
+   * An import source that names a member of a type another language declares, in that language's own namespace
+   * and not as a file (an LWC `@salesforce/apex/ClubController.getClubs` → the Apex method
+   * `ClubController.getClubs`): the language the type is declared in, the type and the member. A call of the name
+   * the import binds links to that member where the project declares it in a file of that language, whatever the
+   * importer's family — the one place a link crosses families. Leaf code: it reads only `source`.
+   */
+  foreignImportTarget?(source: string): { language: Language; type: string; member: string } | null;
+  /**
    * The files a file reaches without importing them, for a language whose
    * loader finds a file by the constant it defines (Rails' Zeitwerk:
    * `Club::MatchReport` → `club/match_report.rb` under an autoload root): the

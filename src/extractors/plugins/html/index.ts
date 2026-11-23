@@ -244,10 +244,10 @@ const ELEMENT_FOR_TAG: Record<string, InteractiveElementInfo["element"]> = {
 const TAG_RE = /<\/?([a-zA-Z][\w-]*)\b([^>]*)/g;
 /** Tags whose attributes are read past a line break: where a request is stated. */
 const READS_WRAPPED = new Set(["form", "button", "input", "a"]);
-/** Inline event handlers: `onclick="foo()"`, `onsubmit='...'`. The `\b` keeps
+/** Inline event handlers: `onclick="foo()"`, `onsubmit='...'`, a Lightning Web Component's `onclick={handleSave}`. The `\b` keeps
  *  attributes merely CONTAINING "on" out — without it, `content="notranslate"`
  *  matched as event "ontent" / handler "notranslate". */
-const HANDLER_RE = /\bon([a-z]+)\s*=\s*"([^"]*)"|\bon([a-z]+)\s*=\s*'([^']*)'/gi;
+const HANDLER_RE = /\bon([a-z]+)\s*=\s*"([^"]*)"|\bon([a-z]+)\s*=\s*'([^']*)'|\bon([a-z]+)\s*=\s*\{\s*([A-Za-z_$][\w$]*)\s*\}/gi;
 /** Alpine.js / petite-vue event directives: `@click="changeRange"`, `x-on:submit.prevent="save()"`.
  *  Only DOM event names: a template dialect's own `@word=` attribute (Razor `@bind=`) is no handler. */
 const DIRECTIVE_HANDLER_RE =
@@ -256,7 +256,7 @@ const DIRECTIVE_HANDLER_RE =
 function inlineHandler(attrs: string): { event: string; handler: string | null } | null {
   const on = HANDLER_RE.exec(attrs);
   HANDLER_RE.lastIndex = 0;
-  if (on) return { event: "on" + (on[1] ?? on[3])!.toLowerCase(), handler: cleanHandler((on[2] ?? on[4])!) };
+  if (on) return { event: "on" + (on[1] ?? on[3] ?? on[5])!.toLowerCase(), handler: cleanHandler((on[2] ?? on[4] ?? on[6])!) };
   const directive = DIRECTIVE_HANDLER_RE.exec(attrs);
   DIRECTIVE_HANDLER_RE.lastIndex = 0;
   return directive ? { event: "on" + directive[1]!.toLowerCase(), handler: cleanHandler((directive[2] ?? directive[3])!) } : null;

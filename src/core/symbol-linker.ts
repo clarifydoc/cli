@@ -5405,6 +5405,31 @@ function resolveCallUnscoped(
   return link && call.alternative && link.confidence !== "AMBIGUOUS" ? { ...link, confidence: "AMBIGUOUS" } : link;
 }
 
+/**
+ * A call of a name bound by an import that names a member of a type another language declares
+ * (`foreignImportTarget`): the member, where a file of that language in the project declares the type. Names of
+ * that language compare as it does (`caseInsensitiveNames`); two files declaring the type leave the call unlinked.
+ */
+function foreignImportMember(ctx: LinkContext, analysis: FileAnalysis, source: string, mkLink: MkLink): SymbolLink | null {
+  const target = pluginFor(analysis.language)?.foreignImportTarget?.(source);
+  if (!target) return null;
+  const fold = pluginFor(target.language)?.caseInsensitiveNames === true;
+  const same = (a: string, b: string) => (fold ? a.toLowerCase() === b.toLowerCase() : a === b);
+  const files: Array<{ file: string; type: string }> = [];
+  for (const [name, declaring] of ctx.classNameIndex) {
+    if (!same(name, target.type)) continue;
+    for (const file of declaring) if (ctx.languageOf.get(file) === target.language) files.push({ file, type: name });
+  }
+  if (files.length !== 1) return null;
+  const { file, type } = files[0]!;
+  const defs = ctx.symbolIndex.get(file);
+  if (!defs) return null;
+  for (const [symbol, def] of defs) {
+    if (symbol.startsWith(`${type}.`) && same(symbol.slice(type.length + 1), target.member)) return mkLink(file, symbol, def.line, "EXTRACTED", "import-file");
+  }
+  return null;
+}
+
 function resolveCallToDefinitionBody(
   sourceFile: string,
   sourceSymbol: string,
@@ -5541,6 +5566,10 @@ function resolveCallToDefinitionBody(
   }
 
   if (call.kind === "cross-file" && call.target) {
+    // An import naming a member of another language's type (an LWC's Apex method): that member, never a file.
+    // A member of the imported function value (`getClubs.emit(…)`, a test double's `mockResolvedValue`) is no call of it.
+    const foreign = isQualified ? null : foreignImportMember(ctx, analysis, call.target, mkLink);
+    if (foreign) return foreign;
     // Resolve import source to actual file path — by the language's own module rules when it has them (`crate::util`,
     // and `importedFile`: a Node built-in is never the project's `assert.js`).
     const ownResolver = pluginFor(analysis.language)?.resolveImport;

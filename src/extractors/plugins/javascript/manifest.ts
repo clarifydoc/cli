@@ -9,6 +9,7 @@ import { javascriptFrameworkRules } from "./frameworks.js";
 import { npmPackageManager } from "./package-manifests.js";
 import { jsServiceConfig } from "./service-config.js";
 import { jsImportedFile } from "./node-builtins.js";
+import { apexImportTarget } from "./apex-imports.js";
 import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 
 /**
@@ -150,6 +151,7 @@ export const typescriptManifest: LanguagePluginManifest = {
   family: "script",
   // `import assert from "assert"` is Node's, never a project file of that name.
   importedFile: jsImportedFile,
+  foreignImportTarget: apexImportTarget,
   packageManagers: [npmPackageManager],
   packageEcosystems: ["npm"],
   // `process.env.X` / `import.meta.env.X` bases; `.env` files are never read.
@@ -213,6 +215,7 @@ export const javascriptManifest: LanguagePluginManifest = {
   family: "script",
   // `import assert from "assert"` is Node's, never a project file of that name.
   importedFile: jsImportedFile,
+  foreignImportTarget: apexImportTarget,
   // Any parameter may be left out (it is `undefined`) and extra arguments are ignored.
   callArity: { missingAllowed: true, extraAllowed: true },
   // A package's `bin/` scripts, when its package.json declares `bin` — or, with none, when source

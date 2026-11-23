@@ -66,6 +66,8 @@ import { extractModuleValues } from "./module-values.js";
 import { moduleValueFlowOf } from "./value-flow.js";
 import { vuePreprocess, withMixinScope } from "./vue-hooks.js";
 import { sveltePreprocess } from "./svelte-hooks.js";
+import { LwcTemplateResolver } from "./lwc-template.js";
+import { withWiredAdapters } from "./apex-imports.js";
 import { astroPreprocess } from "./astro-hooks.js";
 import { markdownPagesPreprocess } from "./markdown-pages.js";
 import { bundlePreprocess } from "./bundles.js";
@@ -326,7 +328,7 @@ const importsExports = new JavaScriptImportExportExtractor();
 const dataSources = new JavaScriptDataSourceExtractor();
 const dataMutations = new JavaScriptMutationExtractor();
 const entities = new JavaScriptEntityExtractor();
-const dispatchResolvers = ([new JsComponentEmitResolver(), new VuexDispatchResolver(), new VuexStateWatchResolver(), new JsPropCallbackResolver(), new JsComponentRenderResolver(), new JsComponentRenderResolver(true), new JsProvideInjectResolver(), new JsPropFlowResolver(), new JsStoreWatchResolver(), new JsContextTypeResolver(), new JsParamTypeResolver(), new JsSlotScopeResolver(), new JsLoopItemCallbackResolver(), new JsEventBusResolver(), new JsSubjectResolver(), new JsTemplateRefResolver(), new ScopedHandlerResolver(), new DomBindingResolver(), new JobEventResolver()]).map(seeingNamespaceTags);
+const dispatchResolvers = ([new JsComponentEmitResolver(), new VuexDispatchResolver(), new VuexStateWatchResolver(), new JsPropCallbackResolver(), new JsComponentRenderResolver(), new JsComponentRenderResolver(true), new JsProvideInjectResolver(), new JsPropFlowResolver(), new JsStoreWatchResolver(), new JsContextTypeResolver(), new JsParamTypeResolver(), new JsSlotScopeResolver(), new JsLoopItemCallbackResolver(), new JsEventBusResolver(), new JsSubjectResolver(), new JsTemplateRefResolver(), new ScopedHandlerResolver(), new DomBindingResolver(), new JobEventResolver(), new LwcTemplateResolver()]).map(seeingNamespaceTags);
 const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, convexBuilderResolver, cdkRouteResolver, nestInheritedGuards, nestGlobalGuards, nestGlobalInterceptors, koaAppMiddleware, nextMiddlewareGuards, renderModeResolver, astroMiddlewareGuards, screenTableResolver, pathHelperResolver];
 
 export const typescriptMeta: LanguagePluginMeta = {
@@ -345,7 +347,7 @@ export const typescriptMeta: LanguagePluginMeta = {
   // <script> block (dispatched by extension).
   // A call's import-type argument the grammar misreads is rewritten over whichever text is parsed.
   preprocess: (raw, path) =>
-    withMixinScope(withSubjectTriggers(withImportTypeArgs(markdownPagesPreprocess(raw, path) ?? vuePreprocess(raw, path) ?? sveltePreprocess(raw, path) ?? astroPreprocess(raw, path) ?? templateEscapePreprocess(raw, "typescript"), raw, "typescript"), raw, "typescript"), raw, "typescript", path),
+    withMixinScope(withWiredAdapters(withSubjectTriggers(withImportTypeArgs(markdownPagesPreprocess(raw, path) ?? vuePreprocess(raw, path) ?? sveltePreprocess(raw, path) ?? astroPreprocess(raw, path) ?? templateEscapePreprocess(raw, "typescript"), raw, "typescript"), raw, "typescript"), raw, "typescript"), raw, "typescript", path),
   builtinTypes: TS_BUILTINS,
   complexity: COMPLEXITY,
   controlFlow: CONTROL_FLOW,
@@ -377,7 +379,7 @@ export const javascriptMeta: LanguagePluginMeta = {
   autoImports: nuxtAutoImports,
   // A committed build (`public/js/app.js` from webpack) is skipped: its
   // modules are the project's own, bundled, and their facts come from the source.
-  preprocess: (raw, path) => withMixinScope(bundlePreprocess(raw) ?? templateEscapePreprocess(raw, "javascript"), raw, "javascript", path),
+  preprocess: (raw, path) => withMixinScope(withWiredAdapters(bundlePreprocess(raw) ?? templateEscapePreprocess(raw, "javascript"), raw, "javascript"), raw, "javascript", path),
   builtinTypes: TS_BUILTINS,
   complexity: COMPLEXITY,
   controlFlow: CONTROL_FLOW,
