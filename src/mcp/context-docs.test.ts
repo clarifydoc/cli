@@ -120,3 +120,16 @@ describe("clarifydoc_context_docs", () => {
     expect((await call("clarifydoc_context_docs", { function: "getAllPlayers" })).isError).toBe(true);
   });
 });
+
+describe("decisionsAbout (structured)", () => {
+  it("returns the documents naming a file with their staleness, and its markers", async () => {
+    const { decisionsAbout } = await import("./decisions-api.js");
+    const players = await decisionsAbout(proj(), join(dir, "out"), "services/playerService.ts");
+    expect(players?.docs.map((d) => d.path)).toEqual(["docs/adr/0001-player-store.md"]);
+    expect(players?.docs[0]!.staleness?.changedSince.map((c) => c.file)).toEqual(["services/playerService.ts"]);
+    const auth = await decisionsAbout(proj(), join(dir, "out"), "services/authService.ts");
+    expect(auth?.docs[0]!.status).toBe("Superseded by 0003");
+    expect(auth?.markers.map((m) => m.tag)).toEqual(["WHY"]);
+    expect(await decisionsAbout(proj(), join(dir, "nowhere"), "x.ts")).toBeUndefined();
+  });
+});

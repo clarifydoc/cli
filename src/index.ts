@@ -67,6 +67,8 @@ export { AGENT_GUIDANCE } from "./mcp/guidance.js";
 // The MCP server without its stdio transport — for a host that carries the
 // same JSON-RPC messages over another one (an HTTP endpoint).
 export { buildMcpServer, type McpServerConfig, type BuiltMcpServer } from "./mcp/server.js";
+// The documents naming a file, how stale they are, and the decision markers in it, as data.
+export { decisionsAbout, type FileDecisions } from "./mcp/decisions-api.js";
 export { WORKFLOW_PROMPTS } from "./mcp/prompts.js";
 export type { McpPrompt } from "./mcp/protocol.js";
 export {

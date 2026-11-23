@@ -59,12 +59,19 @@ export async function markersIn(root: string, file: string): Promise<DecisionMar
   return findDecisionMarkers(await readFile(join(root, file), "utf8").catch(() => ""), file);
 }
 
+/** The documents naming `file` (with their staleness) and the decision markers in its source — the one rule the MCP rows and the structured API share. */
+export function decisionsOfFile(index: ContextIndex, file: string, source: string): { docs: ContextDoc[]; markers: DecisionMarker[] } {
+  return {
+    docs: index.docs.filter((d) => index.staleness.get(d.path)?.governs.includes(file)),
+    markers: findDecisionMarkers(source, file),
+  };
+}
+
 /** The documents naming `file` and the markers in it, as rows for `clarifydoc_file`; [] when none. */
 export async function decisionsAbout(store: AnalysisStore, loaded: LoadedAnalysis, file: string, limit: number): Promise<string[]> {
   const index = await contextIndex(store, loaded);
-  const docs = index.docs.filter((d) => index.staleness.get(d.path)?.governs.includes(file));
   const source = await readFile(join(store.projectRoot, file), "utf8").catch(() => "");
-  const markers = findDecisionMarkers(source, file);
+  const { docs, markers } = decisionsOfFile(index, file, source);
   // The reasons comments and commit bodies state: not decisions, and said so, beside the records.
   const { comments } = reasonComments(source, file, await store.fileAnalysis(file).catch(() => null), undefined);
   const commits = await commitReasons(store.projectRoot, file, {}).catch(() => null);
@@ -141,9 +148,8 @@ export function contextDocsTool(ctx: ToolContext): McpTool {
 
       if (fileArg) {
         const file = mustResolveFile(loaded, fileArg);
-        const docs = index.docs.filter((d) => index.staleness.get(d.path)?.governs.includes(file));
         const source = await readFile(join(root, file), "utf8").catch(() => "");
-        const markers = findDecisionMarkers(source, file);
+        const { docs, markers } = decisionsOfFile(index, file, source);
         const analysis = await ctx.store.fileAnalysis(file);
         const fn = functionArg ? mustResolveFunction(analysis, file, functionArg) : undefined;
         const terms = query?.split(/\s+/).filter(Boolean) ?? [];
