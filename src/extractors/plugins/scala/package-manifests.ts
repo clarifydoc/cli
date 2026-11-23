@@ -1,5 +1,6 @@
 import type { PackageScope } from "../../../types/analysis.js";
 import type { DeclaredPackage, PackageManagerSpec } from "../../../types/language-plugin.js";
+import { sbtProjects } from "./sbt-projects.js";
 import { declared } from "../shared/declared-package.js";
 
 /** sbt: `"group" %% "artifact" % "version" [% Test]` — Maven coordinates. */
@@ -17,5 +18,5 @@ function parseSbt(text: string, declaredIn: string): DeclaredPackage[] {
 /** sbt resolves from Maven repositories: its packages join Java's `maven` ecosystem. */
 export const sbtPackageManager: PackageManagerSpec = {
   ecosystem: "maven",
-  manifests: [{ files: ["build.sbt"], parse: (text, file) => parseSbt(text, file.declaredIn) }],
+  manifests: [{ files: ["build.sbt"], parse: (text, file) => parseSbt(text, file.declaredIn), declaredProjects: sbtProjects }],
 };

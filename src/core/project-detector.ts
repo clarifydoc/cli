@@ -43,6 +43,7 @@ const MARKER_GLOBS: { pattern: string; kind: SubProjectKind }[] = [
   { pattern: "**/Package.swift", kind: "swift" },
   { pattern: "**/pubspec.yaml", kind: "dart" },
   { pattern: "**/mix.exs", kind: "elixir" },
+  { pattern: "**/build.sbt", kind: "sbt" },
   // Only a CMakeLists.txt containing a project() call marks a project root —
   // most CMakeLists are per-directory source lists (add_subdirectory targets)
   // and treating them as markers would fragment the repo under innermost-wins.
@@ -83,6 +84,7 @@ const KIND_PRIORITY: SubProjectKind[] = [
   "dotnet",
   "dart",
   "elixir",
+  "sbt",
   "java-maven",
   "java-gradle",
   "rust",
@@ -168,6 +170,8 @@ export async function detectSubProjects(
   }
 
   subProjects.sort((a, b) => byOrdinal(a.root, b.root));
+  const declaredEdges = await addDeclaredProjects(root, subProjects, (dir) => ignorePatterns.length > 0 && isIgnored(join(root, dir), root, ignorePatterns));
+  subProjects.sort((a, b) => byOrdinal(a.root, b.root));
   await Promise.all(subProjects.map(async (p) => {
     const { names, local } = await declaredPackages(root, p);
     const [first, ...rest] = names;
@@ -181,9 +185,62 @@ export async function detectSubProjects(
   }));
   await Promise.all(subProjects.map(async (p) => {
     const references = await declaredReferences(root, p, subProjects);
-    if (references.length > 0) p.references = references;
+    const merged = new Map(references.map((r) => [r.project, r]));
+    for (const r of declaredEdges.get(p.id) ?? []) if (r.project !== p.id && !merged.has(r.project)) merged.set(r.project, r);
+    if (merged.size > 0) p.references = [...merged.values()].sort((a, b) => byOrdinal(a.project, b.project));
   }));
   return subProjects;
+}
+
+/**
+ * Sub-projects a build file declares by directory (`PackageManifestSpec.declaredProjects`: an sbt build's
+ * `project in file("api")`): each existing directory becomes a sub-project of the declaring project's kind unless
+ * one is rooted there, and the references the build states between them (`dependsOn`, `aggregate`, resolved by
+ * declared name) are returned per sub-project id, each citing the build file. Mutates `subProjects`.
+ */
+async function addDeclaredProjects(
+  root: string,
+  subProjects: SubProject[],
+  ignored: (dir: string) => boolean,
+): Promise<Map<string, Array<{ project: string; file: string }>>> {
+  const edges = new Map<string, Array<{ project: string; file: string }>>();
+  const specs = PACKAGE_MANAGERS.flatMap((m) => m.manifests).filter((spec) => spec.declaredProjects && !spec.glob);
+  if (specs.length === 0) return edges;
+  for (const host of [...subProjects]) {
+    const base = host.root.replace(/\\/g, "/");
+    for (const spec of specs) {
+      for (const file of spec.files) {
+        const text = await readFile(join(root, host.root, file), "utf-8").catch(() => null);
+        if (text === null) continue;
+        const declared = await spec.declaredProjects!(text, selfNameContext(root, host.root, file));
+        const idByName = new Map<string, string>();
+        for (const d of declared) {
+          const dir = posix.normalize(posix.join(base, d.path)).replace(/\/+$/, "");
+          if (dir === ".." || dir.startsWith("../") || posix.isAbsolute(dir)) continue;
+          const rel = dir === "." ? "" : dir;
+          let project = subProjects.find((p) => p.root.replace(/\\/g, "/") === rel);
+          if (!project) {
+            if (ignored(rel) || !(await readdir(join(root, rel)).then(() => true, () => false))) continue;
+            project = { id: slugify(rel), name: rel.split("/").pop()!, root: rel, kind: host.kind, markers: [] };
+            subProjects.push(project);
+          }
+          idByName.set(d.name, project.id);
+        }
+        for (const d of declared) {
+          const from = idByName.get(d.name);
+          if (!from) continue;
+          for (const ref of d.references) {
+            const to = idByName.get(ref);
+            if (!to || to === from) continue;
+            const list = edges.get(from) ?? [];
+            if (!list.some((e) => e.project === to)) list.push({ project: to, file: posix.join(base, file) });
+            edges.set(from, list);
+          }
+        }
+      }
+    }
+  }
+  return edges;
 }
 
 /**

@@ -5180,6 +5180,7 @@ export type SubProjectKind =
   | "swift"
   | "dart"
   | "elixir"
+  | "sbt"
   | "root";
 
 export interface SubProject {

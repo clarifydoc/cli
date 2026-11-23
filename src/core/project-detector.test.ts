@@ -131,3 +131,44 @@ describe("detectSubProjects — npm workspace protocol references", () => {
     }
   });
 });
+
+describe("detectSubProjects — an sbt build's declared projects", () => {
+  it("makes each `project in file(...)` a sub-project and reads dependsOn / aggregate by val name, never a decoy", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cd-sbt-"));
+    try {
+      const files: Record<string, string> = {
+        "build.sbt": [
+          'val commonSettings = Seq(name := "league")',
+          "// lazy val ghost = (project in file(\"ghost\")).dependsOn(core)",
+          'lazy val core = (project in file("core"))',
+          '  .settings(commonSettings)',
+          'lazy val `club-api` = project',
+          '  .dependsOn(core % "compile;test->test", `player-api`.jvm)',
+          'lazy val `player-api` = projectMatrix.in(file("players")).dependsOn(core)',
+          'lazy val missing = (project in file("not-there")).dependsOn(core)',
+          'lazy val root = (project in file(".")).aggregate(core, `club-api`)',
+        ].join("\n"),
+        "core/src/Match.scala": "object Match",
+        "club-api/src/Club.scala": "object Club",
+        "players/src/Player.scala": "object Player",
+        "docs/readme.md": "# Docs",
+      };
+      for (const [path, text] of Object.entries(files)) {
+        await mkdir(join(root, path, ".."), { recursive: true });
+        await writeFile(join(root, path), text);
+      }
+      const projects = await detectSubProjects(root);
+      expect(projects.map((p) => p.root).sort()).toEqual(["", "club-api", "core", "players"]);
+      const refs = Object.fromEntries(projects.map((p) => [p.root || "(root)", (p.references ?? []).map((r) => r.project).sort()]));
+      expect(refs).toEqual({
+        "(root)": ["club-api", "core"],
+        "club-api": ["core", "players"],
+        core: [],
+        players: ["core"],
+      });
+      expect(projects.find((p) => p.root === "club-api")!.references![0]!.file).toBe("build.sbt");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

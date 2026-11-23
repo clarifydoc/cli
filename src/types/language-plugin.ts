@@ -118,6 +118,22 @@ export interface PackageManifestSpec {
    * same-named definitions apart.
    */
   projectReferences?(text: string, file: SelfNameContext): ProjectReference[];
+  /**
+   * The sub-projects the manifest itself declares by directory (an sbt build's
+   * `lazy val api = (project in file("api"))`), which have no manifest of their
+   * own: core makes each a sub-project, and its `references` name the others
+   * by their `name`. Read at every directory holding one of `files`.
+   */
+  declaredProjects?(text: string, file: SelfNameContext): DeclaredProject[];
+}
+
+/** One sub-project a build file declares (`PackageManifestSpec.declaredProjects`). */
+export interface DeclaredProject {
+  name: string;
+  /** Directory, posix, relative to the build file's; `.` for the build's own. */
+  path: string;
+  /** Names of declared projects it depends on or aggregates. */
+  references: string[];
 }
 
 /** One declared sibling project (`PackageManifestSpec.projectReferences`). */
