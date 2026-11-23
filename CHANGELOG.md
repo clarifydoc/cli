@@ -3,6 +3,70 @@
 User-facing changes to the `clarifydoc` CLI, its MCP server and its library exports. Earlier versions are
 recorded in the git history only.
 
+## 1.2.0 — 2026-11-23
+
+Extractor 1.709.0 → 1.723.0: every cached analysis is read again once.
+
+### Added
+
+- **Writes and throws.** TS/JS, Java and Kotlin functions record the fields they assign and the exception types they
+  throw, resolved to project classes (`fieldWrites`, `thrownTypes`); `clarifydoc_trace direction=writers` answers who
+  assigns a field or throws a class, and `clarifydoc_explain` has a "Writes and throws" part.
+- **Taint for Go, Ruby and Rust.** Request input from Gin, Echo, Fiber and `net/http` handlers (including bodies bound
+  into a struct), Rails controllers and Sinatra routes (heredoc interpolation too), and axum, actix-web and rocket
+  extractors is followed to SQL, command, path, URL and redirect sinks.
+- **Vulnerable functions reached.** With `--osv`, an advisory that names its vulnerable functions (Go) says whether a
+  route or entry point reaches them, with the shortest call path.
+- **Render mode.** Pages state `ssr`, `ssg`, `isr` or `csr` where Next.js, SvelteKit or Nuxt settings say so; shown by
+  `clarifydoc_screens`.
+- **Config files the code opens.** A file opened by a literal path (Java/Kotlin `File`/`Path`, Python `open`/`Path`,
+  JS/TS `fs` and `path.join`) is joined to the analysed file (`configFiles`); Spring `Environment.getProperty` joins a
+  config key like `@Value`.
+- **Jupyter notebooks** (`.ipynb`): a Python kernel's code cells are read as one Python file, and a notebook is an
+  entry point.
+- **Spring AOP advice** reaches every project method its pointcut matches.
+- **Deployment:** well-known Terraform registry modules (SQS, SNS, DynamoDB, RDS, Lambda) build nodes and edges; a
+  broker or cache URL in an environment value joins the service it names, judged by that service's kind and ports.
+- **Test commands** for Scala (`sbt testOnly`), Perl (`prove`), C/C++ (`ctest`), Go testify suites, Elixir umbrella
+  apps and SwiftPM test targets; a spec describing a type the file declares counts as testing it.
+- **Ignore suggestions:** `analyze --verbose` and `clarifydoc_status` suggest `.clarifydocignore` entries for
+  generated and vendored roots that still hold analysed files.
+- **Columns on API calls.** Every language's api-call rows carry the column of the call, so editors can underline the
+  call itself.
+- **`addedFiles` in `impact`** — the files a change adds, apart from the files it could not judge.
+- **MCP registry entry:** `server.json` ships in the package.
+- **Export `decisionsAbout`:** the documents naming a file, their staleness and its decision markers, as data.
+
+### Changed
+
+- **Impact and blast radius charge the files that name what changed**, not every importer: an edit of a module-level
+  name charges only its readers (Python, JS/TS), a decorator added above a function edits that function, a deleted
+  file is narrowed by its removed members, a re-exporting file is charged when the change takes a name away, and the
+  importer count stays as context. Pure deletions narrow too.
+- **More calls link by type:** destructured tuples (TS, C#, Kotlin, Swift), each arm of a conditional initializer
+  (JS/TS, Java, Kotlin, C#, PHP, Python, Ruby), union and intersection types, values taken out of `Optional`,
+  `Lazy`, `IOptions`, lists and maps, types written through their owner (`Right.Builder`), generated AutoValue,
+  Immutables and Lombok classes, Python locals bound to a module, Dart setters and loop variables.
+- **Value flow follows named and keyword arguments** (Python, C#, Kotlin, Swift, Ruby, PHP), Ruby and PHP closures,
+  C# events through derived types, Go package variables, function-type aliases declared in other files (Dart, Swift,
+  C#, C), and C/C++ structs of function pointers.
+- **C and C++ macros:** a call to a function-like `#define` makes the calls its body makes, marked "through the
+  macro" in Traces; Objective-C reads its `#define`s too.
+- **Routes:** a path a router writes below its mount links where one service states it; FastAPI router prefixes from
+  a settings class; chained `Router().use(…)` mounts; contract rows join their code twin by method, path and API
+  version; an inline-handler route is a definition every symbol tool reads.
+- **Faster C++ and Rust reading:** more parser decisions settled from tokens; test-framework macros no longer make a
+  C++ file fall back. Docker is probed for LSP while linking, and not at all when no language has a server.
+- **Performance findings** are listed widest reach first; C# `.Result` / `.Wait()` and Swift blocking calls inside
+  async code are flagged by the receiver's declared type.
+
+### Fixed
+
+- A forward declaration no longer hides a C/C++ struct's body; a namesake C++ class outside the include closure no
+  longer takes a caller's calls.
+- An include written with its extension resolves to the file of exactly that name.
+- One malformed LSP record is skipped instead of dropping the whole merge.
+
 ## 1.1.1 — 2026-11-19
 
 Extractor 1.708.0 → 1.709.0: every cached analysis is read again once.
