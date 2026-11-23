@@ -10,7 +10,7 @@ import { join, dirname } from "node:path";
 import { analyzeFile } from "../../../core/file-analyzer.js";
 import { buildSymbolLinks } from "../../../core/symbol-linker.js";
 import type { FileAnalysis, Language } from "../../../types/analysis.js";
-import { collectionVerdict, isFunctionType } from "./value-flow.js";
+import { collectionVerdict, functionTypeVerdict } from "./value-flow.js";
 
 async function analyzeAll(files: Record<string, string>, language: Language): Promise<FileAnalysis[]> {
   const root = await mkdtemp(join(tmpdir(), "jvm-vf-"));
@@ -45,13 +45,13 @@ function links(analyses: FileAnalysis[], strategy?: string): string[] {
 
 describe("function types", () => {
   it("tells functions from ordinary types", () => {
-    expect(isFunctionType("Runnable")).toBe(true);
-    expect(isFunctionType("java.util.function.Supplier<Club>")).toBe(true);
-    expect(isFunctionType("() -> Unit")).toBe(true);
-    expect(isFunctionType("(() -> Unit)?")).toBe(true);
-    expect(isFunctionType("suspend (Club) -> Unit")).toBe(true);
-    expect(isFunctionType("Worker")).toBe(false);
-    expect(isFunctionType("List<() -> Unit>")).toBe(false);
+    expect(functionTypeVerdict("Runnable")).toBe(true);
+    expect(functionTypeVerdict("java.util.function.Supplier<Club>")).toBe(true);
+    expect(functionTypeVerdict("() -> Unit")).toBe(true);
+    expect(functionTypeVerdict("(() -> Unit)?")).toBe(true);
+    expect(functionTypeVerdict("suspend (Club) -> Unit")).toBe(true);
+    expect(functionTypeVerdict("Worker")).toBe(false);
+    expect(functionTypeVerdict("List<() -> Unit>")).toBe(false);
     expect(collectionVerdict("List<Runnable>")).toBe(true);
     expect(collectionVerdict("Map<String, () -> Unit>")).toBe(true);
     expect(collectionVerdict("Runnable[]")).toBe(true);
@@ -720,3 +720,32 @@ describe("a platform function-type name on a Kotlin field or list is judged by c
   });
 });
 
+
+describe("a Kotlin constructor field and a builder's element type name the platform interface through core's rule", () => {
+  const body = (pkg: string, imports: string[]) => [
+    `package ${pkg}`,
+    ...imports,
+    "class Match(var onGoal: Consumer<String>) {",
+    "  private val hooks = mutableMapOf<String, Consumer<String>>()",
+    "  fun celebrate(who: String) {}",
+    "  fun wire() { onGoal = ::celebrate; hooks[\"a\"] = ::celebrate }",
+    "  fun goal() { onGoal.accept(\"x\") }",
+    "  fun hook() { hooks[\"a\"]?.accept(\"x\") }",
+    "}",
+  ].join("\n");
+  const project = { "league/Consumer.kt": ["package league", "class Consumer<T> { fun accept(who: T) {} }"].join("\n") };
+  const flows = async (files: Record<string, string>) =>
+    links(await analyzeAll(files, "kotlin"), "value-flow").filter((x) => x.startsWith("Match."));
+  it("links through the platform interface, imported", async () => {
+    expect(await flows({ "cup/Match.kt": body("cup", ["import java.util.function.Consumer"]) })).toEqual([
+      "Match.goal: onGoal.accept -> Match.kt::Match.celebrate",
+      "Match.hook: hooks[\"a\"]?.accept -> Match.kt::Match.celebrate",
+    ]);
+  });
+  it("links nothing through a project class of that name in the file's own package", async () => {
+    expect(await flows({ ...project, "league/Match.kt": body("league", ["import java.util.function.*"]) })).toEqual([]);
+  });
+  it("links nothing through a project class of that name imported by name", async () => {
+    expect(await flows({ ...project, "cup/Match.kt": body("cup", ["import league.Consumer"]) })).toEqual([]);
+  });
+});

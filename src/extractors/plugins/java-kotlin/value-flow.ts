@@ -63,29 +63,6 @@ const LIBRARY_HEADS = new Set(["log", "logger", "LOG", "LOGGER", "System", "Math
 const norm = (text: string): string => text.replace(/\s+/g, "");
 
 /**
- * Whether a bare functional-interface name is the platform's in this file. `Consumer` needs an import or a wildcard
- * one, so a file with neither, or one that imports a project class of that name, or declares it, names a project
- * class (no function type). Any wildcard import from a library path may bring the platform's in: it stays a function,
- * as does a name when there is no file context (`lib` null).
- */
-function namesPlatformInterface(lib: LibraryContext | null | undefined, simple: string): boolean {
-  if (!lib || FN_DEFAULT_IMPORTED.has(simple)) return true;
-  if (lib.declared.has(simple)) return false;
-  const explicit = lib.imports.find((i) => !i.static && !i.star && i.name === simple);
-  if (explicit) return externalPath(lib, explicit.path);
-  return lib.imports.some((i) => !i.static && i.star && externalPath(lib, i.path));
-}
-
-/**
- * Whether `text` (a Java or Kotlin type as written) is a function: a JDK functional interface or a Kotlin function
- * type. `lib`, the file's imports, keeps a project class that shares a JDK interface's simple name from passing.
- */
-export function isFunctionType(text: string | null | undefined, lib?: LibraryContext | null): boolean {
-  const verdict = functionTypeVerdict(text);
-  return typeof verdict === "string" ? namesPlatformInterface(lib, verdict) : verdict;
-}
-
-/**
  * What the written type alone says: `true` (an arrow type, a name written with its package, a name `java.lang` brings
  * in), `false`, or the bare platform name (`Consumer`) that only the file's imports, package and declared classes can
  * judge — the question core answers (`judgePlatformFunctionType`) when the fact says `ifFnType`.
@@ -365,7 +342,7 @@ export function classFlowOf(body: Node, lang: Lang, headerFields: ReadonlyArray<
     const dest: ValueCell = { name: "this", member: d.name };
     const kind = flow.initialize(dest, d.name, true, d.init, ctx.fn.has(d.name), ctx.elem.has(d.name), d.type === null);
     if (kind === "fn") remember(ctx.fn, d.name, true);
-    else if (kind === "elem") remember(ctx.elem, d.name, true);
+    else if (kind === "elem") remember(ctx.elem, d.name, Flow.kotlinBuilderElementVerdict(d.init) || true);
   }
   ctx.initFacts = flow.facts;
   return ctx;
@@ -698,13 +675,13 @@ class Flow {
   }
 
   /** The element type a Kotlin collection builder states (`mutableListOf<() -> Unit>()`). */
-  private static kotlinBuilderElementIsFunction(node: Node | null | undefined, lib: LibraryContext | null): boolean {
+  static kotlinBuilderElementVerdict(node: Node | null | undefined): FnVerdict | false {
     if (!node || node.type !== "call_expression") return false;
     const name = node.children[0]?.type === "simple_identifier" ? node.children[0].text : "";
     const args = node.children.find((c) => c.type === "call_suffix")?.namedChildren.find((c) => c.type === "type_arguments");
     if (!args || !(LIST_LITERALS.has(name) || MAP_LITERALS.has(name) || COLLECTIONS.has(name))) return false;
     const last = args.namedChildren[args.namedChildren.length - 1];
-    return !!last && isFunctionType(last.text, lib);
+    return last ? functionTypeVerdict(last.text) : false;
   }
 
   /**
@@ -715,7 +692,7 @@ class Flow {
     if (!declaredFn) {
       const ref: Ref = { cell: dest, fn: false, elem: true, name, ...(field ? { field: name } : {}) };
       if (this.literalInto(ref, init)) return "elem";
-      if (declaredElem || (untyped && Flow.kotlinBuilderElementIsFunction(init, this.library))) return "elem";
+      if (declaredElem || (untyped && Flow.kotlinBuilderElementVerdict(init) !== false)) return "elem";
     }
     if (declaredFn || (untyped && this.isFnExpr(init))) {
       this.flowInto(dest, init, declaredFn);
@@ -948,7 +925,8 @@ class Flow {
     if (init) kind = this.initialize({ name }, name, false, init, declaredFn, declaredElem, type === null);
     // A local that takes a conditional one's value (`var c = param`) is as conditional as its source.
     const cond = declaredFn ? (typeof verdict === "string" ? verdict : undefined) : kind === "fn" && init ? this.condOf(init) : undefined;
-    this.bind(name, declaredFn || kind === "fn", declaredElem || kind === "elem", cond, typeof elementVerdict === "string" ? elementVerdict : undefined);
+    const builder = kind === "elem" && !declaredElem ? Flow.kotlinBuilderElementVerdict(init) : false;
+    this.bind(name, declaredFn || kind === "fn", declaredElem || kind === "elem", cond, platformName(elementVerdict === false ? builder || undefined : elementVerdict));
   }
 
   /** The platform name a function-valued expression is conditional on: a conditional name, a conditional collection's element, a method declared to return one. */
@@ -1219,7 +1197,7 @@ export function methodValueFlow(
 }
 
 /** Facts for a Kotlin primary constructor: each `val`/`var` function parameter is the field of that name. */
-export function constructorFieldFlow(params: ReadonlyArray<{ name: string; type: string | null }>, line: number, lib?: LibraryContext | null): ValueFlowFact[] {
+export function constructorFieldFlow(params: ReadonlyArray<{ name: string; type: string | null }>, line: number): ValueFlowFact[] {
   const out: ValueFlowFact[] = [];
   for (const p of params) {
     if (functionTypeVerdict(p.type) !== false || collectionVerdict(p.type) !== false) out.push({ kind: "copy", from: { name: p.name }, to: { name: "this", member: p.name }, line });
