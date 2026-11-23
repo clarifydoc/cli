@@ -109,7 +109,7 @@ export function buildSymbolLinks(
   const memberTypes = buildMemberTypes(typeDecls, typeAliases, packageDirectory);
   const ctx: LinkContext = {
     filePathMap,
-    memos: { projectStatic: new Map(), inScopeBinding: new Map(), moduleStem: new Map(), pathScope: new Map(), typeFile: new Map(), importedFiles: new Map(), includeClosure: new Map(), callableMembers: new Map() },
+    memos: { projectStatic: new Map(), inScopeBinding: new Map(), moduleStem: new Map(), pathScope: new Map(), typeFile: new Map(), importedFiles: new Map(), includeClosure: new Map(), callableMembers: new Map(), importPath: new Map() },
     typeAliases,
     symbolIndex,
     memberTypes,
@@ -2091,6 +2091,8 @@ interface LinkMemos {
   importedFiles: Map<string, string[]>;
   includeClosure: Map<string, Set<string>>;
   callableMembers: Map<string, boolean>;
+  /** `importPath` per (importing file, source); the answer reads nothing the run changes. */
+  importPath: Map<string, string | null>;
   codeHandlers?: Map<string, Array<{ file: string; handler: string; line: number }>>;
   codeContracts?: Map<string, Array<{ file: string; symbol: string; line: number }>>;
   methodLeaves?: Map<string, Array<{ file: string; symbol: string; className: string }>>;
@@ -2750,6 +2752,16 @@ function headNamesForeignPackage(analysis: FileAnalysis, head: string, ctx: Link
  * file), else by the generic path rules.
  */
 function importPath(ctx: LinkContext, source: string, fromFile: string): string | null {
+  const key = `${fromFile}\0${source}`;
+  const memo = ctx.memos.importPath;
+  const known = memo.get(key);
+  if (known !== undefined) return known;
+  const found = importPathUncached(ctx, source, fromFile);
+  memo.set(key, found);
+  return found;
+}
+
+function importPathUncached(ctx: LinkContext, source: string, fromFile: string): string | null {
   const language = ctx.languageOf.get(fromFile) as Language | undefined;
   const rule = language ? manifestFor(language)?.importedFile : undefined;
   if (rule) {
