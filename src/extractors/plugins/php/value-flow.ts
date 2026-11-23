@@ -453,6 +453,9 @@ export function extractPhpValueFlow(body: Node | null, params: readonly string[]
  * top-level `return` (a config file's array) hands nothing on.
  */
 export function phpTopLevelValueFlow(root: Node): ValueFlowFact[] {
+  // A class-only file (most of them) has no statement of its own: skip the walk.
+  const SKIPPED = new Set(["php_tag", "text", "text_interpolation", "comment", "namespace_use_declaration", "declare_statement", "function_definition", "class_declaration", "interface_declaration", "trait_declaration", "enum_declaration"]);
+  if (root.namedChildren.every((c) => SKIPPED.has(c.type))) return [];
   const reader = new Reader([]);
   reader.walk(root);
   return liveValueFlow(reader.facts.filter((f) => f.kind !== "return"), [], { bindBases: true, elementArgs: true });
