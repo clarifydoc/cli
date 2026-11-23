@@ -2093,6 +2093,9 @@ interface LinkMemos {
   callableMembers: Map<string, boolean>;
   /** `importPath` per (importing file, source); the answer reads nothing the run changes. */
   importPath: Map<string, string | null>;
+  /** `forwardedDefinition` / `definitionIn` of a lookup that starts at depth 0 with nothing seen, per (file, name[, forwards]). */
+  forwarded?: Map<string, ForwardedDefinition | null>;
+  definition?: Map<string, ForwardedDefinition | null>;
   codeHandlers?: Map<string, Array<{ file: string; handler: string; line: number }>>;
   codeContracts?: Map<string, Array<{ file: string; symbol: string; line: number }>>;
   methodLeaves?: Map<string, Array<{ file: string; symbol: string; className: string }>>;
@@ -6692,6 +6695,24 @@ const MAX_REEXPORT_DEPTH = 5;
  * leading to different definitions decide nothing.
  */
 function forwardedDefinition(
+  ctx: LinkContext,
+  file: string,
+  name: string,
+  depth: number,
+  seen: Set<string>,
+): ForwardedDefinition | null {
+  // A lookup that starts here with nothing seen is a function of (file, name): every caller hands a fresh set and drops it.
+  if (depth !== 0 || seen.size !== 0) return forwardedDefinitionUncached(ctx, file, name, depth, seen);
+  const memo = (ctx.memos.forwarded ??= new Map());
+  const key = `${file}\0${name}`;
+  const known = memo.get(key);
+  if (known !== undefined) return known;
+  const found = forwardedDefinitionUncached(ctx, file, name, depth, seen);
+  memo.set(key, found);
+  return found;
+}
+
+function forwardedDefinitionUncached(
   ctx: LinkContext,
   file: string,
   name: string,
