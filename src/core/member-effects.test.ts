@@ -586,3 +586,92 @@ describe("member effects, Ruby", () => {
     ]);
   });
 });
+
+describe("member effects, Rust", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-member-effects-rs-"));
+    await mkdir(join(dir, "src", "models"), { recursive: true });
+    await mkdir(join(dir, "src", "services"), { recursive: true });
+    await writeFile(join(dir, "Cargo.toml"), '[package]\nname = "league"\nversion = "0.1.0"\n');
+    await writeFile(join(dir, "src", "models", "club.rs"), [
+      "pub struct Stats { pub goals: u32 }",
+      "pub struct Club {",
+      "    pub name: String,",
+      "    pub points: u32,",
+      "    pub stats: Stats,",
+      "    pub items: Vec<u32>,",
+      "}",
+      "impl Club {",
+      "    pub fn win(&mut self, n: u32) {",
+      "        let old = self.points;",
+      "        self.points += 3;",
+      "        self.stats.goals += n;",
+      "        self.items[0] = 1;",
+      "        self.name = format!(\"self.ghost = 1\");",
+      "        if old == self.points { self.items.push(1); }",
+      "        // self.points = 9;",
+      "        *self.counter += 1;",
+      "    }",
+      "}",
+    ].join("\n"));
+    await writeFile(join(dir, "src", "models", "extra.rs"), [
+      "use crate::models::club::Club;",
+      "impl Club {",
+      "    pub fn reset(&mut self) {",
+      "        self.points = 0;",
+      "    }",
+      "}",
+    ].join("\n"));
+    await writeFile(join(dir, "src", "services", "garage.rs"), [
+      "use crate::models::club::Club;",
+      "static mut TOTAL: u32 = 0;",
+      "pub struct Club2 { pub name: String }",
+      "pub fn rename(club: &mut Club, other: &Club2, plain: &Club) {",
+      "    club.name = String::new();",
+      "    let mut local: Club2 = make();",
+      "    local.name = String::new();",
+      "    unsafe { TOTAL += 1; }",
+      "}",
+      "pub fn score(s: &mut crate::models::club::Stats) {",
+      "    s.goals = 1;",
+      "}",
+    ].join("\n"));
+    await writeFile(join(dir, "src", "services", "club.rs"), [
+      "pub struct Club { pub name: String }",
+      "impl Club {",
+      "    pub fn call(&mut self) { self.name = String::new(); }",
+      "}",
+    ].join("\n"));
+    await analyze({ projectRoot: dir, outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 60_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const rows = (): string[] => (summary.fieldWrites ?? []).map((w) => `${w.class}.${w.member} <- ${w.function}:${w.line} ${w.via} ${w.classFile}`).sort();
+
+  it("lists writes through self, a field's struct, a typed parameter and a typed local, in the struct that declares them", () => {
+    expect(rows().filter((r) => !r.includes("TOTAL"))).toEqual([
+      "Club.name <- Club.call:3 this src/services/club.rs",
+      "Club.points <- Club.reset:4 this src/models/club.rs",
+      "Club.points <- Club.win:11 this src/models/club.rs",
+      "Club.items <- Club.win:13 this src/models/club.rs",
+      "Club.name <- Club.win:14 this src/models/club.rs",
+      "Club2.name <- rename:7 typed src/services/garage.rs",
+      "Stats.goals <- Club.win:12 typed src/models/club.rs",
+      "Stats.goals <- score:11 typed src/models/club.rs",
+    ].sort());
+  });
+
+  it("states nothing for a let, a comment, a string, a deref or a mutating call", () => {
+    expect((summary.fieldWrites ?? []).some((w) => w.function === "Club.win" && (w.line === 10 || w.line === 15 || w.line === 16 || w.line === 17))).toBe(false);
+  });
+
+  it("joins a static mut written bare to the file that declares it, and never lists a thrown type", () => {
+    expect(rows().filter((r) => r.includes("TOTAL"))).toEqual(["garage.TOTAL <- rename:8 package src/services/garage.rs"]);
+    expect((summary.thrownTypes ?? []).length).toBe(0);
+  });
+});

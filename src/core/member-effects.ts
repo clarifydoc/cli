@@ -52,17 +52,30 @@ export function joinMemberEffects(
     const from = analysisByFile.get(nearFile);
     if (from && spansFiles(from.language)) {
       // One type of a directory: its parts across the files, never a namesake of another package, nor a type written through a package qualifier.
-      if (name.includes(".") && !beyondDirectory(from.language)) return null;
+      const beyond = beyondDirectory(from.language);
+      if (name.includes(".") && !beyond) return null;
       const dir = nearFile.slice(0, nearFile.lastIndexOf("/") + 1);
       // A qualified name states which one it means: only a lone class of its last segment answers it.
-      const qualified = beyondDirectory(from.language) && /[.:]/.test(name);
+      const qualified = beyond && /[.:]/.test(name);
       const parts = qualified ? [] : (byName.get(name) ?? []).filter((c) => c.file.slice(0, c.file.lastIndexOf("/") + 1) === dir && analysisByFile.get(c.file)?.language === from.language);
-      if (parts.length > 0) {
+      // Where a type is looked up beyond its directory, parts that only extend it (an `impl` block) do not settle which type it is.
+      // ... and with real declarations of the name in several files, none of them the writer's own, nothing says which is meant.
+      const named = beyond ? (byName.get(name.slice(name.search(/[^.:]*$/))) ?? []).filter((c) => analysisByFile.get(c.file)?.language === from.language) : [];
+      const real = named.filter((c) => !c.cls.extension);
+      // (the file's own declaration, or an `impl` block of the type it writes, makes the directory's declaration the one meant)
+      if (beyond && real.length > 1 && !named.some((c) => c.file === nearFile)) return null;
+      if (parts.length > 0 && (!beyond || parts.some((c) => !c.cls.extension))) {
         const home = parts.find((c) => !c.cls.extension && c.cls.properties.length > 0) ?? parts[0]!;
         return { ...home, parts };
       }
-      if (!beyondDirectory(from.language)) return null;
+      if (!beyond) return null;
+      const found = locateIn(name, nearFile, project, line, from);
+      return found && parts.length > 0 ? { ...found, parts: [found, ...parts.filter((c) => c.cls !== found.cls)] } : found;
     }
+    return locateIn(name, nearFile, project, line, from);
+  };
+
+  const locateIn = (name: string, nearFile: string, project: string, line: number, from: FileAnalysis | undefined): ClassRef | null => {
     const sep = from ? manifestFor(from.language as LanguageName)?.classNamesByEvidence?.separator : undefined;
     // Only the writer's language family: a TypeScript `Error` is never a Go struct of that name.
     const family = from ? familyOf(from.language) : null;
@@ -71,7 +84,7 @@ export function joinMemberEffects(
       return kept && kept.length > 0 ? kept : undefined;
     };
     let all = inFamily(byName.get(sep ? leaf(name, sep) : name)) ?? inFamily(byName.get(leaf(name)));
-    if (all && from && beyondDirectory(from.language)) all = all.filter((c) => analysisByFile.get(c.file)?.language === from.language);
+    if (all && from && beyondDirectory(from.language)) all = all.filter((c) => !c.cls.extension && analysisByFile.get(c.file)?.language === from.language);
     if (!all || all.length === 0) return null;
     if (sep && from) {
       const simple = leaf(name, sep).toLowerCase();
@@ -132,7 +145,13 @@ export function joinMemberEffects(
   const thrownTypes: ThrownTypeRow[] = [];
 
   const dirOf = (file: string): string => file.slice(0, file.lastIndexOf("/") + 1);
-  const packageName = (file: string): string => dirOf(file).split("/").filter(Boolean).pop() ?? "main";
+  /** The unit a package variable belongs to: the directory's package where a directory shares its names (Go), else the file's module (its stem, or the folder of a `mod`/`index` file). */
+  const packageName = (file: string): string => {
+    const dirName = dirOf(file).split("/").filter(Boolean).pop() ?? "main";
+    if (manifestFor(analysisByFile.get(file)?.language as LanguageName)?.directoryNamesShared === true) return dirName;
+    const stem = file.slice(file.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "");
+    return /^(?:mod|index|lib|main)$/.test(stem) ? dirName : stem;
+  };
   /** The one file that declares package variable `name` for a function of `a`: where the language shares a directory's names (`directoryNamesShared`) a sibling's, else its own. */
   const packageVariableHome = (a: FileAnalysis, name: string): string | null => {
     const shared = manifestFor(a.language as LanguageName)?.directoryNamesShared === true;

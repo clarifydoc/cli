@@ -21,10 +21,10 @@ export class EffectsCollector {
   private readonly writes: NonNullable<Effects["fieldWrites"]> = [];
   private readonly thrown: NonNullable<Effects["throws"]> = [];
 
-  addWrite(receiver: string, member: string, line: number, init?: true): void {
+  addWrite(receiver: string, member: string, line: number, init?: true, pkg?: true): void {
     if (this.writes.length >= MAX_FACTS) return;
     if (this.writes.some((w) => w.receiver === receiver && w.member === member && w.line === line)) return;
-    this.writes.push({ member, receiver, line, ...(init ? { init } : {}) });
+    this.writes.push({ member, receiver, line, ...(init ? { init } : {}), ...(pkg ? { package: pkg } : {}) });
   }
 
   get throwsFull(): boolean { return this.thrown.length >= MAX_FACTS; }

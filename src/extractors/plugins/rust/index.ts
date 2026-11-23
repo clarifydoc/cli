@@ -1,3 +1,4 @@
+import { rustStaticMuts } from "./member-effects.js";
 import { withStructLiteralCalls } from "../shared/struct-literals.js";
 import { markRustTests } from "./inline-tests.js";
 import type { FunctionInfo, PropertyInfo } from "../../../types/analysis.js";
@@ -193,6 +194,7 @@ export const rustSpec: RegexLangSpec = {
    * methods — impl methods, trait signatures — from the top-level functions.
    */
   extractClasses: (lines, fns) => extractRustClasses(lines, fns, rustSpec),
+  extractPackageVariables: rustStaticMuts,
   extractLocalTypes: (body, fn) => extractRustLocalTypes(body, fn.params),
 
   // Whole `use` declarations, multi-line and nested braces included (imports.ts).

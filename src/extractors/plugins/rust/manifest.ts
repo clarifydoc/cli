@@ -44,6 +44,7 @@ export const rustManifest: LanguagePluginManifest = {
   extensions: [".rs"],
   // One type spans files here: `impl` blocks for a type can live in other files of its module.
   typesSpanFiles: true,
+  typesBeyondDirectory: true,
   // `Garage::park()` binds through a `use`, a written `crate::garage::` path, `Self` or the same file — never a namesake elsewhere.
   pathCallTypesNeedScope: { separator: "::", selfTypes: ["Self"], typeSegment: /^[A-Z]/ },
   // `let m = upgrade_manager(x)?;` holds the `Ok` value: `?`/`.unwrap()` unwrap these

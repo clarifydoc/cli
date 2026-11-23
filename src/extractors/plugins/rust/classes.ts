@@ -1,4 +1,5 @@
 import { addRustElementTypes, type RustTypeEnv } from "./element-types.js";
+import { rustMemberEffects, rustStaticMuts } from "./member-effects.js";
 import type { ClassInfo, FunctionInfo } from "../../../types/analysis.js";
 import { blockEndLine, extractClassesWithSpec, headerLineMethods, splitBracketedArgs, type RegexLangSpec } from "../shared/regex-base.js";
 
@@ -88,6 +89,11 @@ export function extractRustClasses(lines: string[], fns: FunctionInfo[], spec: R
     }
   }
   for (const fn of fns) if (!attached.has(fn)) resolveGenerics(fn, lines, new Map(), null, typeEnv);
+  const statics = new Set(rustStaticMuts(lines).map((v) => v.name));
+  for (const fn of new Set([...fns, ...[...classes, ...stubs.values()].flatMap((c) => (c.kind === "interface" ? [] : c.methods))])) {
+    const effects = rustMemberEffects(lines, fn, statics);
+    if (effects?.fieldWrites) fn.fieldWrites = effects.fieldWrites;
+  }
   for (const cls of classes) {
     if (cls.kind !== "interface") continue;
     const bounds = genericBounds(declarationHead(lines, cls.line - 1));
