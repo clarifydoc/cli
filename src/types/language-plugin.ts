@@ -2570,6 +2570,11 @@ export interface ReachabilityModel {
    */
   declaredNames?(analysis: FileAnalysis, source: string | undefined): readonly string[];
   /**
+   * The declared names are case-insensitive (Apex): a mention matches whatever its case, so
+   * `clubservice.promote()` reaches `ClubService`. Only this model's names are folded.
+   */
+  foldNames?: boolean;
+  /**
    * Identifiers the toolchain reads from configuration the model scanned at
    * load — AndroidManifest components, `web.xml` servlets, an `.app.src`
    * application module, types named in `appsettings.json`. A file declaring

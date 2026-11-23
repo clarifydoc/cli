@@ -10,7 +10,8 @@ import { queryEnd, stringEnd } from "./source.js";
  *
  *  - inline SOQL `[SELECT Id FROM Club__c WHERE …]` and SOSL `[FIND 'x' RETURNING Club__c(Id)]`: a read of each object
  *    the top-level query names. A relationship subquery `(SELECT Id FROM Players__r)` names a RELATIONSHIP, not an
- *    object — it is left out (the parent query's own object is the access);
+ *    object: it is a row with `viaRelationship` and no entity, which the entity extractor's `reconcileProject`
+ *    resolves through the lookup field declaring that relationship name (or drops);
  *  - a string literal that is a whole query (`'SELECT Id FROM Club__c'`, the pieces of `'SELECT Id ' + 'FROM Club__c'`
  *    joined): what `Database.query(…)`, `getQueryLocator(…)` and `countQuery(…)` run, found wherever the string sits;
  *  - DML — `insert x;`, `update`, `upsert`, `delete`, `undelete`, `merge`, `insert as user x;` and `Database.insert(x)` —
@@ -84,6 +85,44 @@ export function queryObjects(query: string): string[] {
   }
   return found;
 }
+
+/**
+ * The child relationships a SOQL query's select list names: `[SELECT Id, (SELECT Id FROM Players__r) FROM Club__c]` →
+ * `{ parent: "Club__c", name: "Players__r" }`. Only subqueries before the query's own `FROM` count (one in a `WHERE`
+ * is a semi-join over an object, read by `queryObjects`); a nested subquery is not followed.
+ */
+export function childRelationships(query: string): Array<{ parent: string; name: string }> {
+  const text = query.trim().replace(/^\[/, "").replace(/\]$/, "");
+  if (/^\s*FIND\b/i.test(text)) return [];
+  const flat = topLevel(text);
+  const from = /\bFROM\s+([A-Za-z_][\w.]*)/i.exec(flat);
+  if (!from) return [];
+  const parent = from[1]!.split(".").pop()!;
+  const blanked = blankStrings(text);
+  const out: Array<{ parent: string; name: string }> = [];
+  for (let i = 0; i < from.index; i++) {
+    if (blanked[i] !== "(" || !/^\(\s*SELECT\b/i.test(blanked.slice(i, i + 16))) continue;
+    const close = matchingParen(blanked, i);
+    if (close < 0) break;
+    const name = /\bFROM\s+([A-Za-z_]\w*)/i.exec(topLevel(blanked.slice(i + 1, close)))?.[1];
+    if (name && !out.some((r) => r.name.toLowerCase() === name.toLowerCase())) out.push({ parent, name });
+    i = close;
+  }
+  return out;
+}
+
+function matchingParen(text: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    if (text[i] === "(") depth++;
+    else if (text[i] === ")" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+const relationshipRow = (name: string, rel: { parent: string; name: string }, line: number): DataSourceInfo => ({
+  kind: "database", name, target: null, access: "read", viaRelationship: rel, calls: [], line,
+});
 
 interface Literal { start: number; end: number; value: string }
 
@@ -190,7 +229,9 @@ export function apexDataSources(dataText: string, classes: readonly ClassInfo[],
     else if (c === "[" && queryOpensAt(dataText, i)) {
       const end = queryEnd(dataText, i);
       const verb = queryOpensAt(dataText, i)!;
-      for (const object of queryObjects(dataText.slice(i, end))) out.push(row(verb, object, "read", lineOf(i)));
+      const query = dataText.slice(i, end);
+      for (const object of queryObjects(query)) out.push(row(verb, object, "read", lineOf(i)));
+      for (const rel of childRelationships(query)) out.push(relationshipRow(verb, rel, lineOf(i)));
       i = end - 1;
     }
   }
@@ -199,6 +240,7 @@ export function apexDataSources(dataText: string, classes: readonly ClassInfo[],
   for (const lit of literalsOf(dataText)) {
     if (!SOQL_STRING.test(lit.value)) continue;
     for (const object of queryObjects(lit.value)) out.push(row("SELECT", object, "read", lineOf(lit.start)));
+    for (const rel of childRelationships(lit.value)) out.push(relationshipRow("SELECT", rel, lineOf(lit.start)));
   }
 
   // DML statements and `Database.*` calls.

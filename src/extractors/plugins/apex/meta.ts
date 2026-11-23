@@ -3,6 +3,7 @@ import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { isSalesforceMetadata, SalesforceEntityExtractor } from "./entities.js";
 import { apexSpec } from "./index.js";
 import { apexManifest } from "./manifest.js";
+import { apexReachability } from "./reachability.js";
 import { apexClassSource, apexSource } from "./preprocess.js";
 
 /** Platform namespaces and types: never a project class (`System.debug`, `Database.insert`, `new List<Club__c>()`). */
@@ -23,6 +24,8 @@ export const apexMeta: LanguagePluginMeta = {
   regexSpec: apexSpec,
   builtinTypes: APEX_BUILTINS,
   entities: new SalesforceEntityExtractor(),
+  // Dead code: platform entry points, reached by class name (see reachability.ts).
+  reachability: apexReachability,
   preprocess: apexSource,
   adopt(rawSource, relativePath) {
     if (/\.cls$/i.test(relativePath)) return apexClassSource(rawSource);

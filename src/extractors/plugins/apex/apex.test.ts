@@ -220,7 +220,7 @@ describe("sample-salesforce — Apex to SObject", () => {
       const edge = summary.dataAccessGraph!.edges.filter((e) => e.source === `file::force-app/main/default/classes/${file}`);
       return edge.flatMap((e) => (e.calls ?? []).map((c) => `${c.name} ${c.entity}`)).sort();
     };
-    expect(entityRows("ClubController.cls")).toEqual(["SELECT Club__c", "SELECT Club__c", "SELECT Club__c", "SELECT Player__c", "UPDATE Club__c"]);
+    expect(entityRows("ClubController.cls")).toEqual(["SELECT Club__c", "SELECT Club__c", "SELECT Club__c", "SELECT Player__c", "SELECT Player__c", "UPDATE Club__c"]);
     expect(entityRows("PlayerService.cls")).toEqual(["UPDATE Player__c"]);
     expect(entityRows("ClubResource.cls")).toEqual(["DELETE Club__c", "INSERT Club__c", "SELECT Club__c"]);
   });

@@ -417,9 +417,10 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
         let configured: string | undefined;
         for (const n of new Set(model.declaredNames(a, input.readSource(a.filePath)))) {
           if (n.length < 2) continue;
-          const list = nameIndex.get(n);
+          const key = model.foldNames ? FOLDED + n.toLowerCase() : n;
+          const list = nameIndex.get(key);
           if (list) list.push(a.filePath);
-          else nameIndex.set(n, [a.filePath]);
+          else nameIndex.set(key, [a.filePath]);
           if (!configured && model.configMentions?.has(n)) configured = n;
         }
         if (configured && !entryReason.has(a.filePath)) {
@@ -449,6 +450,7 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
       if (seen.has(tok)) continue;
       seen.add(tok);
       for (const t of nameIndex.get(tok) ?? []) if (t !== file) out.push(t);
+      for (const t of nameIndex.get(FOLDED + tok.toLowerCase()) ?? []) if (t !== file) out.push(t);
     }
     return out;
   };
@@ -825,6 +827,8 @@ const FIXTURE_DIR_RE =
 
 /** A whole identifier, for name references (`$`/`@` prefixes split off). */
 const IDENTIFIER_RE = /[A-Za-z_][A-Za-z0-9_]*/g;
+/** Key prefix of a name a case-insensitive language declares (`ReachabilityModel.foldNames`). */
+const FOLDED = "\u0001";
 
 /** Basename without extension; an `index` file is named by its directory. */
 function fileStem(filePath: string): string {

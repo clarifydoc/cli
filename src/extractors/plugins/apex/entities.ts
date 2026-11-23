@@ -30,19 +30,21 @@ function objectOfPath(path: string): string | null {
   return /(?:^|\/)objects\/([^/]+)\//.exec(path)?.[1] ?? null;
 }
 
-interface FieldDef { name: string; type: string | null; referenceTo: string | null; required: boolean }
+interface FieldDef { name: string; type: string | null; referenceTo: string | null; required: boolean; relationshipName: string | null }
 
 function fieldDefOf(xml: string, fallbackName: string | null): FieldDef | null {
   const name = elementText(xml, "fullName") ?? fallbackName;
   if (!name) return null;
   const type = elementText(xml, "type");
-  return { name, type, referenceTo: elementText(xml, "referenceTo"), required: elementText(xml, "required") === "true" || type === "MasterDetail" };
+  return { name, type, referenceTo: elementText(xml, "referenceTo"), relationshipName: elementText(xml, "relationshipName"), required: elementText(xml, "required") === "true" || type === "MasterDetail" };
 }
 
 function relationOf(object: string, f: FieldDef): EntityRelation | null {
   if (!f.referenceTo || (f.type !== "Lookup" && f.type !== "MasterDetail" && f.type !== "Hierarchy")) return null;
   return {
     fromEntity: object, fromField: f.name, toEntity: f.referenceTo, cardinality: "many-to-one",
+    // The name a subquery of the parent reads the children by: `Players` is `Players__r` on a custom field.
+    ...(f.relationshipName ? { inverseField: `${f.relationshipName}${/__c$/i.test(f.name) ? "__r" : ""}` } : {}),
     optional: !f.required, orm: ORM, confidence: "EXTRACTED",
   };
 }
@@ -106,6 +108,25 @@ export class SalesforceEntityExtractor extends EntityExtractor {
       const have = new Set(host.properties.map((p) => p.name));
       for (const p of cls.properties) if (!have.has(p.name)) { have.add(p.name); host.properties.push(p); }
       file.classes = file.classes.filter((c) => c !== cls);
+    }
+    // A child relationship a subquery names: the lookup field of another object that declares it from the parent.
+    const children = new Map<string, string>();
+    for (const file of apex) {
+      for (const r of file.entityRelations ?? []) {
+        if (r.orm === ORM && r.inverseField) children.set(`${r.toEntity.toLowerCase()}\0${r.inverseField.toLowerCase()}`, r.fromEntity);
+      }
+    }
+    for (const file of apex) {
+      if (!file.dataSources.some((d) => d.viaRelationship)) continue;
+      file.dataSources = file.dataSources.filter((d) => {
+        if (!d.viaRelationship || d.entity) return true;
+        const child = children.get(`${d.viaRelationship.parent.toLowerCase()}\0${d.viaRelationship.name.toLowerCase()}`);
+        if (!child) return false;
+        const declared = hosts.get(child.toLowerCase())?.name ?? child;
+        d.entity = declared;
+        d.target = declared;
+        return true;
+      });
     }
     if (hosts.size === 0) return;
     for (const file of apex) {

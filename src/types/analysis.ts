@@ -2995,6 +2995,13 @@ export interface DataSourceInfo {
    */
   envRef?: string;
   /**
+   * For `database`: the row reads a CHILD RELATIONSHIP a subquery names (Apex `(SELECT Id FROM Players__r)` inside a
+   * query of `Club__c`), not an object. `target`/`entity` stay empty until the project pass (the entity extractor's
+   * `reconcileProject`) finds the lookup field that declares that relationship name from the parent object; a
+   * relationship no field declares leaves no row.
+   */
+  viaRelationship?: { parent: string; name: string };
+  /**
    * For queue kinds: the message broker the destination lives on (`amqp`,
    * `kafka`, `sqs`, `bullmq`, `celery`, `redis`, `mqtt`, `socket.io`, `dapr`, …),
    * lower-case. Absent when the extractor cannot tell; a destination name alone
