@@ -109,12 +109,13 @@ describe("flat tree equals the real tree", () => {
     { name: "unicode.ts", text: 'const été = "café ☕ 🏟️";\nexport function équipe(joueur: string) { return `⚽ ${joueur}`; }\n' },
     { name: "unicode.py", text: 'club = "Zürich 🏟"\ndef équipe():\n    return "⚽ ✓"\n' },
     { name: "unicode.cs", text: 'class Équipe { string Nom = "日本 🚗"; void Jouer() { var x = "é"; } }\n' },
+    { name: "broken.py", text: "def (:\n  class 😀 = \nx = 1\n" },
     { name: "broken.ts", text: "function ( { class 😀 = ;\nconst a = 1;\n" },
     { name: "broken.cs", text: "class A { void M( { int x = ; } }\n" },
   );
 
   it("answers every used member alike for each fixture tree", async () => {
-    await ensureLanguagesLoaded(["typescript", "javascript"]);
+    await ensureLanguagesLoaded(["typescript", "javascript", "python", "java", "kotlin", "php"]);
     const scripts: Array<{ name: string; text: string }> = [];
     for (const c of components) {
       const pre = pluginFor("typescript")?.preprocess?.(c.text, c.name);
@@ -160,7 +161,7 @@ describe("flat tree equals the real tree", () => {
     try {
       expect(await parseSource("class Car { }\n", "csharp", "Car.cs")).toBeInstanceOf(FlatTree);
       expect(await parseSource("const car = 1;\n", "typescript", "car.ts")).toBeInstanceOf(FlatTree);
-      expect(await parseSource("class Car:\n    pass\n", "python", "car.py")).not.toBeInstanceOf(FlatTree);
+      expect(await parseSource("class Car:\n    pass\n", "python", "car.py")).toBeInstanceOf(FlatTree);
     } finally {
       if (prior === undefined) delete process.env.CLARIFYDOC_FEATURES;
       else process.env.CLARIFYDOC_FEATURES = prior;

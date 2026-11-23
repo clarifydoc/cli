@@ -267,7 +267,7 @@ export async function getLanguage(language: TreeSitterLanguage): Promise<TSLangu
  * The languages whose extractors read a flat copy of the tree (`flat-tree` feature): each joined once its corpus
  * output was byte-identical with and without the copy.
  */
-const FLAT_TREE_LANGUAGES: ReadonlySet<string> = new Set(["csharp", "javascript", "typescript"]);
+const FLAT_TREE_LANGUAGES: ReadonlySet<string> = new Set(["csharp", "javascript", "python", "typescript"]);
 
 /**
  * Parse source into the WebAssembly tree itself, never a flat copy: what a query runs on and what the flat copy is
