@@ -454,6 +454,7 @@ prints it for a git diff or a file list.
 | `baseLabel` | What the change set was diffed against: a git ref, `staged`, `--files`, `previous analysis run`. |
 | `changedFiles`, `removedFiles` | Changed files the analysis knows; files deleted since the previous run. |
 | `unknownFiles` | Changed paths the analysis has no entry for: new or non-source files (`package.json`). |
+| `addedFiles` | Optional, git runs only: the files the change adds — new in the diff against the base (or the index with `--staged`) plus untracked files git does not ignore, any language, known to the analysis or not. Apart from `unknownFiles`, which also holds unanalysed and non-source paths. |
 | `screens`, `routes`, `entities`, `queues` (+ `…Count`) | What the changed code reaches, in both directions: the screens and routes whose code runs through it, the entities and queues it touches. Lists are capped; the counts are exact, and `truncated: true` says a cap was hit. |
 | `dependents`, `tests` (+ counts) | Files that import the changed ones, transitively; the test files among them and the changed set — the tests to run. |
 | `chains` | Sample import chains from a changed file to a screen or route, so the reach is explainable. |
