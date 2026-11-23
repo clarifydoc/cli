@@ -2439,6 +2439,12 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           }
           if (value.type === "call_expression" || value.type === "new_expression") this.extractStoreCallActions(value, functions);
         }
+        // `export default function clubForm() { return { save() {…} } }`: a component factory (Alpine's `Alpine.data("clubForm", clubForm)`
+        // is written in another module) — its methods are the template's handlers, named `clubForm.save`.
+        const decl = moduleLevel ? child.childForFieldName("declaration") : null;
+        const factoryName = decl?.type === "function_declaration" ? decl.childForFieldName("name")?.text : undefined;
+        const factory = factoryName && !/^use[A-Z]/.test(factoryName) ? componentFactoryObject(decl!) : null;
+        if (factory) this.extractObjectMembers(factoryName!, factory, functions, true, 0);
         this.extractJsFunctions(child, functions, true);
         continue;
       }
@@ -3798,6 +3804,19 @@ function factoryObject(fn: Node): Node | null {
   let ret = last?.type === "return_statement" ? last.namedChild(0) : null;
   while (ret?.type === "parenthesized_expression") ret = ret.namedChild(0);
   return ret?.type === "object" ? ret : null;
+}
+
+/**
+ * The object a function declaration builds and returns as a component: its last statement returns a literal that holds at
+ * least one method, with no spread and no shorthand member — a hook's `return { data, save }` is no component factory.
+ */
+function componentFactoryObject(fn: Node): Node | null {
+  const obj = factoryObject(fn);
+  if (!obj) return null;
+  const members = obj.namedChildren.filter((m) => m.type !== "comment");
+  if (members.some((m) => m.type !== "pair" && m.type !== "method_definition")) return null;
+  const isFn = (m: Node) => m.type === "method_definition" || /^(?:arrow_function|function_expression)$/.test(m.childForFieldName("value")?.type ?? "");
+  return members.some(isFn) ? obj : null;
 }
 
 /** The object literal an arrow function returns as its expression body (`(id) => ({ … })`), or null. */

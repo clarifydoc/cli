@@ -82,4 +82,9 @@ describe("AngularJS 1 and Alpine screens", () => {
     const l = links().filter((x) => x.sourceFile === "server/app.js" && x.callName === "PlayerService.load");
     expect(l.map((x) => `${x.targetFile}::${x.targetSymbol}`)).toEqual(["server/player-service.js::load"]);
   });
+
+  it("Alpine: x-data names the registered factory; its own method runs, not the namesake of another component", () => {
+    expect(reach("web/alpine/clubs.html", "save")).toEqual({ handlers: ["alpine/js/club-form.js::clubForm.save"], routes: ["POST /api/clubs"] });
+    expect(reach("web/alpine/cars.html", "save")).toEqual({ handlers: ["alpine/js/car-form.js::carForm.save"], routes: ["GET /api/cars/:id"] });
+  });
 });

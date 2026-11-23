@@ -265,6 +265,16 @@ const TEMPLATE_KEYS = ["templateUrl", "controller"] as const;
  */
 export function extractScopeRegistrations(tree: Tree, sourceText: string): ScopeRegistration[] {
   const out: ScopeRegistration[] = [];
+  if (sourceText.includes("Alpine.data(")) {
+    for (const call of tree.rootNode.descendantsOfType("call_expression")) {
+      const callee = call?.childForFieldName("function");
+      if (!call || callee?.type !== "member_expression" || callee.text !== "Alpine.data") continue;
+      const args = call.childForFieldName("arguments")?.namedChildren.filter((a): a is Node => !!a && a.type !== "comment") ?? [];
+      const name = stringValue(args[0]);
+      if (!name) continue;
+      out.push({ kind: "component", name, ...(args[1]?.type === "identifier" ? { value: args[1].text } : {}), line: call.startPosition.row + 1 });
+    }
+  }
   if (!sourceText.includes("controller")) return out;
   for (const reg of factsOf(tree).registrations) {
     if (reg.kind === "controller" && reg.name && reg.ident) out.push({ kind: "component", name: reg.name, value: reg.ident, line: reg.line });
