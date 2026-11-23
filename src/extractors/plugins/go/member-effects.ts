@@ -1,6 +1,6 @@
 import type { FunctionInfo } from "../../../types/analysis.js";
 import { blankStringLiterals } from "../shared/regex-base.js";
-import { splitGoTopLevel, stripGoComment } from "./syntax.js";
+import { bracketDelta, splitGoTopLevel, stripGoComment } from "./syntax.js";
 
 type Write = NonNullable<FunctionInfo["fieldWrites"]>[number];
 
@@ -9,27 +9,38 @@ const LVALUE = String.raw`\*?[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:\[[^\]]*\])?`;
 /** An assignment statement: a list of lvalues, then `=`, a compound `op=`, `++` or `--` (never `:=`, `==`, `<=`, `!=`). */
 const ASSIGN_RE = new RegExp(String.raw`^\s*(${LVALUE}(?:\s*,\s*${LVALUE})*)\s*(?:(?:<<|>>|&\^|[-+*/%&|^])?=(?!=)|\+\+|--)`);
 
-/** The names a file declares with `var` at its top level (`FileAnalysis.packageVariables`), typed or not, with the line. */
-export function goPackageVariableNames(lines: readonly string[]): Array<{ name: string; line: number }> {
+/** The names `var` declarations in `lines` bind (`var a, b T`, a `var ( … )` block at its own depth), with the line; `indented` also reads those inside a body. */
+function varNames(lines: readonly string[], indented: boolean): Array<{ name: string; line: number }> {
   const out: Array<{ name: string; line: number }> = [];
   const seen = new Set<string>();
   const add = (names: string, line: number): void => {
     for (const n of names.split(",").map((s) => s.trim())) if (n && n !== "_" && !seen.has(n)) { seen.add(n); out.push({ name: n, line }); }
   };
+  const lead = indented ? String.raw`\s*` : "";
+  const blockOpen = new RegExp(String.raw`^${lead}var\s*\(\s*$`);
+  const single = new RegExp(String.raw`^${lead}var\s+([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)(?=\s|$|=)`);
   let block = false;
+  let depth = 0;
   for (let i = 0; i < lines.length; i++) {
     const code = blankStringLiterals(stripGoComment(lines[i] ?? ""));
     if (block) {
-      if (/^\s*\)/.test(code)) { block = false; continue; }
-      const m = /^\s+([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)(?=\s|$|=)/.exec(code);
+      if (depth === 0 && /^\s*\)/.test(code)) { block = false; continue; }
+      // A name opens a spec only at the block's own depth: a struct body or a literal's lines are not specs.
+      const m = depth === 0 ? /^\s+([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)(?=\s|$|=)/.exec(code) : null;
       if (m) add(m[1]!, i + 1);
+      depth += bracketDelta(code);
       continue;
     }
-    if (/^var\s*\(\s*$/.test(code)) { block = true; continue; }
-    const m = /^var\s+([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)(?=\s|$|=)/.exec(code);
+    if (blockOpen.test(code)) { block = true; depth = 0; continue; }
+    const m = single.exec(code);
     if (m) add(m[1]!, i + 1);
   }
   return out;
+}
+
+/** The names a file declares with `var` at its top level (`FileAnalysis.packageVariables`), typed or not, with the line. */
+export function goPackageVariableNames(lines: readonly string[]): Array<{ name: string; line: number }> {
+  return varNames(lines, false);
 }
 
 /**
@@ -48,7 +59,14 @@ export function goMemberEffects(
   bound: ReadonlySet<string>,
 ): Write[] {
   const out: Write[] = [];
-  const signature = lines[fn.line - 1] ?? "";
+  // The whole signature, through the line that opens the body: parameters and named results may span lines.
+  let signature = "";
+  for (let ln = fn.line; ln <= Math.min(fn.endLine, fn.line + 20); ln++) {
+    const code = stripGoComment(lines[ln - 1] ?? "");
+    signature += `${code}\n`;
+    if (/\{\s*$/.test(code)) break;
+  }
+  const declaredVars = new Set(varNames(body, true).map((v) => v.name));
   const named = (name: string): boolean => new RegExp(String.raw`(?<![\w.])${name}(?!\w)`).test(signature);
   const typed = new Set<string>();
   for (const p of fn.params) if (p.type && p.name !== "_" && !p.isReceiver) typed.add(p.name);
@@ -70,7 +88,7 @@ export function goMemberEffects(
         if (target.startsWith("*") || parts.some((p) => p === "")) continue;
         const head = parts[0]!;
         if (parts.length === 1) {
-          if (!bound.has(head) && !typed.has(head) && head !== receiverName && !named(head)) add(head, "", line, true);
+          if (!bound.has(head) && !declaredVars.has(head) && !typed.has(head) && head !== receiverName && !named(head)) add(head, "", line, true);
         } else if (parts.length === 2) {
           if (head === own) add(parts[1]!, "this", line);
           else if (typed.has(head) && head !== receiverName && !(bound.has(head) && fn.params.some((p) => p.name === head))) add(parts[1]!, head, line);

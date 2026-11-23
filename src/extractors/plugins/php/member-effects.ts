@@ -50,6 +50,8 @@ export function phpMemberEffects(
   const typed = typedNames(params, localNames);
   const initializer = methodName?.toLowerCase() === "__construct";
   const addWrite = (left: Node | null | undefined, at: Node): void => {
+    // An element write (`$this->items[] = $x`, `$this->map['k'] = $v`) changes the property it indexes.
+    while (left?.type === "subscript_expression") left = left.namedChildren[0];
     if (initializer || !left) return;
     const row = at.startPosition.row + 1;
     if (left.type === "scoped_property_access_expression") {
