@@ -10,7 +10,7 @@ import { join, dirname } from "node:path";
 import { analyzeFile } from "../../../core/file-analyzer.js";
 import { buildSymbolLinks } from "../../../core/symbol-linker.js";
 import type { FileAnalysis, Language } from "../../../types/analysis.js";
-import { isFunctionCollectionType, isFunctionType } from "./value-flow.js";
+import { collectionVerdict, isFunctionType } from "./value-flow.js";
 
 async function analyzeAll(files: Record<string, string>, language: Language): Promise<FileAnalysis[]> {
   const root = await mkdtemp(join(tmpdir(), "jvm-vf-"));
@@ -52,10 +52,10 @@ describe("function types", () => {
     expect(isFunctionType("suspend (Club) -> Unit")).toBe(true);
     expect(isFunctionType("Worker")).toBe(false);
     expect(isFunctionType("List<() -> Unit>")).toBe(false);
-    expect(isFunctionCollectionType("List<Runnable>")).toBe(true);
-    expect(isFunctionCollectionType("Map<String, () -> Unit>")).toBe(true);
-    expect(isFunctionCollectionType("Runnable[]")).toBe(true);
-    expect(isFunctionCollectionType("List<Club>")).toBe(false);
+    expect(collectionVerdict("List<Runnable>")).toBe(true);
+    expect(collectionVerdict("Map<String, () -> Unit>")).toBe(true);
+    expect(collectionVerdict("Runnable[]")).toBe(true);
+    expect(collectionVerdict("List<Club>")).toBe(false);
   });
 });
 
