@@ -51,7 +51,7 @@ Docker containers are tagged `clarifydoc-lsp-<lang>`. Images are cached between 
 
 See [lsp-configs.ts](lsp-configs.ts). Currently: TypeScript (tsserver), Python (Pyright), Java (jdtls), .NET C#/VB (Roslyn `Microsoft.CodeAnalysis.LanguageServer` — `misterkiem/roslyn-plusvb` fork that patches VB libs into the upstream server; single container serves both `.cs` and `.vb`), Kotlin (kotlin-language-server), Go (gopls), Rust (rust-analyzer), Ruby (Solargraph), PHP (Intelephense), Pascal/Delphi (`genericptr/pascal-language-server` — FPC-based `pasls`, built from source against Lazarus trunk CodeTools; handles `.pas/.pp/.dpr/.dpk/.lpr/.inc` in Delphi mode, but RTL-only: Delphi-exclusive namespaces like `VCL.*`/`FMX.*` won't fully resolve).
 
-Each language has a Dockerfile in `../../docker/<lang>/`.
+Each language has a Dockerfile in `../../docker/<lang>/`. A Dockerfile that downloads a native server picks the asset by BuildKit's `TARGETARCH` (`amd64` / `arm64`, the build fails on any other) and never hard-codes an architecture, so `docker build` produces an image for the host (dotnet: `linux-x64`/`linux-arm64` Roslyn zip; rust: `x86_64`/`aarch64-unknown-linux-gnu` rust-analyzer).
 
 ## Adding a new LSP server
 
