@@ -19,9 +19,9 @@ const FUNCTION_BOUNDARIES: ReadonlySet<string> = new Set([
 const SYMBOL_BOUNDARIES: ReadonlySet<string> = new Set(["function_declaration", "generator_function_declaration", "method_definition", "class_body", "program"]);
 const FUNCTION_VALUES: ReadonlySet<string> = new Set(["arrow_function", "function_expression", "generator_function", "class"]);
 
-let cache: { tree: unknown; blocks: Map<number, Set<string>>; vars: Map<number, Set<string>> } | null = null;
+let cache: { tree: unknown; blocks: Map<number, Set<string>>; vars: Map<number, Set<string>>; tops: Map<number, Set<string>> } | null = null;
 const memo = (node: Node) => {
-  if (cache?.tree !== node.tree) cache = { tree: node.tree, blocks: new Map(), vars: new Map() };
+  if (cache?.tree !== node.tree) cache = { tree: node.tree, blocks: new Map(), vars: new Map(), tops: new Map() };
   return cache;
 };
 
@@ -228,6 +228,9 @@ export function ownMemberObjectAt(site: Node, head: string, key: string): boolea
 
 /** The names a program's top level declares, exports or imports. */
 function topLevelNames(program: Node): Set<string> {
+  const m = memo(program);
+  const hit = m.tops.get(program.id);
+  if (hit) return hit;
   const out = new Set(declaredIn(program));
   for (const stmt of program.namedChildren) {
     if (stmt.type === "export_statement") {
@@ -238,6 +241,7 @@ function topLevelNames(program: Node): Set<string> {
       for (const id of clause?.descendantsOfType("identifier") ?? []) if (id) out.add(id.text);
     }
   }
+  m.tops.set(program.id, out);
   return out;
 }
 
