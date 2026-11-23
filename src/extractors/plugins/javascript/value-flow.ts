@@ -110,7 +110,11 @@ interface ModuleFlow {
 /** Parameter types that hold data, never a function: such a parameter's value is not followed. */
 const DATA_TYPE = /^(?:string|number|boolean|bigint|symbol|null|undefined|never|void|Date|Error|RegExp|Buffer|Uint8Array|Request|Response)\b|\[\]$|^(?:Array|Record|Promise|Set|Map)</;
 
+let knownTree: Tree | null = null;
+let knownMemo: Set<string> = new Set();
+/** The names a file can bind to a function, read once per tree: the module flow and every class field's flow share it. */
 function knownNamesOf(tree: Tree): Set<string> {
+  if (tree === knownTree) return knownMemo;
   const out = new Set<string>();
   for (const st of tree.rootNode.namedChildren) {
     if (st.type !== "import_statement") continue;
@@ -127,6 +131,8 @@ function knownNamesOf(tree: Tree): Set<string> {
       if (value && (isFunctionLike(value) || (value.type === "call_expression" && value.childForFieldName("function")?.text === "require"))) out.add(name.text);
     }
   }
+  knownTree = tree;
+  knownMemo = out;
   return out;
 }
 let importsTree: Tree | null = null;
