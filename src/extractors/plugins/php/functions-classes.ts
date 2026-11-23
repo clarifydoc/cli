@@ -4,6 +4,7 @@ import type { FunctionInfo, ClassInfo, ParamInfo, PropertyInfo, Language } from 
 import { callChainText, extractCalls } from "../../shared/call-graph.js";
 import { receiverTypeName } from "../../shared/type-parser.js";
 import { arrayLiteralAt, extractPhpRequestAccess, requestReceivers, ruleEntries, ruleType } from "./request-access.js";
+import { phpMemberEffects } from "./member-effects.js";
 import { docblockAbove, parseDocblock, phpLocatorType, useAliases, type DocTypes } from "./di.js";
 import { extractPhpResponses } from "./responses.js";
 import { phpCollectionElement } from "./collection-element.js";
@@ -173,6 +174,8 @@ export class PhpExtractor extends FunctionClassExtractor {
     const valueFlow = extractPhpValueFlow(body, params.filter(mayHoldCallable).map((p) => p.name));
     if (valueFlow) fn.valueFlow = valueFlow;
     this.attachRequestAccess(fn, body);
+    const effects = phpMemberEffects(body, params, (fn.localTypes ?? []).filter((l) => l.type).map((l) => l.name), docblockAbove(node), name, fn.line);
+    if (effects) Object.assign(fn, effects);
     if (body && this.fileMayRespond) {
       const responses = extractPhpResponses(body.text);
       if (responses.length > 0) fn.responses = responses;
@@ -307,6 +310,8 @@ export class PhpExtractor extends FunctionClassExtractor {
     const valueFlow = extractPhpValueFlow(body, params.filter(mayHoldCallable).map((p) => p.name));
     if (valueFlow) fn.valueFlow = valueFlow;
     this.attachRequestAccess(fn, body);
+    const effects = phpMemberEffects(body, params, (fn.localTypes ?? []).filter((l) => l.type).map((l) => l.name), docblockAbove(node), name, fn.line);
+    if (effects) Object.assign(fn, effects);
     if (body && this.fileMayRespond) {
       const responses = extractPhpResponses(body.text);
       if (responses.length > 0) fn.responses = responses;

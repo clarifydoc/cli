@@ -1,5 +1,7 @@
 import type { ClassInfo, FieldWriteRow, FileAnalysis, FunctionInfo, ThrownTypeRow } from "../types/analysis.js";
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
+import { manifestFor } from "../extractors/registry.js";
+import { declaresEvidenceName, evidenceFullName } from "./class-evidence.js";
 
 /**
  * Field writes and thrown exception types, resolved to project classes (`ProjectAnalysis.fieldWrites` /
@@ -14,6 +16,8 @@ interface ClassRef { cls: ClassInfo; file: string; project: string }
 
 const MAX_HOPS = 8;
 
+type LanguageName = Parameters<typeof manifestFor>[0];
+
 export function joinMemberEffects(
   analyses: readonly FileAnalysis[],
   include: (file: string) => boolean = () => true,
@@ -27,12 +31,25 @@ export function joinMemberEffects(
       byName.set(cls.name, list);
     }
   }
-  const leaf = (name: string): string => name.slice(Math.max(name.lastIndexOf("."), name.lastIndexOf(":")) + 1);
+  const analysisByFile = new Map(analyses.map((a) => [a.filePath, a]));
+  const leaf = (name: string, sep?: string): string => name.slice(Math.max(name.lastIndexOf("."), name.lastIndexOf(":"), sep ? name.lastIndexOf(sep) : -1) + 1);
 
-  /** The one class `name` means from `nearFile`: its own file's, else its sub-project's, else the project's only one. */
-  const locate = (name: string, nearFile: string, project: string): ClassRef | null => {
-    const all = byName.get(name) ?? byName.get(leaf(name));
+  /**
+   * The one class `name` means from `nearFile`: its own file's, else its sub-project's, else the project's only one.
+   * Where classes are looked up by namespace (`classNamesByEvidence`) the candidates are first narrowed to the
+   * namespace the writing file's own evidence names (an import, its namespace, a full name), never a namesake's.
+   */
+  const locate = (name: string, nearFile: string, project: string, line = 0): ClassRef | null => {
+    const from = analysisByFile.get(nearFile);
+    const sep = from ? manifestFor(from.language as LanguageName)?.classNamesByEvidence?.separator : undefined;
+    let all = byName.get(sep ? leaf(name, sep) : name) ?? byName.get(leaf(name));
     if (!all) return null;
+    if (sep && from) {
+      const simple = leaf(name, sep).toLowerCase();
+      const full = evidenceFullName(from, sep, name, line);
+      all = all.filter((c) => (c.file === nearFile && !name.includes(sep)) || declaresEvidenceName(analysisByFile.get(c.file), sep, simple, full));
+      if (all.length === 0) return null;
+    }
     const own = all.filter((c) => c.file === nearFile);
     if (own.length > 0) return own.length === 1 ? own[0]! : null;
     const sameProject = all.filter((c) => c.project === project);
@@ -61,7 +78,7 @@ export function joinMemberEffects(
       const prop = at.cls.properties?.find((p) => p.name === member);
       if (prop) return { ref: at, ...(prop.type ? { type: prop.type } : {}) };
       if (initMembers(at.cls).has(member)) return { ref: at };
-      at = at.cls.extends ? locate(at.cls.extends, at.file, at.project) : null;
+      at = at.cls.extends ? locate(at.cls.extends, at.file, at.project, at.cls.line) : null;
     }
     return null;
   };
@@ -93,18 +110,18 @@ export function joinMemberEffects(
       } else if (w.receiver.startsWith("this.") && owner) {
         const field = declaring(owner)(w.receiver.slice(5));
         const type = field?.type ? receiverTypeName(field.type, a.language) : null;
-        const typed = type ? locate(type, field!.ref.file, field!.ref.project) : null;
+        const typed = type ? locate(type, field!.ref.file, field!.ref.project, field!.ref.cls.line) : null;
         target = typed ? declaring(typed)(w.member)?.ref ?? null : null;
       } else if (w.receiver && !w.receiver.includes(".") && w.receiver !== "this") {
         const type = typeOfName(w.receiver);
-        const typed = type ? locate(type, a.filePath, project) : null;
+        const typed = type ? locate(type, a.filePath, project, w.line) : null;
         target = typed ? declaring(typed)(w.member)?.ref ?? null : null;
       }
       if (!target) continue;
       fieldWrites.push({ class: target.cls.name, classFile: target.file, member: w.member, function: symbol, file: a.filePath, line: w.line, via });
     }
     for (const t of fn.throws ?? []) {
-      const known = locate(t.type, a.filePath, project);
+      const known = locate(t.type, a.filePath, project, t.line);
       thrownTypes.push({ type: t.type, function: symbol, file: a.filePath, line: t.line, ...(t.declared ? { declared: true as const } : {}), ...(known ? { classFile: known.file } : {}) });
     }
   };

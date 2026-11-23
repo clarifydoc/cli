@@ -234,3 +234,83 @@ describe("member effects, end to end", () => {
     ].sort());
   });
 });
+
+/** PHP: properties written through `$this`, static properties, typed receivers; thrown classes bound by `use` and namespace. */
+describe("member effects, PHP", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-member-effects-php-"));
+    await mkdir(join(dir, "app", "Models"), { recursive: true });
+    await mkdir(join(dir, "app", "Exceptions"), { recursive: true });
+    await mkdir(join(dir, "app", "Other"), { recursive: true });
+    await writeFile(join(dir, "app", "Exceptions", "ClubNotFound.php"), "<?php\nnamespace App\\Exceptions;\nclass ClubNotFound extends \\Exception {}\n");
+    await writeFile(join(dir, "app", "Other", "ClubNotFound.php"), "<?php\nnamespace App\\Other;\nclass ClubNotFound extends \\Exception {}\n");
+    await writeFile(join(dir, "app", "Models", "Club.php"), [
+      "<?php",
+      "namespace App\\Models;",
+      "use App\\Exceptions\\ClubNotFound;",
+      "class Club {",
+      '    public string $name = "";',
+      "    public static int $count = 0;",
+      "    public int $points = 0;",
+      '    public function __construct(string $n) { $this->name = $n; }',
+      "    /** @throws ClubNotFound */",
+      "    public function rename(string $n): void {",
+      "        $this->name = $n;",
+      "        self::$count++;",
+      "        static::$count = 5;",
+      "        $f = 'name';",
+      "        $this->$f = 'x';",
+      "        $this->points += 1;",
+      '        throw new ClubNotFound("x");',
+      "    }",
+      '    public function fail() { throw new \\App\\Other\\ClubNotFound(); }',
+      "}",
+      "class Garage { public string $name = ''; public function open() { $this->name = 'o'; } }",
+    ].join("\n"));
+    await writeFile(join(dir, "app", "Models", "Elite.php"), "<?php\nnamespace App\\Models;\nclass Elite extends Club { public function promote() { $this->points = 9; } }\n");
+    await writeFile(join(dir, "app", "Models", "League.php"), [
+      "<?php",
+      "namespace App\\Models;",
+      "class League {",
+      "    public Club $club;",
+      "    public function move(Club $c, Garage $g, $o) {",
+      "        $c->name = 'r'; $c->points++; $g->name = 'g'; $o->name = 'u';",
+      "        $this->club->name = 'lead';",
+      "        $v = new Club('a'); $v->name = 'z';",
+      "    }",
+      "}",
+    ].join("\n"));
+    await analyze({ projectRoot: dir, outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 60_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const writers = (cls: string, member: string): string[] =>
+    (summary.fieldWrites ?? []).filter((w) => w.class === cls && w.member === member).map((w) => `${w.function}:${w.line}`).sort();
+
+  it("lists the writers of a property through this, a static scope, inheritance and typed receivers", () => {
+    expect(writers("Club", "name")).toEqual(["Club.rename:11", "League.move:6", "League.move:7", "League.move:8"]);
+    expect(writers("Club", "points")).toEqual(["Club.rename:16", "Elite.promote:3", "League.move:6"]);
+    expect(writers("Club", "count")).toEqual(["Club.rename:12", "Club.rename:13"]);
+    expect(writers("Garage", "name")).toEqual(["Garage.open:21", "League.move:6"]);
+  });
+
+  it("states nothing for a constructor, a dynamic property or an untyped receiver", () => {
+    const rows = (summary.fieldWrites ?? []).filter((w) => w.file === "app/Models/Club.php");
+    expect(rows.some((w) => w.line === 8 || w.line === 15)).toBe(false);
+    expect((summary.fieldWrites ?? []).some((w) => w.function === "League.move" && w.class !== "Club" && w.class !== "Garage")).toBe(false);
+  });
+
+  it("binds a thrown class through the file's use and namespace, and the docblock as declared", () => {
+    const rows = (summary.thrownTypes ?? []).map((t) => `${t.function} ${t.type}${t.declared ? " declared" : ""} -> ${t.classFile}`).sort();
+    expect(rows).toEqual([
+      "Club.fail \\App\\Other\\ClubNotFound -> app/Other/ClubNotFound.php",
+      "Club.rename ClubNotFound -> app/Exceptions/ClubNotFound.php",
+      "Club.rename ClubNotFound declared -> app/Exceptions/ClubNotFound.php",
+    ]);
+  });
+});

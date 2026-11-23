@@ -1,3 +1,4 @@
+import { declaresEvidenceName, evidenceFullName } from "./class-evidence.js";
 import { routeSymbolName } from "./route-symbol.js";
 import { codeTwinsIndex, isJoinableRoute, type TwinRoute } from "./route-linker.js";
 import {
@@ -2995,25 +2996,12 @@ function compiledNameMember(ctx: LinkContext, analysis: FileAnalysis, sourceFile
  */
 function filesNamedByEvidence(ctx: LinkContext, analysis: FileAnalysis, sep: string, written: string, candidates: readonly string[], line = 0): string[] {
   const simple = written.slice(written.lastIndexOf(sep) + 1).toLowerCase();
-  let full: string;
-  if (written.startsWith(sep)) full = written.slice(sep.length);
-  else {
-    const segments = written.split(sep);
-    const bound = analysis.imports.find((i) => i.isType && i.specifiers.includes(segments[0]!));
-    // A file opening several namespaces records each class's own: the caller's is the class around the call.
-    const around = analysis.classes.some((c) => c.namespace) ? analysis.classes.find((c) => c.line <= line && line <= c.endLine) : undefined;
-    const ns = around ? around.namespace : analysis.declaredNamespace;
-    full = bound ? [bound.source, ...segments.slice(1)].join(sep) : ns ? `${ns}${sep}${written}` : written;
-  }
-  full = full.toLowerCase();
+  const full = evidenceFullName(analysis, sep, written, line);
   ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
   return candidates.filter((f) => {
     if (f === analysis.filePath && !written.includes(sep)) return true;
     const other = ctx.analysisByFile!.get(f);
-    // The class's own namespace where the file states one per class; else the file's.
-    const named = other?.classes.some((c) => c.namespace) ? other.classes.filter((c) => c.name.toLowerCase() === simple) : [];
-    const spaces = named.length > 0 ? named.map((c) => c.namespace) : [other?.declaredNamespace];
-    return spaces.some((ns) => (ns ? `${ns}${sep}${simple}` : simple).toLowerCase() === full);
+    return declaresEvidenceName(other, sep, simple, full);
   });
 }
 
