@@ -399,7 +399,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
         // `db.session.get(Club, id)`: a session read of the model it is handed (a string or `url` first argument is no model).
         const sessionGet = leaf === "get" && PY_DB_RECEIVER_RE.test(receiver) && sessionModelArg(node, leaf) !== null;
         const isQuery =
-          PY_DB_LEAVES.has(leaf) || djangoManager || sessionGet ||
+          (PY_DB_LEAVES.has(leaf) && !(leaf === "save" && savesThroughLibraryModule(parts, this.sourceText))) || djangoManager || sessionGet ||
           (PY_GENERIC_DB_LEAVES.has(leaf) && datastoreChain(fnName)) || (relatedManager(fnName, leaf) && (PY_GENERIC_DB_LEAVES.has(leaf) || !datastoreChain(fnName))) ||
           (PY_SESSION_STATEMENT_LEAVES.has(leaf) && !fnName.includes("(") && PY_DB_RECEIVER_RE.test(receiver));
         if (fnName.includes(".") && (isQuery || isSessionWrite)) {
@@ -544,6 +544,32 @@ const PY_DB_LEAVES = new Set([
   "insert_one", "insert_many", "update_one", "update_many",
   "delete_one", "delete_many", "count_documents",
 ]);
+
+/** Import roots that are database / ORM libraries: a `save` through one of them stays a write. */
+const PY_ORM_MODULE_ROOTS = new Set([
+  "django", "sqlalchemy", "sqlmodel", "flask_sqlalchemy", "pymongo", "mongoengine", "motor", "peewee", "tortoise",
+  "pony", "odmantic", "beanie", "databases", "psycopg", "psycopg2", "sqlite3", "mysql", "pymysql", "asyncpg", "redis", "aioredis",
+]);
+
+/**
+ * `np.save(…)`, `torch.save(…)`, `onnx.save(…)`: a `save` whose receiver is a module the file imports
+ * with a plain `import x [as n]` (an instance is never bound that way) and whose package is no database
+ * library. A project module bound the same way (`import repository`) reads the same: its call site is no
+ * row, and the write inside its own function keeps the row it states.
+ */
+function savesThroughLibraryModule(parts: string[], sourceText: string): boolean {
+  if (parts.length !== 2) return false;
+  const receiver = escapeRegex(parts[0]!);
+  for (const m of sourceText.matchAll(new RegExp(String.raw`^[ \t]*import\s+([^\n#]+)`, "gm"))) {
+    for (const item of m[1]!.split(",")) {
+      const bound = /^\s*([\w.]+)(?:\s+as\s+(\w+))?\s*$/.exec(item);
+      if (!bound) continue;
+      const name = bound[2] ?? bound[1]!;
+      if (new RegExp(`^${receiver}$`).test(name) && !PY_ORM_MODULE_ROOTS.has(bound[1]!.split(".")[0]!)) return true;
+    }
+  }
+  return false;
+}
 
 /** Verbs a model INSTANCE answers (`club.save()`), as opposed to a manager or session. */
 const INSTANCE_VERBS = new Set(["save", "delete", "refresh_from_db"]);

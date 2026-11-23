@@ -880,3 +880,30 @@ describe("a loop over a module-level constant of classes", () => {
     expect(found.map(([e]) => e)).toEqual(["Club", "Player"]);
   });
 });
+
+describe("Python save on a library module (E-291)", () => {
+  async function dbRows(src: string) {
+    const tree = await parseSource(src, "python" as never, "x.py");
+    return new PythonDataSourceExtractor().extract(tree, src).filter((d) => d.kind === "database").map((d) => `${d.name}@${d.line}`);
+  }
+
+  it("is no write on an imported library module, and stays one on a model, a session and an ORM module", async () => {
+    const rows = await dbRows([
+      "import numpy as np",
+      "import torch, onnx",
+      "import mongoengine as me",
+      "np.save('a.npy', arr)",
+      "torch.save(model, 'm.pt')",
+      "onnx.save(model, 'm.onnx')",
+      "def f(car, session):",
+      "    car = Car(name='x')",
+      "    car.save()",
+      "    me.save(car)",
+      "    session.add(car)",
+    ].join("\n"));
+    expect(rows.some((r) => /^(?:np|torch|onnx)\./.test(r))).toBe(false);
+    expect(rows).toContain("car.save@9");
+    expect(rows).toContain("me.save@10");
+    expect(rows.some((r) => r.startsWith("session.add"))).toBe(true);
+  });
+});
