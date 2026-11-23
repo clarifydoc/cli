@@ -148,11 +148,12 @@ function routeAttribute(fn: Node): string {
  * `fn load(db: &Db, name: String)` is a helper, never a handler.
  */
 function isAxumHandler(fn: Node, param: Node): boolean {
-  if (!/\buse\s+axum\b|\baxum::/.test(fn.tree.rootNode.text)) return false;
   if (!fn.children.some((c) => c.type === "function_modifiers" && /\basync\b/.test(c.text))) return false;
   const params = (fn.childForFieldName("parameters")?.namedChildren ?? []).filter((p) => p.type === "parameter");
   // A body extractor must be last.
   if (params[params.length - 1]?.id !== param.id) return false;
+  // The file text crosses into WASM: read it last, after the cheap checks.
+  if (!/\buse\s+axum\b|\baxum::/.test(fn.tree.rootNode.text)) return false;
   const others = params.filter((p) => p.id !== param.id);
   if (others.some((p) => AXUM_EXTRACTOR.test(typeHead(p.childForFieldName("type"))?.head ?? ""))) return true;
   return others.length === 0 && AXUM_RESPONSE.test(fn.childForFieldName("return_type")?.text ?? "");
