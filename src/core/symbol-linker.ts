@@ -4775,7 +4775,7 @@ function callableMember(ctx: LinkContext, q: Parameters<CallableMemberQuestion>[
  * `typealias` of a function type another file declares): is it a function type there? The name means what the
  * nearest scope that declares it says, never a pool across files or sub-projects — the file's own declarations, then
  * the files it imports (through barrels), then its own sub-project (a module whose files see each other), then the
- * sub-projects it imports as packages. A scope declaring the name as an alias only is a function type; as a class
+ * sub-projects it imports as packages, then those its build declares it references. A scope declaring the name as an alias only is a function type; as a class
  * only, a class; both, or neither anywhere, no answer is claimed (never a function type).
  */
 function functionTypeQuestion(ctx: LinkContext): FunctionTypeQuestion {
@@ -4837,10 +4837,13 @@ function judgeFunctionType(ctx: LinkContext, file: string, type: string): boolea
   const imported = importedFilesOf(analysis, ctx);
   const project = ctx.projectOf.get(file);
   const importedProjects = importedProjectsOf(analysis, ctx);
+  // The sub-projects its build declares (a .NET `ProjectReference`): their types are in scope with no import line.
+  const references = project === undefined ? undefined : ctx.declaredReferences.get(project);
   return decide((f) => f === file)
     ?? decide((f) => imported.has(f))
     ?? (project === undefined ? undefined : decide((f) => ctx.projectOf.get(f) === project))
     ?? decide((f) => importedProjects.has(ctx.projectOf.get(f) ?? ""))
+    ?? (references === undefined ? undefined : decide((f) => references.has(ctx.projectOf.get(f) ?? "")))
     ?? false;
 }
 

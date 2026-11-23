@@ -9,9 +9,9 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { analyzeFile } from "../../../core/file-analyzer.js";
 import { buildSymbolLinks } from "../../../core/symbol-linker.js";
-import type { FileAnalysis } from "../../../types/analysis.js";
+import type { FileAnalysis, SubProject } from "../../../types/analysis.js";
 
-async function analyzeAll(files: Record<string, string>): Promise<FileAnalysis[]> {
+async function analyzeAll(files: Record<string, string>, projectOf: (rel: string) => string = () => "root"): Promise<FileAnalysis[]> {
   const root = await mkdtemp(join(tmpdir(), "cs-vf-"));
   const out = await mkdtemp(join(tmpdir(), "cs-vf-out-"));
   const analyses: FileAnalysis[] = [];
@@ -23,7 +23,7 @@ async function analyzeAll(files: Record<string, string>): Promise<FileAnalysis[]
     const result = await analyzeFile({
       file: { absolutePath: join(root, rel), relativePath: rel, language: "csharp" },
       frameworkIds: [],
-      projectId: "root",
+      projectId: projectOf(rel),
       outputOpts: { outputDir: out, pretty: false },
       verbose: false,
       projectRoot: root,
@@ -35,8 +35,8 @@ async function analyzeAll(files: Record<string, string>): Promise<FileAnalysis[]
 }
 
 /** `source@line -> target`, for the value-flow links only. */
-function flowLinks(analyses: FileAnalysis[]): string[] {
-  return buildSymbolLinks(analyses)
+function flowLinks(analyses: FileAnalysis[], subProjects: SubProject[] = []): string[] {
+  return buildSymbolLinks(analyses, subProjects)
     .filter((l) => l.strategy === "value-flow")
     .map((l) => `${l.sourceSymbol}@${l.sourceLine} ${l.callName} -> ${l.targetFile}::${l.targetSymbol}`)
     .sort();
@@ -788,6 +788,51 @@ describe("C# value flow: a plain-typed parameter only handed on", () => {
       "League/Setup.cs": setup,
     }));
     expect(links).toEqual([]);
+  });
+});
+
+describe("C# value flow: a delegate in a referenced sub-project", () => {
+  const web = {
+    "League.Web/Board.cs": lines(
+      "namespace League.Web;",
+      "public class Board {",
+      "  private Kick _kick;",
+      "  public void Set(Kick k) { _kick = k; }",
+      "  public void Run(Player p) { _kick(p); }",
+      "}",
+    ),
+    "League.Web/Setup.cs": lines(
+      "namespace League.Web;",
+      "public class Setup {",
+      "  public void Go() { new Board().Set(Penalty); }",
+      "  void Penalty(Player p) {}",
+      "}",
+    ),
+  };
+  const subProjects = (references: string[]): SubProject[] => [
+    { id: "core", name: "League.Core", root: "League.Core", kind: "dotnet", markers: [] },
+    { id: "other", name: "Other", root: "Other", kind: "dotnet", markers: [] },
+    { id: "web", name: "League.Web", root: "League.Web", kind: "dotnet", markers: [], references: references.map((project) => ({ project, file: "League.Web/League.Web.csproj" })) },
+  ];
+  const projectOf = (rel: string): string => (rel.startsWith("League.Core") ? "core" : rel.startsWith("Other") ? "other" : "web");
+
+  it("finds the delegate through the project reference, with no using", async () => {
+    const analyses = await analyzeAll({
+      ...web,
+      "League.Core/Kick.cs": lines("namespace League;", "public delegate void Kick(Player p);", "public class Player {}"),
+      // A namesake class in a project nothing references.
+      "Other/Kick.cs": lines("namespace League;", "public class Kick {}"),
+    }, projectOf);
+    expect(flowLinks(analyses, subProjects(["core"]))).toEqual(["Board.Run@5 _kick -> League.Web/Setup.cs::Setup.Penalty"]);
+    expect(flowLinks(analyses, subProjects([]))).toEqual([]);
+  });
+
+  it("does not take a namesake class of an unreferenced project for the delegate", async () => {
+    const analyses = await analyzeAll({
+      ...web,
+      "Other/Kick.cs": lines("namespace League;", "public delegate void Kick(Player p);", "public class Player {}"),
+    }, projectOf);
+    expect(flowLinks(analyses, subProjects(["core"]))).toEqual([]);
   });
 });
 
