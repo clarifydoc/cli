@@ -761,6 +761,8 @@ export interface FileAnalysis {
    * impact pass charges the files that import it, not every importer. Omitted when the file binds none.
    */
   moduleNames?: ModuleNameSpan[];
+  /** Variables the file declares at its package's top level, typed or not, by name and line (Go `var`); what a function's `fieldWrites` marked `package` joins. */
+  packageVariables?: Array<{ name: string; line: number }>;
   /**
    * The namespace the file's free functions are declared in, as the language
    * writes it (PHP `namespace App\Support;` → `App\Support`). A call reaching
@@ -1696,8 +1698,10 @@ export interface FunctionInfo {
    * change. Core resolves the receiver's class (`ProjectAnalysis.fieldWrites`). Absent when the function writes none.
    * `init` marks a write in an initializer (Python `__init__`) of a language whose fields are declared by assignment:
    * it declares the member for core (`this.x = …` there is where the attribute exists) and is listed as no writer.
+   * `package` marks a bare name the function does not bind itself (Go `clubCount = 0`, `cache[id] = c`): a candidate
+   * package variable, which core lists only when a file of the same package declares it (`FileAnalysis.packageVariables`).
    */
-  fieldWrites?: Array<{ member: string; receiver: string; line: number; init?: true }>;
+  fieldWrites?: Array<{ member: string; receiver: string; line: number; init?: true; package?: true }>;
   /**
    * The exception types the function throws: `throw new Overdrawn(…)` (the type as written, qualifier kept) and what its
    * signature declares (Java `throws`, Kotlin `@Throws`; `declared`). A rethrow of a variable and a thrown call result
@@ -6101,8 +6105,11 @@ export interface FieldWriteRow {
   function: string;
   file: string;
   line: number;
-  /** `this`: through the own instance or a bare field; `typed`: through a parameter, a local or a field of a declared class. */
-  via: "this" | "typed";
+  /**
+   * `this`: through the own instance or a bare field; `typed`: through a parameter, a local or a field of a declared class;
+   * `package`: a package variable (Go) — `class` is then the package's name and `member` the variable.
+   */
+  via: "this" | "typed" | "package";
 }
 
 /** One thrown exception type of a function. `classFile` is set when the type is a class of the project. */

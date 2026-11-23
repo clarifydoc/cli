@@ -314,3 +314,115 @@ describe("member effects, PHP", () => {
     ]);
   });
 });
+
+/** Go: fields written through the receiver, typed parameters and locals; package variables joined to the file that declares them. */
+describe("member effects, Go", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-member-effects-go-"));
+    await mkdir(join(dir, "league"), { recursive: true });
+    await mkdir(join(dir, "garage"), { recursive: true });
+    await writeFile(join(dir, "go.mod"), "module example.com/league\n\ngo 1.21\n");
+    await writeFile(join(dir, "league", "club.go"), [
+      "package league",
+      "",
+      "var clubCount = 0",
+      "var (",
+      "\tcache = map[string]*Club{}",
+      "\tready bool",
+      ")",
+      "",
+      "type Stats struct{ Goals int }",
+      "",
+      "type Base struct{ ID int }",
+      "",
+      "type Club struct {",
+      "\tBase",
+      "\tName  string",
+      "\tScore int",
+      "\tStats *Stats",
+      "}",
+    ].join("\n"));
+    await writeFile(join(dir, "league", "ops.go"), [
+      "package league",
+      "",
+      "import \"example.com/lib\"",
+      "",
+      "func (c *Club) Rename(n string) {",
+      "\tc.Name = n",
+      "\tc.Stats.Goals = 0",
+      "\tc.ID = 7",
+      "\tclubCount++",
+      "}",
+      "",
+      "func Score(p *Club, cfg *lib.Config) {",
+      "\tp.Score += 1",
+      "\tcfg.Name = \"x\"",
+      "\tcache[p.Name] = p",
+      "}",
+      "",
+      "func Fresh() *Club {",
+      "\tclubCount := 3",
+      "\tclubCount = 4",
+      "\tc := &Club{}",
+      "\tc.Name = \"a\"",
+      "\tready = true",
+      "\treturn c",
+      "}",
+      "",
+      "func Shadow(ready bool) {",
+      "\tready = false",
+      "}",
+      "",
+      "func (c *Club) Total() (clubCount int) {",
+      "\tclubCount = 2",
+      "\treturn",
+      "}",
+    ].join("\n"));
+    await writeFile(join(dir, "garage", "garage.go"), [
+      "package garage",
+      "",
+      "var clubCount = 1",
+      "",
+      "type Club struct{ Name string }",
+      "",
+      "func (c *Club) Rename(n string) {",
+      "\tc.Name = n",
+      "\tclubCount = 5",
+      "}",
+    ].join("\n"));
+    await analyze({ projectRoot: dir, outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 60_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const rows = (): string[] =>
+    (summary.fieldWrites ?? []).map((w) => `${w.class}.${w.member} <- ${w.function}:${w.line} ${w.via} ${w.classFile}`).sort();
+
+  it("lists struct fields written through the receiver, a typed parameter and a typed local, in the package's own type", () => {
+    expect(rows().filter((r) => r.includes("league/club.go") && !r.includes("package"))).toEqual([
+      "Base.ID <- Club.Rename:8 this league/club.go",
+      "Club.Name <- Club.Rename:6 this league/club.go",
+      "Club.Name <- Fresh:22 typed league/club.go",
+      "Club.Score <- Score:13 typed league/club.go",
+      "Stats.Goals <- Club.Rename:7 typed league/club.go",
+    ]);
+  });
+
+  it("keeps a namesake type of another package apart, and a type from a library package", () => {
+    expect(rows().filter((r) => r.includes("garage/garage.go") && !r.includes("package"))).toEqual(["Club.Name <- Club.Rename:8 this garage/garage.go"]);
+    expect((summary.fieldWrites ?? []).some((w) => w.function === "Score" && w.member === "Name" && w.line === 14)).toBe(false);
+  });
+
+  it("joins a bare assignment to the package variable a sibling file declares, and never to a local, a parameter or a result", () => {
+    expect(rows().filter((r) => r.includes(" package "))).toEqual([
+      "garage.clubCount <- Club.Rename:9 package garage/garage.go",
+      "league.cache <- Score:15 package league/club.go",
+      "league.clubCount <- Club.Rename:9 package league/club.go",
+      "league.ready <- Fresh:23 package league/club.go",
+    ]);
+  });
+});

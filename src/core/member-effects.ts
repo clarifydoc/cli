@@ -12,9 +12,13 @@ import { declaresEvidenceName, evidenceFullName } from "./class-evidence.js";
  * project). A receiver no declaration types states nothing, so a namesake field of another class is never listed.
  */
 
-interface ClassRef { cls: ClassInfo; file: string; project: string }
+/** `parts`: the other declarations of one type in its directory, where a type spans files (Go: the struct and the files holding its methods). */
+interface ClassRef { cls: ClassInfo; file: string; project: string; parts?: ClassRef[] }
 
 const MAX_HOPS = 8;
+
+/** Does `language` declare one type across the files of a directory (`typesSpanFiles`)? */
+const spansFiles = (language: string): boolean => manifestFor(language as LanguageName)?.typesSpanFiles === true;
 
 type LanguageName = Parameters<typeof manifestFor>[0];
 
@@ -41,6 +45,15 @@ export function joinMemberEffects(
    */
   const locate = (name: string, nearFile: string, project: string, line = 0): ClassRef | null => {
     const from = analysisByFile.get(nearFile);
+    if (from && spansFiles(from.language)) {
+      // One type of a directory: its parts across the files, never a namesake of another package, nor a type written through a package qualifier.
+      if (name.includes(".")) return null;
+      const dir = nearFile.slice(0, nearFile.lastIndexOf("/") + 1);
+      const parts = (byName.get(name) ?? []).filter((c) => c.file.slice(0, c.file.lastIndexOf("/") + 1) === dir && analysisByFile.get(c.file)?.language === from.language);
+      if (parts.length === 0) return null;
+      const home = parts.find((c) => !c.cls.extension && c.cls.properties.length > 0) ?? parts[0]!;
+      return { ...home, parts };
+    }
     const sep = from ? manifestFor(from.language as LanguageName)?.classNamesByEvidence?.separator : undefined;
     let all = byName.get(sep ? leaf(name, sep) : name) ?? byName.get(leaf(name));
     if (!all) return null;
@@ -69,22 +82,48 @@ export function joinMemberEffects(
     return set;
   };
 
-  /** The class in `ref`'s own or base chain that declares property `member` (itself when it does). */
+  /** The class in `ref`'s own, base or embedded chain that declares property `member` (itself when it does). */
   const declaring = (ref: ClassRef): ((member: string) => { ref: ClassRef; type?: string } | null) => (member) => {
     const seen = new Set<ClassInfo>();
-    let at: ClassRef | null = ref;
-    for (let hop = 0; at && hop < MAX_HOPS && !seen.has(at.cls); hop++) {
+    const queue: ClassRef[] = [ref];
+    for (let hop = 0; queue.length > 0 && hop < MAX_HOPS * 4; hop++) {
+      const at = queue.shift()!;
+      if (seen.has(at.cls)) continue;
       seen.add(at.cls);
-      const prop = at.cls.properties?.find((p) => p.name === member);
-      if (prop) return { ref: at, ...(prop.type ? { type: prop.type } : {}) };
-      if (initMembers(at.cls).has(member)) return { ref: at };
-      at = at.cls.extends ? locate(at.cls.extends, at.file, at.project, at.cls.line) : null;
+      for (const part of at.parts ?? [at]) {
+        const prop = part.cls.properties?.find((p) => p.name === member);
+        if (prop) return { ref: part, ...(prop.type ? { type: prop.type } : {}) };
+        if (initMembers(part.cls).has(member)) return { ref: part };
+      }
+      for (const part of at.parts ?? [at]) {
+        const bases = [...(part.cls.extends ? [part.cls.extends] : []), ...(spansFiles(analysisByFile.get(part.file)?.language ?? "") ? part.cls.embeds ?? [] : [])];
+        for (const base of bases) {
+          const next = locate(base, part.file, part.project, part.cls.line);
+          if (next) queue.push(next);
+        }
+      }
     }
     return null;
   };
 
+  const analysesByDir = new Map<string, FileAnalysis[]>();
+  for (const a of analyses) {
+    if (!include(a.filePath) || !a.packageVariables) continue;
+    const dir = a.filePath.slice(0, a.filePath.lastIndexOf("/") + 1);
+    analysesByDir.set(dir, [...(analysesByDir.get(dir) ?? []), a]);
+  }
   const fieldWrites: FieldWriteRow[] = [];
   const thrownTypes: ThrownTypeRow[] = [];
+
+  const dirOf = (file: string): string => file.slice(0, file.lastIndexOf("/") + 1);
+  const packageName = (file: string): string => dirOf(file).split("/").filter(Boolean).pop() ?? "main";
+  /** The one file that declares package variable `name` for a function of `a`: where the language shares a directory's names (`directoryNamesShared`) a sibling's, else its own. */
+  const packageVariableHome = (a: FileAnalysis, name: string): string | null => {
+    const shared = manifestFor(a.language as LanguageName)?.directoryNamesShared === true;
+    const dir = dirOf(a.filePath);
+    const homes = (shared ? (analysesByDir.get(dir) ?? []) : [a]).filter((x) => x.language === a.language && x.packageVariables?.some((v) => v.name === name));
+    return homes.length === 1 ? homes[0]!.filePath : null;
+  };
 
   const visit = (a: FileAnalysis, fn: FunctionInfo, symbol: string, owner: ClassRef | null): void => {
     const project = a.projectId ?? "";
@@ -97,13 +136,19 @@ export function joinMemberEffects(
       const only = [...types];
       return only.length === 1 ? only[0] ?? null : null;
     };
+    const spans = spansFiles(a.language);
     for (const w of fn.fieldWrites ?? []) {
       if (w.init) continue;
+      if (w.package) {
+        const home = packageVariableHome(a, w.member);
+        if (home) fieldWrites.push({ class: packageName(home), classFile: home, member: w.member, function: symbol, file: a.filePath, line: w.line, via: "package" });
+        continue;
+      }
       let target: ClassRef | null = null;
       let via: FieldWriteRow["via"] = "typed";
       if (w.receiver === "this" && owner) {
         via = "this";
-        target = declaring(owner)(w.member)?.ref ?? owner;
+        target = declaring(owner)(w.member)?.ref ?? (spans ? null : owner);
       } else if (w.receiver === "" && owner) {
         via = "this";
         target = declaring(owner)(w.member)?.ref ?? null;
@@ -129,7 +174,8 @@ export function joinMemberEffects(
   for (const a of analyses) {
     if (!include(a.filePath)) continue;
     for (const cls of a.classes) {
-      const owner: ClassRef = { cls, file: a.filePath, project: a.projectId ?? "" };
+      const own: ClassRef = { cls, file: a.filePath, project: a.projectId ?? "" };
+      const owner = spansFiles(a.language) ? locate(cls.name, a.filePath, own.project) ?? own : own;
       for (const m of cls.methods) if (m.fieldWrites || m.throws) visit(a, m, `${cls.name}.${m.name}`, owner);
     }
     for (const fn of a.functions) if (fn.fieldWrites || fn.throws) visit(a, fn, fn.name, null);

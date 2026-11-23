@@ -4,6 +4,7 @@ import { goFuncVarParams, goInlineBodyColumn } from "./func-vars.js";
 import { extractGoLocalTypes, goPackageVars, initializerType, type GoBodyReading, type GoConstructors } from "./locals.js";
 import { addExpressionReceiverCalls, type GoTypeEnv } from "./element-types.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
+import { goMemberEffects } from "./member-effects.js";
 import { goLiteralParams } from "./literal-params.js";
 import { boundFromTags } from "./bound-tags.js";
 import { withHeadPathNames } from "./head-paths.js";
@@ -93,6 +94,8 @@ export function extractGoClasses(lines: string[], fns: FunctionInfo[], parsePara
     else delete fn.boundNames;
     if (locals.length > 0) fn.localTypes = locals;
     else delete fn.localTypes;
+    const writes = goMemberEffects(lines, fn, body, inline >= 0 ? fn.line : fn.line + 1, receiver?.name ?? null, bound);
+    if (writes.length > 0) fn.fieldWrites = writes;
     typeBlockLocalCalls(lines, fn, declared, locals, receiver?.name, constructors);
     typeSwitchCalls(lines, fn);
     if (reading.typeOfName) addExpressionReceiverCalls(fn, lines, env, reading.typeOfName);

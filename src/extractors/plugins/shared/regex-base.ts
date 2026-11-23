@@ -293,6 +293,8 @@ export interface RegexLangSpec {
   extractModuleValues?: (lines: string[]) => Record<string, string>;
   /** Typed variables the file declares at its top level (`FileAnalysis.moduleBindings`). */
   extractModuleBindings?: (lines: string[]) => import("../../../types/analysis.js").ModuleBindingInfo[];
+  /** Variables the file declares at its package's top level, typed or not (`FileAnalysis.packageVariables`). */
+  extractPackageVariables?: (lines: string[]) => Array<{ name: string; line: number }>;
   /** Function values the file's module-level code holds (`HANDLERS = { save: method(:save) }`) → `FileAnalysis.moduleValueFlow`. Runs after the functions and classes are known. */
   extractModuleValueFlow?: (lines: string[], analysis: import("../../../types/analysis.js").FileAnalysis) => import("../../../types/analysis.js").ValueFlowFact[];
   /**

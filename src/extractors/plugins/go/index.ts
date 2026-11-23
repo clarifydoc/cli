@@ -15,6 +15,7 @@ import { extractHumaRoutes } from "./huma.js";
 import { extractGoDataSources } from "./data-sources.js";
 import { extractGoHttpClientRegistrations } from "./http-clients.js";
 import { extractGoRequestAccess } from "./request-access.js";
+import { goPackageVariableNames } from "./member-effects.js";
 import { extractGoClasses, hideShadowedTypes } from "./classes.js";
 import { goAddressedTypes } from "./addressed-types.js";
 import { goTestSuites } from "./test-suites.js";
@@ -240,6 +241,8 @@ export const goSpec: RegexLangSpec = {
   extractHttpClientRegistrations: extractGoHttpClientRegistrations,
   // Typed package-level variables (`var first = &Club{}`) a bare name in the file's functions reaches.
   extractModuleBindings: (lines) => goPackageVars(lines).map((v) => ({ name: v.name, type: v.type, ...(v.from ? { from: v.from } : {}), line: v.line, exported: false })),
+  // Every package-level `var` name, typed or not: what a function's bare assignment joins (core/member-effects.ts).
+  extractPackageVariables: goPackageVariableNames,
   // Calls naming the endpoint of a request factory (`NewInternalRequest(ctx, reqURL, "POST")`).
   extractPathArgCalls: extractGoPathArgCalls,
   extractRequestAccess: extractGoRequestAccess,
