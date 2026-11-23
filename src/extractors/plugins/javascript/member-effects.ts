@@ -1,16 +1,13 @@
 import type { Node } from "web-tree-sitter";
-import type { FunctionInfo, ParamInfo } from "../../../types/analysis.js";
+import type { ParamInfo } from "../../../types/analysis.js";
+import { jsDocThrows } from "./jsdoc.js";
+import { EffectsCollector, MAX_FACTS, typedNames, visitOwnScope, type Effects } from "../shared/member-effects-kit.js";
 
 /** Scopes whose `this` and locals are not the function's own. An arrow function keeps both, so it is walked. */
 const OWN_SCOPE_BREAKS: ReadonlySet<string> = new Set([
   "function_expression", "function", "function_declaration", "generator_function", "generator_function_declaration",
   "method_definition", "class_body", "class", "class_declaration",
 ]);
-
-/** Most facts one function states: a generated initializer would otherwise swell the file for no reader. */
-const MAX_FACTS = 40;
-
-type Effects = Pick<FunctionInfo, "fieldWrites" | "throws">;
 
 /** `this`, `this.field`, or a plain name; anything else (`a.b.c`, a call, a subscript) states no receiver. */
 function receiverText(n: Node | null | undefined, typed: ReadonlySet<string>): string | null {
@@ -38,39 +35,27 @@ export function memberEffectsOf(
   options: { initializer?: boolean; skip?: (node: Node) => boolean } = {},
 ): Effects | null {
   if (!body) return null;
-  const typed = new Set<string>(localNames);
-  for (const p of params) if (p.type) typed.add(p.name);
-  const writes: NonNullable<Effects["fieldWrites"]> = [];
-  const throws: NonNullable<Effects["throws"]> = [];
-  const seen = new Set<string>();
+  const typed = typedNames(params, localNames);
+  const out = new EffectsCollector();
   const addWrite = (target: Node | null | undefined, at: Node): void => {
-    if (options.initializer || target?.type !== "member_expression" || writes.length >= MAX_FACTS) return;
+    if (options.initializer || target?.type !== "member_expression") return;
     const prop = target.childForFieldName("property");
     if (prop?.type !== "property_identifier") return;
     const receiver = receiverText(target.childForFieldName("object"), typed);
-    if (receiver === null) return;
-    const line = at.startPosition.row + 1;
-    const key = `${receiver}.${prop.text}@${line}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    writes.push({ member: prop.text, receiver, line });
+    if (receiver !== null) out.addWrite(receiver, prop.text, at.startPosition.row + 1);
   };
-  const visit = (n: Node, root: boolean): void => {
-    if (!root && (OWN_SCOPE_BREAKS.has(n.type) || options.skip?.(n))) return;
+  visitOwnScope(body, (n) => OWN_SCOPE_BREAKS.has(n.type) || !!options.skip?.(n), (n) => {
     if (n.type === "assignment_expression" || n.type === "augmented_assignment_expression") addWrite(n.childForFieldName("left"), n);
     else if (n.type === "update_expression") addWrite(n.childForFieldName("argument"), n);
-    else if (n.type === "throw_statement" && throws.length < MAX_FACTS) {
+    else if (n.type === "throw_statement" && !out.throwsFull) {
       const thrown = n.namedChildren.find((c) => c.type !== "comment");
       const ctor = thrown?.type === "new_expression" ? thrown.childForFieldName("constructor") : null;
       if (ctor && (ctor.type === "identifier" || ctor.type === "member_expression") && /^[\w$.]+$/.test(ctor.text)) {
-        throws.push({ type: ctor.text, line: n.startPosition.row + 1 });
+        out.addThrow(ctor.text, n.startPosition.row + 1);
       }
     }
-    for (const c of n.namedChildren) visit(c, false);
-  };
-  visit(body, true);
-  if (writes.length === 0 && throws.length === 0) return null;
-  return { ...(writes.length > 0 ? { fieldWrites: writes } : {}), ...(throws.length > 0 ? { throws } : {}) };
+  });
+  return out.result();
 }
 
 /**
@@ -78,7 +63,8 @@ export function memberEffectsOf(
  * the tag is the function's stated contract (as a Java `throws` clause is), not a `throw` site, so it is stated even
  * when the body also throws the type, and a function that only delegates still lists what it promises.
  */
-export function withJsDocThrows(effects: Effects | null, names: readonly string[], line: number): Effects | null {
+export function withJsDocThrows(effects: Effects | null, doc: string | null | undefined, line: number): Effects | null {
+  const names = doc ? jsDocThrows(doc) : [];
   if (names.length === 0) return effects;
   const throws = [...(effects?.throws ?? [])];
   for (const type of names) if (throws.length < MAX_FACTS && !throws.some((t) => t.declared && t.type === type)) throws.push({ type, line, declared: true });

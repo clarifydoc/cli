@@ -26,7 +26,7 @@ import {
   restatesType,
   type InjectedType,
 } from "./di.js";
-import { jsDocImplements, jsDocIsInterface, jsDocParamTypes, jsDocReturnType, jsDocThrows, jsDocTypeTag, precedingJsDoc } from "./jsdoc.js";
+import { jsDocImplements, jsDocIsInterface, jsDocParamTypes, jsDocReturnType, jsDocTypeTag, precedingJsDoc } from "./jsdoc.js";
 import { FUNCTION_EXPRESSIONS, handlerOf, wrappedCalleeName, wrappedFunction } from "./wrapped-functions.js";
 import { optionsWatchers } from "./reactive-cells.js";
 import { isMemberLoaderBody, loadedDefaultSource, loadedMemberCall } from "./loaded-members.js";
@@ -2662,7 +2662,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const responses = responsesOf(params, body);
     const { calls, localTypes, returnedSpreads, returnedMembers, returnedFrom, valueFlow } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx, params);
     const derivedLocals = composableLocals(node, returnedMembers);
-    const effects = withJsDocThrows(memberEffectsOf(body, params, typedLocalNames(localTypes)), doc ? jsDocThrows(doc) : [], node.startPosition.row + 1);
+    const effects = withJsDocThrows(memberEffectsOf(body, params, typedLocalNames(localTypes)), doc, node.startPosition.row + 1);
     return {
       name,
       params,
@@ -2733,7 +2733,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const responses = responsesOf(params, body);
     const { calls, localTypes, returnedSpreads, returnedMembers, returnedFrom, valueFlow } = finishBody(extractCalls(body, "typescript", skip), body, paramNames, this.ctx, params, skip);
     const derivedLocals = composableLocals(funcNode, returnedMembers);
-    const effects = withJsDocThrows(memberEffectsOf(body, params, typedLocalNames(localTypes), { skip }), doc ? jsDocThrows(doc) : [], funcNode.startPosition.row + 1);
+    const effects = withJsDocThrows(memberEffectsOf(body, params, typedLocalNames(localTypes), { skip }), doc, funcNode.startPosition.row + 1);
     return {
       name,
       params,
@@ -3284,7 +3284,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           const segment = templates.length === 0 && params.length === 0 && RESOURCE_METHOD.test(methodName) ? returnedSegment(methodBody) : null;
           if (segment) templates.push(segment);
           const { calls, localTypes, returnedSpreads, returnedFrom, valueFlow } = finishBody(extractCalls(methodBody, "typescript"), methodBody, paramNames, this.ctx, params);
-          const effects = withJsDocThrows(memberEffectsOf(methodBody, params, typedLocalNames(localTypes), { initializer: methodName === "constructor" }), memberDoc ? jsDocThrows(memberDoc) : [], member.startPosition.row + 1);
+          const effects = withJsDocThrows(memberEffectsOf(methodBody, params, typedLocalNames(localTypes), { initializer: methodName === "constructor" }), memberDoc, member.startPosition.row + 1);
           methods.push({
             name: methodName,
             params,

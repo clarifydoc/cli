@@ -1,13 +1,9 @@
 import type { Node } from "web-tree-sitter";
-import type { FunctionInfo, ParamInfo } from "../../../types/analysis.js";
+import type { ParamInfo } from "../../../types/analysis.js";
+import { dottedTarget, EffectsCollector, typedNames, visitOwnScope, type AccessShape, type Effects, type WriteTarget } from "../shared/member-effects-kit.js";
 
 /** Declarations whose members are not the method's own: a local or anonymous class. A lambda keeps `this` and is walked. */
 const OWN_SCOPE_BREAKS: ReadonlySet<string> = new Set(["class_body", "class_declaration", "object_declaration", "anonymous_initializer", "enum_body"]);
-
-/** Most facts one method states. */
-const MAX_FACTS = 40;
-
-type Effects = Pick<FunctionInfo, "fieldWrites" | "throws">;
 
 /** The type a `throw new X<…>(…)` / `throw X(…)` names, as written with its qualifier and without type arguments. */
 function typeText(n: Node | null | undefined): string | null {
@@ -39,27 +35,10 @@ function declaredNames(body: Node, language: string): Set<string> {
   return out;
 }
 
-interface Target { receiver: string; member: string }
-
-/** Java `this.x` / `a.x` / `this.a.x` / bare `x`. */
-function javaTarget(left: Node | null | undefined, typed: ReadonlySet<string>, locals: ReadonlySet<string>): Target | null {
-  if (!left) return null;
-  if (left.type === "identifier") return locals.has(left.text) ? null : { receiver: "", member: left.text };
-  if (left.type !== "field_access") return null;
-  const member = left.childForFieldName("field");
-  const obj = left.childForFieldName("object");
-  if (member?.type !== "identifier" || !obj) return null;
-  if (obj.type === "this") return { receiver: "this", member: member.text };
-  if (obj.type === "identifier") return typed.has(obj.text) ? { receiver: obj.text, member: member.text } : null;
-  if (obj.type === "field_access" && obj.childForFieldName("object")?.type === "this") {
-    const field = obj.childForFieldName("field");
-    return field?.type === "identifier" ? { receiver: `this.${field.text}`, member: member.text } : null;
-  }
-  return null;
-}
+const JAVA_ACCESS: AccessShape = { access: "field_access", member: "field", object: "object", thisTypes: new Set(["this"]) };
 
 /** Kotlin `this.x` / `a.x` / `this.a.x` / bare `x`, from a `directly_assignable_expression` or a `navigation_expression`. */
-function kotlinTarget(left: Node | null | undefined, typed: ReadonlySet<string>, locals: ReadonlySet<string>): Target | null {
+function kotlinTarget(left: Node | null | undefined, typed: ReadonlySet<string>, locals: ReadonlySet<string>): WriteTarget | null {
   if (!left) return null;
   if (left.type === "simple_identifier") return locals.has(left.text) ? null : { receiver: "", member: left.text };
   if (left.type !== "directly_assignable_expression" && left.type !== "navigation_expression") return null;
@@ -88,16 +67,14 @@ export function jvmMemberEffects(
   params: readonly ParamInfo[],
   localNames: Iterable<string>,
 ): Effects | null {
-  const typed = new Set<string>(localNames);
-  for (const p of params) if (p.type) typed.add(p.name);
-  const writes: NonNullable<Effects["fieldWrites"]> = [];
-  const throws: NonNullable<Effects["throws"]> = [];
+  const typed = typedNames(params, localNames);
+  const out = new EffectsCollector();
   const methodLine = node.startPosition.row + 1;
   const seenThrow = new Set<string>();
   const addThrow = (type: string | null, line: number, declared?: true): void => {
-    if (!type || throws.length >= MAX_FACTS || seenThrow.has(`${type}|${declared ?? ""}|${line}`)) return;
+    if (!type || out.throwsFull || seenThrow.has(`${type}|${declared ?? ""}|${line}`)) return;
     seenThrow.add(`${type}|${declared ?? ""}|${line}`);
-    throws.push({ type, line, ...(declared ? { declared } : {}) });
+    out.addThrow(type, line, declared);
   };
   if (language === "kotlin") {
     for (const a of node.descendantsOfType("annotation")) {
@@ -114,30 +91,32 @@ export function jvmMemberEffects(
   }
   const initializer = node.type === "constructor_declaration" || node.type === "secondary_constructor";
   if (body) {
-    const locals = declaredNames(body, language);
-    for (const p of params) locals.add(p.name);
-    const kotlin = language === "kotlin";
-    const addWrite = (target: Target | null, at: Node): void => {
-      if (initializer || !target || writes.length >= MAX_FACTS) return;
-      const line = at.startPosition.row + 1;
-      if (writes.some((w) => w.receiver === target.receiver && w.member === target.member && w.line === line)) return;
-      writes.push({ member: target.member, receiver: target.receiver, line });
+    let declared: Set<string> | null = null;
+    const locals = (): Set<string> => {
+      if (!declared) {
+        declared = declaredNames(body, language);
+        for (const p of params) declared.add(p.name);
+      }
+      return declared;
     };
-    const visit = (n: Node, root: boolean): void => {
-      if (!root && OWN_SCOPE_BREAKS.has(n.type)) return;
+    const kotlin = language === "kotlin";
+    const addWrite = (target: WriteTarget | null, at: Node): void => {
+      if (!initializer && target) out.addWrite(target.receiver, target.member, at.startPosition.row + 1);
+    };
+    visitOwnScope(body, (n) => OWN_SCOPE_BREAKS.has(n.type), (n) => {
       switch (n.type) {
         case "assignment_expression":
-          addWrite(javaTarget(n.childForFieldName("left"), typed, locals), n);
+          addWrite(dottedTarget(n.childForFieldName("left"), JAVA_ACCESS, typed, locals), n);
           break;
         case "update_expression":
-          addWrite(javaTarget(n.namedChildren[0], typed, locals), n);
+          addWrite(dottedTarget(n.namedChildren[0], JAVA_ACCESS, typed, locals), n);
           break;
         case "assignment":
-          addWrite(kotlinTarget(n.namedChildren[0], typed, locals), n);
+          addWrite(kotlinTarget(n.namedChildren[0], typed, locals()), n);
           break;
         case "postfix_expression":
         case "prefix_expression":
-          if (kotlin && (n.type === "postfix_expression" ? /(\+\+|--)$/ : /^(\+\+|--)/).test(n.text.trim())) addWrite(kotlinTarget(n.namedChildren[0], typed, locals), n);
+          if (kotlin && (n.type === "postfix_expression" ? /(\+\+|--)$/ : /^(\+\+|--)/).test(n.text.trim())) addWrite(kotlinTarget(n.namedChildren[0], typed, locals()), n);
           break;
         case "throw_statement": {
           const thrown = n.namedChildren.find((c) => c.type !== "comment");
@@ -152,10 +131,7 @@ export function jvmMemberEffects(
           break;
         }
       }
-      for (const c of n.namedChildren) visit(c, false);
-    };
-    visit(body, true);
+    });
   }
-  if (writes.length === 0 && throws.length === 0) return null;
-  return { ...(writes.length > 0 ? { fieldWrites: writes } : {}), ...(throws.length > 0 ? { throws } : {}) };
+  return out.result();
 }
