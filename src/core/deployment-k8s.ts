@@ -708,14 +708,15 @@ export async function collectK8sManifests(
   const configMaps = new Map<string, Record<string, string>>();
   const pending: Array<{ file: string; docs: K8sDoc[] }> = [];
 
-  for (const rel of candidates) {
-    let text: string;
-    try {
-      text = await readFile(join(absRoot, rel), "utf-8");
-    } catch {
-      continue;
-    }
-    if (text.length > 1_000_000) continue;
+  // Read in parallel batches (a sequential read of each candidate idles on the disk), judged in path order.
+  const texts: Array<string | undefined> = [];
+  for (let i = 0; i < candidates.length; i += 32) {
+    texts.push(...(await Promise.all(candidates.slice(i, i + 32).map((f) => readFile(join(absRoot, f), "utf-8").catch(() => undefined)))));
+  }
+
+  for (const [at, rel] of candidates.entries()) {
+    let text = texts[at];
+    if (text === undefined || text.length > 1_000_000) continue;
 
     if (text.includes("{{")) {
       // Helm template — render against the nearest enclosing chart.
