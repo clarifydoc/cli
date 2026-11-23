@@ -246,6 +246,9 @@ function mayStateFlow(text: string, params: readonly ParamInfo[], ctx: ClassValu
   if (params.some((p) => shapeOfType(p.type, ctx?.delegates ?? NO_NAMES))) return true;
   const called = params.map((p) => p.name).filter(Boolean).map(escapeRe);
   if (called.length > 0 && new RegExp(`\\b(?:${called.join("|")})\\s*\\(`).test(text)) return true;
+  // A parameter of a plain type name (a delegate another file may declare) handed on as an argument: `_board.Add(handler)`.
+  const plain = params.filter((p) => p.name && plainTypeName(p.type)).map((p) => escapeRe(p.name));
+  if (plain.length > 0 && new RegExp(`[(,]\\s*(?:${plain.join("|")})\\s*[,)]`).test(text)) return true;
   if (!ctx) return false;
   if (ctx.signal === undefined) {
     const parts: string[] = [];
@@ -309,6 +312,7 @@ function statementsFlow(
   const locals = new Map<string, LocalInfo>();
   const localFunctions = new Set<string>();
   for (const p of params) locals.set(p.name, { shape: shapeOfType(p.type, delegates), type: p.type });
+  const parameterNames = new Set(params.map((p) => p.name));
   const declare = (name: string, type: string | null, init: Node | null): void => {
     let shape = shapeOfType(type, delegates);
     if (shape === "unknown" && init) {
@@ -414,7 +418,9 @@ function statementsFlow(
   const isMember = (name: string): boolean => members.has(name);
   const shapeOfName = (name: string): Shape => {
     const l = locals.get(name);
-    if (l) return l.shape === "unknown" ? (valueUses.has(name) ? "unknown" : null) : l.shape ?? (called.has(name) && plainTypeName(l.type) ? "named" : null);
+    // A parameter of a plain type name only handed on is a value that may be a delegate another file declares: its
+    // flow is stated, and the invoke that finally runs it asks core (`ifFnType`).
+    if (l) return l.shape === "unknown" ? (valueUses.has(name) ? "unknown" : null) : l.shape ?? ((called.has(name) || (parameterNames.has(name) && valueUses.has(name))) && plainTypeName(l.type) ? "named" : null);
     if (members.has(name)) return shapeOfType(members.get(name), delegates) ?? (ctx?.calledNamed?.has(name) && plainTypeName(members.get(name)) ? "named" : null);
     return null;
   };

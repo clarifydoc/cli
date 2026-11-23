@@ -751,3 +751,43 @@ describe("C# value flow: a member sharing its type's name with a method", () => 
     expect(links).toContain("Fixture.Match2@4 Match -> League/Main.cs::Main.Handle");
   });
 });
+
+describe("C# value flow: a plain-typed parameter only handed on", () => {
+  const board = lines(
+    "namespace League;",
+    "public class Board {",
+    "  private Kick _kick;",
+    "  public void Set(Kick k) { _kick = k; }",
+    "  public void Run(Player p) { _kick(p); }",
+    "}",
+  );
+  const setup = lines(
+    "namespace League;",
+    "public class Setup {",
+    "  private readonly Board _board = new();",
+    "  public void Register(Kick handler) => _board.Set(handler);",
+    "  public void Go() { Register(Penalty); }",
+    "  void Penalty(Player p) {}",
+    "  void Decoy(Player p) {}",
+    "}",
+  );
+
+  it("follows the handler through a parameter that is never called there", async () => {
+    const links = flowLinks(await analyzeAll({
+      "League/Kick.cs": lines("namespace League;", "public delegate void Kick(Player p);", "public class Player {}"),
+      "League/Board.cs": board,
+      "League/Setup.cs": setup,
+    }));
+    expect(links).toEqual(["Board.Run@5 _kick -> League/Setup.cs::Setup.Penalty"]);
+  });
+
+  it("states nothing when the type is a class", async () => {
+    const links = flowLinks(await analyzeAll({
+      "League/Kick.cs": lines("namespace League;", "public class Kick {}", "public class Player {}"),
+      "League/Board.cs": board,
+      "League/Setup.cs": setup,
+    }));
+    expect(links).toEqual([]);
+  });
+});
+
