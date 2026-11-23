@@ -1,6 +1,6 @@
 import type { FileAnalysis, InteractiveElementInfo, Language, SymbolLink } from "../../../types/analysis.js";
-import type { DispatchResolver } from "../../dispatch/base.js";
-import { importResolver } from "./dom-binding-resolver.js";
+import { newDispatchRun, type DispatchResolver, type DispatchRun } from "../../dispatch/base.js";
+import { sharedImportResolver } from "./dom-binding-resolver.js";
 
 const SCRIPT_LANGUAGES = new Set<Language>(["javascript", "typescript"]);
 
@@ -19,25 +19,30 @@ interface Resolved {
   handled: Set<InteractiveElementInfo>;
 }
 
-const cache = new WeakMap<FileAnalysis[], Resolved>();
+/** This resolver's slot in a dispatch run; both resolvers that read it are given the same language list. */
+const RUN_KEY = {};
 
 const normalizeTemplate = (path: string): string => path.replace(/[?#].*$/, "").replace(/^(?:\.{0,2}\/|~\/)+/, "");
 
 /** The last name of a handler as written: `vm.save` runs `save`. */
 const memberOf = (handler: string): string => handler.slice(handler.lastIndexOf(".") + 1);
 
-function resolveScoped(analyses: FileAnalysis[]): Resolved {
-  const cached = cache.get(analyses);
-  if (cached) return cached;
+type Target = { file: string; symbol: string; line: number };
+type Entry = Target & { script: FileAnalysis; order: number };
+
+function resolveScoped(analyses: FileAnalysis[], run: DispatchRun): Resolved {
+  return run.memo(RUN_KEY, () => buildScoped(analyses, run));
+}
+
+function buildScoped(analyses: FileAnalysis[], run: DispatchRun): Resolved {
   const out: Resolved = { links: [], handled: new Set() };
-  cache.set(analyses, out);
   const pages = analyses.filter((a) => !SCRIPT_LANGUAGES.has(a.language) && a.interactiveElements.some((e) => e.handler && e.event.startsWith("on")));
   if (pages.length === 0) return out;
   const scripts = analyses.filter((a) => SCRIPT_LANGUAGES.has(a.language));
   const registrations = scripts.flatMap((s) => (s.scopeRegistrations ?? []).map((r) => ({ file: s, ...r })));
   const hasScopes = pages.some((p) => p.interactiveElements.some((e) => e.componentScope)) || registrations.some((r) => r.kind === "template");
   if (!hasScopes) return out;
-  const resolveImport = importResolver(analyses);
+  const resolveImport = sharedImportResolver(analyses, run);
   const projectOf = new Map(analyses.map((a) => [a.filePath, a.projectId]));
   const templates = registrations.filter((r) => r.kind === "template");
   const components = registrations.filter((r) => r.kind === "component");
@@ -51,34 +56,50 @@ function resolveScoped(analyses: FileAnalysis[]): Resolved {
     return hits.size === 1 ? [...hits][0] || null : null;
   };
 
+  const componentsByName = new Map<string, typeof components>();
+  for (const r of components) (componentsByName.get(r.name) ?? componentsByName.set(r.name, []).get(r.name)!).push(r);
+  // Members by owner, in script order (class methods, then `Owner.member` functions, per script).
+  const methodsOf = new Map<string, Array<Entry>>();
+  const functionsNamed = new Map<string, Array<Entry>>();
+  const firstFunction = new Map<string, Array<Entry>>();
+  const add = (map: Map<string, Array<Entry>>, key: string, entry: Entry): void => {
+    (map.get(key) ?? map.set(key, []).get(key)!).push(entry);
+  };
+  scripts.forEach((s, order) => {
+    for (const c of s.classes) for (const m of c.methods) add(methodsOf, `${c.name}\0${m.name}`, { script: s, order, file: s.filePath, symbol: `${c.name}.${m.name}`, line: m.line });
+    const firstHere = new Set<string>();
+    for (const f of s.functions) {
+      add(functionsNamed, f.name, { script: s, order, file: s.filePath, symbol: f.name, line: f.line });
+      if (!firstHere.has(f.name)) (firstHere.add(f.name), add(firstFunction, f.name, { script: s, order, file: s.filePath, symbol: f.name, line: f.line }));
+    }
+  });
+
   /** The methods named `member` of the component registered as `scope`: [file, symbol, line]. */
-  const targetsOf = (scope: string, member: string): Array<{ file: string; symbol: string; line: number }> => {
+  const targetsOf = (scope: string, member: string): Target[] => {
     const owners = new Map<string, FileAnalysis | null>([[scope, null]]);
-    for (const r of components) {
-      if (r.name !== scope || !r.value) continue;
+    for (const r of componentsByName.get(scope) ?? []) {
+      if (!r.value) continue;
       // The module the factory comes from: an import of the registering file, else wherever it is declared.
       const imp = r.file.imports.find((i) => i.specifiers.includes(r.value!) || i.aliases?.[r.value!] !== undefined);
       owners.set(r.value, imp ? resolveImport(imp.source, r.file) : null);
     }
-    const found = new Map<string, { file: string; symbol: string; line: number }>();
+    const found = new Map<string, Target>();
     for (const [owner, from] of owners) {
-      for (const s of scripts) {
-        if (from && s !== from) continue;
-        for (const c of s.classes) {
-          if (c.name !== owner) continue;
-          for (const m of c.methods) if (m.name === member) found.set(`${s.filePath}::${owner}.${member}`, { file: s.filePath, symbol: `${owner}.${member}`, line: m.line });
-        }
-        for (const f of s.functions) if (f.name === `${owner}.${member}`) found.set(`${s.filePath}::${f.name}`, { file: s.filePath, symbol: f.name, line: f.line });
+      // Per script: class methods, then functions (the index holds each in that order).
+      const entries = [...(methodsOf.get(`${owner}\0${member}`) ?? []), ...(functionsNamed.get(`${owner}.${member}`) ?? [])];
+      entries.sort((x, y) => x.order - y.order);
+      for (const e of entries) {
+        if (from && e.script !== from) continue;
+        found.set(`${e.file}::${e.symbol}`, { file: e.file, symbol: e.symbol, line: e.line });
       }
     }
     if (found.size === 0) {
       // A registered factory that states no members: the factory holds the calls of all of them.
       for (const [owner, from] of owners) {
         if (owner === scope && !from) continue;
-        for (const s of scripts) {
-          if (from && s !== from) continue;
-          const fn = s.functions.find((f) => f.name === owner);
-          if (fn) found.set(`${s.filePath}::${fn.name}`, { file: s.filePath, symbol: fn.name, line: fn.line });
+        for (const e of firstFunction.get(owner) ?? []) {
+          if (from && e.script !== from) continue;
+          found.set(`${e.file}::${e.symbol}`, { file: e.file, symbol: e.symbol, line: e.line });
         }
       }
     }
@@ -121,8 +142,8 @@ function resolveScoped(analyses: FileAnalysis[]): Resolved {
 }
 
 /** The elements a component scope claims and joins: the name-based resolver leaves them alone. */
-export function handledScopedElements(analyses: FileAnalysis[]): ReadonlySet<InteractiveElementInfo> {
-  return resolveScoped(analyses).handled;
+export function handledScopedElements(analyses: FileAnalysis[], run: DispatchRun = newDispatchRun()): ReadonlySet<InteractiveElementInfo> {
+  return resolveScoped(analyses, run).handled;
 }
 
 export class ScopedHandlerResolver implements DispatchResolver {
@@ -130,7 +151,7 @@ export class ScopedHandlerResolver implements DispatchResolver {
   readonly languages: Language[] = ["javascript", "typescript", "html", "handlebars", "liquid", "velocity", "razor", "ejs", "erb", "jsp", "php", "heex"];
   readonly priority = 42;
 
-  resolve(analyses: FileAnalysis[]): SymbolLink[] {
-    return resolveScoped(analyses).links;
+  resolve(analyses: FileAnalysis[], run: DispatchRun = newDispatchRun()): SymbolLink[] {
+    return resolveScoped(analyses, run).links;
   }
 }

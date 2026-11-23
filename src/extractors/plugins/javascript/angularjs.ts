@@ -1,6 +1,7 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { ScopeRegistration } from "../../../types/analysis.js";
-import { keyOf } from "./node-utils.js";
+import { enclosingFunctionNode, literalString } from "../../shared/node-helpers.js";
+import { keyOf, pairsOf } from "./node-utils.js";
 
 /**
  * AngularJS 1 (`angular.module("league").service("ClubService", function ($http) { … })`) and Alpine
@@ -46,6 +47,18 @@ interface TreeFacts {
   registrations: Registration[];
   /** Function node id → its registration. */
   byFunction: Map<number, Registration>;
+  /** `Fn.$inject = [...]`: the first array assigned, by the function's name. */
+  injectArrays: Map<string, string[]>;
+  /** What `angularMember` decided for a function node id. */
+  members: Map<number, AngularMember | null>;
+  /** The names a registered function's body binds to `this` or a fresh object, by function node id. */
+  owners: Map<number, Set<string>>;
+}
+
+interface AngularMember {
+  owner: string;
+  member: string;
+  host: Node;
 }
 
 /** The facts of each tree, read once; the map lets a freed tree go. */
@@ -86,29 +99,58 @@ function rootedAtAngularModule(callee: Node, variables: ReadonlySet<string>): bo
   return false;
 }
 
-function stringValue(n: Node | null | undefined): string | null {
-  if (!n) return null;
-  if (n.type === "string") return n.text.slice(1, -1);
-  if (n.type === "template_string" && !n.text.includes("${")) return n.text.slice(1, -1);
-  return null;
+/** The named children of a node, comments left out. */
+function nonComments(n: Node | null | undefined): Node[] {
+  return n?.namedChildren.filter((a): a is Node => !!a && a.type !== "comment") ?? [];
 }
 
-function declaredFunction(root: Node, name: string): Node | null {
+/** A function's parameter list (a lone arrow parameter has its own field). */
+function paramsOf(fn: Node): Node | null {
+  return fn.childForFieldName("parameters") ?? fn.childForFieldName("parameter");
+}
+
+/** The first function declaration of each name in the tree. */
+function declaredFunctions(root: Node): Map<string, Node> {
+  const out = new Map<string, Node>();
   for (const d of root.descendantsOfType("function_declaration")) {
-    if (d?.childForFieldName("name")?.text === name) return d;
+    const name = d?.childForFieldName("name")?.text;
+    if (d && name && !out.has(name)) out.set(name, d);
   }
-  return null;
+  return out;
 }
 
-function factsOf(tree: Tree): TreeFacts {
+/** `ClubCtrl.$inject = ["$scope", "ClubService"]`: the annotation of a declared function, the first array of each name. */
+function injectArraysOf(root: Node): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const a of root.descendantsOfType("assignment_expression")) {
+    const left = a?.childForFieldName("left");
+    if (left?.type !== "member_expression") continue;
+    const text = left.text.replace(/\s+/g, "");
+    if (!text.endsWith(".$inject")) continue;
+    const name = text.slice(0, -".$inject".length);
+    const right = a!.childForFieldName("right");
+    if (right?.type !== "array" || out.has(name)) continue;
+    out.set(name, nonComments(right).map((x) => literalString(x) ?? ""));
+  }
+  return out;
+}
+
+/** Read a tree's facts from the source text the extractor has (a later `factsOf` finds them memoised). */
+export function readAngularFacts(tree: Tree, sourceText: string): void {
+  factsOf(tree, sourceText);
+}
+
+function factsOf(tree: Tree, sourceText?: string): TreeFacts {
   const known = memos.get(tree);
   if (known) return known;
   const registrations: Registration[] = [];
   const byFunction = new Map<number, Registration>();
-  const memo: TreeFacts = { registrations, byFunction };
+  const text = sourceText ?? tree.rootNode.text;
+  const memo: TreeFacts = { registrations, byFunction, injectArrays: text.includes("$inject") ? injectArraysOf(tree.rootNode) : new Map(), members: new Map(), owners: new Map() };
   memos.set(tree, memo);
   // The cheap gate: a file with no such call registers nothing.
-  if (!REGISTRATION_GATE.test(tree.rootNode.text)) return memo;
+  if (!REGISTRATION_GATE.test(text)) return memo;
+  let declared: Map<string, Node> | null = null;
   const variables = moduleVariables(tree);
   for (const call of tree.rootNode.descendantsOfType("call_expression")) {
     const callee = call?.childForFieldName("function");
@@ -118,8 +160,8 @@ function factsOf(tree: Tree): TreeFacts {
     const receiver = callee.childForFieldName("object")!;
     const rooted = rootedAtAngularModule(receiver, variables);
     if (!rooted && !(receiver.type === "identifier" && GLOBAL_MODULE_KINDS.has(kind))) continue;
-    const args = call.childForFieldName("arguments")?.namedChildren.filter((a): a is Node => !!a && a.type !== "comment") ?? [];
-    const name = UNNAMED.has(kind) ? null : stringValue(args[0]);
+    const args = nonComments(call.childForFieldName("arguments"));
+    const name = UNNAMED.has(kind) ? null : literalString(args[0]);
     if (!UNNAMED.has(kind) && !name) continue;
     const value = args[UNNAMED.has(kind) ? 0 : 1];
     if (!value) continue;
@@ -128,17 +170,17 @@ function factsOf(tree: Tree): TreeFacts {
     let annotation: string[] | null = null;
     let target: Node | null = value;
     if (value.type === "array") {
-      const items = value.namedChildren.filter((a): a is Node => !!a && a.type !== "comment");
-      annotation = items.slice(0, -1).map((a) => stringValue(a) ?? "");
+      const items = nonComments(value);
+      annotation = items.slice(0, -1).map((a) => literalString(a) ?? "");
       target = items[items.length - 1] ?? null;
     }
     if (target && FUNCTIONS.has(target.type)) fn = target;
     else if (target?.type === "identifier") {
       ident = target.text;
-      fn = declaredFunction(tree.rootNode, ident);
+      fn = (declared ??= declaredFunctions(tree.rootNode)).get(ident) ?? null;
     }
     if (!rooted) {
-      const params = fn?.childForFieldName("parameters") ?? fn?.childForFieldName("parameter");
+      const params = fn ? paramsOf(fn) : null;
       const names = [...(annotation ?? []), ...(params ? [params.text] : [])];
       if (!names.some((n) => /(?:^|[^\w$])\$[A-Za-z]/.test(n))) continue;
     }
@@ -150,36 +192,24 @@ function factsOf(tree: Tree): TreeFacts {
 }
 
 /** The names a function's parameters are injected by, in order, or null when the function is not one the injector calls. */
-export function injectedNames(fn: Node): string[] | null {
+function injectedNames(fn: Node): string[] | null {
   if (!FUNCTIONS.has(fn.type)) return null;
   const facts = factsOf(fn.tree);
   const reg = facts.byFunction.get(fn.id);
   const own = (): string[] => {
-    const params = fn.childForFieldName("parameters") ?? fn.childForFieldName("parameter");
+    const params = paramsOf(fn);
     if (!params) return [];
     return params.type === "identifier" ? [params.text] : params.namedChildren.filter((p): p is Node => !!p && p.type === "identifier").map((p) => p.text);
   };
   if (fn.type === "function_declaration") {
     const name = fn.childForFieldName("name")?.text;
     if (!name) return null;
-    const inject = injectArray(fn.tree, name);
+    const inject = facts.injectArrays.get(name);
     if (inject) return inject;
     return reg ? own() : null;
   }
   if (!reg) return null;
   return reg.annotation ?? own();
-}
-
-/** `ClubCtrl.$inject = ["$scope", "ClubService"]`: the annotation of a declared function. */
-function injectArray(tree: Tree, name: string): string[] | null {
-  for (const a of tree.rootNode.descendantsOfType("assignment_expression")) {
-    const left = a?.childForFieldName("left");
-    if (left?.type !== "member_expression" || left.text.replace(/\s+/g, "") !== `${name}.$inject`) continue;
-    const right = a!.childForFieldName("right");
-    if (right?.type !== "array") continue;
-    return right.namedChildren.filter((x): x is Node => !!x && x.type !== "comment").map((x) => stringValue(x) ?? "");
-  }
-  return null;
 }
 
 /** The type an injected parameter has: the name it is injected by, unless it is the framework's own (`$scope`, `$http`). */
@@ -194,16 +224,12 @@ export function injectedTypes(fn: Node, paramNames: readonly string[]): Map<stri
   return out.size > 0 ? out : null;
 }
 
-function nearestFunction(node: Node): Node | null {
-  for (let p = node.parent; p; p = p.parent) {
-    if (/^(?:function_expression|arrow_function|function_declaration|method_definition|generator_function|generator_function_declaration)$/.test(p.type)) return p;
-  }
-  return null;
-}
-
 /** Names bound inside `fn` to `this` or to a fresh object (`var vm = this`, `var service = {}`). */
-function ownersIn(fn: Node): Set<string> {
+function ownersIn(fn: Node, facts: TreeFacts): Set<string> {
+  const known = facts.owners.get(fn.id);
+  if (known) return known;
   const out = new Set<string>(["this", "$scope"]);
+  facts.owners.set(fn.id, out);
   const body = fn.childForFieldName("body");
   if (!body) return out;
   for (const d of body.descendantsOfType("variable_declarator")) {
@@ -227,26 +253,33 @@ export function angularMemberName(fn: Node): string | null {
 }
 
 /** The registered function a member belongs to: its registered name, the member's name and the function's span. */
-export function angularMember(fn: Node): { owner: string; member: string; host: Node } | null {
+export function angularMember(fn: Node): AngularMember | null {
   const parent = fn.parent;
   if (!parent) return null;
   const facts = factsOf(fn.tree);
   if (facts.registrations.length === 0) return null;
+  if (facts.members.has(fn.id)) return facts.members.get(fn.id) ?? null;
+  const found = memberOf(fn, parent, facts);
+  facts.members.set(fn.id, found);
+  return found;
+}
+
+function memberOf(fn: Node, parent: Node, facts: TreeFacts): AngularMember | null {
   if (parent.type === "assignment_expression" && parent.childForFieldName("right")?.id === fn.id) {
     const left = parent.childForFieldName("left");
     if (left?.type !== "member_expression") return null;
     const owner = left.childForFieldName("object")?.text;
     const member = left.childForFieldName("property")?.text;
-    const host = nearestFunction(parent);
+    const host = enclosingFunctionNode(parent);
     const reg = host ? facts.byFunction.get(host.id) : undefined;
-    if (!host || !reg?.name || !IDENT.test(reg.name) || !owner || !member || !IDENT.test(member) || !ownersIn(host).has(owner)) return null;
+    if (!host || !reg?.name || !IDENT.test(reg.name) || !owner || !member || !IDENT.test(member) || !ownersIn(host, facts).has(owner)) return null;
     return { owner: reg.name, member, host };
   }
   if (parent.type === "pair") {
     const obj = parent.parent;
     const ret = obj?.parent;
     if (obj?.type !== "object" || ret?.type !== "return_statement") return null;
-    const host = nearestFunction(ret);
+    const host = enclosingFunctionNode(ret);
     const reg = host ? facts.byFunction.get(host.id) : undefined;
     const key = keyOf(parent);
     if (!host || !reg?.name || !IDENT.test(reg.name) || !key || !IDENT.test(key)) return null;
@@ -256,8 +289,6 @@ export function angularMember(fn: Node): { owner: string; member: string; host: 
 }
 
 const IDENT = /^[A-Za-z_$][\w$]*$/;
-
-const TEMPLATE_KEYS = ["templateUrl", "controller"] as const;
 
 /**
  * The registrations the template side joins on: an Alpine `Alpine.data("clubForm", clubForm)`, an AngularJS
@@ -270,27 +301,22 @@ export function extractScopeRegistrations(tree: Tree, sourceText: string): Scope
     for (const call of tree.rootNode.descendantsOfType("call_expression")) {
       const callee = call?.childForFieldName("function");
       if (!call || callee?.type !== "member_expression" || callee.text !== "Alpine.data") continue;
-      const args = call.childForFieldName("arguments")?.namedChildren.filter((a): a is Node => !!a && a.type !== "comment") ?? [];
-      const name = stringValue(args[0]);
+      const args = nonComments(call.childForFieldName("arguments"));
+      const name = literalString(args[0]);
       if (!name) continue;
       out.push({ kind: "component", name, ...(args[1]?.type === "identifier" ? { value: args[1].text } : {}), line: call.startPosition.row + 1 });
     }
   }
   if (!sourceText.includes("controller")) return out;
-  for (const reg of factsOf(tree).registrations) {
+  for (const reg of factsOf(tree, sourceText).registrations) {
     if (reg.kind === "controller" && reg.name && reg.ident) out.push({ kind: "component", name: reg.name, value: reg.ident, line: reg.line });
   }
   if (sourceText.includes("templateUrl")) {
     for (const obj of tree.rootNode.descendantsOfType("object")) {
       if (!obj) continue;
-      let template: string | null = null;
-      let controller: string | null = null;
-      for (const p of obj.namedChildren) {
-        if (p?.type !== "pair") continue;
-        const key = keyOf(p);
-        if (key === TEMPLATE_KEYS[0]) template = stringValue(p.childForFieldName("value"));
-        else if (key === TEMPLATE_KEYS[1]) controller = stringValue(p.childForFieldName("value"));
-      }
+      const pairs = pairsOf(obj);
+      const template = literalString(pairs.get("templateUrl"));
+      const controller = literalString(pairs.get("controller"));
       const name = controller?.split(/\s+as\s+/)[0]?.trim();
       if (template && name) out.push({ kind: "template", name: template, value: name, line: obj.startPosition.row + 1 });
     }

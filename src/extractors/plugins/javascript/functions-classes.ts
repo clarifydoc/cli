@@ -12,7 +12,7 @@ import { REQUEST_PARAM_NAMES, scanRequestAccess } from "./request-access.js";
 import { callChainText, extractCalls } from "../../shared/call-graph.js";
 import { testCaseFunctions } from "./test-cases.js";
 import { heldFunctionNodes } from "./held-functions.js";
-import { angularMember, injectedTypes } from "./angularjs.js";
+import { angularMember, injectedTypes, readAngularFacts } from "./angularjs.js";
 import { fieldValueFlow, valueFlowOf } from "./value-flow.js";
 import { memberEffectsOf, withJsDocThrows } from "./member-effects.js";
 import { contractHandlerObjects } from "./contract-handlers.js";
@@ -1983,8 +1983,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       if (angularMember(held.node)) continue;
       const fn = this.parseJsArrowOrExpr(held.name, held.node, false);
       // It closes over the functions it is written in: their typed parameters and locals type its receivers.
-      const captured = this.capturedTypes(held.node, new Set([...fn.params.map((p) => p.name), ...(fn.localTypes ?? []).map((l) => l.name)]));
-      if (captured.length > 0) fn.localTypes = [...(fn.localTypes ?? []), ...captured];
+      this.closeOver(fn, held.node);
       functions.push(fn);
     }
     // The handlers a Node RPC server is given in place (`createServer(ClubService, { getClub() {…} })`): each a function of its own.
@@ -1995,8 +1994,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         if (m.fn) {
           const fn = this.parseJsArrowOrExpr(m.name, m.fn, false);
           // It closes over the functions it is written in, as a held function does.
-          const captured = this.capturedTypes(m.fn, new Set([...fn.params.map((p) => p.name), ...(fn.localTypes ?? []).map((l) => l.name)]));
-          if (captured.length > 0) fn.localTypes = [...(fn.localTypes ?? []), ...captured];
+          this.closeOver(fn, m.fn);
           functions.push({ ...fn, line: m.line });
         } else if (m.handedName) {
           functions.push({
@@ -2014,6 +2012,12 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       }
     }
     return functions;
+  }
+
+  /** A function written in place closes over the typed bindings of the functions around it. */
+  private closeOver(fn: FunctionInfo, node: Node): void {
+    const captured = this.capturedTypes(node, new Set([...fn.params.map((p) => p.name), ...(fn.localTypes ?? []).map((l) => l.name)]));
+    if (captured.length > 0) fn.localTypes = [...(fn.localTypes ?? []), ...captured];
   }
 
   /**
@@ -2147,8 +2151,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       const m = angularMember(held.node);
       if (!m) continue;
       const fn = this.parseJsArrowOrExpr(m.member, held.node, true);
-      const captured = this.capturedTypes(held.node, new Set([...fn.params.map((p) => p.name), ...(fn.localTypes ?? []).map((l) => l.name)]));
-      if (captured.length > 0) fn.localTypes = [...(fn.localTypes ?? []), ...captured];
+      this.closeOver(fn, held.node);
       const entry = byOwner.get(m.owner) ?? byOwner.set(m.owner, { host: m.host, methods: [] }).get(m.owner)!;
       if (!entry.methods.some((x) => x.name === fn.name)) entry.methods.push(fn);
     }
@@ -2370,6 +2373,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     // Both entry points run for the same file in turn — compute once.
     if (this.ctxTree === tree) return;
     this.ctxTree = tree;
+    readAngularFacts(tree, sourceText);
     this.pinia = sourceText.includes("defineStore");
     this.alpine = sourceText.includes("Alpine.data(");
     this.prototypes = sourceText.includes(".prototype") || sourceText.includes("['prototype']")

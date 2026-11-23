@@ -1,5 +1,5 @@
 import type { FileAnalysis, InteractiveElementInfo, Language, SymbolLink } from "../../../types/analysis.js";
-import type { DispatchResolver } from "../../dispatch/base.js";
+import { newDispatchRun, type DispatchResolver, type DispatchRun } from "../../dispatch/base.js";
 import { buildFilePathMap, resolveTarget } from "../../shared/link-scoring.js";
 import { handledScopedElements } from "./scoped-handlers.js";
 
@@ -31,7 +31,7 @@ export class DomBindingResolver implements DispatchResolver {
   readonly languages: Language[] = ["javascript", "typescript", "html", "handlebars", "liquid", "velocity", "razor", "ejs", "erb", "jsp", "php", "heex"];
   readonly priority = 43;
 
-  resolve(analyses: FileAnalysis[]): SymbolLink[] {
+  resolve(analyses: FileAnalysis[], run: DispatchRun = newDispatchRun()): SymbolLink[] {
     const scripts = analyses.filter((a) => SCRIPT_LANGUAGES.has(a.language));
     if (scripts.length === 0) return [];
     const byBase = new Map<string, FileAnalysis[]>();
@@ -49,7 +49,7 @@ export class DomBindingResolver implements DispatchResolver {
       return named.length === 1 ? named[0]! : null;
     };
 
-    const links: SymbolLink[] = namedHandlerLinks(analyses, scripts, handledScopedElements(analyses));
+    const links: SymbolLink[] = namedHandlerLinks(analyses, scripts, handledScopedElements(analyses, run), run);
     for (const page of analyses) {
       if (SCRIPT_LANGUAGES.has(page.language)) continue;
       const elements = page.interactiveElements.filter((e) => e.selector);
@@ -105,6 +105,13 @@ export function importResolver(analyses: FileAnalysis[]): (source: string, from:
   };
 }
 
+const IMPORTS_KEY = {};
+
+/** `importResolver` built once per dispatch run: every resolver of the run is handed the same language subset. */
+export function sharedImportResolver(analyses: FileAnalysis[], run: DispatchRun): ReturnType<typeof importResolver> {
+  return run.memo(IMPORTS_KEY, () => importResolver(analyses));
+}
+
 /**
  * Links from each page to the functions its inline handlers name. A name is
  * looked up in the page's own scripts, then in what they import (two levels);
@@ -114,13 +121,13 @@ export function importResolver(analyses: FileAnalysis[]): (source: string, from:
  * page script imports links once, and a shared form whose `save` each page
  * defines links to each page's `save`.
  */
-function namedHandlerLinks(analyses: FileAnalysis[], scripts: FileAnalysis[], handled: ReadonlySet<InteractiveElementInfo>): SymbolLink[] {
+function namedHandlerLinks(analyses: FileAnalysis[], scripts: FileAnalysis[], handled: ReadonlySet<InteractiveElementInfo>, run: DispatchRun): SymbolLink[] {
   const pages = analyses.filter((a) => !SCRIPT_LANGUAGES.has(a.language));
   const wanted = pages
     .map((page) => ({ page, named: page.interactiveElements.filter((e) => !e.request && e.event.startsWith("on") && e.handler && IDENT.test(e.handler) && !handled.has(e)) }))
     .filter((p) => p.named.length > 0);
   if (wanted.length === 0 || scripts.length === 0) return [];
-  const resolveImport = importResolver(analyses);
+  const resolveImport = sharedImportResolver(analyses, run);
   const loads = new Map<FileAnalysis, FileAnalysis[]>();
   const loadsOf = (a: FileAnalysis): FileAnalysis[] => {
     let out = loads.get(a);

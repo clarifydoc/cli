@@ -1,4 +1,5 @@
 import { blankStringAwareComments } from "../shared/text-scan.js";
+import { VOID_TAGS } from "../shared/void-tags.js";
 
 /**
  * The names a Vue template binds below an element, which its handlers read as if they were the
@@ -23,7 +24,6 @@ export interface TemplateScope {
 /** `scope.slot.prop` of a scope that binds the slot's whole props object: the member comes from the call (`props.save`). */
 export const WHOLE_SLOT_PROPS = "*";
 
-const VOID = new Set(["input", "br", "img", "hr", "meta", "link", "area", "base", "col", "embed", "source", "track", "wbr"]);
 
 /** The element carrying a `v-for`: the loop it binds and the template offsets its element spans (`end` exclusive). */
 export interface LoopExtent {
@@ -76,7 +76,7 @@ export function templateScopes(template: string, loops?: LoopExtent[]): Map<numb
     }
     const scopes = own.length > 0 ? [...inherited, ...own] : inherited;
     if (scopes.length > 0) out.set(m.index, scopes);
-    if (!m[4] && !VOID.has(tag.toLowerCase())) stack.push({ tag, scopes, custom, ...(loop && loops && own.some((o) => o.kind === "loop") ? { extent: loops[loops.length - 1]! } : {}) });
+    if (!m[4] && !VOID_TAGS.has(tag.toLowerCase())) stack.push({ tag, scopes, custom, ...(loop && loops && own.some((o) => o.kind === "loop") ? { extent: loops[loops.length - 1]! } : {}) });
   }
   return out;
 }

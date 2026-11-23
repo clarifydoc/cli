@@ -11,6 +11,24 @@ import type { FileAnalysis, SymbolLink, Language } from "../../types/analysis.js
  * Mirrors the entity `reconcileProject` design: core invokes every resolver
  * generically (see `resolveProjectDispatch`) and never names a framework itself.
  */
+export interface DispatchRun {
+  /** The value `build` made for `key` earlier in this run, else build and keep it: work several resolvers share. */
+  memo<T>(key: object, build: () => T): T;
+}
+
+/** A run's memo, for a caller that has no framework run (a test calling a resolver directly). */
+export function newDispatchRun(): DispatchRun {
+  const values = new Map<object, unknown>();
+  return {
+    memo<T>(key: object, build: () => T): T {
+      if (values.has(key)) return values.get(key) as T;
+      const v = build();
+      values.set(key, v);
+      return v;
+    },
+  };
+}
+
 export interface DispatchResolver {
   /**
    * Stable identifier, used as the `dispatch:<id>` strategy tag on every link
@@ -36,5 +54,5 @@ export interface DispatchResolver {
    * Inspect the (already per-file analyzed) project and return extra symbol
    * links bridging dispatch sites to their handlers. Must be side-effect free.
    */
-  resolve(analyses: FileAnalysis[]): SymbolLink[];
+  resolve(analyses: FileAnalysis[], run?: DispatchRun): SymbolLink[];
 }

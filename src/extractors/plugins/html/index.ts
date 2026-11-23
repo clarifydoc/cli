@@ -2,6 +2,7 @@ import type { RouteInfo, InteractiveElementInfo } from "../../../types/analysis.
 import { inlineScriptRequests } from "../shared/inline-script-requests.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { literalPath, handlerOf } from "../shared/element-requests.js";
+import { VOID_TAGS } from "../shared/void-tags.js";
 
 /**
  * Plain HTML page extraction (regex path) — for vanilla multi-page static sites
@@ -332,8 +333,6 @@ function innerText(markup: string[], line: number, from: number, tag: string): s
   return clean ? (clean.length > 60 ? clean.slice(0, 57) + "…" : clean) : undefined;
 }
 
-/** Tags that never close: they open no scope the next closing tag would end. */
-const VOID_TAGS: ReadonlySet<string> = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]);
 /** A component scope a template opens: Alpine's `x-data="clubForm"`, AngularJS's `ng-controller="ClubCtrl as vm"`. */
 const SCOPE_ATTR_RE = /(?:^|\s)(?:(x-data)|(?:data-)?(ng-controller))\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
 /** The name a scope attribute states ("" for an inline `x-data="{ … }"`, which no registered component answers), or null when the tag opens none. */
@@ -375,6 +374,8 @@ function postsToOwnView(attrs: string, method: string): boolean {
  */
 export function extractHtmlInteractiveElements(lines: string[], opts: { requests?: boolean } = {}): InteractiveElementInfo[] {
   const markup = maskMarkup(lines);
+  // A file that states no scope attribute opens none: the wrapped-tag read below is then only for the tags that need it.
+  const mayScope = markup.some((l) => SCOPE_HINT.test(l));
   const out: InteractiveElementInfo[] = [];
   const forms: OpenForm[] = [];
   /** Open elements that carry a component scope, innermost last; `depth` counts the same-named tags opened inside. */
@@ -397,16 +398,17 @@ export function extractHtmlInteractiveElements(lines: string[], opts: { requests
         continue;
       }
       let attrs = m[2] ?? "";
-      // A component scope this tag opens (the attribute may sit on a line the tag wraps onto).
+      // The tag's attributes up to its `>`, when they wrap onto the next lines: where a scope may sit and a request is stated.
       let tagText = attrs;
-      if (m.index! + m[0].length >= markup[i]!.length) {
+      if ((mayScope || READS_WRAPPED.has(tag)) && m.index! + m[0].length >= markup[i]!.length) {
         for (let j = i + 1; j < Math.min(markup.length, i + 12); j++) {
           const close = markup[j]!.indexOf(">");
           tagText += " " + (close < 0 ? markup[j]! : markup[j]!.slice(0, close));
           if (close >= 0) break;
         }
       }
-      const scoped = SCOPE_HINT.test(tagText) ? scopeOf(tagText) : null;
+      if (READS_WRAPPED.has(tag)) attrs = tagText;
+      const scoped = mayScope && SCOPE_HINT.test(tagText) ? scopeOf(tagText) : null;
       const closed = VOID_TAGS.has(tag) || tagText.trimEnd().endsWith("/");
       const top = scopes[scopes.length - 1];
       let ownScope: string | undefined;
@@ -414,14 +416,6 @@ export function extractHtmlInteractiveElements(lines: string[], opts: { requests
         if (closed) ownScope = scoped;
         else scopes.push({ tag, depth: 0, name: scoped });
       } else if (!closed && top?.tag === tag) top.depth++;
-      // A tag whose attributes wrap onto the next lines: read them up to its `>`.
-      if (READS_WRAPPED.has(tag) && m.index! + m[0].length >= markup[i]!.length) {
-        for (let j = i + 1; j < Math.min(markup.length, i + 12); j++) {
-          const close = markup[j]!.indexOf(">");
-          attrs += " " + (close < 0 ? markup[j]! : markup[j]!.slice(0, close));
-          if (close >= 0) break;
-        }
-      }
       const inline = inlineHandler(attrs);
       const control = FORM_CONTROL[tag];
       const id = attr(attrs, "id");

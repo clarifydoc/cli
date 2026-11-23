@@ -1,5 +1,5 @@
 import { relationForStrategy, type FileAnalysis, type SymbolLink } from "../../types/analysis.js";
-import type { DispatchResolver } from "./base.js";
+import { newDispatchRun, type DispatchResolver } from "./base.js";
 import { allPluginMetas } from "../registry.js";
 import { isTestFile } from "../../core/test-file-detector.js";
 
@@ -23,6 +23,7 @@ export function resolveProjectDispatch(analyses: FileAnalysis[]): SymbolLink[] {
   }
   resolvers.sort((a, b) => a.priority - b.priority);
 
+  const run = newDispatchRun();
   const out: SymbolLink[] = [];
   for (const r of resolvers) {
     const langs = new Set(r.languages);
@@ -35,7 +36,7 @@ export function resolveProjectDispatch(analyses: FileAnalysis[]): SymbolLink[] {
     // knows both the resolver and everything it produced.
     const strategy = `dispatch:${r.id}` as const;
     const relation = relationForStrategy(strategy);
-    for (const link of r.resolve(subset)) {
+    for (const link of r.resolve(subset, run)) {
       // A link may state its own relation (a `(reference)` edge a resolver draws is no call).
       out.push({ ...link, strategy, relation: link.relation ?? relation });
     }
@@ -62,4 +63,4 @@ export function dropProductionToTestLinks(links: SymbolLink[], analyses: readonl
   return links.filter((l) => testFile(l.sourceFile) || !testFile(l.targetFile));
 }
 
-export type { DispatchResolver } from "./base.js";
+export type { DispatchResolver, DispatchRun } from "./base.js";

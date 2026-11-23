@@ -3125,10 +3125,13 @@ function classNameMember(
     if (candidateFiles.length === 0) return null;
   }
   // A name the caller binds by an import or `require` is that module, not a class the container registers under the name.
-  if (candidateFiles && !imported && analysis.imports.some((i) => i.specifiers.includes(className) || i.aliases?.[className] !== undefined)) {
+  if (candidateFiles && !imported) {
+    // Only a registered candidate can be dropped, so the caller's imports are read only then.
     const own = candidateFiles.filter((f) => !ctx.classAt.get(memberKey(f, declaredClass))?.registered);
-    if (own.length === 0) return null;
-    candidateFiles = own;
+    if ((own.length < candidateFiles.length || own.length === 0) && analysis.imports.some((i) => i.specifiers.includes(className) || i.aliases?.[className] !== undefined)) {
+      if (own.length === 0) return null;
+      candidateFiles = own;
+    }
   }
   // A class called by name is one of the caller's own language family: a Swift
   // or Ruby `Coach.train()` never reaches a Python `Coach` (unknown families stay eligible).
