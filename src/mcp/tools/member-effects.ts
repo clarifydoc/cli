@@ -50,7 +50,7 @@ export function writersText(summary: ProjectAnalysis, symbol: string, limit: num
     return noResults({
       headline: `No assignment to \`${symbol}\` and no throw of it is in the analysis.`,
       holds: `The analysis holds ${plural((summary.fieldWrites ?? []).length, "field assignment")} (${members.slice(0, 5).join(", ") || "none"}${members.length > 5 ? ", …" : ""}) and ${plural((summary.thrownTypes ?? []).length, "thrown type")}. ` +
-        `Writes are stated for TypeScript/JavaScript, Java and Kotlin, through \`this\`, a bare field or a receiver whose type is declared; a constructor's initializing writes are left out.`,
+        `Writes are stated for TypeScript/JavaScript, Java, Kotlin, C#, Python, PHP and Go, through \`this\`, a bare field or a receiver whose type is declared; a constructor's initializing writes are left out.`,
       next: [`clarifydoc_search query="${member || symbol}" — by name`],
     });
   }
