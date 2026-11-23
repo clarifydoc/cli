@@ -240,7 +240,7 @@ export function hasValueFlowFacts(analyses: readonly FileAnalysis[]): boolean {
 
 interface Target { file: string; symbol: string; line: number }
 interface InvokeSite { scope: Scope; call: string; line: number; key: string }
-interface ArgUse { index: number; cell: number; name?: string }
+interface ArgUse { index: number; cell: number; name?: string; elements?: boolean }
 
 /** Solve the value flow and return one `value-flow` link per (invoke site, target). */
 export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
@@ -628,7 +628,10 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
     for (const a of args ?? []) {
       const formal = a.name !== undefined ? scope.fn!.params.find((x) => (x.argumentLabel ?? x.name) === a.name) : scope.fn!.params[a.index + offset];
       if (!formal || formal.variadic) continue;
-      addEdge(a.cell, cellOfKey(`L\0${scope.file}\0${scope.symbol}\0${formal.name}`));
+      const formalKey = `L\0${scope.file}\0${scope.symbol}\0${formal.name}`;
+      addEdge(a.cell, cellOfKey(formalKey));
+      // A list or map handed over (a local or parameter of the caller): the formal's elements are the argument's.
+      if (a.elements && cellKeys[a.cell]!.startsWith("L\0")) addEdge(cellOfKey(`${cellKeys[a.cell]}.[]`), cellOfKey(`${formalKey}.[]`));
       // An object handed to a formal declared as a class or interface: its members are the members of that type, for every reader of it.
       const members = membersOfBase.get(cellKeys[a.cell] ?? "");
       const owner = members && formal.type ? host.classOfType(scope.file, formal.type) : null;
@@ -695,7 +698,7 @@ export function solveValueFlow(host: ValueFlowHost): SymbolLink[] {
           const from = cellOf(s, f.from);
           if (from === null) break;
           const site = callSiteKey(s.file, s.symbol, f.line, f.call);
-          (argsOfSite.get(site) ?? argsOfSite.set(site, []).get(site)!).push({ index: f.index, cell: from, ...(f.name !== undefined ? { name: f.name } : {}) });
+          (argsOfSite.get(site) ?? argsOfSite.set(site, []).get(site)!).push({ index: f.index, cell: from, ...(f.name !== undefined ? { name: f.name } : {}), ...(f.elements ? { elements: true } : {}) });
           sitesWithFacts.add(site);
           break;
         }

@@ -1206,9 +1206,10 @@ export type ValueFlowFact =
   | { kind: "copy"; from: ValueCell; to: ValueCell; line: number; lambda?: string; ifFnType?: string }
   /**
    * `from` is passed as written argument `index` (0-based) of the call; `name` instead says which formal a named
-   * argument (`Btn(onPressed: save)`) binds, `index` then being unused (-1).
+   * argument (`Btn(onPressed: save)`) binds, `index` then being unused (-1). `elements`: the argument is a list or map
+   * whose element cell (`from` + `[]`) the callee's formal receives too (PHP, Ruby).
    */
-  | { kind: "arg"; call: string; line: number; index: number; from: ValueCell; name?: string }
+  | { kind: "arg"; call: string; line: number; index: number; from: ValueCell; name?: string; elements?: true }
   /** `to` receives what the call returns. */
   | { kind: "result"; call: string; line: number; to: ValueCell }
   /** The function returns what `from` holds. */

@@ -443,6 +443,17 @@ export function extractPhpValueFlow(body: Node | null, params: readonly string[]
   if (!body) return undefined;
   const reader = new Reader(params);
   reader.walk(body);
-  const facts = liveValueFlow(reader.facts, params, { bindBases: true });
+  const facts = liveValueFlow(reader.facts, params, { bindBases: true, elementArgs: true });
   return facts.length > 0 ? facts : undefined;
+}
+
+/**
+ * The value-flow facts of a file's top-level statements (a plain `.php` script storing a callable and calling it
+ * later), for `FileAnalysis.moduleValueFlow`: functions and classes are their own scopes and are skipped, and a
+ * top-level `return` (a config file's array) hands nothing on.
+ */
+export function phpTopLevelValueFlow(root: Node): ValueFlowFact[] {
+  const reader = new Reader([]);
+  reader.walk(root);
+  return liveValueFlow(reader.facts.filter((f) => f.kind !== "return"), [], { bindBases: true, elementArgs: true });
 }

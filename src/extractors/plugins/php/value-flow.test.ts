@@ -353,3 +353,43 @@ describe("PHP value flow: a closure written as an argument", () => {
     expect(links.map((l) => l.replace(/^Club\.run(\w)@\d+ \S+ -> src\/Club\.php::Club\./, "$1 "))).toEqual(["A onFullTime", "B onKickoff", "C onWhistle"]);
   });
 });
+
+describe("PHP value flow: top-level code and lists handed to a parameter", () => {
+  it("a script storing a callable at the top and running it later links to the stored function, never a namesake", async () => {
+    const links = await flow({
+      "decoys.php": decoys,
+      "other/Match.php": ["<?php", "function kickOff() {}", ""].join("\n"),
+      "public/index.php": ["<?php", "function kickOff() {}", "$go = 'kickOff';", "$again = $go;", "$again();", ""].join("\n"),
+    });
+    expect(links).toEqual(["<setup>@5 again -> public/index.php::kickOff"]);
+  });
+
+  it("a list of closures passed to a method that loops over it reaches each closure's call; a namesake does not", async () => {
+    const links = await flow({
+      "decoys.php": decoys,
+      "src/Club.php": [
+        "<?php", "class Club {",
+        "    public function persist() {}",
+        "    public function runAll(array $list) {", "        foreach ($list as $h) { $h(); }", "    }",
+        "    public function boot() {", "        $handlers = [fn() => $this->persist()];", "        $this->runAll($handlers);", "    }",
+        "}", "",
+      ].join("\n"),
+    });
+    expect(links).toEqual(["Club.runAll@5 h -> src/Club.php::Club.persist"]);
+  });
+
+  it("a list handed on through two methods and a list nothing writes", async () => {
+    const links = await flow({
+      "decoys.php": decoys,
+      "src/Club.php": [
+        "<?php", "class Club {",
+        "    public function persist() {}",
+        "    public function runAll(array $list) {", "        foreach ($list as $h) { $h(); }", "    }",
+        "    public function relay(array $items) {", "        $this->runAll($items);", "    }",
+        "    public function boot($other) {", "        $handlers = [[$this, 'persist']];", "        $this->relay($handlers);", "        $this->relay($other);", "    }",
+        "}", "",
+      ].join("\n"),
+    });
+    expect(links).toEqual(["Club.runAll@5 h -> src/Club.php::Club.persist"]);
+  });
+});
