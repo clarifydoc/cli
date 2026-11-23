@@ -449,3 +449,34 @@ describe("member effects, Go", () => {
     expect((summary.fieldWrites ?? []).some((w) => w.file === "league/more.go" || w.file === "league/ops_test.go")).toBe(false);
   });
 });
+
+describe("member effects, two language families in one project", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-member-effects-mixed-"));
+    await mkdir(join(dir, "web"), { recursive: true });
+    await mkdir(join(dir, "server", "models"), { recursive: true });
+    await writeFile(join(dir, "go.mod"), "module example.com/league\n\ngo 1.21\n");
+    await writeFile(join(dir, "server", "models", "error.go"), "package models\n\ntype Error struct{ Code int }\n");
+    await writeFile(join(dir, "web", "club.ts"), [
+      "export function signPlayer(name: string) {",
+      "  if (!name) throw new Error(\"no name\");",
+      "  throw new ClubError(\"closed\");",
+      "}",
+      "",
+    ].join("\n"));
+    await writeFile(join(dir, "web", "errors.ts"), "export class ClubError extends Error {}\n");
+    await writeFile(join(dir, "web", "package.json"), "{\"name\":\"web\"}\n");
+    await mkdir(join(dir, "out"), { recursive: true });
+    await analyze({ projectRoot: dir, outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
+    summary = await loadReportSummary(join(dir, "out"));
+  });
+  afterAll(async () => { await rm(dir, { recursive: true, force: true }); });
+
+  it("never resolves a TypeScript throw to a Go type of that name, and still resolves a TypeScript project class", () => {
+    const rows = (summary.thrownTypes ?? []).filter((t) => t.file === "web/club.ts");
+    expect(rows.find((t) => t.type === "Error")?.classFile).toBeUndefined();
+    expect(rows.find((t) => t.type === "ClubError")?.classFile).toBe("web/errors.ts");
+  });
+});

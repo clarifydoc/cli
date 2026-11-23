@@ -20,6 +20,9 @@ const MAX_HOPS = 8;
 /** Does `language` declare one type across the files of a directory (`typesSpanFiles`)? */
 const spansFiles = (language: string): boolean => manifestFor(language as LanguageName)?.typesSpanFiles === true;
 
+/** The language family a file's language belongs to (its manifest's `family`, else the language itself). */
+const familyOf = (language: string): string => manifestFor(language as LanguageName)?.family ?? language;
+
 type LanguageName = Parameters<typeof manifestFor>[0];
 
 export function joinMemberEffects(
@@ -57,6 +60,12 @@ export function joinMemberEffects(
     const sep = from ? manifestFor(from.language as LanguageName)?.classNamesByEvidence?.separator : undefined;
     let all = byName.get(sep ? leaf(name, sep) : name) ?? byName.get(leaf(name));
     if (!all) return null;
+    // Only the writer's language family: a TypeScript `Error` is never a Go struct of that name.
+    if (from) {
+      const family = familyOf(from.language);
+      all = all.filter((c) => familyOf(analysisByFile.get(c.file)?.language ?? "") === family);
+      if (all.length === 0) return null;
+    }
     if (sep && from) {
       const simple = leaf(name, sep).toLowerCase();
       const full = evidenceFullName(from, sep, name, line);
