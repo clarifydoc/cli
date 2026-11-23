@@ -12,6 +12,7 @@ import { REQUEST_PARAM_NAMES, scanRequestAccess } from "./request-access.js";
 import { callChainText, extractCalls } from "../../shared/call-graph.js";
 import { testCaseFunctions } from "./test-cases.js";
 import { heldFunctionNodes } from "./held-functions.js";
+import { angularMember, injectedTypes } from "./angularjs.js";
 import { fieldValueFlow, valueFlowOf } from "./value-flow.js";
 import { memberEffectsOf, withJsDocThrows } from "./member-effects.js";
 import { contractHandlerObjects } from "./contract-handlers.js";
@@ -1978,6 +1979,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     functions.push(...testCaseFunctions(tree.rootNode, sourceText, (name, fn, skip) => this.parseJsArrowOrExpr(name, fn, false, skip)));
     // Callbacks handed on to run later (`toast.action = () => …`): each a function of its own (`heldFunction`).
     for (const held of heldFunctionNodes(tree)) {
+      // An AngularJS service's or controller's member belongs to the class `angularClasses` builds.
+      if (angularMember(held.node)) continue;
       const fn = this.parseJsArrowOrExpr(held.name, held.node, false);
       // It closes over the functions it is written in: their typed parameters and locals type its receivers.
       const captured = this.capturedTypes(held.node, new Set([...fn.params.map((p) => p.name), ...(fn.localTypes ?? []).map((l) => l.name)]));
@@ -2025,10 +2028,13 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       const params = this.extractJsParams(p.childForFieldName("parameters") ?? p.childForFieldName("parameter"));
       const body = p.childForFieldName("body");
       const locals = body?.type === "statement_block" ? scanBody(body, paramNameSet(params), this.ctx, params).localTypes : [];
+      // An AngularJS function the injector calls: its parameters are typed by the names they are injected by.
+      const injected = injectedTypes(p, params.map((x) => x.name));
       for (const param of params) {
         if (own.has(param.name)) continue;
         own.add(param.name);
-        if (param.type && /^[A-Za-z_$]/.test(param.name)) out.push({ name: param.name, type: param.type });
+        const type = param.type ?? injected?.get(param.name) ?? null;
+        if (type && /^[A-Za-z_$]/.test(param.name)) out.push({ name: param.name, type });
       }
       for (const local of locals) {
         if (own.has(local.name)) continue;
@@ -2125,7 +2131,39 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     classes.push(...extractZodSchemas(tree.rootNode, sourceText));
     const declared = new Set(classes.map((c) => c.name));
     for (const p of this.prototypeClasses(tree)) if (!declared.has(p.cls.name)) classes.push(p.cls);
+    for (const cls of this.angularClasses(tree)) if (!declared.has(cls.name)) classes.push(cls);
     return classes;
+  }
+
+  /**
+   * An AngularJS service, factory or controller as a class named for what it is registered as
+   * (`angular.module("league").service("ClubService", function ($http) { this.load = function … })`): its members are
+   * the methods, so `ClubService.load(1)` and a call through an injected parameter typed `ClubService` find them, and
+   * a template's `ng-click="save()"` finds the controller's `save`.
+   */
+  private angularClasses(tree: Tree): ClassInfo[] {
+    const byOwner = new Map<string, { host: Node; methods: FunctionInfo[] }>();
+    for (const held of heldFunctionNodes(tree)) {
+      const m = angularMember(held.node);
+      if (!m) continue;
+      const fn = this.parseJsArrowOrExpr(m.member, held.node, true);
+      const captured = this.capturedTypes(held.node, new Set([...fn.params.map((p) => p.name), ...(fn.localTypes ?? []).map((l) => l.name)]));
+      if (captured.length > 0) fn.localTypes = [...(fn.localTypes ?? []), ...captured];
+      const entry = byOwner.get(m.owner) ?? byOwner.set(m.owner, { host: m.host, methods: [] }).get(m.owner)!;
+      if (!entry.methods.some((x) => x.name === fn.name)) entry.methods.push(fn);
+    }
+    return [...byOwner].map(([name, { host, methods }]) => ({
+      name,
+      extends: null,
+      implements: [],
+      decorators: [],
+      methods,
+      properties: [],
+      isExported: true,
+      registered: true,
+      line: host.startPosition.row + 1,
+      endLine: host.endPosition.row + 1,
+    }));
   }
 
   /** The prototype classes of the file `prototypeClasses` read last, by tree. */

@@ -839,6 +839,8 @@ export interface AstExtractorHooks {
   pathArgCalls?(tree: Tree, sourceText: string): PathArgCall[];
   /** Listeners bound to page elements by selector → `FileAnalysis.domBindings`. */
   domBindings?(tree: Tree, sourceText: string): import("./analysis.js").DomBinding[];
+  /** Template scopes registered by name and templates bound to controllers → `FileAnalysis.scopeRegistrations`. */
+  scopeRegistrations?(tree: Tree, sourceText: string): import("./analysis.js").ScopeRegistration[];
   /** Project classes constructed with a string argument → `FileAnalysis.instantiations`. */
   instantiations?(tree: Tree, sourceText: string): Instantiation[];
   /** URL-shaped module-level values by name (`environment.apiUrl`) → `FileAnalysis.moduleValues`. */

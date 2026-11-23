@@ -385,6 +385,14 @@ export interface FileAnalysis {
    */
   domBindings?: DomBinding[];
   /**
+   * How a page's component scopes meet the script that defines them: a module registering a component factory
+   * under the name a template's `x-data` / `ng-controller` states (Alpine `Alpine.data("clubForm", clubForm)`,
+   * AngularJS `.controller("ClubCtrl", ClubCtrl)`), and a route or directive that binds a template file to a
+   * controller (`{ templateUrl: "views/club.html", controller: "ClubCtrl" }`). Joined with
+   * `InteractiveElementInfo.componentScope` by the scoped-handler resolver.
+   */
+  scopeRegistrations?: ScopeRegistration[];
+  /**
    * `new X("rooms")`: project classes constructed with a string argument — a
    * generic client configured per instance, as a subclass configures it
    * through `super("rooms")`. The project pass reads the class's requests
@@ -2027,6 +2035,13 @@ export interface ClassInfo {
    * a unique name — a class is told apart by file and name.
    */
   nestedPath?: string;
+  /**
+   * A class a framework's container builds under the name it is registered by (an AngularJS service, factory or
+   * controller: `.service("orders", …)`), not one a module exports: found by a type's name (an injected parameter's, a call
+   * on that name) and never by an import's binding, which a variable of the same name (`var orders = require("./orders")`)
+   * would otherwise lend to it.
+   */
+  registered?: true;
   /** One declaration of a class written in several (C# `partial class`): its namesakes in the file are the same class. */
   partial?: true;
   /** The first sentence of its doc comment or docstring, capped (core/doc-comments.ts). Absent when it has none. */
@@ -3926,6 +3941,13 @@ export interface InteractiveElementInfo {
    * the route that renders this page (`ScreenInfo.renderedBy`), sets it to a POST at that route's path.
    */
   ownViewPost?: true;
+  /**
+   * The component scope the element sits in, as the markup names it: the nearest enclosing `x-data="clubForm"`
+   * (Alpine) or `ng-controller="ClubCtrl"` / `ng-controller="ClubCtrl as vm"` (AngularJS), the name alone; "" under
+   * an inline `x-data="{ … }"`, which no registered component answers. The scoped-handler resolver looks the handler up
+   * in the component registered under that name.
+   */
+  componentScope?: string;
   /** The text a person reads on it: a link's or button's label, a submit input's `value` ("Place Order"). */
   caption?: string;
   /**
@@ -3945,6 +3967,18 @@ export interface InteractiveElementInfo {
    * and attribute names. A page script's `domBindings` join on it.
    */
   selector?: string;
+}
+
+/**
+ * One registration of a template scope. `component`: `name` is the name a template states, `value` the identifier the
+ * module registers under it (the factory function or class; absent when the registration writes the function in place,
+ * and then the members are named by `name`). `template`: `name` is the template path as written, `value` the controller name.
+ */
+export interface ScopeRegistration {
+  kind: "component" | "template";
+  name: string;
+  value?: string;
+  line: number;
 }
 
 /** One listener a script binds by selector. `handler` is null for an inline function (its calls are the enclosing function's). */

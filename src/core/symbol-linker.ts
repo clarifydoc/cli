@@ -3124,6 +3124,11 @@ function classNameMember(
     candidateFiles = filesNamedByEvidence(ctx, analysis, evidenceSeparator, writtenName, candidateFiles, line);
     if (candidateFiles.length === 0) return null;
   }
+  // A name the caller binds by an import or `require` is that module, not a class the container registers under the name.
+  if (candidateFiles && !imported && analysis.imports.some((i) => i.specifiers.includes(className) || i.aliases?.[className] !== undefined)) {
+    const own = candidateFiles.filter((f) => !ctx.classAt.get(memberKey(f, declaredClass))?.registered);
+    candidateFiles = own.length > 0 ? own : undefined;
+  }
   // A class called by name is one of the caller's own language family: a Swift
   // or Ruby `Coach.train()` never reaches a Python `Coach` (unknown families stay eligible).
   const family = extensionFamily(sourceFile);
@@ -9131,6 +9136,8 @@ function importedTypeRef(ctx: LinkContext, typeName: string, sourceFile: string,
   const language = ctx.languageOf.get(sourceFile) as Language | undefined;
   if (!target && language && pluginFor(language)?.importsBindNames) return { typeName: exported, typeFile: null };
   const found = typeFileFor(ctx, exported, sourceFile, projectId);
+  // A class the container registers is no export of the module an import names.
+  if (found && ctx.classAt.get(memberKey(found, exported))?.registered) return { typeName: exported, typeFile: null };
   return { typeName: exported, typeFile: found && withinImportConfinement(ctx, imp.source, sourceFile, found) ? found : null };
 }
 

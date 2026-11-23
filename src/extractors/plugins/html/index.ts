@@ -250,7 +250,7 @@ const HANDLER_RE = /\bon([a-z]+)\s*=\s*"([^"]*)"|\bon([a-z]+)\s*=\s*'([^']*)'/gi
 /** Alpine.js / petite-vue event directives: `@click="changeRange"`, `x-on:submit.prevent="save()"`.
  *  Only DOM event names: a template dialect's own `@word=` attribute (Razor `@bind=`) is no handler. */
 const DIRECTIVE_HANDLER_RE =
-  /(?:^|\s)(?:@|x-on:|v-on:)(click|dblclick|submit|change|input|keyup|keydown|keypress|focus|blur|mouseenter|mouseleave|mouseover|mouseout|mousedown|mouseup|scroll|select|reset|paste|drop|dragstart|dragend|touchstart|touchend)(?:\.[\w.-]+)?\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
+  /(?:^|\s)(?:@|x-on:|v-on:|(?:data-)?ng-)(click|dblclick|submit|change|input|keyup|keydown|keypress|focus|blur|mouseenter|mouseleave|mouseover|mouseout|mousedown|mouseup|scroll|select|reset|paste|drop|dragstart|dragend|touchstart|touchend)(?:\.[\w.-]+)?\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
 /** The first inline handler an element's attributes carry: `onclick="…"` or an event directive. */
 function inlineHandler(attrs: string): { event: string; handler: string | null } | null {
   const on = HANDLER_RE.exec(attrs);
@@ -332,6 +332,21 @@ function innerText(markup: string[], line: number, from: number, tag: string): s
   return clean ? (clean.length > 60 ? clean.slice(0, 57) + "…" : clean) : undefined;
 }
 
+/** Tags that never close: they open no scope the next closing tag would end. */
+const VOID_TAGS: ReadonlySet<string> = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]);
+/** A component scope a template opens: Alpine's `x-data="clubForm"`, AngularJS's `ng-controller="ClubCtrl as vm"`. */
+const SCOPE_ATTR_RE = /(?:^|\s)(?:(x-data)|(?:data-)?(ng-controller))\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
+/** The name a scope attribute states ("" for an inline `x-data="{ … }"`, which no registered component answers), or null when the tag opens none. */
+function scopeOf(attrs: string): string | null {
+  const m = SCOPE_ATTR_RE.exec(attrs);
+  if (!m) return null;
+  const value = (m[3] ?? m[4] ?? "").trim();
+  return /^[A-Za-z_$][\w$]*/.exec(value)?.[0] ?? "";
+}
+
+/** A line that may carry a scope attribute (a cheap gate before the attribute reader). */
+const SCOPE_HINT = /x-data|ng-controller/i;
+
 /** The form a submit control sits in. */
 interface OpenForm { method: string; request?: ElementRequest; ownViewPost?: true }
 
@@ -362,6 +377,8 @@ export function extractHtmlInteractiveElements(lines: string[], opts: { requests
   const markup = maskMarkup(lines);
   const out: InteractiveElementInfo[] = [];
   const forms: OpenForm[] = [];
+  /** Open elements that carry a component scope, innermost last; `depth` counts the same-named tags opened inside. */
+  const scopes: Array<{ tag: string; depth: number; name: string }> = [];
   const withRequest = (el: InteractiveElementInfo, request: ElementRequest | undefined): InteractiveElementInfo =>
     opts.requests && request ? { ...el, handler: handlerOf(request.method, request.target), request } : el;
   for (let i = 0; i < markup.length; i++) {
@@ -370,9 +387,31 @@ export function extractHtmlInteractiveElements(lines: string[], opts: { requests
       const tag = m[1]!.toLowerCase();
       if (m[0][1] === "/") {
         if (tag === "form") forms.pop();
+        const top = scopes[scopes.length - 1];
+        if (top?.tag === tag) {
+          if (top.depth === 0) scopes.pop();
+          else top.depth--;
+        }
         continue;
       }
       let attrs = m[2] ?? "";
+      // A component scope this tag opens (the attribute may sit on a line the tag wraps onto).
+      let tagText = attrs;
+      if (m.index! + m[0].length >= markup[i]!.length) {
+        for (let j = i + 1; j < Math.min(markup.length, i + 12); j++) {
+          const close = markup[j]!.indexOf(">");
+          tagText += " " + (close < 0 ? markup[j]! : markup[j]!.slice(0, close));
+          if (close >= 0) break;
+        }
+      }
+      const scoped = SCOPE_HINT.test(tagText) ? scopeOf(tagText) : null;
+      const closed = VOID_TAGS.has(tag) || attrs.trimEnd().endsWith("/");
+      const top = scopes[scopes.length - 1];
+      let ownScope: string | undefined;
+      if (scoped !== null) {
+        if (closed) ownScope = scoped;
+        else scopes.push({ tag, depth: 0, name: scoped });
+      } else if (!closed && top?.tag === tag) top.depth++;
       // A tag whose attributes wrap onto the next lines: read them up to its `>`.
       if (READS_WRAPPED.has(tag) && m.index! + m[0].length >= markup[i]!.length) {
         for (let j = i + 1; j < Math.min(markup.length, i + 12); j++) {
@@ -395,6 +434,8 @@ export function extractHtmlInteractiveElements(lines: string[], opts: { requests
       const column = lines[i]!.startsWith(markup[i]!.slice(0, m.index!)) ? m.index! : undefined;
       const add = (el: InteractiveElementInfo): void => {
         if (column !== undefined && (el.request || el.ownViewPost)) el = { ...el, column };
+        const scope = ownScope ?? scopes[scopes.length - 1]?.name;
+        if (scope !== undefined) el = { ...el, componentScope: scope };
         out.push(selector && !el.request && (el.handler === null || el.handler === id) ? { ...el, selector } : el);
       };
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { htmlSpec, pageRoutePath, htmlPreprocess } from "./index.js";
+import { htmlSpec, pageRoutePath, htmlPreprocess, extractHtmlInteractiveElements } from "./index.js";
 
 /**
  * Plain HTML page extraction. Vanilla multi-page static sites (the Food-order
@@ -293,5 +293,25 @@ describe("a web server's canned status page", () => {
     expect([status.routes.length, status.interactiveElements.length]).toEqual([0, 0]);
     const page = await run("public/standings.html");
     expect(page.interactiveElements.length).toBe(1);
+  });
+});
+
+describe("component scopes of inline handlers (Alpine x-data, AngularJS ng-controller)", () => {
+  const read = (html: string) => extractHtmlInteractiveElements(lines(html)).map((e) => `${e.handler}:${e.componentScope}`);
+
+  it("names the nearest enclosing scope, through nested tags of the same name, and none outside it", () => {
+    expect(read(`<div x-data="clubForm">
+  <div class="row"><button @click="save()">Save</button></div>
+  <div x-data="{ open: false }"><button @click="toggle()">Toggle</button></div>
+  <button @click="reset()">Reset</button>
+</div>
+<button @click="outside()">Outside</button>`)).toEqual(["save:clubForm", "toggle:", "reset:clubForm", "outside:undefined"]);
+  });
+
+  it("reads ng-click and the controller name before `as`, on a tag whose attributes wrap", () => {
+    expect(read(`<section
+  ng-controller="ClubCtrl as vm">
+  <a href="#" ng-click="vm.save()">Save</a>
+</section>`)).toEqual(["save:ClubCtrl"]);
   });
 });

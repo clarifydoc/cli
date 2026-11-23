@@ -824,6 +824,8 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     if (pathArgCalls && pathArgCalls.length > 0) analysis.pathArgCalls = pathArgCalls;
     const domBindings = hooks?.domBindings?.(tree, sourceText);
     if (domBindings && domBindings.length > 0) analysis.domBindings = domBindings;
+    const scopeRegistrations = hooks?.scopeRegistrations?.(tree, sourceText);
+    if (scopeRegistrations && scopeRegistrations.length > 0) analysis.scopeRegistrations = scopeRegistrations;
     const instantiations = hooks?.instantiations?.(tree, sourceText);
     if (instantiations && instantiations.length > 0) analysis.instantiations = instantiations;
     const moduleValues = hooks?.moduleValues?.(tree, sourceText);

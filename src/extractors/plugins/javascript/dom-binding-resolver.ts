@@ -1,6 +1,7 @@
-import type { FileAnalysis, Language, SymbolLink } from "../../../types/analysis.js";
+import type { FileAnalysis, InteractiveElementInfo, Language, SymbolLink } from "../../../types/analysis.js";
 import type { DispatchResolver } from "../../dispatch/base.js";
 import { buildFilePathMap, resolveTarget } from "../../shared/link-scoring.js";
+import { handledScopedElements } from "./scoped-handlers.js";
 
 const SCRIPT_LANGUAGES = new Set<Language>(["javascript", "typescript"]);
 
@@ -22,7 +23,8 @@ const SCRIPT_LANGUAGES = new Set<Language>(["javascript", "typescript"]);
  * of that name in the scripts the page loads (`<script src>`, a Blade
  * `@vite([...])` entry), or else in the modules those scripts import (an Alpine
  * component spread from `../shared/dates.js`): one link per handler, only when
- * exactly one function at the nearer level has that name.
+ * exactly one function at the nearer level has that name. An element a component scope claims and
+ * the scoped-handler resolver joins (`scoped-handlers.ts`) is left to that resolver.
  */
 export class DomBindingResolver implements DispatchResolver {
   readonly id = "dom-binding";
@@ -47,7 +49,7 @@ export class DomBindingResolver implements DispatchResolver {
       return named.length === 1 ? named[0]! : null;
     };
 
-    const links: SymbolLink[] = namedHandlerLinks(analyses, scripts);
+    const links: SymbolLink[] = namedHandlerLinks(analyses, scripts, handledScopedElements(analyses));
     for (const page of analyses) {
       if (SCRIPT_LANGUAGES.has(page.language)) continue;
       const elements = page.interactiveElements.filter((e) => e.selector);
@@ -82,7 +84,7 @@ export class DomBindingResolver implements DispatchResolver {
 const IDENT = /^[A-Za-z_$][\w$]*$/;
 
 /** The file an import of `from` names: a relative specifier through the path map, else by path suffix, else the one file of that name. */
-function importResolver(analyses: FileAnalysis[]): (source: string, from: FileAnalysis) => FileAnalysis | null {
+export function importResolver(analyses: FileAnalysis[]): (source: string, from: FileAnalysis) => FileAnalysis | null {
   const filePathMap = buildFilePathMap(analyses);
   const byPath = new Map(analyses.map((a) => [a.filePath, a]));
   const byBase = new Map<string, FileAnalysis[]>();
@@ -112,10 +114,10 @@ function importResolver(analyses: FileAnalysis[]): (source: string, from: FileAn
  * page script imports links once, and a shared form whose `save` each page
  * defines links to each page's `save`.
  */
-function namedHandlerLinks(analyses: FileAnalysis[], scripts: FileAnalysis[]): SymbolLink[] {
+function namedHandlerLinks(analyses: FileAnalysis[], scripts: FileAnalysis[], handled: ReadonlySet<InteractiveElementInfo>): SymbolLink[] {
   const pages = analyses.filter((a) => !SCRIPT_LANGUAGES.has(a.language));
   const wanted = pages
-    .map((page) => ({ page, named: page.interactiveElements.filter((e) => !e.request && e.event.startsWith("on") && e.handler && IDENT.test(e.handler)) }))
+    .map((page) => ({ page, named: page.interactiveElements.filter((e) => !e.request && e.event.startsWith("on") && e.handler && IDENT.test(e.handler) && !handled.has(e)) }))
     .filter((p) => p.named.length > 0);
   if (wanted.length === 0 || scripts.length === 0) return [];
   const resolveImport = importResolver(analyses);

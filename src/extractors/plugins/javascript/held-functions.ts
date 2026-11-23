@@ -3,6 +3,7 @@ import { subscriptionOf } from "./component-subscriptions.js";
 import { reactiveCallbackName } from "./reactive-cells.js";
 import { libraryCallbackName } from "./library-callbacks.js";
 import { keyText } from "./node-utils.js";
+import { angularMemberName } from "./angularjs.js";
 
 /**
  * Function values written in place and handed on to run later — each a function of its own
@@ -52,6 +53,7 @@ export function heldFunctionsOf(tree: Tree): ReadonlyMap<number, string> {
     let name = heldName(n, () => (imported ??= importedNames(tree.rootNode)));
     if (!name) continue;
     // Two in one line under one key (`[{ run: () => a() }, { run: () => b() }]`): each keeps its own name.
+    if (taken.has(name) && !name.endsWith(">")) continue;
     for (let i = 2; taken.has(name); i++) name = name.replace(/(?:#\d+)?>$/, `#${i}>`);
     taken.add(name);
     memo.set(n.id, name);
@@ -76,6 +78,11 @@ function heldName(fn: Node, imported: () => ReadonlySet<string>): string | null 
   const line = fn.startPosition.row + 1;
   const parent = fn.parent;
   if (!parent) return null;
+  // `this.load = function …` in an AngularJS service, `$scope.save = function …` in its controller: the member of the registered name.
+  if (parent.type === "assignment_expression" || parent.type === "pair") {
+    const member = angularMemberName(fn);
+    if (member) return member;
+  }
   const reactive = parent.type === "arguments" ? reactiveCallbackName(fn) : null;
   if (reactive) return reactive;
   // `x.subscribe(() => …)`, `x.subscribe({ next: () => … })`, `ref.result.then((r) => …)`.

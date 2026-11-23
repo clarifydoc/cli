@@ -57,7 +57,9 @@ import { extractKubbConfigs } from "./kubb.js";
 import { extractMockedModules } from "./test-mocks.js";
 import { extractPathArgCalls } from "./path-arg-calls.js";
 import { extractDomBindings } from "./dom-bindings.js";
+import { extractScopeRegistrations } from "./angularjs.js";
 import { DomBindingResolver } from "./dom-binding-resolver.js";
+import { ScopedHandlerResolver } from "./scoped-handlers.js";
 import { JobEventResolver } from "./job-events.js";
 import { extractInstantiations } from "./instantiations.js";
 import { extractModuleValues } from "./module-values.js";
@@ -298,6 +300,7 @@ function astHooks(language: Language, manifest: LanguagePluginManifest): AstExtr
     mockedModules: extractMockedModules,
     pathArgCalls: extractPathArgCalls,
     domBindings: extractDomBindings,
+    scopeRegistrations: extractScopeRegistrations,
     instantiations: extractInstantiations,
     moduleValues: extractModuleValues,
     stringConstants: extractStringConstants,
@@ -323,7 +326,7 @@ const importsExports = new JavaScriptImportExportExtractor();
 const dataSources = new JavaScriptDataSourceExtractor();
 const dataMutations = new JavaScriptMutationExtractor();
 const entities = new JavaScriptEntityExtractor();
-const dispatchResolvers = ([new JsComponentEmitResolver(), new VuexDispatchResolver(), new VuexStateWatchResolver(), new JsPropCallbackResolver(), new JsComponentRenderResolver(), new JsComponentRenderResolver(true), new JsProvideInjectResolver(), new JsPropFlowResolver(), new JsStoreWatchResolver(), new JsContextTypeResolver(), new JsParamTypeResolver(), new JsSlotScopeResolver(), new JsLoopItemCallbackResolver(), new JsEventBusResolver(), new JsSubjectResolver(), new JsTemplateRefResolver(), new DomBindingResolver(), new JobEventResolver()]).map(seeingNamespaceTags);
+const dispatchResolvers = ([new JsComponentEmitResolver(), new VuexDispatchResolver(), new VuexStateWatchResolver(), new JsPropCallbackResolver(), new JsComponentRenderResolver(), new JsComponentRenderResolver(true), new JsProvideInjectResolver(), new JsPropFlowResolver(), new JsStoreWatchResolver(), new JsContextTypeResolver(), new JsParamTypeResolver(), new JsSlotScopeResolver(), new JsLoopItemCallbackResolver(), new JsEventBusResolver(), new JsSubjectResolver(), new JsTemplateRefResolver(), new ScopedHandlerResolver(), new DomBindingResolver(), new JobEventResolver()]).map(seeingNamespaceTags);
 const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, convexBuilderResolver, cdkRouteResolver, nestInheritedGuards, nestGlobalGuards, nestGlobalInterceptors, koaAppMiddleware, nextMiddlewareGuards, renderModeResolver, astroMiddlewareGuards, screenTableResolver, pathHelperResolver];
 
 export const typescriptMeta: LanguagePluginMeta = {
