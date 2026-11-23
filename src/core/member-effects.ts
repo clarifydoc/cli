@@ -63,7 +63,7 @@ export function joinMemberEffects(
       const named = beyond ? (byName.get(name.slice(name.search(/[^.:]*$/))) ?? []).filter((c) => analysisByFile.get(c.file)?.language === from.language) : [];
       const real = named.filter((c) => !c.cls.extension);
       // (the file's own declaration, or an `impl` block of the type it writes, makes the directory's declaration the one meant)
-      if (beyond && real.length > 1 && !named.some((c) => c.file === nearFile)) return null;
+      if (beyond && real.length > 1 && !named.some((c) => c.file === nearFile) && new Set(real.map((c) => c.file.slice(0, c.file.lastIndexOf("/")))).size > 1) return null;
       if (parts.length > 0 && (!beyond || parts.some((c) => !c.cls.extension))) {
         const home = parts.find((c) => !c.cls.extension && c.cls.properties.length > 0) ?? parts[0]!;
         return { ...home, parts };
@@ -150,7 +150,7 @@ export function joinMemberEffects(
     const dirName = dirOf(file).split("/").filter(Boolean).pop() ?? "main";
     if (manifestFor(analysisByFile.get(file)?.language as LanguageName)?.directoryNamesShared === true) return dirName;
     const stem = file.slice(file.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "");
-    return /^(?:mod|index|lib|main)$/.test(stem) ? dirName : stem;
+    return /^(?:mod|index|lib|main|__init__)$/.test(stem) ? dirName : stem;
   };
   /** The one file that declares package variable `name` for a function of `a`: where the language shares a directory's names (`directoryNamesShared`) a sibling's, else its own. */
   const packageVariableHome = (a: FileAnalysis, name: string): string | null => {
