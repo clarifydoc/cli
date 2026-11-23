@@ -67,4 +67,9 @@ export const csharpManifest: LanguagePluginManifest = {
   // CsharpUiBridgeResolver joins VB/XAML code-behind too (partial-class join
   // is language-agnostic) — a pure-VB MAUI project must still load this plugin.
   dispatchLanguages: ["vb", "xaml"],
+  // Files that mark a sub-project root (core's project detector); a lower `priority` wins a directory holding several kinds.
+  projectMarkers: [
+    { pattern: "**/*.csproj", kind: "dotnet", priority: 30 },
+    { pattern: "**/*.sln", kind: "dotnet", priority: 30 },
+  ],
 };

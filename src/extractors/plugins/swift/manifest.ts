@@ -39,4 +39,8 @@ export const swiftManifest: LanguagePluginManifest = {
   collectionElementOf: elementType,
   frameworkRules: swiftFrameworkRules,
   activationFiles: ["Package.swift"],
+  // Files that mark a sub-project root (core's project detector); a lower `priority` wins a directory holding several kinds.
+  projectMarkers: [
+    { pattern: "**/Package.swift", kind: "swift", priority: 150 },
+  ],
 };

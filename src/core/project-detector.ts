@@ -4,7 +4,7 @@ import { readdir, readFile, stat } from "fs/promises";
 import { join, posix, resolve } from "path";
 import type { PackageEcosystem, SubProject, SubProjectKind } from "../types/analysis.js";
 import { loadIgnorePatterns, isIgnored, ignoredDirectories } from "./clarifydoc-ignore.js";
-import { PACKAGE_MANAGERS } from "../extractors/registry.js";
+import { PACKAGE_MANAGERS, PROJECT_MARKERS, PROJECT_KIND_PRIORITY } from "../extractors/registry.js";
 import type { SelfNameContext } from "../types/language-plugin.js";
 
 /**
@@ -18,39 +18,6 @@ import type { SelfNameContext } from "../types/language-plugin.js";
  * `packages/api/src` belongs to `packages/api`, not the outer repo root.
  * Files with no enclosing marker fall back to the synthetic "root" project.
  */
-
-const MARKER_GLOBS: { pattern: string; kind: SubProjectKind }[] = [
-  { pattern: "**/package.json", kind: "node" },
-  { pattern: "**/*.csproj", kind: "dotnet" },
-  { pattern: "**/*.vbproj", kind: "dotnet" },
-  { pattern: "**/*.fsproj", kind: "dotnet" },
-  { pattern: "**/*.sln", kind: "dotnet" },
-  { pattern: "**/*.dpr", kind: "delphi" },
-  { pattern: "**/*.dpk", kind: "delphi" },
-  { pattern: "**/*.dproj", kind: "delphi" },
-  { pattern: "**/*.lpi", kind: "lazarus" },
-  { pattern: "**/*.lpr", kind: "lazarus" },
-  { pattern: "**/pom.xml", kind: "java-maven" },
-  { pattern: "**/build.gradle", kind: "java-gradle" },
-  { pattern: "**/build.gradle.kts", kind: "java-gradle" },
-  { pattern: "**/Cargo.toml", kind: "rust" },
-  { pattern: "**/go.mod", kind: "go" },
-  { pattern: "**/pyproject.toml", kind: "python" },
-  { pattern: "**/setup.py", kind: "python" },
-  { pattern: "**/requirements.txt", kind: "python" },
-  { pattern: "**/composer.json", kind: "php" },
-  { pattern: "**/Gemfile", kind: "ruby" },
-  { pattern: "**/Package.swift", kind: "swift" },
-  { pattern: "**/pubspec.yaml", kind: "dart" },
-  { pattern: "**/mix.exs", kind: "elixir" },
-  { pattern: "**/build.sbt", kind: "sbt" },
-  // An SFDX project: its `package.json` (LWC test tooling) is not the project.
-  { pattern: "**/sfdx-project.json", kind: "salesforce" },
-  // Only a CMakeLists.txt containing a project() call marks a project root —
-  // most CMakeLists are per-directory source lists (add_subdirectory targets)
-  // and treating them as markers would fragment the repo under innermost-wins.
-  { pattern: "**/CMakeLists.txt", kind: "cmake" },
-];
 
 /** Whether a marker pattern (a file name or `*.ext` under any directory) names a file, given its lower-cased base name. */
 function markerMatches(pattern: string, base: string): boolean {
@@ -74,32 +41,6 @@ const MARKER_IGNORE = [
   "**/Pods/**",
 ];
 
-/**
- * Primary-kind priority: when a directory contains multiple marker kinds
- * (e.g. a .NET project with a `package.json` for frontend tooling), pick
- * the more specific one. `node` is last so repo-root `package.json` only
- * wins when nothing else applies.
- */
-const KIND_PRIORITY: SubProjectKind[] = [
-  "delphi",
-  "lazarus",
-  "dotnet",
-  "dart",
-  "elixir",
-  "sbt",
-  "java-maven",
-  "java-gradle",
-  "rust",
-  "go",
-  "cmake",
-  "python",
-  "php",
-  "ruby",
-  "swift",
-  "salesforce",
-  "node",
-];
-
 /** Detect all sub-projects under `projectRoot` by scanning for marker files. */
 export async function detectSubProjects(
   projectRoot: string,
@@ -117,7 +58,7 @@ export async function detectSubProjects(
   >();
 
   // One walk for every marker: each pattern is `**/<name>` or `**/*.<ext>`, matched case-insensitively.
-  const found = await glob(MARKER_GLOBS.map((m) => m.pattern), {
+  const found = await glob(PROJECT_MARKERS.map((m) => m.pattern), {
     cwd: root,
     ignore: MARKER_IGNORE,
     absolute: false,
@@ -134,10 +75,8 @@ export async function detectSubProjects(
     const lastSlash = norm.lastIndexOf("/");
     const dir = lastSlash >= 0 ? norm.slice(0, lastSlash) : "";
     const base = norm.slice(lastSlash + 1).toLowerCase();
-    for (const { kind } of MARKER_GLOBS.filter((m) => markerMatches(m.pattern, base))) {
-      if (kind === "cmake" && !(await isCmakeProjectRoot(root, match))) continue;
-      // sbt's meta-build (`project/build.sbt` beside `project/plugins.sbt`) belongs to the build above it.
-      if (kind === "sbt" && dir.split("/").pop() === "project") continue;
+    for (const { kind, isProjectRoot } of PROJECT_MARKERS.filter((m) => markerMatches(m.pattern, base))) {
+      if (isProjectRoot && !(await isProjectRoot({ dir, text: () => readFile(join(root, match), "utf-8").catch(() => "") }))) continue;
       let entry = byDir.get(dir);
       if (!entry) {
         entry = { kinds: new Set(), markers: new Set() };
@@ -423,19 +362,9 @@ function selfNameContext(root: string, projectRoot: string, file: string): SelfN
   };
 }
 
-/** True when this CMakeLists.txt declares a project (`project(...)` call). */
-async function isCmakeProjectRoot(root: string, relPath: string): Promise<boolean> {
-  try {
-    const content = await readFile(join(root, relPath), "utf-8");
-    return /^\s*project\s*\(/im.test(content);
-  } catch {
-    return false;
-  }
-}
-
-/** The most specific kind among several markers in one directory, by `KIND_PRIORITY`. */
+/** The most specific kind among several markers in one directory, by the plugins' marker priorities. */
 function pickPrimaryKind(kinds: Set<SubProjectKind>): SubProjectKind {
-  for (const k of KIND_PRIORITY) if (kinds.has(k)) return k;
+  for (const k of PROJECT_KIND_PRIORITY) if (kinds.has(k)) return k;
   return "root";
 }
 

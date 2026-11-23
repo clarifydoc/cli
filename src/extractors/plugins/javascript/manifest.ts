@@ -187,6 +187,10 @@ export const typescriptManifest: LanguagePluginManifest = {
   // manifest only, so the registry sees each rule exactly once.
   frameworkRules: javascriptFrameworkRules,
   activationFiles: ["package.json"],
+  // Files that mark a sub-project root (core's project detector); a lower `priority` wins a directory holding several kinds.
+  projectMarkers: [
+    { pattern: "**/package.json", kind: "node", priority: 170 },
+  ],
 };
 
 export const javascriptManifest: LanguagePluginManifest = {

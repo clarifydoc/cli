@@ -21,4 +21,8 @@ export const apexManifest: LanguagePluginManifest = {
   testFilePatterns: [/(?:[a-z0-9]Tests?|_[Tt]ests?)\.(?:cls|trigger)$/],
   testSubjectAffixes: { suffixes: ["Test", "_Test", "Tests"] },
   activationFiles: ["sfdx-project.json"],
+  // Files that mark a sub-project root (core's project detector); a lower `priority` wins a directory holding several kinds.
+  projectMarkers: [
+    { pattern: "**/sfdx-project.json", kind: "salesforce", priority: 160 },
+  ],
 };

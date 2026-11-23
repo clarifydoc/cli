@@ -132,6 +132,12 @@ export const javaManifest: LanguagePluginManifest = {
   builtinMembers: JVM_BUILTIN_MEMBERS,
   // Kotlin's `object` (`INSTANCE`) and companion (`Companion`) as Java sees them.
   classMemberHolders: ["INSTANCE", "Companion"],
+  // Files that mark a sub-project root (core's project detector); a lower `priority` wins a directory holding several kinds.
+  projectMarkers: [
+    { pattern: "**/pom.xml", kind: "java-maven", priority: 70 },
+    { pattern: "**/build.gradle", kind: "java-gradle", priority: 80 },
+    { pattern: "**/build.gradle.kts", kind: "java-gradle", priority: 80 },
+  ],
 };
 
 export const kotlinManifest: LanguagePluginManifest = {

@@ -5208,25 +5208,12 @@ export interface UnreadCode {
   examples: string[];
 }
 
-export type SubProjectKind =
-  | "node"
-  | "dotnet"
-  | "cmake"
-  | "delphi"
-  | "lazarus"
-  | "java-maven"
-  | "java-gradle"
-  | "rust"
-  | "go"
-  | "python"
-  | "php"
-  | "ruby"
-  | "swift"
-  | "dart"
-  | "elixir"
-  | "sbt"
-  | "salesforce"
-  | "root";
+/**
+ * A sub-project's kind: the `kind` a plugin's `projectMarkers` entry states (`node`, `dotnet`, `java-maven`, …),
+ * or the synthetic `root`. An open string, since a new build system arrives with its plugin; nothing outside
+ * the detector switches on it (the app and the VS Code extension only display it).
+ */
+export type SubProjectKind = string;
 
 export interface SubProject {
   id: string;

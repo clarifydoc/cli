@@ -3,6 +3,7 @@ import { sbtPackageManager } from "./package-manifests.js";
 import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import { scalaTestCommand } from "./test-command.js";
 import { scalaProjectCommands } from "./project-commands.js";
+import { notSbtMetaBuild } from "./project-markers.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -40,4 +41,8 @@ export const scalaManifest: LanguagePluginManifest = {
   namedFiles: ["routes"],
   externalModulePrefixes: ["scala.", "java.", "javax.", "akka.", "cats.", "zio.", "play.", "org.apache.", "io.circe", "doobie.", "slick."],
   frameworkImportHints: { "slick.": "slick", "doobie.": "doobie", "io.getquill": "quill" },
+  // Files that mark a sub-project root (core's project detector); a lower `priority` wins a directory holding several kinds.
+  projectMarkers: [
+    { pattern: "**/build.sbt", kind: "sbt", priority: 60, isProjectRoot: notSbtMetaBuild },
+  ],
 };

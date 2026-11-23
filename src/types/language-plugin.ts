@@ -2030,6 +2030,11 @@ export interface LanguagePluginManifest {
    */
   activationFiles?: readonly string[];
   /**
+   * Files that mark a directory as a sub-project root (`package.json`, `*.csproj`, `Cargo.toml`) — the
+   * project detector's marker table, built by the registry. Static manifest data, like `activationFiles`.
+   */
+  projectMarkers?: readonly ProjectMarkerSpec[];
+  /**
    * Package managers this plugin owns — manifest parsers and import matching
    * (see `PackageManagerSpec`). Family plugins attach them to ONE member.
    */
@@ -2692,4 +2697,26 @@ export interface StructuralMatch {
    * has the value-receiver methods alone.
    */
   receiverKinds?: true;
+}
+
+/** What a marker predicate is told about a matched file. */
+export interface ProjectMarkerContext {
+  /** The directory holding the file, relative to the analysis root, posix-style (`""` at the root). */
+  dir: string;
+  /** The file's text, read on demand. */
+  text(): Promise<string>;
+}
+
+/** A file that marks a sub-project root: `**\/name` or `**\/*.ext`, matched case-insensitively. */
+export interface ProjectMarkerSpec {
+  pattern: string;
+  /** The sub-project kind the marker states (`SubProject.kind`). A kind has one priority across every plugin naming it. */
+  kind: string;
+  /**
+   * Which kind a directory takes when several markers meet there: the lowest wins. A .NET project with a
+   * frontend `package.json` is dotnet; the repository-root `package.json` (the highest number) wins only when nothing else applies.
+   */
+  priority: number;
+  /** Whether this match is a project root at all; a marker the predicate refuses marks nothing. */
+  isProjectRoot?(file: ProjectMarkerContext): boolean | Promise<boolean>;
 }

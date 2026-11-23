@@ -83,3 +83,10 @@ describe("claimShebangInterpreters", () => {
     expect(claimShebangInterpreters([withShebang("ruby", ["ruby"], /^ruby$/), withShebang("bash", ["bash", "sh"], /^(?:bash|sh)$/)])).toHaveLength(2);
   });
 });
+
+describe("project markers", () => {
+  it("orders kinds by the priority the plugins state", async () => {
+    const { PROJECT_KIND_PRIORITY } = await import("./registry.js");
+    expect(PROJECT_KIND_PRIORITY).toEqual(["delphi", "lazarus", "dotnet", "dart", "elixir", "sbt", "java-maven", "java-gradle", "rust", "go", "cmake", "python", "php", "ruby", "swift", "salesforce", "node"]);
+  });
+});

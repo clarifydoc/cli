@@ -46,4 +46,8 @@ export const phpManifest: LanguagePluginManifest = {
   frameworkRules: phpFrameworkRules,
   markerCandidates: phpMarkerCandidates,
   activationFiles: ["composer.json"],
+  // Files that mark a sub-project root (core's project detector); a lower `priority` wins a directory holding several kinds.
+  projectMarkers: [
+    { pattern: "**/composer.json", kind: "php", priority: 130 },
+  ],
 };

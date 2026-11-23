@@ -22,4 +22,8 @@ export const vbManifest: LanguagePluginManifest = {
   externalNamespaceRoots: ["System", "Microsoft"],
   // WinForms designers, the VB counterpart of the C# rule above.
   generatedFilePatterns: [/\.Designer\.vb$/],
+  // Files that mark a sub-project root (core's project detector); a lower `priority` wins a directory holding several kinds.
+  projectMarkers: [
+    { pattern: "**/*.vbproj", kind: "dotnet", priority: 30 },
+  ],
 };

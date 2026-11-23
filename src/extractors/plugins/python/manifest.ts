@@ -102,4 +102,10 @@ export const pythonManifest: LanguagePluginManifest = {
   activationFiles: ["requirements.txt", "pyproject.toml"],
   // protoc output for Python.
   generatedFilePatterns: [/_pb2\.py$/, /_pb2_grpc\.py$/],
+  // Files that mark a sub-project root (core's project detector); a lower `priority` wins a directory holding several kinds.
+  projectMarkers: [
+    { pattern: "**/pyproject.toml", kind: "python", priority: 120 },
+    { pattern: "**/setup.py", kind: "python", priority: 120 },
+    { pattern: "**/requirements.txt", kind: "python", priority: 120 },
+  ],
 };

@@ -6,6 +6,7 @@ import type {
   PreprocessContext,
   PreprocessOutcome,
   PackageManagerSpec,
+  ProjectMarkerSpec,
   ConfigSourceSpec,
   ProxySourceSpec,
   ServiceConfigSpec,
@@ -834,6 +835,23 @@ export function inferFileFrameworks(
  * read whether or not its language was discovered.
  */
 export const PACKAGE_MANAGERS: readonly PackageManagerSpec[] = ALL_MANIFESTS.flatMap((m) => m.packageManagers ?? []);
+
+/**
+ * Every plugin's sub-project markers, in manifest order, and the kind priority they state (lowest first).
+ * A kind stated with two priorities is a plugin conflict and throws at load.
+ */
+export const PROJECT_MARKERS: readonly ProjectMarkerSpec[] = ALL_MANIFESTS.flatMap((m) => m.projectMarkers ?? []);
+export const PROJECT_KIND_PRIORITY: readonly string[] = (() => {
+  const byKind = new Map<string, number>();
+  for (const marker of PROJECT_MARKERS) {
+    const seen = byKind.get(marker.kind);
+    if (seen !== undefined && seen !== marker.priority) throw new Error(`Project kind "${marker.kind}" stated with priorities ${seen} and ${marker.priority}`);
+    byKind.set(marker.kind, marker.priority);
+  }
+  const priorities = [...byKind.values()];
+  if (new Set(priorities).size !== priorities.length) throw new Error("Two project kinds share one priority");
+  return [...byKind].sort((a, b) => a[1] - b[1]).map(([kind]) => kind);
+})();
 
 /** Every language's build/test/start reader, in manifest order (the first to name a kind for a root wins). */
 /** The compilation databases the languages read (`compile_commands.json`), one entry per parser. */

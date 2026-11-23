@@ -72,4 +72,8 @@ export const rubyManifest: LanguagePluginManifest = {
   frameworkImportHints: { active_record: "active-record", sequel: "sequel" },
   frameworkRules: rubyFrameworkRules,
   activationFiles: ["Gemfile"],
+  // Files that mark a sub-project root (core's project detector); a lower `priority` wins a directory holding several kinds.
+  projectMarkers: [
+    { pattern: "**/Gemfile", kind: "ruby", priority: 140 },
+  ],
 };

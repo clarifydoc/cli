@@ -56,4 +56,8 @@ export const rustManifest: LanguagePluginManifest = {
   frameworkImportHints: { diesel: "diesel", sea_orm: "sea-orm", sqlx: "rust-sqlx" },
   frameworkRules: rustFrameworkRules,
   activationFiles: ["Cargo.toml"],
+  // Files that mark a sub-project root (core's project detector); a lower `priority` wins a directory holding several kinds.
+  projectMarkers: [
+    { pattern: "**/Cargo.toml", kind: "rust", priority: 90 },
+  ],
 };

@@ -43,4 +43,8 @@ export const dartManifest: LanguagePluginManifest = {
   frameworkImportHints: { "package:flutter": "flutter", "package:go_router": "go_router", "package:http": "http", "package:dio": "dio", "package:cloud_firestore": "firestore", "package:sqflite": "sqflite", "package:supabase_flutter": "supabase", "package:shelf": "shelf", "package:shelf_router": "shelf" },
   frameworkRules: dartFrameworkRules,
   activationFiles: ["pubspec.yaml"],
+  // Files that mark a sub-project root (core's project detector); a lower `priority` wins a directory holding several kinds.
+  projectMarkers: [
+    { pattern: "**/pubspec.yaml", kind: "dart", priority: 40 },
+  ],
 };

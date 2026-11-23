@@ -174,3 +174,28 @@ describe("detectSubProjects — an sbt build's declared projects", () => {
     }
   });
 });
+
+describe("detectSubProjects — markers stated by plugins", () => {
+  it("skips an sbt meta-build and a CMakeLists without project(), and picks a directory's kind by priority", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cd-markers-"));
+    try {
+      const files: Record<string, string> = {
+        "build.sbt": 'name := "league"',
+        "project/build.sbt": 'addSbtPlugin("com.example" % "league" % "1.0")',
+        "cars/CMakeLists.txt": "add_library(engine engine.cpp)\n",
+        "garage/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)\nproject(garage)\n",
+        "garage/package.json": "{}",
+        "club-ui/Club.csproj": "<Project/>",
+        "club-ui/package.json": "{}",
+      };
+      for (const [path, text] of Object.entries(files)) {
+        await mkdir(join(root, path, ".."), { recursive: true });
+        await writeFile(join(root, path), text);
+      }
+      const projects = await detectSubProjects(root);
+      expect(projects.map((p) => `${p.root}:${p.kind}`).sort()).toEqual([":sbt", "club-ui:dotnet", "garage:cmake"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

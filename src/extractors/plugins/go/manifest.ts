@@ -51,4 +51,8 @@ export const goManifest: LanguagePluginManifest = {
   activationFiles: ["go.mod"],
   // An address read from the environment (`os.Getenv("ORDERS_ADDR")`), valued from the deployment.
   serviceConfig: goServiceConfig,
+  // Files that mark a sub-project root (core's project detector); a lower `priority` wins a directory holding several kinds.
+  projectMarkers: [
+    { pattern: "**/go.mod", kind: "go", priority: 100 },
+  ],
 };

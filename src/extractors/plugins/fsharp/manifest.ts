@@ -30,4 +30,8 @@ export const fsharpManifest: LanguagePluginManifest = {
   externalModulePrefixes: ["System", "Microsoft.", "FSharp.", "Giraffe", "Saturn", "Falco", "Dapper", "Npgsql"],
   externalNamespaceRoots: ["System", "Microsoft", "FSharp"],
   frameworkImportHints: { Giraffe: "giraffe", Saturn: "saturn", Falco: "falco", Dapper: "dapper", "Npgsql.FSharp": "npgsql-fsharp" },
+  // Files that mark a sub-project root (core's project detector); a lower `priority` wins a directory holding several kinds.
+  projectMarkers: [
+    { pattern: "**/*.fsproj", kind: "dotnet", priority: 30 },
+  ],
 };

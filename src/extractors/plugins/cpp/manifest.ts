@@ -6,6 +6,7 @@ import { vcpkgPackageManager, conanPackageManager } from "./package-manifests.js
 import { parseCompileCommands } from "../shared/compile-commands.js";
 import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 import { cmakeProjectCommands, ctestCommand } from "../shared/cmake-commands.js";
+import { declaresCmakeProject } from "./project-markers.js";
 
 /**
  * Static tier of this plugin — the cheap pure data the registry aggregates
@@ -83,4 +84,8 @@ export const cppManifest: LanguagePluginManifest = {
   frameworkRules: cppFrameworkRules,
   activationFiles: ["CMakeLists.txt", "conanfile.txt", "vcpkg.json"],
   readingVariant: cppReadingVariant,
+  // Files that mark a sub-project root (core's project detector); a lower `priority` wins a directory holding several kinds.
+  projectMarkers: [
+    { pattern: "**/CMakeLists.txt", kind: "cmake", priority: 110, isProjectRoot: declaresCmakeProject },
+  ],
 };

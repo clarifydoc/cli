@@ -63,6 +63,14 @@ export const pascalManifest: LanguagePluginManifest = {
   // The DFM→handler UI bridge joins .dfm event wirings to form methods, so
   // discovering dfm files must load this plugin's resolvers too.
   dispatchLanguages: ["dfm"],
+  // Files that mark a sub-project root (core's project detector); a lower `priority` wins a directory holding several kinds.
+  projectMarkers: [
+    { pattern: "**/*.dpr", kind: "delphi", priority: 10 },
+    { pattern: "**/*.dpk", kind: "delphi", priority: 10 },
+    { pattern: "**/*.dproj", kind: "delphi", priority: 10 },
+    { pattern: "**/*.lpi", kind: "lazarus", priority: 20 },
+    { pattern: "**/*.lpr", kind: "lazarus", priority: 20 },
+  ],
 };
 
 export const dfmManifest: LanguagePluginManifest = {

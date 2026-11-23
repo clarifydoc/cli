@@ -26,4 +26,8 @@ export const elixirManifest: LanguagePluginManifest = {
   testSubjectAffixes: { suffixes: ["_test"] },
   externalModulePrefixes: ["Enum", "Map", "List", "String", "Kernel", "IO", "File", "Path", "Logger", "GenServer", "Supervisor", "Application", "Process", "Agent", "Task", "Stream", "Ecto", "Phoenix", "Plug", "Jason"],
   frameworkImportHints: { Phoenix: "phoenix", "Phoenix.Controller": "phoenix", "Phoenix.Router": "phoenix", "Phoenix.LiveView": "phoenix_live_view", Ecto: "ecto", "Ecto.Schema": "ecto", Plug: "plug", Absinthe: "absinthe" },
+  // Files that mark a sub-project root (core's project detector); a lower `priority` wins a directory holding several kinds.
+  projectMarkers: [
+    { pattern: "**/mix.exs", kind: "elixir", priority: 50 },
+  ],
 };

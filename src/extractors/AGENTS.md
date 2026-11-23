@@ -70,7 +70,7 @@ the import index, a class index (`resolve`, `supertypes`, `ancestors`,
 **Two tiers.** Each plugin also has a `manifest.ts` — the STATIC tier
 (`LanguagePluginManifest`): extensions, `family`, parsing kind, grammar
 location, test-file patterns, external prefixes/roots, builtin members,
-framework import hints, `frameworks.ts` rules, `activationFiles`,
+framework import hints, `frameworks.ts` rules, `activationFiles`, `projectMarkers` (the files that mark a sub-project root: kind, priority, optional root predicate),
 `dispatchLanguages`, `docComments` (from `shared/doc-comment-specs.ts`),
 and the plugin's package managers (`packageManagers` —
 manifest parsers + how an import names a package, from `package-manifests.ts`
