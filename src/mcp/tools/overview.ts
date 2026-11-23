@@ -1468,13 +1468,14 @@ export function impactTool(ctx: ToolContext): McpTool {
       const explicit = stringArrayArg(args, "files");
       let changed: string[];
       let label: string;
+      let added: string[] | undefined;
       if (explicit.length) {
         changed = explicit;
         label = "files argument";
       } else {
         const { gitChangedFiles } = await import("../../core/git-changed-files.js");
         try {
-          ({ files: changed, label } = await gitChangedFiles(root, {
+          ({ files: changed, label, added } = await gitChangedFiles(root, {
             base: stringArg(args, "base"),
             staged: booleanArg(args, "staged"),
           }));
@@ -1516,7 +1517,7 @@ export function impactTool(ctx: ToolContext): McpTool {
           // Without line ranges the file-level projection stands alone.
         }
       }
-      const impact = computeImpactDiff(loaded.summary, changed, { baseLabel: label, ...(symbols ? { symbols } : {}) });
+      const impact = computeImpactDiff(loaded.summary, changed, { baseLabel: label, ...(added ? { addedFiles: added } : {}), ...(symbols ? { symbols } : {}) });
       return {
         text: joinLines([
           origin,

@@ -310,11 +310,12 @@ program
 
       let changed: string[];
       let label: string;
+      let added: string[] | undefined;
       if (options.files?.length) {
         changed = options.files;
         label = "--files";
       } else {
-        ({ files: changed, label } = await gitChangedFiles(projectRoot, {
+        ({ files: changed, label, added } = await gitChangedFiles(projectRoot, {
           base: options.base,
           staged: options.staged,
         }));
@@ -337,7 +338,7 @@ program
           if (process.env.CLARIFYDOC_DEBUG) console.error(e);
         }
       }
-      const impact = computeImpactDiff(summary, changed, { baseLabel: label, ...(author ? { author } : {}), ...(symbols ? { symbols } : {}) });
+      const impact = computeImpactDiff(summary, changed, { baseLabel: label, ...(added ? { addedFiles: added } : {}), ...(author ? { author } : {}), ...(symbols ? { symbols } : {}) });
       let surface: import("./core/surface-diff.js").SurfaceDiff | undefined;
       const sd = options.baseline ? await import("./core/surface-diff.js") : null;
       if (sd) surface = sd.diffSurface(await loadAnalysisAt(options.baseline, options.output), summary);

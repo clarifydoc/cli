@@ -12,7 +12,7 @@ import { GIT_SAFE_DIFF, gitArgs } from "./git-safe.js";
 export async function gitChangedFiles(
   root: string,
   opts: { base?: string; staged?: boolean } = {},
-): Promise<{ files: string[]; label: string }> {
+): Promise<{ files: string[]; label: string; added: string[] }> {
   const run = (args: string[]): Promise<string> =>
     new Promise((res, rej) => {
       execFile(
@@ -30,12 +30,16 @@ export async function gitChangedFiles(
     return {
       files: split(await run(["diff", "--name-only", "--relative", ...GIT_SAFE_DIFF, "--cached"])),
       label: "staged",
+      added: split(await run(["diff", "--name-only", "--relative", "--diff-filter=A", ...GIT_SAFE_DIFF, "--cached"])),
     };
   }
   const base = opts.base ?? "HEAD";
   const tracked = await run(["diff", "--name-only", "--relative", ...GIT_SAFE_DIFF, base]);
   const untracked = await run(["ls-files", "--others", "--exclude-standard"]);
-  return { files: [...split(tracked), ...split(untracked)], label: base };
+  // Added = what git itself calls new: files the diff against `base` adds (`--diff-filter=A`, e.g. `git add`ed) and
+  // untracked files it does not ignore. Not filtered by language: a new README is added too.
+  const addedTracked = await run(["diff", "--name-only", "--relative", "--diff-filter=A", ...GIT_SAFE_DIFF, base]);
+  return { files: [...split(tracked), ...split(untracked)], label: base, added: [...new Set([...split(addedTracked), ...split(untracked)])] };
 }
 
 /** `git config user.name` at a path, or undefined when it is unset or git is missing. */

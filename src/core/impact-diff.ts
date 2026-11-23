@@ -57,6 +57,12 @@ export interface ImpactDiffResult {
   unknownFiles: string[];
   /** Files deleted since the previous analysis run, when known. */
   removedFiles: string[];
+  /**
+   * Changed paths the change adds (git: new in the diff against the base, or untracked and not ignored), whether or
+   * not the analysis knows them — apart from `unknownFiles`, which also holds unanalysed and non-source paths.
+   * Only a git-driven run states it; an older consumer ignores it.
+   */
+  addedFiles?: string[];
   screens: TraceImpactScreen[];
   screenCount: number;
   routes: TraceImpactRoute[];
@@ -196,6 +202,8 @@ export function computeImpactDiff(
   changed: string[],
   options?: {
     removedFiles?: string[];
+    /** Paths the change adds (`gitChangedFiles().added`); stated on the result only when given. */
+    addedFiles?: string[];
     baseLabel?: string;
     author?: string;
     /** The changed functions (from `symbolsInHunks`), when the diff's lines are known. */
@@ -554,6 +562,7 @@ export function computeImpactDiff(
     changedFiles,
     unknownFiles,
     removedFiles: (options?.removedFiles ?? []).map(normalizePath).sort(),
+    ...(options?.addedFiles ? { addedFiles: [...new Set(options.addedFiles.map(normalizePath))].sort() } : {}),
     screens: [...screens.values()].sort((a, b) => byOrdinal(a.name, b.name)),
     screenCount: screens.size,
     routes: [...routes.values()].sort((a, b) => byOrdinal(a.path, b.path)),
@@ -724,6 +733,7 @@ export function renderImpactText(r: ImpactDiffResult): string {
   if (r.changedFiles.length) lines.push(`Changed:  ${r.changedFiles.join(", ")}`);
   if (r.unknownFiles.length) lines.push(`Unknown:  ${r.unknownFiles.join(", ")}  (not in the analysis)`);
   if (r.removedFiles.length) lines.push(`Removed:  ${r.removedFiles.join(", ")}`);
+  if (r.addedFiles?.length) lines.push(`Added:    ${r.addedFiles.join(", ")}`);
   if (r.screenCount > 0) {
     lines.push("", `Screens reached (${geq(r)}${r.screenCount}):`);
     for (const s of r.screens) lines.push(`  ${s.name}${s.route ? `  ${s.route}` : ""}  (${s.file})`);
@@ -825,6 +835,7 @@ export function renderImpactMarkdown(r: ImpactDiffResult): string {
   row("Changed", r.changedFiles.map((f) => `\`${f}\``).join(", ") || "—");
   if (r.unknownFiles.length) row("Unknown", r.unknownFiles.map((f) => `\`${f}\``).join(", "));
   if (r.removedFiles.length) row("Removed", r.removedFiles.map((f) => `\`${f}\``).join(", "));
+  if (r.addedFiles?.length) row("Added", r.addedFiles.map((f) => `\`${f}\``).join(", "));
   row(
     `Screens (${geq(r)}${r.screenCount})`,
     r.screens.map((s) => `${s.name}${s.route ? ` (\`${s.route}\`)` : ""}`).join(", ") || "—",
