@@ -92,6 +92,55 @@ describe("member effects, end to end", () => {
       "public class Other { public string Status; }",
       "}",
     ].join("\n"));
+    await mkdir(join(dir, "py"), { recursive: true });
+    await writeFile(join(dir, "py", "club.py"), [
+      "class Overdrawn(Exception):",
+      "    pass",
+      "",
+      "class Club:",
+      "    def __init__(self, name):",
+      "        self.status = 'new'",
+      "    def close(self):",
+      "        self.status = 'closed'",
+      "        self.points += 1",
+      "        raise Overdrawn('x')",
+      "    def same(self, status):",
+      "        status = 'param'",
+      "    def again(self, err):",
+      "        try:",
+      "            self.close()",
+      "        except Exception as e:",
+      "            raise",
+      "        raise err",
+      "    def fail(self):",
+      "        raise Overdrawn",
+      "",
+      "class Garage:",
+      "    def __init__(self):",
+      "        self.status = 'x'",
+      "    def open(self):",
+      "        self.status = 'open'",
+      "",
+      "class Elite(Club):",
+      "    def promote(self):",
+      "        self.status = 'elite'",
+      "",
+      "class Division:",
+      "    def __init__(self, club: Club):",
+      "        self.club = club",
+      "    def rename(self, c: Club, g: Garage, o, h: 'Garage'):",
+      "        c.status = 'r'",
+      "        self.club.status = 'lead'",
+      "        g.status = 'g'",
+      "        o.status = 'untyped'",
+      "        make().status = 'call'",
+      "        errors.Overdrawn",
+      "        raise errors.Overdrawn()",
+      "",
+      "def adjust(g: Garage):",
+      "    g.status = 'free'",
+      "",
+    ].join("\n"));
     await analyze({ projectRoot: dir, outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
     summary = await loadReportSummary(join(dir, "out"));
   }, 60_000);
@@ -138,6 +187,13 @@ describe("member effects, end to end", () => {
     expect((summary.fieldWrites ?? []).some((w) => w.function === "Club.Same" || w.function === "Club.Club")).toBe(false);
   });
 
+  it("resolves Python writes through self, inherited attributes and typed receivers", () => {
+    expect(writers("Club", "status", "py/club.py")).toEqual(["Club.close:8", "Division.rename:36", "Division.rename:37", "Elite.promote:30"]);
+    expect(writers("Club", "points", "py/club.py")).toEqual(["Club.close:9"]);
+    expect(writers("Garage", "status", "py/club.py")).toEqual(["Division.rename:38", "Garage.open:26", "adjust:45"]);
+    expect((summary.fieldWrites ?? []).some((w) => w.file === "py/club.py" && (w.function === "Club.same" || w.line === 39 || w.line === 40))).toBe(false);
+  });
+
   it("lists thrown types with the project class they name and what the signature declares", () => {
     const rows = (summary.thrownTypes ?? []).map((t) => `${t.function} ${t.type}${t.declared ? " declared" : ""}${t.classFile ? ` -> ${t.classFile}` : ""}`).sort();
     expect(rows).toEqual([
@@ -149,6 +205,9 @@ describe("member effects, end to end", () => {
       "Cup.close Closed declared -> jvm/Cup.kt",
       "Cup.close java.io.IOException declared",
       "Club.Close Overdrawn -> cs/Club.cs",
+      "Club.close Overdrawn -> py/club.py",
+      "Club.fail Overdrawn -> py/club.py",
+      "Division.rename errors.Overdrawn -> py/club.py",
       "League.plain Error",
     ].sort());
   });

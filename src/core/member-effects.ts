@@ -40,6 +40,18 @@ export function joinMemberEffects(
     return all.length === 1 ? all[0]! : null;
   };
 
+  /** Members a class's initializers assign through `this` (`FieldWrite.init`): declared by assignment, in a language with no field declarations. */
+  const initDeclared = new Map<ClassInfo, Set<string>>();
+  const initMembers = (cls: ClassInfo): ReadonlySet<string> => {
+    let set = initDeclared.get(cls);
+    if (!set) {
+      set = new Set();
+      for (const m of cls.methods) for (const w of m.fieldWrites ?? []) if (w.init && w.receiver === "this") set.add(w.member);
+      initDeclared.set(cls, set);
+    }
+    return set;
+  };
+
   /** The class in `ref`'s own or base chain that declares property `member` (itself when it does). */
   const declaring = (ref: ClassRef): ((member: string) => { ref: ClassRef; type?: string } | null) => (member) => {
     const seen = new Set<ClassInfo>();
@@ -48,6 +60,7 @@ export function joinMemberEffects(
       seen.add(at.cls);
       const prop = at.cls.properties?.find((p) => p.name === member);
       if (prop) return { ref: at, ...(prop.type ? { type: prop.type } : {}) };
+      if (initMembers(at.cls).has(member)) return { ref: at };
       at = at.cls.extends ? locate(at.cls.extends, at.file, at.project) : null;
     }
     return null;
@@ -68,6 +81,7 @@ export function joinMemberEffects(
       return only.length === 1 ? only[0] ?? null : null;
     };
     for (const w of fn.fieldWrites ?? []) {
+      if (w.init) continue;
       let target: ClassRef | null = null;
       let via: FieldWriteRow["via"] = "typed";
       if (w.receiver === "this" && owner) {

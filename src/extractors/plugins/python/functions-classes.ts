@@ -1,3 +1,4 @@
+import { pythonMemberEffects } from "./member-effects.js";
 import type { Node, Tree } from "web-tree-sitter";
 import { FunctionClassExtractor } from "../../functions-classes/base.js";
 import type { FunctionInfo, ClassInfo, ParamInfo, Language } from "../../functions-classes/base.js";
@@ -337,6 +338,13 @@ export class PythonExtractor extends FunctionClassExtractor {
         const module = modules.get(local.name);
         if (module && !local.type) local.module = module;
       }
+    }
+    if (body && /\b(?:raise|self|cls)\b|\.\w+\s*[-+*/|&^%@]?=(?!=)/.test(bodyText)) {
+      // `self` / `cls`: the first parameter when named so (core states `this` only where a class owns the function).
+      const first = paramsNode?.namedChild(0);
+      const selfName = first?.type === "identifier" && (first.text === "self" || first.text === "cls") ? first.text : null;
+      const effects = pythonMemberEffects(node, body, params, (fn.localTypes ?? []).filter((l) => l.type).map((l) => l.name), selfName);
+      if (effects) Object.assign(fn, effects);
     }
     return { fn, node, assignsSelf: SELF_ASSIGN_GATE.test(bodyText), typeComments };
   }

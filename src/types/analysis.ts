@@ -1686,8 +1686,10 @@ export interface FunctionInfo {
    * for the bare spelling; `member` the field. Stated only where the receiver is `this`, a bare field or a name the
    * function declares (a parameter or a local), and never from a constructor — a constructor initializes, it does not
    * change. Core resolves the receiver's class (`ProjectAnalysis.fieldWrites`). Absent when the function writes none.
+   * `init` marks a write in an initializer (Python `__init__`) of a language whose fields are declared by assignment:
+   * it declares the member for core (`this.x = …` there is where the attribute exists) and is listed as no writer.
    */
-  fieldWrites?: Array<{ member: string; receiver: string; line: number }>;
+  fieldWrites?: Array<{ member: string; receiver: string; line: number; init?: true }>;
   /**
    * The exception types the function throws: `throw new Overdrawn(…)` (the type as written, qualifier kept) and what its
    * signature declares (Java `throws`, Kotlin `@Throws`; `declared`). A rethrow of a variable and a thrown call result

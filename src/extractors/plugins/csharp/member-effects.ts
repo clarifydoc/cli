@@ -86,7 +86,7 @@ export function csharpMemberEffects(
         break;
       case "postfix_unary_expression":
       case "prefix_unary_expression":
-        if (/(\+\+|--)/.test(n.text)) addWrite(target(n.namedChildren[0], typed, locals), n);
+        if (n.children.some((c) => c.type === "++" || c.type === "--")) addWrite(target(n.namedChildren[0], typed, locals), n);
         break;
       case "throw_statement":
       case "throw_expression": {
