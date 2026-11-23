@@ -110,9 +110,11 @@ describe("flat tree equals the real tree", () => {
     { name: "unicode.py", text: 'club = "Zürich 🏟"\ndef équipe():\n    return "⚽ ✓"\n' },
     { name: "unicode.cs", text: 'class Équipe { string Nom = "日本 🚗"; void Jouer() { var x = "é"; } }\n' },
     { name: "unicode.java", text: 'class Équipe { String nom = "日本 🚗"; void jouer() { var x = "é"; } }\n' },
+    { name: "unicode.kt", text: 'class Équipe { val nom = "日本 🚗"\n  fun jouer() { val x = "é" } }\n' },
     { name: "unicode.php", text: '<?php\n$nom = "日本 🚗";\nfunction équipe($joueur) { return "⚽ $joueur"; }\n' },
     { name: "broken.py", text: "def (:\n  class 😀 = \nx = 1\n" },
     { name: "broken.java", text: "class A { void m( { int x = ; } }\n" },
+    { name: "broken.kt", text: "class A { fun m( { val x = ; } }\n" },
     { name: "broken.php", text: "<?php\nfunction ( { class = ;\n$a = 1;\n" },
     { name: "broken.ts", text: "function ( { class 😀 = ;\nconst a = 1;\n" },
     { name: "broken.cs", text: "class A { void M( { int x = ; } }\n" },
@@ -167,6 +169,7 @@ describe("flat tree equals the real tree", () => {
       expect(await parseSource("const car = 1;\n", "typescript", "car.ts")).toBeInstanceOf(FlatTree);
       expect(await parseSource("class Car:\n    pass\n", "python", "car.py")).toBeInstanceOf(FlatTree);
       expect(await parseSource("class Car { }\n", "java", "Car.java")).toBeInstanceOf(FlatTree);
+      expect(await parseSource("class Car\n", "kotlin", "Car.kt")).toBeInstanceOf(FlatTree);
       expect(await parseSource("<?php class Car {}\n", "php", "Car.php")).toBeInstanceOf(FlatTree);
     } finally {
       if (prior === undefined) delete process.env.CLARIFYDOC_FEATURES;

@@ -413,7 +413,27 @@ export function flattenTree(tree: Tree, source: string): FlatTree {
   }
   cursor.delete();
   propagateErrors(flags, parents, count);
+  // An external scanner can insert a zero-width MISSING token the cursor never visits (a Kotlin statement end): the
+  // real tree still says `hasError` for it and its ancestors. Rare (broken files), so ask the real nodes then.
+  if (tree.rootNode.hasError && (flags[0]! & HAS_ERROR) === 0) readErrorFlags(tree, flags);
   return flat;
+}
+
+/** `hasError` of every node as the real tree answers it, in the walk's own preorder. */
+function readErrorFlags(tree: Tree, flags: Uint8Array): void {
+  const cursor = tree.walk();
+  let i = 0;
+  for (;;) {
+    if (cursor.currentNode.hasError) flags[i] = flags[i]! | HAS_ERROR;
+    i++;
+    if (cursor.gotoFirstChild()) continue;
+    while (!cursor.gotoNextSibling()) {
+      if (!cursor.gotoParent()) {
+        cursor.delete();
+        return;
+      }
+    }
+  }
 }
 
 /** `hasError`: a node is an error or missing, or holds one. Children follow their parent in preorder, so one reverse pass. */
