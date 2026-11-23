@@ -15,6 +15,7 @@ import {
 } from "./docker-runner.js";
 import {
   getConfigsForLanguages,
+  networkOf,
   type LspDockerConfig,
 } from "./lsp-configs.js";
 
@@ -174,7 +175,10 @@ export class LspManager {
     }
 
     // Start container
-    if (this.verbose) console.log(`  Starting LSP server: ${config.id}...`);
+    const network = networkOf(config);
+    if (this.verbose) {
+      console.log(`  Starting LSP server: ${config.id} (network: ${network}${network === "none" ? "; CLARIFYDOC_LSP_NETWORK=bridge gives it one" : ""})...`);
+    }
     const container = startContainer({
       image: config.dockerImage,
       command: config.serverCommand,
@@ -182,6 +186,7 @@ export class LspManager {
       mountPath: config.mountPath,
       name: `clarifydoc-lsp-${config.id}-${Date.now()}`,
       readOnly: config.readOnly,
+      network,
     });
 
     // The container is a live child process from here on, and `shutdownAll`

@@ -60,6 +60,7 @@ Each language has a Dockerfile in `../../docker/<lang>/`.
    - `id`, `languageIds` (matches ClarifyDoc `Language`), `dockerImage`, `dockerfilePath`
    - `fileExtensions` — which files to open
    - `readOnly` — set false if server needs to write (e.g. jdtls .project, rust target/)
+   - `network` — `none` by default (the container has no network); set `"bridge"` only for a server that restores packages to type-check (jdtls, Roslyn: measured offline, they lose most reference answers) and say so in `SECURITY.md`; `CLARIFYDOC_LSP_NETWORK=none|bridge` overrides every config for probing
    - `indexDelayMs` — how long to wait after opening files before querying (5s for gopls, 10s for jdtls, 15s for rust-analyzer)
 3. Add language ID mapping in `LANGUAGE_ID_MAP` in [lsp-manager.ts](lsp-manager.ts)
 4. Add extension-to-languageId mapping in `extensionToLanguageId()` in [lsp-manager.ts](lsp-manager.ts)

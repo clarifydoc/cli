@@ -4,7 +4,8 @@ import { createHash } from "crypto";
 import { createServer } from "net";
 import { tmpdir } from "os";
 import { join } from "path";
-import { pingDockerSocket, resolveDockerEndpoint, type EndpointEnv } from "./docker-runner.js";
+import { LSP_CONFIGS, networkOf } from "./lsp-configs.js";
+import { dockerRunArgs, pingDockerSocket, resolveDockerEndpoint, type EndpointEnv } from "./docker-runner.js";
 
 function files(map: Record<string, string>, env: Record<string, string> = {}, platform: NodeJS.Platform = "linux"): EndpointEnv {
   return { env, home: "/home/coach", platform, readText: (p) => map[p] };
@@ -56,5 +57,36 @@ describe("pingDockerSocket", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("dockerRunArgs", () => {
+  const base = { image: "club-lsp", command: [], projectRoot: "/work/club", mountPath: "/workspace" };
+  it("adds --network none only when asked, before the mount", () => {
+    const off = dockerRunArgs({ ...base, network: "none" }, "c1");
+    expect(off.slice(off.indexOf("--network"), off.indexOf("--network") + 2)).toEqual(["--network", "none"]);
+    expect(off.indexOf("--network")).toBeLessThan(off.indexOf("-v"));
+    expect(dockerRunArgs(base, "c1")).not.toContain("--network");
+    const bridge = dockerRunArgs({ ...base, network: "bridge" }, "c1");
+    expect(bridge.slice(bridge.indexOf("--network"), bridge.indexOf("--network") + 2)).toEqual(["--network", "bridge"]);
+  });
+  it("mounts read-only unless readOnly is false and keeps the command last", () => {
+    expect(dockerRunArgs(base, "c1")).toContain("/work/club:/workspace:ro");
+    const rw = dockerRunArgs({ ...base, readOnly: false, command: ["serve", "--stdio"] }, "c1");
+    expect(rw).toContain("/work/club:/workspace");
+    expect(rw.slice(-3)).toEqual(["club-lsp", "serve", "--stdio"]);
+  });
+});
+
+describe("networkOf", () => {
+  const car = LSP_CONFIGS[0]!;
+  it("defaults to none, a config can ask for bridge, the environment overrides both", () => {
+    expect(networkOf(car, {})).toBe("none");
+    expect(networkOf({ ...car, network: "bridge" }, {})).toBe("bridge");
+    expect(networkOf({ ...car, network: "bridge" }, { CLARIFYDOC_LSP_NETWORK: "none" })).toBe("none");
+    expect(networkOf(car, { CLARIFYDOC_LSP_NETWORK: "bridge" })).toBe("bridge");
+    expect(networkOf(car, { CLARIFYDOC_LSP_NETWORK: " Bridge " })).toBe("bridge");
+    expect(networkOf(car, { CLARIFYDOC_LSP_NETWORK: "host" })).toBe("none");
+    expect(LSP_CONFIGS.filter((c) => networkOf(c, {}) === "bridge").map((c) => c.id)).toEqual(["java", "dotnet"]);
   });
 });

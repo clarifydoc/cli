@@ -20,6 +20,11 @@ export interface LspDockerConfig {
   mountPath: string;
   fileExtensions: string[];
   readOnly?: boolean;
+  /**
+   * Network policy of the container. `none` (the default policy, see `networkOf`) gives it no network;
+   * `bridge` keeps Docker's default for a server that must fetch packages to type-check.
+   */
+  network?: "none" | "bridge";
   indexDelayMs?: number;
   initializationOptions?: Record<string, unknown>;
   /**
@@ -65,6 +70,7 @@ export const LSP_CONFIGS: LspDockerConfig[] = [
     mountPath: "/workspace",
     fileExtensions: [".java"],
     readOnly: false, // jdtls needs to write .project/.classpath
+    network: "bridge", // jdtls resolves Maven/Gradle dependencies; offline, a project with dependencies lost every reference
     indexDelayMs: 10000, // jdtls needs extra time to build project model
   },
   {
@@ -144,6 +150,7 @@ export const LSP_CONFIGS: LspDockerConfig[] = [
     mountPath: "/workspace",
     fileExtensions: [".cs", ".vb"],
     readOnly: false, // Roslyn LSP needs dotnet restore output
+    network: "bridge", // the restore asks NuGet for packages; offline the project loads half-typed (reference answers fell by 85%)
     indexDelayMs: 15000, // Roslyn needs time to load sln/*proj and build workspace
     // Roslyn requires an explicit `solution/open` or `project/open` notification to
     // load a workspace — the LSP initialize handshake alone leaves it in single-file mode.
@@ -184,6 +191,17 @@ export const LSP_CONFIGS: LspDockerConfig[] = [
     },
   },
 ];
+
+/**
+ * The network a config's container gets: `none` unless the config says `bridge`.
+ * `CLARIFYDOC_LSP_NETWORK=none|bridge` overrides every config (for probing a server).
+ */
+export function networkOf(config: LspDockerConfig, env: NodeJS.ProcessEnv = process.env): "none" | "bridge" {
+  const forced = env.CLARIFYDOC_LSP_NETWORK?.trim().toLowerCase();
+  if (forced === "none" || forced === "bridge") return forced;
+  if (forced) console.error(`Ignoring CLARIFYDOC_LSP_NETWORK=${env.CLARIFYDOC_LSP_NETWORK}: expected none or bridge`);
+  return config.network ?? "none";
+}
 
 /**
  * Get the LSP config for a given language.

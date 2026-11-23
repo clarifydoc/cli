@@ -18,6 +18,8 @@ export interface DockerContainerOptions {
   mountPath: string;
   name?: string;
   readOnly?: boolean;
+  /** `none` runs the container with no network at all; `bridge` is Docker's default network; omitted leaves it to Docker. */
+  network?: "none" | "bridge";
 }
 
 export interface DockerContainer {
@@ -217,24 +219,7 @@ export async function buildImage(
  */
 export function startContainer(opts: DockerContainerOptions): DockerContainer {
   const containerName = opts.name ?? `clarifydoc-lsp-${Date.now()}`;
-
-  // Normalize the project root path for Docker volume mounting
-  // On Windows, convert C:\path to /c/path for Docker
-  let mountSource = opts.projectRoot.replace(/\\/g, "/");
-  if (/^[A-Za-z]:/.test(mountSource)) {
-    mountSource = `/${mountSource[0]!.toLowerCase()}${mountSource.slice(2)}`;
-  }
-
-  const args = [
-    "run",
-    "--rm",
-    "-i",
-    "--name", containerName,
-    "-v", `${mountSource}:${opts.mountPath}${opts.readOnly !== false ? ":ro" : ""}`,
-    "-w", opts.mountPath,
-    opts.image,
-    ...opts.command,
-  ];
+  const args = dockerRunArgs(opts, containerName);
 
   const proc = spawn("docker", args, {
     stdio: ["pipe", "pipe", "pipe"],
@@ -251,6 +236,28 @@ export function startContainer(opts: DockerContainerOptions): DockerContainer {
     stdout: proc.stdout,
     name: containerName,
   };
+}
+
+/** The `docker run` arguments for one language-server container (the project mounted read-only unless `readOnly` is false). */
+export function dockerRunArgs(opts: DockerContainerOptions, containerName: string): string[] {
+  // Normalize the project root path for Docker volume mounting
+  // On Windows, convert C:\path to /c/path for Docker
+  let mountSource = opts.projectRoot.replace(/\\/g, "/");
+  if (/^[A-Za-z]:/.test(mountSource)) {
+    mountSource = `/${mountSource[0]!.toLowerCase()}${mountSource.slice(2)}`;
+  }
+
+  return [
+    "run",
+    "--rm",
+    "-i",
+    "--name", containerName,
+    ...(opts.network ? ["--network", opts.network] : []),
+    "-v", `${mountSource}:${opts.mountPath}${opts.readOnly !== false ? ":ro" : ""}`,
+    "-w", opts.mountPath,
+    opts.image,
+    ...opts.command,
+  ];
 }
 
 /**
