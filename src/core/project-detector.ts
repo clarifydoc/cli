@@ -1,6 +1,6 @@
 import { glob } from "./glob.js";
 import { byOrdinal } from "./ordinal.js";
-import { readdir, readFile } from "fs/promises";
+import { readdir, readFile, stat } from "fs/promises";
 import { join, posix, resolve } from "path";
 import type { PackageEcosystem, SubProject, SubProjectKind } from "../types/analysis.js";
 import { loadIgnorePatterns, isIgnored, ignoredDirectories } from "./clarifydoc-ignore.js";
@@ -174,7 +174,6 @@ export async function detectSubProjects(
     });
   }
 
-  subProjects.sort((a, b) => byOrdinal(a.root, b.root));
   const declaredEdges = await addDeclaredProjects(root, subProjects, (dir) => ignorePatterns.length > 0 && isIgnored(join(root, dir), root, ignorePatterns));
   subProjects.sort((a, b) => byOrdinal(a.root, b.root));
   await Promise.all(subProjects.map(async (p) => {
@@ -211,38 +210,41 @@ async function addDeclaredProjects(
   const edges = new Map<string, Array<{ project: string; file: string }>>();
   const specs = PACKAGE_MANAGERS.flatMap((m) => m.manifests).filter((spec) => spec.declaredProjects && !spec.glob);
   if (specs.length === 0) return edges;
-  for (const host of [...subProjects]) {
-    const base = host.root.replace(/\\/g, "/");
-    for (const spec of specs) {
-      for (const file of spec.files) {
-        const text = await readFile(join(root, host.root, file), "utf-8").catch(() => null);
-        if (text === null) continue;
-        const declared = await spec.declaredProjects!(text, selfNameContext(root, host.root, file));
-        const idByName = new Map<string, string>();
-        for (const d of declared) {
-          const dir = posix.normalize(posix.join(base, d.path)).replace(/\/+$/, "");
-          if (dir === ".." || dir.startsWith("../") || posix.isAbsolute(dir)) continue;
-          const rel = dir === "." ? "" : dir;
-          let project = subProjects.find((p) => p.root.replace(/\\/g, "/") === rel);
-          if (!project) {
-            if (ignored(rel) || !(await readdir(join(root, rel)).then(() => true, () => false))) continue;
-            if (subProjects.some((p) => p.id === slugify(rel))) continue;
-            project = { id: slugify(rel), name: rel.split("/").pop()!, root: rel, kind: host.kind, markers: [] };
-            subProjects.push(project);
-          }
-          idByName.set(d.name, project.id);
-        }
-        for (const d of declared) {
-          const from = idByName.get(d.name);
-          if (!from) continue;
-          for (const ref of d.references) {
-            const to = idByName.get(ref);
-            if (!to || to === from) continue;
-            const list = edges.get(from) ?? [];
-            if (!list.some((e) => e.project === to)) list.push({ project: to, file: posix.join(base, file) });
-            edges.set(from, list);
-          }
-        }
+  const byRoot = new Map(subProjects.map((p) => [p.root, p]));
+  const ids = new Set(subProjects.map((p) => p.id));
+  // Only a host whose directory holds the build file (its marker) is read; the reads run together, the results are used in order.
+  const reads = [...subProjects].flatMap((host) =>
+    specs.flatMap((spec) => spec.files.filter((file) => host.markers.includes(file)).map((file) => ({ host, spec, file, text: readFile(join(root, host.root, file), "utf-8").catch(() => null) }))));
+  for (const { host, spec, file, text: pending } of reads) {
+    const text = await pending;
+    if (text === null) continue;
+    const declared = spec.declaredProjects!(text);
+    const idByName = new Map<string, string>();
+    for (const d of declared) {
+      const dir = posix.normalize(posix.join(host.root, d.path)).replace(/\/+$/, "");
+      if (dir === ".." || dir.startsWith("../") || posix.isAbsolute(dir)) continue;
+      const rel = dir === "." ? "" : dir;
+      let project = byRoot.get(rel);
+      if (!project) {
+        if (ignored(rel) || !(await stat(join(root, rel)).then((s) => s.isDirectory(), () => false))) continue;
+        const id = slugify(rel);
+        if (ids.has(id)) continue;
+        project = { id, name: rel.split("/").pop()!, root: rel, kind: host.kind, markers: [] };
+        subProjects.push(project);
+        byRoot.set(rel, project);
+        ids.add(id);
+      }
+      idByName.set(d.name, project.id);
+    }
+    for (const d of declared) {
+      const from = idByName.get(d.name);
+      if (!from) continue;
+      for (const ref of d.references) {
+        const to = idByName.get(ref);
+        if (!to || to === from) continue;
+        const list = edges.get(from) ?? [];
+        if (!list.some((e) => e.project === to)) list.push({ project: to, file: posix.join(host.root, file) });
+        edges.set(from, list);
       }
     }
   }

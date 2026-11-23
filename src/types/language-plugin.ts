@@ -124,7 +124,7 @@ export interface PackageManifestSpec {
    * own: core makes each a sub-project, and its `references` name the others
    * by their `name`. Read at every directory holding one of `files`.
    */
-  declaredProjects?(text: string, file: SelfNameContext): DeclaredProject[];
+  declaredProjects?(text: string): DeclaredProject[];
 }
 
 /** One sub-project a build file declares (`PackageManifestSpec.declaredProjects`). */
