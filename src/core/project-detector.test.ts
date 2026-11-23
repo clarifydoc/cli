@@ -152,6 +152,8 @@ describe("detectSubProjects — an sbt build's declared projects", () => {
         "club-api/src/Club.scala": "object Club",
         "players/src/Player.scala": "object Player",
         "docs/readme.md": "# Docs",
+        "project/build.sbt": 'addSbtPlugin("com.example" % "league" % "1.0")',
+        "project/Dependencies.scala": "object Dependencies",
       };
       for (const [path, text] of Object.entries(files)) {
         await mkdir(join(root, path, ".."), { recursive: true });

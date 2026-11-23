@@ -133,6 +133,8 @@ export async function detectSubProjects(
     const base = norm.slice(lastSlash + 1).toLowerCase();
     for (const { kind } of MARKER_GLOBS.filter((m) => markerMatches(m.pattern, base))) {
       if (kind === "cmake" && !(await isCmakeProjectRoot(root, match))) continue;
+      // sbt's meta-build (`project/build.sbt` beside `project/plugins.sbt`) belongs to the build above it.
+      if (kind === "sbt" && dir.split("/").pop() === "project") continue;
       let entry = byDir.get(dir);
       if (!entry) {
         entry = { kinds: new Set(), markers: new Set() };
@@ -221,6 +223,7 @@ async function addDeclaredProjects(
           let project = subProjects.find((p) => p.root.replace(/\\/g, "/") === rel);
           if (!project) {
             if (ignored(rel) || !(await readdir(join(root, rel)).then(() => true, () => false))) continue;
+            if (subProjects.some((p) => p.id === slugify(rel))) continue;
             project = { id: slugify(rel), name: rel.split("/").pop()!, root: rel, kind: host.kind, markers: [] };
             subProjects.push(project);
           }
