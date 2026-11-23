@@ -112,6 +112,9 @@ describe("flat tree equals the real tree", () => {
     { name: "unicode.java", text: 'class Équipe { String nom = "日本 🚗"; void jouer() { var x = "é"; } }\n' },
     { name: "unicode.kt", text: 'class Équipe { val nom = "日本 🚗"\n  fun jouer() { val x = "é" } }\n' },
     { name: "unicode.php", text: '<?php\n$nom = "日本 🚗";\nfunction équipe($joueur) { return "⚽ $joueur"; }\n' },
+    // A hidden zero-width MISSING token (the automatic semicolon), alone and beside an ERROR node of the same file.
+    { name: "hidden-missing.kt", text: 'class Équipe { val nom = "日本"\n  fun jouer() { val x = "é" } }\n' },
+    { name: "hidden-missing-error.kt", text: 'class Équipe { val nom = "日本"\n  fun jouer() { val x = "é" } }\nfun ( { class = ;\n' },
     { name: "broken.py", text: "def (:\n  class 😀 = \nx = 1\n" },
     { name: "broken.java", text: "class A { void m( { int x = ; } }\n" },
     { name: "broken.kt", text: "class A { fun m( { val x = ; } }\n" },

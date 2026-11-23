@@ -415,7 +415,7 @@ export function flattenTree(tree: Tree, source: string): FlatTree {
   propagateErrors(flags, parents, count);
   // An external scanner can insert a zero-width MISSING token the cursor never visits (a Kotlin statement end): the
   // real tree still says `hasError` for it and its ancestors. Rare (broken files), so ask the real nodes then.
-  if (tree.rootNode.hasError && (flags[0]! & HAS_ERROR) === 0) readErrorFlags(tree, flags);
+  if (tree.rootNode.hasError) readErrorFlags(tree, flags);
   return flat;
 }
 
