@@ -169,7 +169,7 @@ describe("Ruby value flow: blocks, objects and decoys", () => {
     expect(flow).toEqual([]);
   });
 
-  it("a block captured with &block is run by block.call, but a value handed as &x is not followed into it", async () => {
+  it("a block captured with &block is run by block.call, and a value handed as &x is followed into it", async () => {
     const { flow } = await links({
       "decoy.rb": decoy,
       "club.rb": rb(
@@ -184,7 +184,7 @@ describe("Ruby value flow: blocks, objects and decoys", () => {
         "end",
       ),
     });
-    expect(flow).toEqual([]);
+    expect(flow).toEqual(["Club.each_player@4 block.call -> club.rb::Club.persist"]);
   });
 
   it("`.call` on an object of a stated type is its own method, never an invoke", async () => {
@@ -666,5 +666,74 @@ describe("Ruby value flow: one-line and endless methods", () => {
       ),
     });
     expect(flow.map((l) => l.replace(/^Club\.run_(\w)@(\d+) \S+ -> club\.rb::Club\./, "$1@$2 "))).toEqual(["a@11 on_full_time", "b@12 on_kickoff", "c@13 on_whistle"]);
+  });
+});
+
+describe("Ruby value flow: block arguments and lists handed to a parameter", () => {
+  it("&method(:x) binds the &blk formal; a namesake and &:sym state nothing", async () => {
+    const { flow } = await links({
+      "decoy.rb": decoy,
+      "club.rb": rb(
+        "class Club",
+        "  def persist; end",
+        "  def boot",
+        "    run(&method(:persist))",
+        "    run_sym(&:save)",
+        "  end",
+        "  def run(&blk)",
+        "    blk.call",
+        "  end",
+        "  def run_sym(&blk)",
+        "    blk.call",
+        "  end",
+        "end",
+      ),
+    });
+    expect(flow).toEqual(["Club.run@8 blk.call -> club.rb::Club.persist"]);
+  });
+
+  it("a held value handed on as &blk and a block run by each", async () => {
+    const { flow } = await links({
+      "decoy.rb": decoy,
+      "club.rb": rb(
+        "class Club",
+        "  def persist; end",
+        "  def boot",
+        "    f = method(:persist)",
+        "    relay(&f)",
+        "    each_all([1], &f)",
+        "  end",
+        "  def relay(&blk)",
+        "    run(&blk)",
+        "  end",
+        "  def run(&inner)",
+        "    inner.call",
+        "  end",
+        "  def each_all(items, &handler)",
+        "    items.each(&handler)",
+        "  end",
+        "end",
+      ),
+    });
+    expect(flow).toEqual(["Club.each_all@15 items.each -> club.rb::Club.persist", "Club.run@12 inner.call -> club.rb::Club.persist"]);
+  });
+
+  it("a list of method values passed to a method that loops over it", async () => {
+    const { flow } = await links({
+      "decoy.rb": decoy,
+      "club.rb": rb(
+        "class Club",
+        "  def persist; end",
+        "  def boot",
+        "    handlers = [method(:persist)]",
+        "    run_all(handlers)",
+        "  end",
+        "  def run_all(list)",
+        "    list.each { |h| h.call }",
+        "  end",
+        "end",
+      ),
+    });
+    expect(flow).toEqual(["Club.run_all@8 h.call -> club.rb::Club.persist"]);
   });
 });

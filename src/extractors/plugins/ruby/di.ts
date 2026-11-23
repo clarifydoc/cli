@@ -73,7 +73,10 @@ export function rubyTypeText(raw: string): string | null {
 export function parseRubyParam(text: string): ParamInfo | null {
   const t = text.trim();
   if (!t) return null;
-  if (/^(?:\*\*?|&)\w*$|^\.\.\.$/.test(t)) return { name: t, type: null, defaultValue: null };
+  if (/^(?:\*\*?|&)\w*$|^\.\.\.$/.test(t)) {
+    // A block formal is bound by a `&x` argument, which a call labels `&` (value flow).
+    return t.startsWith("&") ? { name: t, type: null, defaultValue: null, argumentLabel: "&" } : { name: t, type: null, defaultValue: null };
+  }
   const m = /^([a-z_]\w*)\s*(?::(?!:)\s*([\s\S]*)|=\s*([\s\S]+))?$/.exec(t);
   if (!m) return null;
   const value = (m[2] ?? m[3])?.trim() || null;

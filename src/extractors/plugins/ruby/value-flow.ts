@@ -33,6 +33,9 @@ const CLOSURE_HEAD = /^(?:->\s*(?:\(([^)]*)\)|([A-Za-z_][\w\s,*&=]*?))?\s*\{|(?:
 const DO_LINE = /(?:\b(?:lambda|proc|Proc\.new)|->\s*(?:\([^)]*\))?)\s+do\b(?:\s*\|[^|]*\|)?\s*$/;
 const DO_HEAD = /^(?:->\s*(?:\(([^)]*)\))?|(?:lambda|proc|Proc\.new))\s+do\b/;
 
+/** Builtin iterators that run the block handed to them (`items.each(&handler)`). */
+const BLOCK_RUNNERS = new Set(["each", "map", "flat_map", "select", "filter", "filter_map", "reject", "each_value", "each_with_index", "tap", "then", "find", "detect", "any?", "all?", "none?"]);
+
 /** Names in a parameter list text (`a, b = 1, *rest, &blk, k:`). */
 const paramNames = (text: string): string[] => text.split(",").map((x) => /^\s*[*&]*([a-z_]\w*)/.exec(x)?.[1]).filter((x): x is string => !!x);
 /** A line with its string literals emptied, so what is inside one is no call. */
@@ -345,7 +348,15 @@ class Reader {
   private argFacts(argsText: string, call: string, line: number): void {
     splitBracketedArgs(argsText).forEach((raw, index) => {
       const text = raw.trim();
-      // A block argument (`&m`) binds the callee's `&blk` formal, which a written index cannot name: not stated.
+      // A block argument (`&m`, `&method(:save)`) binds the callee's `&blk` formal, which carries the label `&`
+      // (`parseRubyParam`); on a builtin that iterates it is the call that runs the value. `&:name` and `&&` state nothing.
+      if (/^&[^&:\s]/.test(text)) {
+        const from = this.cellFor(text.slice(1).trim(), line);
+        if (!from) return;
+        this.facts.push({ kind: "arg", call, line, index: -1, name: "&", from });
+        if (BLOCK_RUNNERS.has(call.slice(call.lastIndexOf(".") + 1))) this.facts.push({ kind: "invoke", cell: from, call, line });
+        return;
+      }
       if (text === "" || text.startsWith("*") || text.startsWith("&") || /=>/.test(text) || /^["'][^"']*["']:\s/.test(text)) return;
       // `schedule(callback: method(:on_full_time))`: the value binds the keyword formal of that name (a positional
       // formal of the same name is not one, `ParamInfo.argumentLabel`), never one by position.
@@ -467,7 +478,7 @@ export function extractRubyValueFlow(code: readonly string[], fn: FunctionInfo, 
   for (const s of statements) reader.statement(s);
   const last = statements[statements.length - 1]!;
   reader.implicitReturn(last.text.trim(), last.line);
-  const facts = liveValueFlow(reader.facts, fn.params.filter((p) => !p.type).map((p) => p.name), { bindBases: true, localName: (n) => /^[a-z_]/.test(n), external: (n) => /^[A-Z]/.test(n) });
+  const facts = liveValueFlow(reader.facts, fn.params.filter((p) => !p.type).map((p) => p.name), { bindBases: true, elementArgs: true, localName: (n) => /^[a-z_]/.test(n), external: (n) => /^[A-Z]/.test(n) });
   return facts.length > 0 ? facts : undefined;
 }
 
