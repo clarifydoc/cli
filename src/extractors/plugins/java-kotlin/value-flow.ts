@@ -136,14 +136,20 @@ function typeArguments(text: string): string[] {
 
 /** Whether `text` is a collection (or array) whose elements are functions. */
 export function isFunctionCollectionType(text: string | null | undefined, lib?: LibraryContext | null): boolean {
+  const verdict = collectionVerdict(text);
+  return typeof verdict === "string" ? namesPlatformInterface(lib, verdict) : verdict;
+}
+
+/** What a collection type's element says (`functionTypeVerdict` of the element): `false`, `true`, or the bare platform name core judges. */
+export function collectionVerdict(text: string | null | undefined): boolean | string {
   if (!text) return false;
   const t = text.trim().replace(/\?$/, "");
-  if (t.endsWith("[]")) return isFunctionType(t.slice(0, -2), lib);
+  if (t.endsWith("[]")) return functionTypeVerdict(t.slice(0, -2));
   const base = t.replace(/<[\s\S]*$/, "").split(".").pop()!;
   if (!COLLECTIONS.has(base)) return false;
   const args = typeArguments(t);
   if (args.length === 0) return false;
-  return isFunctionType(/Map$/.test(base) ? args[args.length - 1] : args[0], lib);
+  return functionTypeVerdict(/Map$/.test(base) ? args[args.length - 1] : args[0]);
 }
 
 /**
@@ -170,6 +176,10 @@ export interface ClassFlow {
   elem: Set<string>;
   /** Methods declared to return a function. */
   returnsFn: Set<string>;
+  /** Of those, the ones declared with a bare platform type name (`Consumer`) core judges: name → that name. Likewise for `fn` fields and `elem` fields (the element's name). */
+  cond: Map<string, string>;
+  elemCond: Map<string, string>;
+  returnsCond: Map<string, string>;
   /** Facts the field initializers state; the class attaches them to one of its methods. */
   initFacts: ValueFlowFact[];
   /** What the file around the class says about which names are a library's (see `isLibraryCall`). */
@@ -177,7 +187,7 @@ export interface ClassFlow {
 }
 
 function emptyClassFlow(library: LibraryContext | null = null): ClassFlow {
-  return { fields: new Set(), fn: new Set(), elem: new Set(), returnsFn: new Set(), initFacts: [], library };
+  return { fields: new Set(), fn: new Set(), elem: new Set(), returnsFn: new Set(), cond: new Map(), elemCond: new Map(), returnsCond: new Map(), initFacts: [], library };
 }
 
 /** One `import` of the file. */
@@ -290,24 +300,44 @@ function* members(body: Node): Generator<Node> {
   }
 }
 
+/** A field declared with `type`: a function (a bare platform name is core's to judge, `cond`) or a collection of them. */
+function declareMember(ctx: ClassFlow, name: string, type: string | null, asFn = true): void {
+  const verdict = functionTypeVerdict(type);
+  if (verdict !== false && asFn) {
+    ctx.fn.add(name);
+    if (typeof verdict === "string") ctx.cond.set(name, verdict);
+    return;
+  }
+  const element = collectionVerdict(type);
+  if (element === false) return;
+  ctx.elem.add(name);
+  if (typeof element === "string") ctx.elemCond.set(name, element);
+}
+
+function declareReturn(ctx: ClassFlow, name: string, type: string | null | undefined): void {
+  const verdict = functionTypeVerdict(type);
+  if (verdict === false) return;
+  ctx.returnsFn.add(name);
+  if (typeof verdict === "string") ctx.returnsCond.set(name, verdict);
+}
+
 /** Read a class body once: which members hold functions, and what its field initializers do with them. */
 export function classFlowOf(body: Node, lang: Lang, headerFields: ReadonlyArray<{ name: string; type: string | null }> = [], library: LibraryContext | null = null): ClassFlow {
   const ctx = emptyClassFlow(library);
   const decls: Array<{ name: string; type: string | null; init: Node | null }> = [];
   for (const h of headerFields) {
     ctx.fields.add(h.name);
-    if (isFunctionType(h.type, library)) ctx.fn.add(h.name);
-    else if (isFunctionCollectionType(h.type, library)) ctx.elem.add(h.name);
+    declareMember(ctx, h.name, h.type);
   }
   for (const m of members(body)) {
     if (m.type === "method_declaration") {
       const name = m.childForFieldName("name")?.text;
-      if (name && isFunctionType(m.childForFieldName("type")?.text, library)) ctx.returnsFn.add(name);
+      if (name) declareReturn(ctx, name, m.childForFieldName("type")?.text);
     } else if (m.type === "function_declaration") {
       const name = m.children.find((c) => c.type === "simple_identifier")?.text;
       const colon = m.children.findIndex((c) => c.type === ":");
       const ret = colon >= 0 && m.children.findIndex((c) => c.type === "function_value_parameters") < colon ? m.children[colon + 1] : undefined;
-      if (name && ret && isFunctionType(ret.text, library)) ctx.returnsFn.add(name);
+      if (name && ret) declareReturn(ctx, name, ret.text);
     } else if (m.type === "field_declaration" && lang === "java") {
       const type = m.childForFieldName("type")?.text ?? null;
       for (const d of m.children) {
@@ -327,8 +357,7 @@ export function classFlowOf(body: Node, lang: Lang, headerFields: ReadonlyArray<
   const flow = new Flow(lang, ctx, null, false, ctx.library);
   for (const d of decls) {
     ctx.fields.add(d.name);
-    if (isFunctionType(d.type, library) && !buildsObject(d.init)) ctx.fn.add(d.name);
-    else if (isFunctionCollectionType(d.type, library)) ctx.elem.add(d.name);
+    declareMember(ctx, d.name, d.type, !buildsObject(d.init));
   }
   // Initializers: a method reference or collection of them makes an untyped field a function / collection of them.
   for (const d of decls) {
@@ -344,7 +373,7 @@ export function classFlowOf(body: Node, lang: Lang, headerFields: ReadonlyArray<
 
 type Kind = "fn" | "elem" | null;
 /** `cond`: the bare platform type name a parameter or local is declared with — it holds a function only if core says so. */
-interface Ref { cell: ValueCell; fn: boolean; elem: boolean; field?: string; name: string; cond?: string }
+interface Ref { cell: ValueCell; fn: boolean; elem: boolean; field?: string; name: string; cond?: string; elemCond?: string }
 
 /** The facts of one function body, or of a class's field initializers (`calls` null: only seeds and copies). */
 class Flow {
@@ -352,13 +381,15 @@ class Flow {
   private readonly fnNames = new Set<string>();
   private readonly elemNames = new Set<string>();
   private readonly bound = new Set<string>();
-  private readonly shadow: Map<string, boolean>[] = [];
-  /** `forEach` lambdas whose single parameter holds the collection's functions (lambda node id → name). */
-  private readonly forEachParams = new Map<number, string>();
+  private readonly shadow: Map<string, { fn: boolean; cond?: string }>[] = [];
+  /** `forEach` lambdas whose single parameter holds the collection's functions (lambda node id → name, and the platform name core judges). */
+  private readonly forEachParams = new Map<number, { name: string; cond?: string }>();
   private lambdaDepth = 0;
   private readonly seen = new Set<string>();
   /** Parameters and locals declared with a bare platform type name: name → the name core judges (`invoke.ifFnType`). */
   private readonly condNames = new Map<string, string>();
+  /** Likewise for a collection declared with a bare platform element type: name → the element's name. */
+  private readonly elemCondNames = new Map<string, string>();
 
   constructor(
     private readonly lang: Lang,
@@ -379,10 +410,12 @@ class Flow {
     this.facts.push(f);
   }
 
-  bind(name: string, fn: boolean, elem: boolean, cond?: string): void {
+  bind(name: string, fn: boolean, elem: boolean, cond?: string, elemCond?: string): void {
     this.bound.add(name);
     if (cond !== undefined) this.condNames.set(name, cond);
     else this.condNames.delete(name);
+    if (elemCond !== undefined) this.elemCondNames.set(name, elemCond);
+    else this.elemCondNames.delete(name);
     if (fn) this.fnNames.add(name);
     if (elem) this.elemNames.add(name);
   }
@@ -391,15 +424,14 @@ class Flow {
   private nameRef(name: string): Ref | null {
     for (let i = this.shadow.length - 1; i >= 0; i--) {
       const held = this.shadow[i]!.get(name);
-      if (held !== undefined) return { cell: { name }, fn: held, elem: false, name };
+      if (held !== undefined) return { cell: { name }, fn: held.fn, elem: false, name, ...(held.cond !== undefined ? { cond: held.cond } : {}) };
     }
     if (this.bound.has(name)) {
       const cond = this.condNames.get(name);
-      return { cell: { name }, fn: this.fnNames.has(name), elem: this.elemNames.has(name), name, ...(cond !== undefined ? { cond } : {}) };
+      const elemCond = this.elemCondNames.get(name);
+      return { cell: { name }, fn: this.fnNames.has(name), elem: this.elemNames.has(name), name, ...(cond !== undefined ? { cond } : {}), ...(elemCond !== undefined ? { elemCond } : {}) };
     }
-    if (this.ctx?.fields.has(name)) {
-      return { cell: { name: "this", member: name }, fn: this.ctx.fn.has(name), elem: this.ctx.elem.has(name), field: name, name };
-    }
+    if (this.ctx?.fields.has(name)) return this.fieldRef(name);
     return null;
   }
 
@@ -428,7 +460,9 @@ class Flow {
   }
 
   private fieldRef(field: string): Ref {
-    return { cell: { name: "this", member: field }, fn: !!this.ctx?.fn.has(field), elem: !!this.ctx?.elem.has(field), field, name: field };
+    const cond = this.ctx?.cond.get(field);
+    const elemCond = this.ctx?.elemCond.get(field);
+    return { cell: { name: "this", member: field }, fn: !!this.ctx?.fn.has(field), elem: !!this.ctx?.elem.has(field), field, name: field, ...(cond !== undefined ? { cond } : {}), ...(elemCond !== undefined ? { elemCond } : {}) };
   }
 
   /** The cell of a collection's elements (`key`: a literal map key). */
@@ -460,6 +494,11 @@ class Flow {
 
   /** The collection and key an element read names: `hs.get(i)`, `hs[0]`, `table["k"]`, `hs.first()`, `hs.values()`. */
   private elementRead(node: Node | null | undefined): ValueCell | null {
+    return this.elementReadOf(node)?.cell ?? null;
+  }
+
+  /** `elementRead` with the platform element name core judges, when the collection is declared with one. */
+  private elementReadOf(node: Node | null | undefined): { cell: ValueCell; cond?: string } | null {
     if (!node) return null;
     let base: Ref | null = null;
     let key: string | null = null;
@@ -487,7 +526,7 @@ class Flow {
         }
       }
     }
-    return base?.elem ? this.elementCell(base, key ?? undefined) : null;
+    return base?.elem ? { cell: this.elementCell(base, key ?? undefined), ...(base.elemCond !== undefined ? { cond: base.elemCond } : {}) } : null;
   }
 
   /** The call a same-class method declaration says returns a function (`factory()`, `this.factory()`). */
@@ -506,6 +545,21 @@ class Flow {
       }
     }
     return false;
+  }
+
+  /** The platform name a call of a same-class method declared to return a function is conditional on. */
+  private returnsCondOf(node: Node): string | undefined {
+    if (!this.ctx) return undefined;
+    let name: string | undefined;
+    if (node.type === "method_invocation") {
+      const obj = node.childForFieldName("object");
+      if (!obj || obj.type === "this") name = node.childForFieldName("name")?.text;
+    } else if (node.type === "call_expression" && this.lang === "kotlin") {
+      const callee = node.children[0];
+      if (callee?.type === "simple_identifier") name = callee.text;
+      else if (callee?.type === "navigation_expression" && callee.namedChildren[0]?.type === "this_expression") name = callee.namedChildren[1]?.namedChildren[0]?.text;
+    }
+    return name === undefined ? undefined : this.ctx.returnsCond.get(name);
   }
 
   /** Whether an expression evaluates to a function the facts can follow. */
@@ -688,7 +742,8 @@ class Flow {
     for (const p of params) {
       if (p.isReceiver) continue;
       const verdict = functionTypeVerdict(p.type);
-      this.bind(p.name, verdict !== false, isFunctionCollectionType(p.type, this.library), typeof verdict === "string" ? verdict : undefined);
+      const element = collectionVerdict(p.type);
+      this.bind(p.name, verdict !== false, element !== false, typeof verdict === "string" ? verdict : undefined, typeof element === "string" ? element : undefined);
       if (p.type) this.paramTypes.set(p.name, p.type);
     }
     // Kotlin `fun mk(): () -> Unit = ::load`: the body is the returned expression.
@@ -865,7 +920,8 @@ class Flow {
 
   private visitLambda(node: Node): void {
     // A parameter holds a function only where a `forEach` over a collection of functions binds it; else it is unknown.
-    const names = new Map(this.lambdaParams(node).map((n) => [n, this.forEachParams.get(node.id) === n] as const));
+    const each = this.forEachParams.get(node.id);
+    const names = new Map(this.lambdaParams(node).map((n) => [n, n === each?.name ? { fn: true, ...(each.cond !== undefined ? { cond: each.cond } : {}) } : { fn: false }] as const));
     this.shadow.push(names);
     this.lambdaDepth++;
     const body = node.type === "lambda_literal" ? node.children.filter((c) => c.type === "statements") : [node.childForFieldName("body")].filter((c): c is Node => !!c);
@@ -897,13 +953,19 @@ class Flow {
   private declare(name: string, type: string | null, init: Node | null | undefined): void {
     const verdict = functionTypeVerdict(type);
     const declaredFn = verdict !== false && !buildsObject(init);
-    const declaredElem = isFunctionCollectionType(type, this.library);
+    const elementVerdict = collectionVerdict(type);
+    const declaredElem = elementVerdict !== false;
     // The initializer is read before the name it declares is bound (`var f = f2`).
     let kind: Kind = null;
     if (init) kind = this.initialize({ name }, name, false, init, declaredFn, declaredElem, type === null);
     // A local that takes a conditional one's value (`var c = param`) is as conditional as its source.
-    const cond = declaredFn ? (typeof verdict === "string" ? verdict : undefined) : kind === "fn" && init ? this.refOf(init)?.cond : undefined;
-    this.bind(name, declaredFn || kind === "fn", declaredElem || kind === "elem", cond);
+    const cond = declaredFn ? (typeof verdict === "string" ? verdict : undefined) : kind === "fn" && init ? this.condOf(init) : undefined;
+    this.bind(name, declaredFn || kind === "fn", declaredElem || kind === "elem", cond, typeof elementVerdict === "string" ? elementVerdict : undefined);
+  }
+
+  /** The platform name a function-valued expression is conditional on: a conditional name, a conditional collection's element, a method declared to return one. */
+  private condOf(node: Node): string | undefined {
+    return this.refOf(node)?.cond ?? this.elementReadOf(node)?.cond ?? this.returnsCondOf(node);
   }
 
   private javaFor(node: Node): void {
@@ -912,7 +974,7 @@ class Flow {
     if (!name) return;
     const type = node.childForFieldName("type")?.text ?? null;
     const verdict = functionTypeVerdict(type);
-    this.bind(name, verdict !== false || !!source?.elem, false, typeof verdict === "string" && !source?.elem ? verdict : undefined);
+    this.bind(name, verdict !== false || !!source?.elem, false, source?.elem ? source.elemCond : typeof verdict === "string" ? verdict : undefined);
     if (source?.elem) this.push({ kind: "copy", from: this.elementCell(source), to: { name }, line: node.startPosition.row + 1 });
   }
 
@@ -923,7 +985,7 @@ class Flow {
     const iterated = inAt >= 0 ? node.children[inAt + 1] : undefined;
     if (!name) return;
     const source = this.refOf(iterated) ?? this.valuesOf(iterated);
-    this.bind(name, !!source?.elem, false);
+    this.bind(name, !!source?.elem, false, source?.elem ? source.elemCond : undefined);
     if (source?.elem) this.push({ kind: "copy", from: this.elementCell(source), to: { name }, line: node.startPosition.row + 1 });
   }
 
@@ -1115,7 +1177,7 @@ class Flow {
     const params = this.lambdaParams(lambda);
     if (!source?.elem || params.length !== 1) return;
     const name = params[0]!;
-    this.forEachParams.set(lambda.id, name);
+    this.forEachParams.set(lambda.id, { name, ...(source.elemCond !== undefined ? { cond: source.elemCond } : {}) });
     this.push({ kind: "copy", from: this.elementCell(source), to: { name }, line: lambda.startPosition.row + 1 });
   }
 
@@ -1142,11 +1204,11 @@ class Flow {
       if (ref.fn) this.push({ kind: "invoke", cell: ref.cell, call, line, ...(ref.cond !== undefined ? { ifFnType: ref.cond } : {}) });
       return;
     }
-    const element = this.elementRead(receiver);
+    const element = this.elementReadOf(receiver);
     if (element) {
       const via = this.pseudo(receiver);
-      this.push({ kind: "copy", from: element, to: via, line });
-      this.push({ kind: "invoke", cell: via, call, line });
+      this.push({ kind: "copy", from: element.cell, to: via, line });
+      this.push({ kind: "invoke", cell: via, call, line, ...(element.cond !== undefined ? { ifFnType: element.cond } : {}) });
     }
   }
 }
@@ -1163,7 +1225,7 @@ export function methodValueFlow(
 ): ValueFlowFact[] {
   if (!body) return [];
   const lib = library === undefined ? classFlow?.library ?? null : library;
-  const flow = new Flow(lang, classFlow, calls, isFunctionType(returnType, lib), lib);
+  const flow = new Flow(lang, classFlow, calls, functionTypeVerdict(returnType) !== false, lib);
   flow.run(params, body);
   return flow.facts;
 }
@@ -1172,7 +1234,7 @@ export function methodValueFlow(
 export function constructorFieldFlow(params: ReadonlyArray<{ name: string; type: string | null }>, line: number, lib?: LibraryContext | null): ValueFlowFact[] {
   const out: ValueFlowFact[] = [];
   for (const p of params) {
-    if (isFunctionType(p.type, lib) || isFunctionCollectionType(p.type, lib)) out.push({ kind: "copy", from: { name: p.name }, to: { name: "this", member: p.name }, line });
+    if (functionTypeVerdict(p.type) !== false || collectionVerdict(p.type) !== false) out.push({ kind: "copy", from: { name: p.name }, to: { name: "this", member: p.name }, line });
   }
   return out;
 }

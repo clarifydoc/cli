@@ -650,3 +650,73 @@ describe("a platform function type is judged by the file's package and imports (
     expect(l.filter((x) => x.startsWith("Garage.feed"))).toEqual(["Garage.feed: s.get -> Supplier.java::Supplier.get"]);
   });
 });
+
+describe("a platform function-type name on a field, an element collection or a return is judged by core too", () => {
+  const java = {
+    "league/Supplier.java": ["package league;", "public class Supplier {", "  public String get() { return \"x\"; }", "}"].join("\n"),
+    // The file's own package declares the name: a wildcard import never shadows it, on fields, arrays and returns alike.
+    "league/Club.java": [
+      "package league;",
+      "import java.util.function.*;",
+      "public class Club {",
+      "  private Supplier source;",
+      "  private Supplier[] sources;",
+      "  Club(Supplier s, Supplier[] all) { this.source = s; this.sources = all; }",
+      "  Supplier pick() { return source; }",
+      "  void feed() { source.get(); }",
+      "  void each() { for (Supplier s : sources) s.get(); }",
+      "  void late() { var s = pick(); s.get(); }",
+      "}",
+    ].join("\n"),
+    // Another package: the on-demand import brings the platform's in, so these calls run held functions.
+    "cup/Match.java": [
+      "package cup;",
+      "import java.util.function.*;",
+      "public class Match {",
+      "  private Supplier<String> source;",
+      "  private Supplier<String>[] sources;",
+      "  Match(Supplier<String> s, Supplier<String>[] all) { this.source = s; this.sources = all; }",
+      "  Supplier<String> pick() { return source; }",
+      "  void feed() { source.get(); }",
+      "  void each() { for (Supplier<String> s : sources) s.get(); }",
+      "}",
+    ].join("\n"),
+  };
+  it("keeps the same-package project class on a field, a loop over an array and a returned value (Java)", async () => {
+    const l = links(await analyzeAll(java, "java")).map((x) => x.replace(/ \[.*\]$/, ""));
+    expect(l.filter((x) => x.startsWith("Club.feed"))).toEqual(["Club.feed: source.get -> Supplier.java::Supplier.get"]);
+    expect(l.filter((x) => x.startsWith("Club.each"))).toEqual(["Club.each: s.get -> Supplier.java::Supplier.get"]);
+    expect(l.filter((x) => x.startsWith("Club.late") && x.includes("s.get"))).toEqual(["Club.late: s.get -> Supplier.java::Supplier.get"]);
+    expect(l.filter((x) => x.startsWith("Match."))).toEqual([]);
+  });
+});
+
+describe("a platform function-type name on a Kotlin field or list is judged by core too", () => {
+  const kotlin = {
+    "league/Supplier.kt": ["package league", "class Supplier {", "  fun get(): String = \"x\"", "}"].join("\n"),
+    "league/Club.kt": [
+      "package league",
+      "import java.util.function.*",
+      "class Club(private val source: Supplier, private val all: List<Supplier>) {",
+      "  fun feed() { source.get() }",
+      "  fun each() { for (s in all) s.get() }",
+      "  fun every() { all.forEach { it.get() } }",
+      "}",
+    ].join("\n"),
+    "cup/Match.kt": [
+      "package cup",
+      "import java.util.function.*",
+      "class Match(private val source: Supplier<String>, private val all: List<Supplier<String>>) {",
+      "  fun feed() { source.get() }",
+      "  fun each() { for (s in all) s.get() }",
+      "}",
+    ].join("\n"),
+  };
+  it("keeps the same-package project class on a constructor field, a loop and a forEach (Kotlin)", async () => {
+    const l = links(await analyzeAll(kotlin, "kotlin")).map((x) => x.replace(/ \[.*\]$/, ""));
+    expect(l.filter((x) => x.startsWith("Club.feed"))).toEqual(["Club.feed: source.get -> Supplier.kt::Supplier.get"]);
+    expect(l.filter((x) => x.startsWith("Club.each"))).toEqual(["Club.each: s.get -> Supplier.kt::Supplier.get"]);
+    expect(l.filter((x) => x.startsWith("Match."))).toEqual([]);
+  });
+});
+
