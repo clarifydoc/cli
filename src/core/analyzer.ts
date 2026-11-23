@@ -1879,7 +1879,9 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const configKeys = joinConfigKeys(allAnalyses, allAnalyses.some((a) => a.configKeyReads?.length || a.dataSources.some((d) => d.configRead)) ? await readConfigKeys(projectRoot, subProjects) : [], (f) => !isUnauthored(f), (f, l) => isTestFile(f, l));
 
   // Field assignments and thrown exception types, resolved to the classes they name.
-  const memberEffects = joinMemberEffects(allAnalyses, (f) => !isUnauthored(f) && !isTestFile(f));
+  // A test file by its language's own rule too (Go `_test.go`), never only the generic folder names.
+  const effectLanguages = new Map(allAnalyses.map((a) => [a.filePath, a.language as Language]));
+  const memberEffects = joinMemberEffects(allAnalyses, (f) => !isUnauthored(f) && !isTestFile(f, effectLanguages.get(f)));
 
   // Non-code files the code opens by a literal path.
   const configFiles = await joinConfigFiles(allAnalyses, subProjects, (f) => !isUnauthored(f), (f, l) => isTestFile(f, l), diskFileExists(projectRoot));

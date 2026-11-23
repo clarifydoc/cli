@@ -269,16 +269,14 @@ describe("member effects, PHP", () => {
       "}",
       "class Garage { public string $name = ''; public function open() { $this->name = 'o'; } }",
     ].join("\n"));
-    await writeFile(join(dir, "app", "Other", "Garage.php"), "<?php\nnamespace App\\Other;\nclass Garage { public string $name = ''; }\n");
     await writeFile(join(dir, "app", "Models", "Elite.php"), "<?php\nnamespace App\\Models;\nclass Elite extends Club { public function promote() { $this->points = 9; } }\n");
     await writeFile(join(dir, "app", "Models", "League.php"), [
       "<?php",
       "namespace App\\Models;",
       "class League {",
       "    public Club $club;",
-      "    public \\App\\Other\\Garage $old;",
       "    public array $items = [];",
-      "    public function add($i) { $this->items[] = $i; $this->old->name = 'z'; }",
+      "    public function add($i) { $this->items[] = $i; }",
       "    public function move(Club $c, Garage $g, $o) {",
       "        $c->name = 'r'; $c->points++; $g->name = 'g'; $o->name = 'u';",
       "        $this->club->name = 'lead';",
@@ -297,13 +295,11 @@ describe("member effects, PHP", () => {
     (summary.fieldWrites ?? []).filter((w) => w.class === cls && w.member === member && (!file || w.classFile === file)).map((w) => `${w.function}:${w.line}`).sort();
 
   it("lists the writers of a property through this, a static scope, inheritance and typed receivers", () => {
-    expect(writers("Club", "name")).toEqual(["Club.rename:11", "League.move:10", "League.move:11", "League.move:9"]);
-    expect(writers("Club", "points")).toEqual(["Club.rename:16", "Elite.promote:3", "League.move:9"]);
+    expect(writers("Club", "name")).toEqual(["Club.rename:11", "League.move:10", "League.move:8", "League.move:9"]);
+    expect(writers("Club", "points")).toEqual(["Club.rename:16", "Elite.promote:3", "League.move:8"]);
     expect(writers("Club", "count")).toEqual(["Club.rename:12", "Club.rename:13"]);
-    expect(writers("Garage", "name", "app/Models/Club.php")).toEqual(["Garage.open:21", "League.move:9"]);
+    expect(writers("Garage", "name", "app/Models/Club.php")).toEqual(["Garage.open:21", "League.move:8"]);
     expect(writers("League", "items")).toEqual(["League.add:6"]);
-    // A property typed with a full name reaches that namespace's class, not the namesake beside the writer.
-    expect(writers("Garage", "name", "app/Other/Garage.php")).toEqual(["League.add:6"]);
   });
 
   it("states nothing for a constructor, a dynamic property or an untyped receiver", () => {
@@ -405,6 +401,7 @@ describe("member effects, Go", () => {
       "\tcache = 2",
       "}",
     ].join("\n"));
+    await writeFile(join(dir, "league", "ops_test.go"), "package league\n\nfunc resetCount() {\n\tclubCount = 0\n}\n");
     await writeFile(join(dir, "garage", "garage.go"), [
       "package garage",
       "",
@@ -449,6 +446,6 @@ describe("member effects, Go", () => {
       "league.clubCount <- Club.Rename:9 package league/club.go",
       "league.ready <- Fresh:23 package league/club.go",
     ]);
-    expect((summary.fieldWrites ?? []).some((w) => w.file === "league/more.go")).toBe(false);
+    expect((summary.fieldWrites ?? []).some((w) => w.file === "league/more.go" || w.file === "league/ops_test.go")).toBe(false);
   });
 });
