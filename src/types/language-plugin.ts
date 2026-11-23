@@ -1646,6 +1646,12 @@ export interface LanguagePluginManifest {
    */
   typesSpanFiles?: boolean;
   /**
+   * A type the directory does not declare is looked up beyond it, like any other language's (own file, sub-project,
+   * the project's only one) — Ruby's classes and Rust's structs live in other directories of one project. With
+   * `typesSpanFiles`, the same-directory declarations still lead (a reopened class, a struct and its `impl` blocks).
+   */
+  typesBeyondDirectory?: boolean;
+  /**
    * The analysis records every way a file can name one of its types — an import by name, an annotation, a base
    * class, a construction — so a class with no `blastRadius[].typeUsages` record is named by nobody (impact then
    * narrows by member; where this is unset, a class without a record keeps every importer charged).

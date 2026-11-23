@@ -22,6 +22,8 @@ const spansFiles = (language: string): boolean => manifestFor(language as Langua
 
 /** The language family a file's language belongs to (its manifest's `family`, else the language itself). */
 const familyOf = (language: string): string => manifestFor(language as LanguageName)?.family ?? language;
+/** Does `language` look a type up beyond its directory (`typesBeyondDirectory`)? */
+const beyondDirectory = (language: string): boolean => manifestFor(language as LanguageName)?.typesBeyondDirectory === true;
 
 type LanguageName = Parameters<typeof manifestFor>[0];
 
@@ -50,12 +52,16 @@ export function joinMemberEffects(
     const from = analysisByFile.get(nearFile);
     if (from && spansFiles(from.language)) {
       // One type of a directory: its parts across the files, never a namesake of another package, nor a type written through a package qualifier.
-      if (name.includes(".")) return null;
+      if (name.includes(".") && !beyondDirectory(from.language)) return null;
       const dir = nearFile.slice(0, nearFile.lastIndexOf("/") + 1);
-      const parts = (byName.get(name) ?? []).filter((c) => c.file.slice(0, c.file.lastIndexOf("/") + 1) === dir && analysisByFile.get(c.file)?.language === from.language);
-      if (parts.length === 0) return null;
-      const home = parts.find((c) => !c.cls.extension && c.cls.properties.length > 0) ?? parts[0]!;
-      return { ...home, parts };
+      // A qualified name states which one it means: only a lone class of its last segment answers it.
+      const qualified = beyondDirectory(from.language) && /[.:]/.test(name);
+      const parts = qualified ? [] : (byName.get(name) ?? []).filter((c) => c.file.slice(0, c.file.lastIndexOf("/") + 1) === dir && analysisByFile.get(c.file)?.language === from.language);
+      if (parts.length > 0) {
+        const home = parts.find((c) => !c.cls.extension && c.cls.properties.length > 0) ?? parts[0]!;
+        return { ...home, parts };
+      }
+      if (!beyondDirectory(from.language)) return null;
     }
     const sep = from ? manifestFor(from.language as LanguageName)?.classNamesByEvidence?.separator : undefined;
     // Only the writer's language family: a TypeScript `Error` is never a Go struct of that name.
@@ -65,7 +71,8 @@ export function joinMemberEffects(
       return kept && kept.length > 0 ? kept : undefined;
     };
     let all = inFamily(byName.get(sep ? leaf(name, sep) : name)) ?? inFamily(byName.get(leaf(name)));
-    if (!all) return null;
+    if (all && from && beyondDirectory(from.language)) all = all.filter((c) => analysisByFile.get(c.file)?.language === from.language);
+    if (!all || all.length === 0) return null;
     if (sep && from) {
       const simple = leaf(name, sep).toLowerCase();
       const full = evidenceFullName(from, sep, name, line);
@@ -134,7 +141,7 @@ export function joinMemberEffects(
     return homes.length === 1 ? homes[0]!.filePath : null;
   };
 
-  const visit = (a: FileAnalysis, fn: FunctionInfo, symbol: string, owner: ClassRef | null): void => {
+  const visit = (a: FileAnalysis, fn: FunctionInfo, symbol: string, owner: ClassRef | null, self: ClassRef | null = null): void => {
     const project = a.projectId ?? "";
     const typeOfName = (name: string): string | null => {
       const param = fn.params.find((p) => p.name === name);
@@ -157,7 +164,8 @@ export function joinMemberEffects(
       let via: FieldWriteRow["via"] = "typed";
       if (w.receiver === "this" && owner) {
         via = "this";
-        target = declaring(owner)(w.member)?.ref ?? (spans ? null : owner);
+        // The writing class itself first: a namesake declared in the same directory (a second `Club` of another module) never answers for it.
+        target = (self ? declaring(self)(w.member)?.ref : null) ?? declaring(owner)(w.member)?.ref ?? (spans ? null : owner);
       } else if (w.receiver === "" && owner) {
         via = "this";
         target = declaring(owner)(w.member)?.ref ?? null;
@@ -185,7 +193,7 @@ export function joinMemberEffects(
     for (const cls of a.classes) {
       const own: ClassRef = { cls, file: a.filePath, project: a.projectId ?? "" };
       const owner = spansFiles(a.language) ? locate(cls.name, a.filePath, own.project) ?? own : own;
-      for (const m of cls.methods) if (m.fieldWrites || m.throws) visit(a, m, `${cls.name}.${m.name}`, owner);
+      for (const m of cls.methods) if (m.fieldWrites || m.throws) visit(a, m, `${cls.name}.${m.name}`, owner, beyondDirectory(a.language) ? own : null);
     }
     for (const fn of a.functions) if (fn.fieldWrites || fn.throws) visit(a, fn, fn.name, null);
   }

@@ -6,6 +6,7 @@ import { addJobDispatchCalls, extractJobQueueSources } from "./active-job.js";
 import { addConcernClassMethods } from "./concerns.js";
 import { deviseForFact, extractDeviseFacts } from "./devise-routes.js";
 import { addMacroMembers } from "./member-macros.js";
+import { addRubyMemberEffects } from "./member-effects.js";
 import { ACTIVE_RECORD_ASSOCIATION_MACROS } from "./entities.js";
 import { addScopeMethods, extractModelSelfQueries } from "./model-scopes.js";
 import { RAILS_RENDER_CALL_PATTERNS } from "./render-patterns.js";
@@ -1553,6 +1554,7 @@ export const rubySpec: RegexLangSpec = {
         const valueFlow = extractRubyValueFlow(code, m, cls, inlineBodyOf(code, m));
         if (valueFlow) m.valueFlow = valueFlow;
       }
+      addRubyMemberEffects(cls, (m) => bodyLines(code, m));
       // A controller's filters, for the project pass that runs them before each action.
       if (/Controller$/.test(cls.name)) cls.decorators.push(...filterDecorators(lines, cls));
       // What each instance variable is assigned from a call chain (`@agent = agents.find(id)`,

@@ -480,3 +480,109 @@ describe("member effects, two language families in one project", () => {
     expect(rows.find((t) => t.type === "ClubError")?.classFile).toBe("web/errors.ts");
   });
 });
+
+describe("member effects, Ruby", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-member-effects-rb-"));
+    await mkdir(join(dir, "app", "models"), { recursive: true });
+    await mkdir(join(dir, "app", "errors"), { recursive: true });
+    await mkdir(join(dir, "app", "services"), { recursive: true });
+    await writeFile(join(dir, "app", "errors", "errors.rb"), [
+      "module League",
+      "  class ClubNotFound < StandardError; end",
+      "end",
+    ].join("\n"));
+    await writeFile(join(dir, "app", "models", "base.rb"), [
+      "class Base",
+      "  attr_writer :status",
+      "  def initialize",
+      "    @id = 0",
+      "  end",
+      "end",
+    ].join("\n"));
+    await writeFile(join(dir, "app", "models", "club.rb"), [
+      "module League",
+      "  class Club < Base",
+      "    attr_accessor :name",
+      "    attr_reader :budget",
+      "    def initialize(name)",
+      "      @name = name",
+      "      @@count += 1",
+      "    end",
+      "    def win(extra)",
+      "      @points += 1",
+      "      @items[extra] = 1",
+      "      self.name = \"w\"",
+      "      self.status = \"on\"",
+      "      @id = 2",
+      "      @budget ||= compute",
+      "      puts \"@ghost = 1\"",
+      "      raise ClubNotFound, \"x\" if @points < 0",
+      "      raise League::ClubNotFound.new(\"y\")",
+      "      raise \"text\"",
+      "      fail Unknown::Boom",
+      "      raise",
+      "    end",
+      "    def self.reset",
+      "      @count = 0",
+      "    end",
+      "  end",
+      "end",
+      "class Other",
+      "  attr_accessor :name",
+      "  def win; @name = 1; end",
+      "end",
+    ].join("\n"));
+    await writeFile(join(dir, "app", "services", "garage.rb"), [
+      "class Garage",
+      "  attr_accessor :name",
+      "  def rename(c, other)",
+      "    c.name = \"z\"",
+      "    other.name = \"q\"",
+      "    free.name = \"n\"",
+      "  end",
+      "  # @param c [League::Club]",
+      "  def tidy(c)",
+      "    c.name = \"t\"",
+      "  end",
+      "end",
+    ].join("\n"));
+    await analyze({ projectRoot: dir, outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 60_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const rows = (): string[] => (summary.fieldWrites ?? []).map((w) => `${w.class}.${w.member} <- ${w.function}:${w.line} ${w.via} ${w.classFile}`).sort();
+
+  it("lists instance-variable, class-variable and writer-method writes in the class that declares them", () => {
+    expect(rows()).toEqual([
+      "Base.status <- Club.win:13 this app/models/base.rb",
+      "Club.@@count <- Club.initialize:7 this app/models/club.rb",
+      "Club.budget <- Club.win:15 this app/models/club.rb",
+      "Club.id <- Club.win:14 this app/models/club.rb",
+      "Club.items <- Club.win:11 this app/models/club.rb",
+      "Club.name <- Club.win:12 this app/models/club.rb",
+      "Club.name <- Garage.tidy:10 typed app/models/club.rb",
+      "Club.points <- Club.win:10 this app/models/club.rb",
+      "Other.name <- Other.win:30 this app/models/club.rb",
+    ]);
+  });
+
+  it("states nothing for a constructor's own assignments, a class method, a string or an untyped receiver", () => {
+    expect((summary.fieldWrites ?? []).some((w) => w.function === "Club.initialize" && w.member === "name")).toBe(false);
+    expect((summary.fieldWrites ?? []).some((w) => w.function.endsWith(".reset") || w.member === "ghost" || w.member === "count")).toBe(false);
+    expect(rows().filter((r) => r.includes("Garage.rename"))).toEqual([]);
+  });
+
+  it("lists raised constants as written, with the class they name, and no type for text or a bare raise", () => {
+    expect((summary.thrownTypes ?? []).map((t) => `${t.type}:${t.line} ${t.classFile ?? "-"}`).sort()).toEqual([
+      "ClubNotFound:17 app/errors/errors.rb",
+      "League::ClubNotFound:18 app/errors/errors.rb",
+      "Unknown::Boom:20 -",
+    ]);
+  });
+});
