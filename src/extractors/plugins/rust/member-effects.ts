@@ -27,7 +27,7 @@ export function rustStaticMuts(lines: readonly string[]): Array<{ name: string; 
  * What a Rust function assigns (`FunctionInfo.fieldWrites`): a field of `self` (`self.name = n`, `self.score += 1`, an
  * element `self.items[i] = x`), of a field's struct (`self.stats.goals += 1` → `this.stats`), of a typed parameter or
  * local (`club.name = n`), and a `static mut` of the file written bare (`COUNT += 1`: `package`, which core accepts only
- * where this file declares it). A statement starting with `let`, a deref (`*self.n += 1`), a closure body, a tuple field
+ * where this file declares it). A closure body's statements count for the function holding it, as does a nested `fn`'s. A statement starting with `let`, a deref (`*self.n += 1`), a tuple field
  * (`self.0 = x`) and a method call that mutates (`self.items.push`) state nothing. Rust has no exceptions: a returned
  * `Err` and a `panic!` are no thrown type, so a function states none.
  */

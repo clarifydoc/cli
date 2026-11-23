@@ -535,6 +535,23 @@ describe("member effects, Ruby", () => {
       "  def win; @name = 1; end",
       "end",
     ].join("\n"));
+    await writeFile(join(dir, "app", "models", "notes.rb"), [
+      "class Notes",
+      "  def run",
+      "    # @ghost = 1",
+      "    # raise Phantom",
+      "    text = <<~TXT",
+      "      @inside = 1",
+      "    TXT",
+      "    @real = 1",
+      "  end",
+      "  class << self",
+      "    def reset",
+      "      @cache = nil",
+      "    end",
+      "  end",
+      "end",
+    ].join("\n"));
     await writeFile(join(dir, "app", "services", "garage.rb"), [
       "class Garage",
       "  attr_accessor :name",
@@ -568,6 +585,7 @@ describe("member effects, Ruby", () => {
       "Club.name <- Club.win:12 this app/models/club.rb",
       "Club.name <- Garage.tidy:10 typed app/models/club.rb",
       "Club.points <- Club.win:10 this app/models/club.rb",
+      "Notes.real <- Notes.run:8 this app/models/notes.rb",
       "Other.name <- Other.win:30 this app/models/club.rb",
     ]);
   });
