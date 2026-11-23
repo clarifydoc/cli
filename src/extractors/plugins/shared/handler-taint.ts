@@ -168,8 +168,11 @@ export function handlerTaint(tree: Tree, spec: TaintSpec, filePath: string, fact
   const seen = new Set<string>();
   // The file's functions by name, for following input into a helper.
   const byName = new Map<string, Node[]>();
+  // Every function node in source order, collected by the one walk of the tree the handler pass and the summary pass share.
+  const functions: Node[] = [];
   const index = (node: Node): void => {
     if (spec.functionTypes.has(node.type)) {
+      functions.push(node);
       const name = (spec.functionName ?? defaultFunctionName)(node);
       if (name) (byName.get(name) ?? byName.set(name, []).get(name)!).push(node);
     }
@@ -177,32 +180,27 @@ export function handlerTaint(tree: Tree, spec: TaintSpec, filePath: string, fact
   };
   index(tree.rootNode);
   const ctx: FileContext = { spec, filePath, byName, summaries: new Map(), ...(facts ? { facts } : {}) };
-  const visit = (node: Node): void => {
-    if (spec.functionTypes.has(node.type)) {
-      const handler = spec.handler(node);
-      if (handler) {
-        const params = handler.taintedParams;
-        for (const issue of taintFunction(node, new Map(params.map((p) => [p, null])), ctx, 0)) {
-          const key = `${issue.line}\u0000${issue.category}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            out.push(issue);
-          }
-        }
+  for (const node of functions) {
+    const handler = spec.handler(node);
+    if (!handler) continue;
+    const params = handler.taintedParams;
+    for (const issue of taintFunction(node, new Map(params.map((p) => [p, null])), ctx, 0)) {
+      const key = `${issue.line}\u0000${issue.category}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        out.push(issue);
       }
     }
-    for (const c of node.namedChildren) visit(c);
-  };
-  visit(tree.rootNode);
-  if (facts) summarize(tree.rootNode, ctx, facts);
+  }
+  if (facts) summarize(functions, ctx, facts);
   return out;
 }
 
 /** Each function that is not a handler: which of its parameters reach a sink, for callers in other files. */
-function summarize(root: Node, ctx: FileContext, facts: TaintFacts): void {
+function summarize(functions: readonly Node[], ctx: FileContext, facts: TaintFacts): void {
   const { spec } = ctx;
-  const visit = (node: Node): void => {
-    if (spec.functionTypes.has(node.type) && !spec.handler(node)) {
+  for (const node of functions) {
+    if (!spec.handler(node)) {
       const name = (spec.functionName ?? defaultFunctionName)(node);
       const params = (spec.paramNames ?? defaultParamNames)(node).filter((p) => !/^(?:self|cls|this)$/.test(p));
       const all = (spec.paramNames ?? defaultParamNames)(node);
@@ -224,9 +222,7 @@ function summarize(root: Node, ctx: FileContext, facts: TaintFacts): void {
         if (sinks.length) facts.summaries.push({ name, line: node.startPosition.row + 1, sinks });
       }
     }
-    for (const c of node.namedChildren) visit(c);
-  };
-  visit(root);
+  }
 }
 
 interface FileContext {
