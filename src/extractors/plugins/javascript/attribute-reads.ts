@@ -15,14 +15,27 @@ const FUNCTION_TYPES = new Set(["function_declaration", "function_expression", "
 
 const kebab = (camel: string): string => `data-${camel.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`;
 
+/**
+ * The innermost function whose text holds `index`, found by descending through the children that hold it (the
+ * methods of `Node` a flat copy of the tree also answers; no `descendantForIndex`, whose answer at the edge
+ * between two siblings is the tree's own).
+ */
+function innermostFunctionAt(root: Node, index: number): Node | null {
+  let found: Node | null = null;
+  for (let node: Node | undefined = root; node; ) {
+    if (FUNCTION_TYPES.has(node.type)) found = node;
+    node = node.children.find((c) => c.startIndex <= index && index < c.endIndex);
+  }
+  return found;
+}
+
 export function extractAttributeReads(tree: Tree, sourceText: string): Array<{ attribute: string; method?: string; line: number }> {
   if (!/getAttribute\(\s*['"]data-[\w-]*url['"]|\.dataset(?:\.\w*Url\b|\[)/.test(sourceText)) return [];
   const out: Array<{ attribute: string; method?: string; line: number }> = [];
   const verbsIn = new Map<number, Set<string>>();
   for (const m of sourceText.matchAll(READ_RE)) {
     const attribute = (m[2] ?? kebab((m[3] ?? m[5])!)).toLowerCase();
-    let node: Node | null = tree.rootNode.descendantForIndex(m.index!);
-    while (node && !FUNCTION_TYPES.has(node.type)) node = node.parent;
+    const node = innermostFunctionAt(tree.rootNode, m.index!);
     let method: string | undefined;
     if (node) {
       let verbs = verbsIn.get(node.id);

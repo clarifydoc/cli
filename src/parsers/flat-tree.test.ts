@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync, statSync } from "fs";
 import { join, relative } from "path";
 import type { Node } from "web-tree-sitter";
-import "../extractors/registry.js"; // side effect: registers tree-sitter grammars
+import { ensureLanguagesLoaded, pluginFor } from "../extractors/registry.js"; // side effect: registers tree-sitter grammars
 import { parseSource, parseWebAssemblyTree, runQuery } from "./parser-manager.js";
 import { parseErrorsOf } from "../core/coverage.js";
 import { getLanguageForFile } from "./language-map.js";
@@ -101,6 +101,9 @@ describe("flat tree equals the real tree", () => {
     const lang = getLanguageForFile(p);
     if (lang) sources.push({ name: relative(FIXTURES, p), text: normalizeSource(readFileSync(p, "utf-8")) });
   }
+  // What the analyzer parses of a single-file component is its script, after the plugin's preprocess.
+  const components = sources.filter((s) => /\.(?:vue|svelte)$/.test(s.name));
+
   // Non-ASCII spellings: the index units of a JS string input, in columns and in text.
   sources.push(
     { name: "unicode.ts", text: 'const été = "café ☕ 🏟️";\nexport function équipe(joueur: string) { return `⚽ ${joueur}`; }\n' },
@@ -111,10 +114,16 @@ describe("flat tree equals the real tree", () => {
   );
 
   it("answers every used member alike for each fixture tree", async () => {
+    await ensureLanguagesLoaded(["typescript", "javascript"]);
+    const scripts: Array<{ name: string; text: string }> = [];
+    for (const c of components) {
+      const pre = pluginFor("typescript")?.preprocess?.(c.text, c.name);
+      if (pre && !("skip" in pre)) scripts.push({ name: `${c.name}.script.${pre.language === "javascript" ? "js" : "ts"}`, text: pre.sourceText });
+    }
     let compared = 0;
     const skipped: string[] = [];
     const errors: string[] = [];
-    for (const { name, text } of sources) {
+    for (const { name, text } of [...sources, ...scripts]) {
       const lang = getLanguageForFile(name);
       let tree;
       try {
@@ -132,7 +141,7 @@ describe("flat tree equals the real tree", () => {
       compared++;
     }
     expect(compared).toBeGreaterThan(100);
-    expect(errors.slice(0, 5)).toEqual([]);
+    expect(errors.length ? [`${errors.length} files differ: ${errors.map((e) => e.split(":")[0]).join(", ")}`, ...errors.slice(0, 5)] : []).toEqual([]);
   }, 600_000);
 
   it("counts parse errors, runs queries and parses through the feature as the real tree does", async () => {
@@ -150,6 +159,7 @@ describe("flat tree equals the real tree", () => {
     process.env.CLARIFYDOC_FEATURES = "flat-tree";
     try {
       expect(await parseSource("class Car { }\n", "csharp", "Car.cs")).toBeInstanceOf(FlatTree);
+      expect(await parseSource("const car = 1;\n", "typescript", "car.ts")).toBeInstanceOf(FlatTree);
       expect(await parseSource("class Car:\n    pass\n", "python", "car.py")).not.toBeInstanceOf(FlatTree);
     } finally {
       if (prior === undefined) delete process.env.CLARIFYDOC_FEATURES;
