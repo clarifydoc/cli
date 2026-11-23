@@ -12,7 +12,7 @@ import type { DispatchResolver } from "../../dispatch/base.js";
 
 /** The template beside a component's script, by the folder-and-file naming LWC requires. */
 function templatePath(filePath: string): string | null {
-  const m = /^(.*\/lwc\/([^/]+)\/)\2\.(?:js|ts)$/.exec(filePath);
+  const m = /^((?:.*\/)?lwc\/([^/]+)\/)\2\.(?:js|ts)$/.exec(filePath);
   return m ? `${m[1]}${m[2]}.html` : null;
 }
 
@@ -49,7 +49,7 @@ export class LwcTemplateResolver implements DispatchResolver {
       const connected = methods.get("connectedCallback");
       if (connected) to(`${cls.name}.connectedCallback`, 1, connected.line, "connectedCallback");
       const setup = a.functions.find((f) => f.name === "<setup>");
-      if (setup) to("<setup>", 1, setup.line, "<setup>");
+      if (setup && setup.calls.length > 0) to("<setup>", 1, setup.line, "<setup>");
     }
     return links;
   }

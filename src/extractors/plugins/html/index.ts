@@ -247,7 +247,7 @@ const READS_WRAPPED = new Set(["form", "button", "input", "a"]);
 /** Inline event handlers: `onclick="foo()"`, `onsubmit='...'`, a Lightning Web Component's `onclick={handleSave}`. The `\b` keeps
  *  attributes merely CONTAINING "on" out — without it, `content="notranslate"`
  *  matched as event "ontent" / handler "notranslate". */
-const HANDLER_RE = /\bon([a-z]+)\s*=\s*"([^"]*)"|\bon([a-z]+)\s*=\s*'([^']*)'|\bon([a-z]+)\s*=\s*\{\s*([A-Za-z_$][\w$]*)\s*\}/gi;
+const HANDLER_RE = /\bon([a-z]+)\s*=\s*"([^"]*)"|\bon([a-z]+)\s*=\s*'([^']*)'|(?:^|\s)on([a-z]+)\s*=\s*\{\s*([A-Za-z_$][\w$]*)\s*\}/gi;
 /** Alpine.js / petite-vue event directives: `@click="changeRange"`, `x-on:submit.prevent="save()"`.
  *  Only DOM event names: a template dialect's own `@word=` attribute (Razor `@bind=`) is no handler. */
 const DIRECTIVE_HANDLER_RE =

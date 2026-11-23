@@ -252,6 +252,8 @@ describe("sample-salesforce — Apex to SObject", () => {
       // The wired adapter runs when the component connects: the file's own `<setup>`.
       "<setup> -> ClubController.getClubs",
     ]) expect(l).toContain(want);
+    // A decorator in a comment wires nothing: the one `<setup>` call is the live `@wire`.
+    expect(l.filter((x) => x.startsWith("<setup> -> ClubController.")).sort()).toEqual(["<setup> -> ClubController.getClubs"]);
     // The namesake method of the other class is no target.
     expect(l.some((x) => x.endsWith("-> ClubCache.getClubs"))).toBe(false);
   });

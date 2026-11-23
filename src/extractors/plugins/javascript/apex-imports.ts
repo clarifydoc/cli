@@ -1,5 +1,6 @@
 import type { FileAnalysis, Language } from "../../../types/analysis.js";
 import type { PreprocessOutcome } from "../../../types/language-plugin.js";
+import { blankStringAwareComments } from "../shared/text-scan.js";
 
 /**
  * A Lightning Web Component imports an Apex method as a function from a module path no file bears:
@@ -26,7 +27,8 @@ function addWiredAdapterCalls(analysis: FileAnalysis, raw: string): void {
     for (const spec of imp.specifiers) bound.set(spec, imp.source);
   }
   if (bound.size === 0) return;
-  for (const m of raw.matchAll(WIRE)) {
+  // A decorator in a comment is no wiring: blanked, the text keeps its lines and columns.
+  for (const m of blankStringAwareComments(raw).matchAll(WIRE)) {
     const target = bound.get(m[1]!);
     if (!target) continue;
     const before = raw.slice(0, m.index);
