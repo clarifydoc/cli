@@ -1,7 +1,7 @@
 import type { ClassInfo, DataSourceInfo, FunctionInfo } from "../../../types/analysis.js";
 import { splitTopLevel } from "../../shared/split-top-level.js";
 import { statementAccesses } from "../shared/sql-string-sources.js";
-import { balancedArgs, blankStringAwareComments, lineIndex, lineStarts, splitTopLevelCommas } from "../shared/text-scan.js";
+import { balancedArgs, blankStringAwareComments, lineIndex, lineStarts, matchingParen, splitTopLevelCommas } from "../shared/text-scan.js";
 import { innermost, queryOpensAt, TRIGGER_HEAD } from "./patterns.js";
 import { queryEnd, stringEnd } from "./source.js";
 
@@ -109,15 +109,6 @@ export function childRelationships(query: string): Array<{ parent: string; name:
     i = close;
   }
   return out;
-}
-
-function matchingParen(text: string, open: number): number {
-  let depth = 0;
-  for (let i = open; i < text.length; i++) {
-    if (text[i] === "(") depth++;
-    else if (text[i] === ")" && --depth === 0) return i;
-  }
-  return -1;
 }
 
 const relationshipRow = (name: string, rel: { parent: string; name: string }, line: number): DataSourceInfo => ({
