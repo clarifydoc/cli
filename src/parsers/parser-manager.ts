@@ -15,6 +15,8 @@ import { createRequire } from "module";
 import type { Language } from "../types/analysis.js";
 import type { CaptureResult } from "../types/plugin.js";
 import type { GrammarSpec, GrammarVariant } from "../types/language-plugin.js";
+import { featureEnabled } from "../core/feature-flags.js";
+import { flattenTree, isFlatTree } from "./flat-tree.js";
 
 // Re-export tree-sitter types under our own names for use in extractors
 export type { TSTree, TSNode, TSLanguage };
@@ -261,12 +263,17 @@ export async function getLanguage(language: TreeSitterLanguage): Promise<TSLangu
   return getLanguageForKey(language);
 }
 
-/** Parse source code into a tree-sitter tree */
-export async function parseSource(
-  sourceText: string,
-  language: TreeSitterLanguage,
-  filePath?: string,
-): Promise<TSTree> {
+/**
+ * The languages whose extractors read a flat copy of the tree (`flat-tree` feature): each joined once its corpus
+ * output was byte-identical with and without the copy.
+ */
+const FLAT_TREE_LANGUAGES: ReadonlySet<string> = new Set(["csharp"]);
+
+/**
+ * Parse source into the WebAssembly tree itself, never a flat copy: what a query runs on and what the flat copy is
+ * made from.
+ */
+export async function parseWebAssemblyTree(sourceText: string, language: TreeSitterLanguage, filePath?: string): Promise<TSTree> {
   const key = resolveGrammarKey(language, filePath);
   const parser = await getParserForKey(key);
   const tree = parser.parse(sourceText);
@@ -279,9 +286,41 @@ export async function parseSource(
   return tree;
 }
 
+/** Parse source code into a tree-sitter tree (a flat copy of it for the languages the `flat-tree` feature covers). */
+export async function parseSource(
+  sourceText: string,
+  language: TreeSitterLanguage,
+  filePath?: string,
+): Promise<TSTree> {
+  const tree = await parseWebAssemblyTree(sourceText, language, filePath);
+  if (FLAT_TREE_LANGUAGES.has(language) && featureEnabled("flat-tree")) {
+    // One cursor walk into arrays; every later read is a lookup, and the WebAssembly tree is freed at once.
+    try {
+      return flattenTree(tree, sourceText) as unknown as TSTree;
+    } finally {
+      tree.delete();
+    }
+  }
+  return tree;
+}
+
 /** Run a tree-sitter S-expression query and return captures.
  *  Queries are cached by language+querySource to avoid recompilation. */
 export async function runQuery(
+  tree: TSTree,
+  language: TreeSitterLanguage,
+  querySource: string,
+): Promise<Map<string, CaptureResult[]>> {
+  // A flat copy has no WebAssembly tree to query: read the text again (a rare path — no extractor queries).
+  const reparsed = isFlatTree(tree) ? await parseWebAssemblyTree(tree.source, language) : null;
+  try {
+    return await runQueryOn(reparsed ?? tree, language, querySource);
+  } finally {
+    reparsed?.delete();
+  }
+}
+
+async function runQueryOn(
   tree: TSTree,
   language: TreeSitterLanguage,
   querySource: string,

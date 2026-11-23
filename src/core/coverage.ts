@@ -1,5 +1,6 @@
 import type { Tree } from "web-tree-sitter";
 import type { ExternalPackage, FileAnalysis, ProjectAnalysis, SubProject } from "../types/analysis.js";
+import { isFlatTree } from "../parsers/flat-tree.js";
 import { getLanguageForFile } from "../parsers/language-map.js";
 import { isApiContractLanguage, manifestFor, pluginFor } from "../extractors/registry.js";
 import { isTestFile } from "./test-file-detector.js";
@@ -25,6 +26,10 @@ export interface ParseErrors {
 /** The parse errors of a tree, or null for a clean one. Walks only a tree that has errors. */
 export function parseErrorsOf(tree: Tree, length: number): ParseErrors | null {
   if (!tree.rootNode.hasError) return null;
+  if (isFlatTree(tree)) {
+    const { nodes, missing, bytes } = tree.errorStats();
+    return { nodes, missing, ratio: Math.round((Math.min(bytes, length) / Math.max(1, length)) * 1000) / 1000 };
+  }
   const cursor = tree.walk();
   let nodes = 0;
   let missing = 0;
