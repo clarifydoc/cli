@@ -80,7 +80,13 @@ export function queryObjects(query: string): string[] {
     return splitTopLevelCommas(returning).map((part) => /^\s*([A-Za-z_]\w*)/.exec(part)?.[1]).filter((n): n is string => !!n);
   }
   const from = /\bFROM\s+([A-Za-z_][\w.]*)/i.exec(q)?.[1];
-  return from ? [from.split(".").pop()!] : [];
+  const found = from ? [from.split(".").pop()!] : [];
+  // A semi-join or anti-join in a WHERE clause (`Id IN (SELECT Club__c FROM Player__c)`) reads an object too; a
+  // relationship subquery (`FROM Players__r`) names a relationship, which is no SObject type.
+  for (const m of blankStrings(query).matchAll(/\(\s*SELECT\b[^()]*?\bFROM\s+([A-Za-z_]\w*)/gi)) {
+    if (isSObjectType(m[1]!) && !found.includes(m[1]!)) found.push(m[1]!);
+  }
+  return found;
 }
 
 interface Literal { start: number; end: number; value: string }

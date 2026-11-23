@@ -26,6 +26,7 @@ describe("SOQL, DML and type reading", () => {
   it("reads the object a query names, never a relationship subquery", () => {
     expect(queryObjects("[SELECT Id, (SELECT Id FROM Players__r) FROM Club__c WHERE Name = 'FROM Other__c']")).toEqual(["Club__c"]);
     expect(queryObjects("SELECT COUNT() FROM Player__c")).toEqual(["Player__c"]);
+    expect(queryObjects("[SELECT Id FROM Club__c WHERE Id IN (SELECT Club__c FROM Player__c)]")).toEqual(["Club__c", "Player__c"]);
     expect(queryObjects("[FIND 'Rovers' IN ALL FIELDS RETURNING Club__c(Id, Name), Player__c]")).toEqual(["Club__c", "Player__c"]);
   });
 
@@ -159,6 +160,7 @@ describe("Apex structure", () => {
     expect(apexClassSource("public class A {\n}\n")).not.toBeNull();
     expect(apexClassSource("VERSION 1.0 CLASS\nBEGIN\nEND\nAttribute VB_Name = \"A\"\nPublic Sub Run()\nEnd Sub\n")).toBeNull();
     expect(apexClassSource("Public Class A\nEnd Class\n")).toBeNull();
+    expect(apexClassSource("/*\nEnd Class of changes\n*/\npublic class A {\n}\n")).not.toBeNull();
   });
 });
 

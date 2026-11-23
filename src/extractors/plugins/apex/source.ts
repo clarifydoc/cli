@@ -86,6 +86,7 @@ const CLASS_HEAD = /^[ \t]*(?:@\w+(?:\([^)\n]*\))?[ \t]*)*(?:(?:global|public|pr
 
 /** Whether a `.cls` file holds an Apex class (the extension is VB6's too). */
 export function looksLikeApexClass(raw: string): boolean {
-  if (VB_MARKERS.test(raw)) return false;
-  return CLASS_HEAD.test(apexDataText(raw));
+  // Comments and strings may say anything (`End Class of changes`): both readings use the text without comments.
+  const code = apexDataText(raw);
+  return !VB_MARKERS.test(code) && CLASS_HEAD.test(code);
 }

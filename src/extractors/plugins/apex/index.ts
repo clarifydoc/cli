@@ -101,7 +101,8 @@ function apexClasses(lines: string[], fns: FunctionInfo[]): ClassInfo[] {
     const head = lines.slice(i, i + 4).join(" ");
     if (!head.includes("{")) continue;
     const rest = (m[5] ?? "") + (m[5]!.includes("{") ? "" : " " + lines.slice(i + 1, i + 4).join(" "));
-    const header = rest.slice(0, rest.indexOf("{") < 0 ? undefined : rest.indexOf("{"));
+    const headerEnd = rest.search(/[{;]/);
+    const header = headerEnd < 0 ? rest : rest.slice(0, headerEnd);
     const ext = /\bextends\s+([\w.]+)/i.exec(header)?.[1] ?? null;
     const impl = /\bimplements\s+([^{]+)/i.exec(header)?.[1];
     const kind = m[3]!.toLowerCase();
