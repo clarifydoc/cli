@@ -23,14 +23,16 @@ const RECEIVERS = new Set(["this", "self"]);
  * local of the function), a kept fact on a member or element of a plain variable (`m['a']`, `o.h`) is preceded by a
  * self-copy of that variable, which binds it as the function's own — a store to `m.a` alone binds nothing.
  */
-export function liveValueFlow(facts: readonly ValueFlowFact[], params: readonly string[], options: { bindBases?: boolean; elementArgs?: boolean; localName?: (name: string) => boolean; external?: (name: string) => boolean } = {}): ValueFlowFact[] {
+export function liveValueFlow(facts: readonly ValueFlowFact[], params: readonly string[], options: { bindBases?: boolean; localName?: (name: string) => boolean; external?: (name: string) => boolean } = {}): ValueFlowFact[] {
   if (facts.length === 0) return [];
+  // An `arg` of a plain variable may hand on its elements (`foo($list)` runs `$list[…]`).
+  const elementArg = (f: ValueFlowFact): f is Extract<ValueFlowFact, { kind: "arg" }> => f.kind === "arg" && f.from.member === undefined;
   const read = new Set<string>();
   for (const f of facts) {
     if (f.kind === "invoke") read.add(keyOf(f.cell));
     else if (f.kind === "arg" || f.kind === "return") {
       read.add(keyOf(f.from));
-      if (f.kind === "arg" && options.elementArgs && f.from.member === undefined) read.add(keyOf(elementOf(f.from)));
+      if (elementArg(f)) read.add(keyOf(elementOf(f.from)));
     }
     else if ((f.kind === "seed" || f.kind === "copy" || f.kind === "result") && f.to.member !== undefined && RECEIVERS.has(f.to.name)) read.add(keyOf(f.to));
   }
@@ -56,7 +58,7 @@ export function liveValueFlow(facts: readonly ValueFlowFact[], params: readonly 
   // nothing a function value could ride on that the field's own stores do not already reach.
   for (const f of facts) {
     if (f.kind === "arg" || f.kind === "return") {
-      if (sourced(f.from, false) || (f.kind === "arg" && options.elementArgs && f.from.member === undefined && filled.has(keyOf(elementOf(f.from))))) kept.add(f);
+      if (sourced(f.from, false) || (elementArg(f) && filled.has(keyOf(elementOf(f.from))))) kept.add(f);
     }
     else if (f.kind === "invoke") { if (sourced(f.cell, true)) kept.add(f); }
   }
@@ -66,7 +68,7 @@ export function liveValueFlow(facts: readonly ValueFlowFact[], params: readonly 
   if (!kind("seed") && !kind("invoke") && !paramFlow) return [];
   // Keep the statement order the extractor read them in.
   const out = facts.filter((f) => kept.has(f)).map((f) =>
-    options.elementArgs && f.kind === "arg" && f.from.member === undefined && (filled.has(keyOf(elementOf(f.from))) || params.includes(f.from.name)) ? { ...f, elements: true as const } : f);
+    elementArg(f) && (filled.has(keyOf(elementOf(f.from))) || params.includes(f.from.name)) ? { ...f, elements: true as const } : f);
   if (!options.bindBases) return out;
   const bound = new Set<string>(params);
   for (const f of out) if ((f.kind === "seed" || f.kind === "copy" || f.kind === "result") && f.to.member === undefined) bound.add(f.to.name);

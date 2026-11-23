@@ -478,7 +478,7 @@ export function extractRubyValueFlow(code: readonly string[], fn: FunctionInfo, 
   for (const s of statements) reader.statement(s);
   const last = statements[statements.length - 1]!;
   reader.implicitReturn(last.text.trim(), last.line);
-  const facts = liveValueFlow(reader.facts, fn.params.filter((p) => !p.type).map((p) => p.name), { bindBases: true, elementArgs: true, localName: (n) => /^[a-z_]/.test(n), external: (n) => /^[A-Z]/.test(n) });
+  const facts = liveValueFlow(reader.facts, fn.params.filter((p) => !p.type).map((p) => p.name), { bindBases: true, localName: (n) => /^[a-z_]/.test(n), external: (n) => /^[A-Z]/.test(n) });
   return facts.length > 0 ? facts : undefined;
 }
 

@@ -443,9 +443,12 @@ export function extractPhpValueFlow(body: Node | null, params: readonly string[]
   if (!body) return undefined;
   const reader = new Reader(params);
   reader.walk(body);
-  const facts = liveValueFlow(reader.facts, params, { bindBases: true, elementArgs: true });
+  const facts = liveValueFlow(reader.facts, params, { bindBases: true });
   return facts.length > 0 ? facts : undefined;
 }
+
+/** Top-level node types that are no statement of the file's own. */
+const TOP_LEVEL_SKIPPED = new Set(["php_tag", "text", "text_interpolation", "comment", "namespace_use_declaration", "declare_statement", "function_definition", "class_declaration", "interface_declaration", "trait_declaration", "enum_declaration"]);
 
 /**
  * The value-flow facts of a file's top-level statements (a plain `.php` script storing a callable and calling it
@@ -454,9 +457,8 @@ export function extractPhpValueFlow(body: Node | null, params: readonly string[]
  */
 export function phpTopLevelValueFlow(root: Node): ValueFlowFact[] {
   // A class-only file (most of them) has no statement of its own: skip the walk.
-  const SKIPPED = new Set(["php_tag", "text", "text_interpolation", "comment", "namespace_use_declaration", "declare_statement", "function_definition", "class_declaration", "interface_declaration", "trait_declaration", "enum_declaration"]);
-  if (root.namedChildren.every((c) => SKIPPED.has(c.type))) return [];
+  if (root.namedChildren.every((c) => TOP_LEVEL_SKIPPED.has(c.type))) return [];
   const reader = new Reader([]);
   reader.walk(root);
-  return liveValueFlow(reader.facts.filter((f) => f.kind !== "return"), [], { bindBases: true, elementArgs: true });
+  return liveValueFlow(reader.facts.filter((f) => f.kind !== "return"), [], { bindBases: true });
 }

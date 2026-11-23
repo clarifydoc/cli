@@ -57,6 +57,11 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
   /** The file composes Celery work (`chord`, `group`, `chain`, a `link=`): its signatures run. */
   private canvas = false;
   private sourceText = "";
+  private libraryModuleSet: Set<string> | null = null;
+  /** Per-file, on first use: only a `.save(` call asks. */
+  private libraryModules(): Set<string> {
+    return (this.libraryModuleSet ??= libraryModuleNames(this.sourceText));
+  }
   /** The file uses boto3 (SQS/SNS clients) or redis-py (pub/sub). */
   private boto3 = false;
   private redis = false;
@@ -82,6 +87,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
     this.urllib = /\burllib2?\b/.test(sourceText);
     this.signatures = new Map();
     this.sourceText = sourceText;
+    this.libraryModuleSet = null;
     this.baseClients = new Set(extractPythonHttpClientRegistrations(tree as Tree, sourceText).map((r) => r.client));
     this.canvas = this.celery || /\b(?:chord|group|chain)\s*\(|\blink(?:_error)?\s*=/.test(sourceText);
     if (sourceText.includes(".s(") || sourceText.includes(".si(") || sourceText.includes(".signature(")) {
@@ -399,7 +405,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
         // `db.session.get(Club, id)`: a session read of the model it is handed (a string or `url` first argument is no model).
         const sessionGet = leaf === "get" && PY_DB_RECEIVER_RE.test(receiver) && sessionModelArg(node, leaf) !== null;
         const isQuery =
-          (PY_DB_LEAVES.has(leaf) && !(leaf === "save" && savesThroughLibraryModule(parts, this.sourceText))) || djangoManager || sessionGet ||
+          (PY_DB_LEAVES.has(leaf) && !(leaf === "save" && savesThroughLibraryModule(parts, this.libraryModules()))) || djangoManager || sessionGet ||
           (PY_GENERIC_DB_LEAVES.has(leaf) && datastoreChain(fnName)) || (relatedManager(fnName, leaf) && (PY_GENERIC_DB_LEAVES.has(leaf) || !datastoreChain(fnName))) ||
           (PY_SESSION_STATEMENT_LEAVES.has(leaf) && !fnName.includes("(") && PY_DB_RECEIVER_RE.test(receiver));
         if (fnName.includes(".") && (isQuery || isSessionWrite)) {
@@ -557,18 +563,20 @@ const PY_ORM_MODULE_ROOTS = new Set([
  * library. A project module bound the same way (`import repository`) reads the same: its call site is no
  * row, and the write inside its own function keeps the row it states.
  */
-function savesThroughLibraryModule(parts: string[], sourceText: string): boolean {
-  if (parts.length !== 2) return false;
-  const receiver = escapeRegex(parts[0]!);
-  for (const m of sourceText.matchAll(new RegExp(String.raw`^[ \t]*import\s+([^\n#]+)`, "gm"))) {
+function savesThroughLibraryModule(parts: string[], libraryModules: Set<string>): boolean {
+  return parts.length === 2 && libraryModules.has(parts[0]!);
+}
+
+/** Names the file binds with a plain `import x [as n]` to a package that is no database library. */
+function libraryModuleNames(sourceText: string): Set<string> {
+  const names = new Set<string>();
+  for (const m of sourceText.matchAll(/^[ \t]*import\s+([^\n#]+)/gm)) {
     for (const item of m[1]!.split(",")) {
       const bound = /^\s*([\w.]+)(?:\s+as\s+(\w+))?\s*$/.exec(item);
-      if (!bound) continue;
-      const name = bound[2] ?? bound[1]!;
-      if (new RegExp(`^${receiver}$`).test(name) && !PY_ORM_MODULE_ROOTS.has(bound[1]!.split(".")[0]!)) return true;
+      if (bound && !PY_ORM_MODULE_ROOTS.has(bound[1]!.split(".")[0]!)) names.add(bound[2] ?? bound[1]!);
     }
   }
-  return false;
+  return names;
 }
 
 /** Verbs a model INSTANCE answers (`club.save()`), as opposed to a manager or session. */
