@@ -155,6 +155,9 @@ function extractElixirDataSources(lines: string[]): DataSourceInfo[] {
     const trimmed = line.trimStart();
     if (!trimmed || trimmed.startsWith("#")) continue;
     const ln = i + 1;
+    // Every pattern below names `Repo.` or `from`.
+    const hasFrom = line.includes("from");
+    if (!hasFrom && !line.includes("Repo.")) continue;
     for (const m of line.matchAll(ECTO_REPO_RE)) {
       // `Repo.one(Sites.guests_query(site))`: a function building the query — a read of no named schema.
       if (!/^[A-Z]/.test(lastSeg(m[2]))) {
@@ -165,7 +168,7 @@ function extractElixirDataSources(lines: string[]): DataSourceInfo[] {
       out.push({ kind: "database", name: `Repo.${m[1]}`, target: entity, calls: [], line: ln, entity, access: m[1]!.endsWith("_all") && m[1] !== "all" ? "write" : "read" });
     }
     // A query a bulk write wraps from the next line on is that write's.
-    const bulk = i > 0 ? ECTO_BULK_OPEN_RE.exec(lines[i - 1] ?? "") ?? (i > 1 && ECTO_FROM_OPEN_RE.test(lines[i - 1] ?? "") ? ECTO_BULK_OPEN_RE.exec(lines[i - 2] ?? "") : null) : null;
+    const bulk = hasFrom && i > 0 ? ECTO_BULK_OPEN_RE.exec(lines[i - 1] ?? "") ?? (i > 1 && ECTO_FROM_OPEN_RE.test(lines[i - 1] ?? "") ? ECTO_BULK_OPEN_RE.exec(lines[i - 2] ?? "") : null) : null;
     const fromRow = (m: RegExpMatchArray, at: number) => {
       // A schema is a module; `Base.events_query(…)` is a function building a query, over the table it is handed.
       const call = m[1] && (!/^[A-Z]/.test(lastSeg(m[1])) || m[2] !== undefined);

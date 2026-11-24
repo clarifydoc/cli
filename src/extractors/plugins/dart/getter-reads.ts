@@ -118,7 +118,7 @@ function bodyOf(code: CodeView, fn: FunctionInfo): { text: string; position(at: 
   const slice = code.text.slice(from, to < 0 ? undefined : to);
   // Past the parameter list: the first `=>` or `{` at parenthesis depth zero after the name's own parentheses.
   const name = simpleName(fn.name);
-  let i = slice.search(new RegExp(String.raw`(?<![\w$])${escapeRegex(name)}\b`));
+  let i = firstWord(slice, name);
   if (i < 0) i = 0;
   let depth = 0;
   let start = -1;
@@ -133,6 +133,18 @@ function bodyOf(code: CodeView, fn: FunctionInfo): { text: string; position(at: 
   return { text: slice.slice(start), position: (at) => code.positionOf(from + start + at) };
 }
 
+/** Where `name` first stands as a whole word (`(?<![\w$])name\b`), or -1. */
+function firstWord(text: string, name: string): number {
+  // A name ending in `$` has no `\b` after it, so the pattern stays the reference.
+  if (name === "" || name.includes("$") || /[^\w]/.test(name)) return text.search(new RegExp(String.raw`(?<![\w$])${escapeRegex(name)}\b`));
+  for (let at = text.indexOf(name); at >= 0; at = text.indexOf(name, at + 1)) {
+    if (at > 0 && /[\w$]/.test(text[at - 1]!)) continue;
+    if (at + name.length < text.length && /\w/.test(text[at + name.length]!)) continue;
+    return at;
+  }
+  return -1;
+}
+
 interface CodeView {
   text: string;
   offsetOf(line: number, column: number): number;
@@ -145,12 +157,32 @@ interface CodeView {
  */
 function codeView(lines: readonly string[]): CodeView {
   const source = lines.join("\n");
-  const out = source.split("");
+  // The blanked ranges arrive in order and are merged, so the copy is built from slices of the source.
+  const parts: string[] = [];
+  let last = 0;
+  let pendingFrom = -1;
+  let pendingTo = -1;
+  const flush = (): void => {
+    if (pendingFrom < 0) return;
+    parts.push(source.slice(last, pendingFrom), source.slice(pendingFrom, pendingTo).replace(/[^\n]/g, " "));
+    last = pendingTo;
+    pendingFrom = -1;
+  };
   const starts: number[] = [];
   let acc = 0;
   for (const l of lines) { starts.push(acc); acc += l.length + 1; }
-  const blank = (a: number, b: number) => { for (let k = a; k < b && k < out.length; k++) if (out[k] !== "\n") out[k] = " "; };
   const n = source.length;
+  const blank = (from: number, to: number): void => {
+    const a = Math.max(from, last);
+    const b = Math.min(to, n);
+    if (b <= a) return;
+    if (pendingFrom >= 0 && a <= pendingTo) pendingTo = Math.max(pendingTo, b);
+    else {
+      flush();
+      pendingFrom = a;
+      pendingTo = b;
+    }
+  };
   /** Scans a literal whose opening quote is at `open` and body starts at `from`; returns the index after it. */
   const scanString = (open: number, from: number, quote: string, triple: boolean, raw: boolean): number => {
     blank(open, from);
@@ -194,8 +226,10 @@ function codeView(lines: readonly string[]): CodeView {
     }
     i++;
   }
+  flush();
+  parts.push(source.slice(last));
   return {
-    text: out.join(""),
+    text: parts.join(""),
     offsetOf: (line, column) => (line - 1 < starts.length ? starts[line - 1]! + column : source.length),
     positionOf: (offset) => {
       let lo = 0;

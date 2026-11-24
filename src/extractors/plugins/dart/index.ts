@@ -310,6 +310,9 @@ function restClassOf(lines: string[], at: number): string | null {
   return null;
 }
 
+/** A verb call on the line after its receiver: `  .get('/clubs')`. */
+const SPLIT_VERB_RE = new RegExp(String.raw`^(\s*)\.(${HTTP_VERBS})\s*\(`);
+
 export function extractDartDataSources(lines: string[]): DataSourceInfo[] {
   const restApi = lines.some((l) => /^\s*@RestApi\b/.test(l));
   const out: DataSourceInfo[] = [];
@@ -348,9 +351,9 @@ export function extractDartDataSources(lines: string[]): DataSourceInfo[] {
     }
 
     // HTTP clients — http / dio / generic clients; `await http` on one line, `.get(…)` on the next.
-    const split = new RegExp(String.raw`^(\s*)\.(${HTTP_VERBS})\s*\(`).exec(line);
+    const split = trimmed.startsWith(".") ? SPLIT_VERB_RE.exec(line) : null;
     let prev = i - 1;
-    while (prev >= 0 && !lines[prev]!.trim()) prev--;
+    while (split && prev >= 0 && !lines[prev]!.trim()) prev--;
     const splitReceiver = split && prev >= 0 ? /(?<![\w.])(?:this\.|[A-Z]\w*\.)?([A-Za-z_$]\w*)\s*$/.exec(lines[prev]!)?.[1] : undefined;
     const httpCalls = [...line.matchAll(HTTP_CALL_RE)].map((m) => ({ receiver: m[1]!, verb: m[2]!, index: m.index!, text: m[0]! }));
     if (split && splitReceiver) httpCalls.unshift({ receiver: splitReceiver, verb: split[2]!, index: split[1]!.length, text: split[0]!.slice(split[1]!.length) });
@@ -375,17 +378,17 @@ export function extractDartDataSources(lines: string[]): DataSourceInfo[] {
     }
 
     // Cloud Firestore — `.collection('x')`.
-    for (const m of line.matchAll(FIRESTORE_RE)) {
+    for (const m of line.includes(".collection(") ? line.matchAll(FIRESTORE_RE) : []) {
       push({ kind: "database", name: `collection(${m[1]})`, target: m[1]!, calls: [], line: ln, entity: m[1]! });
     }
 
     // Supabase — `supabase.from('table')`.
-    for (const m of line.matchAll(SUPABASE_RE)) {
+    for (const m of line.includes(".from(") ? line.matchAll(SUPABASE_RE) : []) {
       push({ kind: "database", name: `from(${m[1]})`, target: m[1]!, calls: [], line: ln, entity: m[1]! });
     }
 
     // Drift — statement builders and table getters; Isar — collection getters.
-    for (const m of line.matchAll(DRIFT_STATEMENT_RE)) {
+    for (const m of /select|update|delete|into/.test(line) ? line.matchAll(DRIFT_STATEMENT_RE) : []) {
       const entity = pascal(m[2]!);
       push({ kind: "database", name: `${m[1]}(${m[2]})`, target: entity, calls: [], line: ln, entity, access: m[1] === "select" || m[1] === "selectOnly" ? "read" : "write" });
     }
@@ -394,21 +397,21 @@ export function extractDartDataSources(lines: string[]): DataSourceInfo[] {
       const entity = pascal(m[1]!);
       push({ kind: "database", name: `db.${m[1]}.${m[2]}`, target: entity, calls: [], line: ln, entity, access: DRIFT_WRITE.test(m[2]!) ? "write" : "read" });
     }
-    for (const m of line.matchAll(ISAR_CALL_RE)) {
+    for (const m of line.includes("isar") ? line.matchAll(ISAR_CALL_RE) : []) {
       if (/^(?:txn|writeTxn|writeTxnSync|collection|close|clear)$/.test(m[1]!)) continue;
       const entity = pascal(singularize(m[1]!));
       push({ kind: "database", name: `isar.${m[1]}.${m[2]}`, target: entity, calls: [], line: ln, entity, access: /^(put|delete|clear)/.test(m[2]!) ? "write" : "read" });
     }
 
     // Raw SQL: Drift's `customSelect('SELECT … FROM logs')` and `customStatement` (often triple-quoted), sqflite's `rawQuery(…)`.
-    for (const m of line.matchAll(/\.(customSelect|customStatement|customUpdate|customInsert|rawQuery|rawInsert|rawUpdate|rawDelete)\s*\(/g)) {
+    for (const m of /custom|raw/.test(line) ? line.matchAll(/\.(customSelect|customStatement|customUpdate|customInsert|rawQuery|rawInsert|rawUpdate|rawDelete)\s*\(/g) : []) {
       const sql = dartStringArg(lines, i, m.index! + m[0].length);
       const literal = sql ? `"${sql.replace(/\$\{[^}]*\}|\$\w+/g, "{}").replace(/\s+/g, " ").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}";` : null;
       for (const h of literal ? extractSqlStringDataSources([literal]) : []) push({ ...h, name: `db.${m[1]}`, line: ln });
     }
 
     // sqflite — `db.query('users', …)`.
-    for (const m of line.matchAll(SQFLITE_RE)) {
+    for (const m of /db|database|txn|batch/.test(line) ? line.matchAll(SQFLITE_RE) : []) {
       const method = m[1]!;
       // A raw statement named its table above.
       if (/^raw/.test(method) && out.some((d) => d.line === ln && d.name === `db.${method}`)) continue;

@@ -32,10 +32,11 @@ export function addBodyLevelMembers(lines: string[], cls: ClassInfo, spec: Regex
   let other = 0;
   let opened = false;
   const last = Math.min(cls.endLine, lines.length);
+  const constructors = constructorPatterns(cls.name);
   for (let j = cls.line - 1; j < last; j++) {
     const code = codeOf(lines[j]!);
     if (opened && brace === 1 && other === 0 && !known.has(j + 1)) {
-      const fn = memberAt(lines, j, code, cls, spec, parseParam);
+      const fn = memberAt(lines, j, code, cls, spec, parseParam, constructors);
       if (fn) added.push(fn);
     }
     for (const c of code) {
@@ -88,6 +89,14 @@ const SIGNATURE_NAME_RE = new RegExp(
     String.raw`(?!(?:operator|factory|if|for|while|switch|return|await|new|const|final|var|late|super|this)\b)([A-Za-z_$]\w*)\s*(?:<[^;{(]*>)?\s*\(`,
 );
 
+/** The two constructor patterns of a class, built once per class and not once per member line. */
+function constructorPatterns(name: string): { named: RegExp; plain: RegExp } {
+  return {
+    named: new RegExp(LEADING + String.raw`(?:const\s+)?(?:factory\s+)?${name}\s*\.\s*([A-Za-z_$]\w*)\s*\(`),
+    plain: new RegExp(LEADING + String.raw`(?:const\s+)?(?:factory\s+)?(${name})\s*\(`),
+  };
+}
+
 function memberAt(
   lines: string[],
   j: number,
@@ -95,11 +104,15 @@ function memberAt(
   cls: ClassInfo,
   spec: RegexLangSpec,
   parseParam: (t: string) => ParamInfo | null,
+  constructors: { named: RegExp; plain: RegExp },
 ): FunctionInfo | null {
   // `Club(…)`, `factory Club(…)`, and a named constructor `Club.fromJson(…)` / `const factory Club.fromJson(…)` —
   // a member `fromJson` that makes a `Club` (`Club.fromJson(json)` is a call of it).
-  const named = code.match(new RegExp(LEADING + String.raw`(?:const\s+)?(?:factory\s+)?${cls.name}\s*\.\s*([A-Za-z_$]\w*)\s*\(`));
-  const ctor = named ?? code.match(new RegExp(LEADING + String.raw`(?:const\s+)?(?:factory\s+)?(${cls.name})\s*\(`));
+  // Every pattern below ends at a `(`, and the constructor ones need the class's own name.
+  if (!code.includes("(")) return null;
+  const mentionsClass = code.includes(cls.name);
+  const named = mentionsClass ? code.match(constructors.named) : null;
+  const ctor = named ?? (mentionsClass ? code.match(constructors.plain) : null);
   const sig = ctor ? null : code.match(SIGNATURE_NAME_RE);
   const m = ctor ?? sig;
   if (!m) return null;
