@@ -3,7 +3,9 @@ import { routeSymbolPath } from "./route-symbol.js";
 import type { ProjectAnalysis, SymbolLink } from "../types/analysis.js";
 import { idFactory, mermaidLabel } from "./mermaid-text.js";
 import { trimTrailingSlashes } from "../extractors/plugins/shared/path-utils.js";
-import type { SequenceFrame } from "./sequence-frames.js";
+import { frameArms, frameSpan, type FileSource, type SequenceFrame } from "./sequence-frames.js";
+import { callSitesIn, leafName } from "./sequence-order.js";
+import { inlineRouteDefinitions } from "./route-symbol.js";
 
 /**
  * What an endpoint does, in order, as a Mermaid `sequenceDiagram`: the
@@ -28,6 +30,12 @@ export interface SequenceOptions {
   fanOut?: number;
   /** Loops and branches per file (`sequenceFrames`). */
   frames?: ReadonlyMap<string, readonly SequenceFrame[]>;
+  /**
+   * Each file's text and function spans (`sequenceReading`): with them, calls are drawn in the order the body
+   * runs them — arguments before the call receiving them, a chain left to right, every site of a repeated call,
+   * `await` marked — instead of by line and target name.
+   */
+  sources?: ReadonlyMap<string, FileSource>;
   /**
    * `class` (the default): a lane per class, else per file. `package`: a lane
    * per directory, so a long flow reads at the level of its modules; the
@@ -155,6 +163,38 @@ export function buildSequence(summary: ProjectAnalysis, seed: { file: string; sy
   const start = lane(laneOf(seed.file, seed.symbol));
   say(client, start, title);
 
+  const routeSpans = new Map<string, { line: number; endLine: number }>();
+  if (opts.sources) for (const d of inlineRouteDefinitions(summary)) routeSpans.set(`${d.file}::${d.symbol}`, { line: d.line, endLine: d.endLine });
+  const POS = 100000;
+  /**
+   * A function's calls as drawn: in run order with every site where the body is read (`opts.sources`), else one per
+   * link by line. A name with one link takes all its sites; with several, a site goes to the link of its own line.
+   */
+  const callEvents = (file: string, symbol: string, links: SymbolLink[]): { events: Array<{ link: SymbolLink; pos: number; key: number; awaited: boolean }>; columnar: boolean } => {
+    const legacy = () => ({ events: links.map((link) => ({ link, pos: link.sourceLine * POS, key: link.sourceLine * POS, awaited: false })), columnar: false });
+    const src = opts.sources?.get(file);
+    const range = routeSpans.get(`${file}::${symbol}`) ?? src?.functions.get(symbol);
+    if (!src || !range) return legacy();
+    const sites = callSitesIn(src.lines, range.line, range.endLine);
+    const byLeaf = new Map<string, SymbolLink[]>();
+    for (const l of links) {
+      const leaf = leafName(l.callName);
+      (byLeaf.get(leaf) ?? byLeaf.set(leaf, []).get(leaf)!).push(l);
+    }
+    const out: Array<{ link: SymbolLink; pos: number; key: number; awaited: boolean }> = [];
+    const placed = new Set<SymbolLink>();
+    for (const site of sites) {
+      const mine = byLeaf.get(site.name);
+      if (!mine) continue;
+      const link = mine.length === 1 ? mine[0]! : mine.find((l) => l.sourceLine === site.line);
+      if (!link) continue;
+      placed.add(link);
+      out.push({ link, pos: site.line * POS + site.column, key: site.endLine * POS + site.endColumn, awaited: site.awaited });
+    }
+    for (const l of links) if (!placed.has(l)) out.push({ link: l, pos: l.sourceLine * POS + (/\S/.exec(src.lines[l.sourceLine - 1] ?? "")?.index ?? 0), key: l.sourceLine * POS + POS - 1, awaited: false });
+    return { events: out.sort((a, b) => a.key - b.key), columnar: true };
+  };
+
   // A walk that entered a shared component from one user leaves it through that user's bindings only (`usageGate`).
   const gate = usageGate(summary.symbolLinks ?? []);
   const walk = (file: string, symbol: string, level: number, path: Set<string>, state = ""): void => {
@@ -170,42 +210,42 @@ export function buildSequence(summary: ProjectAnalysis, seed: { file: string; sy
       const to = gate.active ? gate.forward(state, keyOf(l.sourceFile, l.sourceSymbol), keyOf(l.targetFile, l.targetSymbol)) : "";
       if (to !== null) next.set(l, to);
     }
-    const out = [...next.keys()];
-    const shown = out.slice(0, fanOut);
+    const { events, columnar: cols } = callEvents(file, symbol, [...next.keys()]);
+    const shown = events.slice(0, fanOut);
     // The frames open around the calls drawn so far, outermost first.
     const frames = opts.frames?.get(file) ?? [];
-    const open: Array<{ frame: SequenceFrame; inElse: boolean }> = [];
-    const enter = (line: number) => {
-      while (open.length && (line < open[open.length - 1]!.frame.line || line > open[open.length - 1]!.frame.endLine)) {
+    const open: Array<{ frame: SequenceFrame; arm: number; end: number; arms: ReturnType<typeof frameArms> }> = [];
+    const enter = (pos: number) => {
+      while (open.length && (pos < frameSpan(open[open.length - 1]!.frame, cols).start || pos > open[open.length - 1]!.end)) {
         open.pop();
         body.push("  end");
       }
       for (const f of frames) {
-        if (line < f.line || line > f.endLine || open.some((o) => o.frame === f)) continue;
-        const enclosing = open[open.length - 1]?.frame;
-        if (enclosing && (f.line < enclosing.line || f.endLine > enclosing.endLine)) continue;
-        open.push({ frame: f, inElse: false });
+        const span = frameSpan(f, cols);
+        if (pos < span.start || pos > span.end || open.some((o) => o.frame === f)) continue;
+        const enclosing = open[open.length - 1];
+        if (enclosing && (span.start < frameSpan(enclosing.frame, cols).start || span.end > enclosing.end)) continue;
+        open.push({ frame: f, arm: 0, end: span.end, arms: frameArms(f, cols) });
         body.push(`  ${f.kind} ${mermaidLabel(f.label)}`);
       }
       for (const o of open) {
-        if (o.frame.kind === "alt" && !o.inElse && o.frame.elseLine && line >= o.frame.elseLine) {
-          o.inElse = true;
-          body.push("  else");
-        }
+        while (o.arm < o.arms.length && pos >= o.arms[o.arm]!.start) body.push(`  ${mermaidLabel(o.arms[o.arm++]!.text)}`);
       }
     };
-    for (const l of shown) {
-      enter(l.sourceLine);
+    for (const ev of shown) {
+      const l = ev.link;
+      enter(ev.pos);
       const callee = `${l.targetFile}::${l.targetSymbol}`;
       const to = lane(laneOf(l.targetFile, l.targetSymbol));
       const arrow = l.confidence === "AMBIGUOUS" ? "-)" : "->>";
+      const wait = ev.awaited ? "await " : "";
       if (path.has(callee)) {
-        say(here, to, `${short(l.targetSymbol)} ↻ recursion`, arrow);
+        say(here, to, `${wait}${short(l.targetSymbol)} ↻ recursion`, arrow);
         continue;
       }
       // An HTTP hop into another tier says the request, not the method it lands in.
       const text = l.relation === "http" ? `HTTP ${l.callName}` : short(l.targetSymbol);
-      say(here, to, text + (l.confidence === "AMBIGUOUS" ? " ?" : ""), arrow);
+      say(here, to, wait + text + (l.confidence === "AMBIGUOUS" ? " ?" : ""), arrow);
       const before = body.length;
       if (level < depth) walk(l.targetFile, l.targetSymbol, level + 1, new Set([...path, callee]), next.get(l));
       else body.push(`  Note over ${to}: depth ${depth} reached`);
@@ -213,7 +253,7 @@ export function buildSequence(summary: ProjectAnalysis, seed: { file: string; sy
       if (to !== here || body.length > before) say(to, here, "return", "-->>");
     }
     for (let i = open.length; i > 0; i--) body.push("  end");
-    if (out.length > shown.length) body.push(`  Note over ${here}: +${out.length - shown.length} more calls`);
+    if (events.length > shown.length) body.push(`  Note over ${here}: +${events.length - shown.length} more calls`);
   };
   walk(seed.file, seed.symbol, 1, new Set([`${seed.file}::${seed.symbol}`]));
 

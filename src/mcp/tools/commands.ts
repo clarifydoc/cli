@@ -40,11 +40,11 @@ export function sequenceTool(ctx: ToolContext): McpTool {
       if (!route && !symbol) throw new Error('Pass `route` ("POST /api/clubs", or a path when it is unique) or `symbol` ("ClubService.create").');
       const loaded = await requireAnalysis(ctx);
       const { buildSequence, sequenceFiles, sequenceSeed } = await import("../../core/sequence.js");
-      const { sequenceFrames } = await import("../../core/sequence-frames.js");
+      const { sequenceReading } = await import("../../core/sequence-frames.js");
       const seed = sequenceSeed(loaded.summary, { route, symbol, file: stringArg(args, "file") });
       const base = args.depth === undefined ? {} : { depth: numberArg(args, "depth", 8, { min: 1, max: 30 }) };
-      const frames = await sequenceFrames(ctx.store.projectRoot, sequenceFiles(loaded.summary, seed, base));
-      const diagram = buildSequence(loaded.summary, seed, { ...base, frames });
+      const { frames, sources } = await sequenceReading(ctx.store.projectRoot, sequenceFiles(loaded.summary, seed, base));
+      const diagram = buildSequence(loaded.summary, seed, { ...base, frames, sources });
       return {
         text: joinLines([
           `# ${seed.title} — in order (${loc(seed.file)})`,

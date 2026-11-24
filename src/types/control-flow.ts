@@ -51,6 +51,9 @@ export interface CfgNode {
   line: number;
   /** 1-based last source line of the construct. */
   endLine: number;
+  /** 0-based start column and end column (on `endLine`) of the construct; absent on the text-read tier and on synthetic nodes. */
+  column?: number;
+  endColumn?: number;
   /**
    * Branches hidden *inside* this node's own expressions — ternaries, `&&`/`||`
    * short circuits, and any branch inside a callback the graph does not
@@ -73,6 +76,16 @@ export interface CfgEdge {
    * edge to where it is really going, and this one records the detour.
    */
   unwind?: boolean;
+}
+
+export interface CfgRegion {
+  kind: "try";
+  line: number;
+  column: number;
+  endLine: number;
+  endColumn: number;
+  /** The clauses after the guarded block, in source order. */
+  arms: Array<{ kind: "catch" | "finally"; label: string; line: number; column: number }>;
 }
 
 export interface Cfg {
@@ -101,6 +114,11 @@ export interface Cfg {
    * not draw. See `control-flow.ts`.
    */
   hasFinally: boolean;
+  /**
+   * The `try` statements of the function with where each clause begins — what a sequence diagram needs to draw
+   * the guarded block and its `catch` / `finally` as sections. Absent when the function has none.
+   */
+  regions?: CfgRegion[];
   /**
    * Branches in code the graph did not draw because nothing reaches it — a
    * statement after a `return`, or a hoisted declaration below one.

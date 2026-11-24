@@ -6,7 +6,7 @@ import type {
   LanguageComplexitySpec,
   LanguageControlFlowSpec,
 } from "../types/language-plugin.js";
-import type { Cfg, CfgEdge, CfgNode, CfgNodeKind, FlowNode } from "../types/control-flow.js";
+import type { Cfg, CfgEdge, CfgNode, CfgNodeKind, CfgRegion, FlowNode } from "../types/control-flow.js";
 import { complexityFor, controlFlowFor, pluginFor } from "../extractors/registry.js";
 import { DEFAULT_COMPLEXITY } from "../extractors/shared/complexity-defaults.js";
 import {
@@ -124,6 +124,7 @@ class Builder {
   readonly edges: CfgEdge[] = [];
   readonly unmodelled = new Set<string>();
   hasFinally = false;
+  readonly regions: CfgRegion[] = [];
   /** Branches in statements nothing reaches. See `Cfg.unreachableBranches`. */
   unreachableBranches = 0;
 
@@ -158,9 +159,15 @@ class Builder {
     line: number,
     endLine: number,
     inlineBranches: number,
+    columns?: { column: number; endColumn: number },
   ): string {
     const id = `n${this.seq++}`;
-    this.nodes.push({ id, kind, label, nodeType, line, endLine, inlineBranches });
+    const node: CfgNode = { id, kind, label, nodeType, line, endLine, inlineBranches };
+    if (columns) {
+      node.column = columns.column;
+      node.endColumn = columns.endColumn;
+    }
+    this.nodes.push(node);
     return id;
   }
 
@@ -173,6 +180,7 @@ class Builder {
       src.startPosition.row + 1,
       src.endPosition.row + 1,
       inline,
+      { column: src.startPosition.column, endColumn: src.endPosition.column },
     );
   }
 
@@ -646,6 +654,11 @@ class Builder {
       const decl = this.named(c).find((x) => this.role(x) === undefined && x.type !== "block");
       return this.node("CATCH", decl ? `catch ${decl.text}` : "catch", c, 0);
     });
+    const arms = [
+      ...catches.map((c, i) => ({ kind: "catch" as const, label: this.nodes.find((x) => x.id === catchHeads[i])!.label, line: c.startPosition.row + 1, column: c.startPosition.column })),
+      ...(finalizer ? [{ kind: "finally" as const, label: "finally", line: finalizer.startPosition.row + 1, column: finalizer.startPosition.column }] : []),
+    ].sort((a, b) => a.line - b.line || a.column - b.column);
+    this.regions.push({ kind: "try", line: n.startPosition.row + 1, column: n.startPosition.column, endLine: n.endPosition.row + 1, endColumn: n.endPosition.column, arms });
 
     const guard: Guard = {};
     if (catchHeads.length > 0) guard.handler = catchHeads[0];
@@ -966,6 +979,7 @@ export function buildFromBody(body: FlowNode, ctx: BuildContext): Cfg {
     edges: builder.edges,
     unmodelled: [...builder.unmodelled].sort(),
     hasFinally: builder.hasFinally,
+    ...(builder.regions.length ? { regions: builder.regions } : {}),
     unreachableBranches: builder.unreachableBranches,
   };
   if (ctx.approximate) cfg.approximate = true;

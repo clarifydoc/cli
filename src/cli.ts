@@ -663,8 +663,9 @@ program
       // Loops and branches from each walked file's control flow, unless asked not to.
       const withFrames = async (seed: { file: string; symbol: string }) => {
         if (options.frames === false) return base;
-        const { sequenceFrames } = await import("./core/sequence-frames.js");
-        return { ...base, frames: await sequenceFrames(projectRoot, sequenceFiles(summary, seed, base)) };
+        const { sequenceReading } = await import("./core/sequence-frames.js");
+        const { frames, sources } = await sequenceReading(projectRoot, sequenceFiles(summary, seed, base));
+        return { ...base, frames, sources };
       };
       if (options.lock || options.check) {
         const { checkFlowLock, flowLock } = await import("./core/sequence-diff.js");
