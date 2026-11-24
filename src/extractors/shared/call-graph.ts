@@ -77,10 +77,10 @@ export function registerCallExtraction(language: Language, hooks: CallExtraction
  * (`const onClick = () => …`, `f = lambda: …`) binds a function — the plugin
  * extracts it as one — so passing it on stays a callback reference.
  */
-function collectBoundNames(site: Node, into: Set<string>, nested: ReadonlySet<string>, tables: BindingTables): void {
-  const fields = tables.sites.get(site.type);
+function collectBoundNames(site: Node, into: Set<string>, nested: ReadonlySet<string>, tables: BindingTables, type: string = site.type): void {
+  const fields = tables.sites.get(type);
   if (!fields) return;
-  if (!nested.has(site.type)) {
+  if (!nested.has(type)) {
     const value = site.childForFieldName("value") ?? site.childForFieldName("right");
     if (value && nested.has(value.type)) return;
   }
@@ -192,7 +192,6 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
   const callbackArgTypes = CALLBACK_ARG_BY_LANGUAGE.get(language) ?? NO_TYPES;
   const bindings = BINDINGS_BY_LANGUAGE.get(language) ?? NO_BINDINGS;
 
-  const visited = new Set<number>();
   const resolve = (n: Node) => resolveCallName(n, language);
 
   // Candidates in walk order. A callback-argument reference is only kept if
@@ -251,8 +250,7 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
   };
 
   function walk(node: Node, isRoot: boolean) {
-    if (visited.has(node.id)) return;
-    visited.add(node.id);
+    const type = node.type;
     // A subtree the caller reads as a function of its own (a test runner's nested `it`).
     if (!isRoot && skip?.(node)) return;
 
@@ -260,9 +258,9 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
     // body itself) — those are symbols of their own. Anonymous function
     // expressions are the exception: `onClick={() => addToCart(id)}` has no
     // symbol, so its calls attribute here.
-    if (!isRoot && nested.has(node.type) && !isAnonymousFnExpression(node, anonymous, named, locals)) return;
+    if (!isRoot && nested.has(type) && !isAnonymousFnExpression(node, anonymous, named, locals)) return;
     // A callback the plugin extracts as a function of its own: handed on from here, its calls its own.
-    const held = !isRoot && nested.has(node.type) ? hooks?.heldFunction?.(node) : null;
+    const held = !isRoot && nested.has(type) ? hooks?.heldFunction?.(node) : null;
     if (held) {
       push(held, node, true, null, null, null, null, null, null, "argument");
       return;
@@ -270,12 +268,12 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
 
     // Parameters, declarators, assignment targets, loop variables — every
     // scope this walk attributes to the function (incl. inline arrows).
-    collectBoundNames(node, boundHere, nested, bindings);
+    collectBoundNames(node, boundHere, nested, bindings, type);
     // A body's own bindings (not a function's parameters): what a bare call of that name calls.
-    if (!nested.has(node.type) && !anonymous.has(node.type)) collectBoundNames(node, localHere, nested, bindings);
+    if (!nested.has(type) && !anonymous.has(type)) collectBoundNames(node, localHere, nested, bindings, type);
 
     // Standard call expressions
-    if (callTypes.has(node.type)) {
+    if (callTypes.has(type)) {
       const name = resolve(node);
       if (name) {
         push(name, node, false, receiverTypeOf?.(node), keyOf?.(node, name), argsOf?.(node), argCountOf?.(node), argOriginsOf?.(node), argKindsOf?.(node));
@@ -289,7 +287,7 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
       }
 
       // Detect callback arguments: fn(callback) — identifiers passed as args
-      if (callbackArgTypes.has(node.type)) {
+      if (callbackArgTypes.has(type)) {
         const args = node.childForFieldName("arguments");
         if (args) {
           for (const arg of args.children) {
@@ -306,7 +304,8 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
     }
 
     // Names read without parentheses where the language runs a routine named so (Pascal `N := ACar.Shine`).
-    for (const r of hooks?.readNames?.(node) ?? []) {
+    const readNames = hooks?.readNames?.(node);
+    if (readNames) for (const r of readNames) {
       if (r.passed) {
         push(r.name, r.node, true, null, null, null, null, null, null, "argument");
         continue;
@@ -317,7 +316,8 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
 
     // Language extras: JSX component references, Python decorators, etc.
     hooks?.collectExtraCalls?.(node, addResult, resolve);
-    for (const name of hooks?.destructuredFromCall?.(node) ?? []) fromFactory.add(name);
+    const destructured = hooks?.destructuredFromCall?.(node);
+    if (destructured) for (const name of destructured) fromFactory.add(name);
 
     for (const child of node.children) {
       walk(child, false);
@@ -568,6 +568,17 @@ export function extractTopLevelCalls(tree: { rootNode: Node }, language: Languag
   return results;
 }
 
+/** The first value import whose module path ends in each last segment (what `imports.find` by that segment answers). */
+function importsByLastSegmentOf(imports: readonly ImportInfo[]): Map<string, ImportInfo> {
+  const bySegment = new Map<string, ImportInfo>();
+  for (const imp of imports) {
+    if (imp.isType) continue;
+    const segment = imp.source.slice(imp.source.lastIndexOf(".") + 1);
+    if (!bySegment.has(segment)) bySegment.set(segment, imp);
+  }
+  return bySegment;
+}
+
 /** Build import lookup maps from an imports array */
 export function buildImportMaps(imports: ImportInfo[]): {
   importMap: Map<string, string>;
@@ -628,6 +639,7 @@ export function classifyCalls(
   // Module paths a file imports whole by their dotted name (`import league._make`), longest first.
   const dottedSpecs = [...importMap.keys()].filter((s) => s.includes(".")).sort((a, b) => b.length - a.length);
 
+  let importsByLastSegment: Map<string, ImportInfo> | undefined;
   outer:
   for (const call of calls) {
     // 0. Auto-imported globals (e.g. Vue <script setup> compiler macros)
@@ -645,7 +657,9 @@ export function classifyCalls(
     // It may still be an API or database call by its name (steps 3-4).
     // A local destructured from a factory's result (`const { frac } = useFraction()`) is the factory's (step 2b).
     if (call.boundLocally && variableAliases?.has(call.name)) delete call.boundLocally;
-    const ownParam = call.boundLocally === true || ownBindings?.has(call.name.split(".")[0]!) === true;
+    const dotAt = call.name.indexOf(".");
+    const root = dotAt < 0 ? call.name : call.name.slice(0, dotAt);
+    const ownParam = call.boundLocally === true || ownBindings?.has(root) === true;
 
     // 1. Check cross-file: exact match on import specifier — unless the file declares the name itself:
     // a later `def save` rebinds an imported `save` (Python), a file's own top-level `fun save` wins over
@@ -660,7 +674,6 @@ export function classifyCalls(
     }
 
     // 2. Check cross-file: qualified call like `importedModule.method`
-    const root = call.name.split(".")[0]!;
     const defaultSource = ownParam ? undefined : defaultImports.get(root);
     if (defaultSource) {
       call.kind = "cross-file";
@@ -738,9 +751,7 @@ export function classifyCalls(
       // Try matching root against import source module names
       // Python: user_service matches last segment of "services.user_service"
       // Most fuzzy of the heuristics — just the last segment.
-      const moduleMatch = imports.find(imp =>
-        !imp.isType && imp.source.split(".").pop() === root
-      );
+      const moduleMatch = (importsByLastSegment ??= importsByLastSegmentOf(imports)).get(root);
       if (moduleMatch) {
         call.kind = "cross-file";
         call.target = moduleMatch.source;

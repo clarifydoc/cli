@@ -518,17 +518,29 @@ const INTERPOLATIONS: ReadonlySet<string> = new Set(["interpolation", "template_
  * is concatenation.
  */
 function mentions(text: string, name: string): boolean {
-  const before = name.startsWith("$") ? "(?<![\\w$])" : "(?<![\\w$.])";
-  return new RegExp(`${before}${escape(name)}(?![\\w$])`).test(text);
+  if (name === "") return new RegExp(`(?<![\\w$.])(?![\\w$])`).test(text);
+  const sigil = name.startsWith("$");
+  // `(?<![\w$.])name(?![\w$])` by occurrence: asked of every tainted name in every statement, so no pattern is built per name.
+  for (let at = text.indexOf(name); at >= 0; at = text.indexOf(name, at + 1)) {
+    if (at > 0) {
+      const before = text.charCodeAt(at - 1);
+      if (isIdentCode(before) || (!sigil && before === 46)) continue;
+    }
+    const after = text.charCodeAt(at + name.length);
+    if (after === after && isIdentCode(after)) continue;
+    return true;
+  }
+  return false;
+}
+
+/** `[\w$]`: a letter, digit, underscore or dollar sign. */
+function isIdentCode(c: number): boolean {
+  return (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || c === 95 || (c >= 97 && c <= 122) || c === 36;
 }
 
 /** A request read as text, one spelling of the quotes (`params["id"]` and `params['id']` are one read, `params["name"]` another). */
 function readKey(read: string): string {
   return read.replace(/["'`]/g, "'").replace(/\s+/g, "");
-}
-
-function escape(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** The identifiers a binding target names (`x`, `a, b`, `{ id, name: n }`, `[first]`). */

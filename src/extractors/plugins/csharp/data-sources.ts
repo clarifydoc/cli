@@ -8,6 +8,7 @@ import { csharpCallClient } from "./http-clients.js";
 import { csharpResponseReads } from "./response-reads.js";
 import { csharpJsonBody } from "./request-body.js";
 import { escapeRegex } from "../shared/path-utils.js";
+import { lineIndex } from "../shared/text-scan.js";
 import { REFIT_GATE, refitInterfaceCalls } from "./refit.js";
 import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level.js";
 
@@ -414,6 +415,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     // A method's own `const string url = "…";` is a local of that method (read
     // below as a string local by its line), never a value of the whole file.
     const localConsts = new Set<number>();
+    const lineAt = lineIndex(sourceText);
     if (/\bconst\s+string\b/.test(sourceText)) {
       for (const d of tree.rootNode.descendantsOfType("local_declaration_statement")) {
         if (d.text.startsWith("const")) localConsts.add(d.startPosition.row + 1);
@@ -422,7 +424,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     // `const string`, and a `readonly`/`static` string field initialized with a
     // literal (`protected readonly string _basePath = "internal/api";`).
     for (const m of sourceText.matchAll(/\b(?:const|readonly|static)\s+string\s+(\w+)\s*=\s*[@$]*"([^"]*)"\s*;/g)) {
-      if (localConsts.size > 0 && localConsts.has(sourceText.slice(0, m.index!).split("\n").length)) continue;
+      if (localConsts.size > 0 && localConsts.has(lineAt(m.index!))) continue;
       if (!this.constStrings.has(m[1]!)) this.constStrings.set(m[1]!, m[2]!);
     }
     // A field read from the environment with a default (`= Environment.GetEnvironmentVariable("TOPIC") ?? "orders"`) is its default.
@@ -448,7 +450,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     // Each initializer as written (`$"api/v1/x"`, `GetPath(id) + "/x"`); `evalUri` reads it.
     for (const m of sourceText.matchAll(/\b(?:var|string)\s+(\w+)\s*=\s*([^;]+);/g)) {
       if (!m[2]!.includes('"') && !/^\s*(?:\w+|(?:string|String)\.Format|[\w.]*Combine(?:Uri|Url)\w*)\s*\(/.test(m[2]!)) continue;
-      const line = sourceText.slice(0, m.index!).split("\n").length;
+      const line = lineAt(m.index!);
       this.stringLocals.push({ name: m[1]!, line, value: m[2]!.trim() });
     }
   }

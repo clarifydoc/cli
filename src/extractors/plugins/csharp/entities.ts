@@ -777,6 +777,8 @@ export class CSharpEntityExtractor extends EntityExtractor {
     const out: EntityRelation[] = [];
     const lines = ctx.lines ?? [];
     if (lines.length === 0) return out;
+    // The statements kept are those naming `.Entity<`; a file that says no such thing joins no line (most files).
+    if (!ENTITY_HEAD_RE.test(ctx.sourceText)) return out;
 
     let statements: string[];
     try {
@@ -1013,7 +1015,7 @@ export class CSharpEntityExtractor extends EntityExtractor {
    * focused on EF configuration and cheap.
    */
   private joinFluentStatements(lines: string[]): string[] {
-    return this.collectStatements(lines, (s) => /\.\s*Entity\s*</.test(s));
+    return this.collectStatements(lines, (s) => ENTITY_HEAD_RE.test(s));
   }
 
   /**
@@ -1090,6 +1092,8 @@ const AUTO_PROP_RE =
 const RECORD_HEADER_RE = /\brecord\b(?:\s+(?:class|struct))?\s+[A-Za-z_]\w*\s*(?=\()/;
 // `modelBuilder.Entity<Type>()` — the head of a Fluent API configuration chain.
 const ENTITY_CALL_RE = /\b\w+\s*\.\s*Entity\s*<\s*([^>]+?)\s*>\s*\(/;
+// A fluent chain's head: `modelBuilder.Entity<Club>()`.
+const ENTITY_HEAD_RE = /\.\s*Entity\s*</;
 // A statement that configures a relationship (vs. Property/HasKey/ToTable/…),
 // used to keep only relation chains inside an `IEntityTypeConfiguration<T>`.
 const REL_VERB_RE = /\.\s*(?:HasOne|HasMany)\s*[(<]/;

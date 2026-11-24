@@ -231,6 +231,36 @@ const DELEGATE_WORDS_RE = /\b(?:Action|Func|Predicate|EventHandler|Comparison|Co
 const NO_NAMES: ReadonlySet<string> = new Set();
 const escapeRe =(s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+const isWordCode = (c: number): boolean => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || c === 95 || (c >= 97 && c <= 122);
+const isSpaceCode = (c: number): boolean => c === 32 || (c >= 9 && c <= 13) || c === 160 || c === 0xfeff || c === 0x2028 || c === 0x2029 || c === 0x1680 || (c >= 0x2000 && c <= 0x200a) || c === 0x202f || c === 0x205f || c === 0x3000;
+
+/** `\bname\s*\(` found in `text`, without compiling a pattern per member (the name is any parameter's, so a regex per call). */
+function calledAsName(text: string, name: string): boolean {
+  const startsWord = isWordCode(name.charCodeAt(0));
+  for (let at = text.indexOf(name); at >= 0; at = text.indexOf(name, at + 1)) {
+    if ((at > 0 && isWordCode(text.charCodeAt(at - 1))) === startsWord) continue;
+    let i = at + name.length;
+    while (i < text.length && isSpaceCode(text.charCodeAt(i))) i++;
+    if (text.charCodeAt(i) === 40) return true;
+  }
+  return false;
+}
+
+/** `[(,]\s*name\s*[,)]` found in `text`: the name written as a whole argument. */
+function handedOnAsArgument(text: string, name: string): boolean {
+  for (let at = text.indexOf(name); at >= 0; at = text.indexOf(name, at + 1)) {
+    let i = at + name.length;
+    while (i < text.length && isSpaceCode(text.charCodeAt(i))) i++;
+    const after = text.charCodeAt(i);
+    if (after !== 44 && after !== 41) continue;
+    let j = at - 1;
+    while (j >= 0 && isSpaceCode(text.charCodeAt(j))) j--;
+    const before = j >= 0 ? text.charCodeAt(j) : -1;
+    if (before === 40 || before === 44) return true;
+  }
+  return false;
+}
+
 /**
  * Whether a member's text can state a function value flow at all: a delegate type or `Invoke`, an event
  * subscription, a delegate the class or file declares, a method of the class named without a call (a method
@@ -244,11 +274,9 @@ function mayStateFlow(text: string, params: readonly ParamInfo[], ctx: ClassValu
   if (text.length < 40000 && /\bvar\s+(\w+)\s*=[^;]*;[\s\S]*?\b\1\s*\(/.test(text)) return true;
   // A delegate parameter is a value to hand on, whatever the body says of it.
   if (params.some((p) => shapeOfType(p.type, ctx?.delegates ?? NO_NAMES))) return true;
-  const called = params.map((p) => p.name).filter(Boolean).map(escapeRe);
-  if (called.length > 0 && new RegExp(`\\b(?:${called.join("|")})\\s*\\(`).test(text)) return true;
+  if (params.some((p) => p.name && calledAsName(text, p.name))) return true;
   // A parameter of a plain type name (a delegate another file may declare) handed on as an argument: `_board.Add(handler)`.
-  const plain = params.filter((p) => p.name && plainTypeName(p.type)).map((p) => escapeRe(p.name));
-  if (plain.length > 0 && new RegExp(`[(,]\\s*(?:${plain.join("|")})\\s*[,)]`).test(text)) return true;
+  if (params.some((p) => p.name && plainTypeName(p.type) && handedOnAsArgument(text, p.name))) return true;
   if (!ctx) return false;
   if (ctx.signal === undefined) {
     const parts: string[] = [];

@@ -121,18 +121,32 @@ export function findBodyNode(
   let bestSpan = -1;
 
   function walk(n: TSNode, nStart: number, nEnd: number) {
-    if (nStart >= startLine && nEnd <= endLine && nEnd - nStart > bestSpan) {
-      best = n;
-      bestSpan = nEnd - nStart;
+    if (nStart >= startLine && nEnd <= endLine) {
+      if (nEnd - nStart > bestSpan) {
+        best = n;
+        bestSpan = nEnd - nStart;
+      }
+      // Everything below lies inside the range too, in no more lines, so none can beat (`>`) this node: the whole
+      // body of the function is not walked.
+      return;
     }
 
-    for (const child of n.children) {
+    // Siblings are in source order and never overlap, so their end rows do not decrease and their start rows do not
+    // either: the children reaching the range are found by a binary search for the first that ends inside it, and the
+    // scan stops at the first that starts past it (a class with hundreds of members is read once per function).
+    const kids = n.children;
+    let lo = 0;
+    let hi = kids.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (endRow(kids[mid]!) + 1 >= startLine) hi = mid;
+      else lo = mid + 1;
+    }
+    for (let i = lo; i < kids.length; i++) {
+      const child = kids[i]!;
       const cStart = child.startPosition.row + 1;
-      const cEnd = endRow(child) + 1;
-      // Only recurse if child overlaps the target range
-      if (cEnd >= startLine && cStart <= endLine) {
-        walk(child, cStart, cEnd);
-      }
+      if (cStart > endLine) break;
+      walk(child, cStart, endRow(child) + 1);
     }
   }
 
