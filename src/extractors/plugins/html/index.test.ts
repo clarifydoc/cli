@@ -314,4 +314,12 @@ describe("component scopes of inline handlers (Alpine x-data, AngularJS ng-contr
   <a href="#" ng-click="vm.save()">Save</a>
 </section>`)).toEqual(["save:ClubCtrl"]);
   });
+
+  it("states a request's column only while the masked line still reads as the given one up to it", () => {
+    const cols = (text: string) => extractHtmlInteractiveElements(lines(text), { requests: true }).map((e) => e.column);
+    // Nothing masked before the tag: the column is where the tag opens, on every tag of a long line.
+    expect(cols(`<a href="/clubs">A</a> <a href="/players">B</a>`)).toEqual([0, 23]);
+    // A comment before the tag shifts the masked text away from the given one, so no column is stated after it.
+    expect(cols(`<!-- x --><a href="/clubs">A</a> <a href="/players">B</a>`)).toEqual([0, undefined]);
+  });
 });

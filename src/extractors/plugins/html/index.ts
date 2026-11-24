@@ -333,6 +333,15 @@ function innerText(markup: string[], line: number, from: number, tag: string): s
   return clean ? (clean.length > 60 ? clean.slice(0, 57) + "…" : clean) : undefined;
 }
 
+/** The length of the longest prefix two strings share. */
+function commonPrefixLength(a: string, b: string): number {
+  if (a === b) return a.length;
+  const n = Math.min(a.length, b.length);
+  let k = 0;
+  while (k < n && a.charCodeAt(k) === b.charCodeAt(k)) k++;
+  return k;
+}
+
 /** A component scope a template opens: Alpine's `x-data="clubForm"`, AngularJS's `ng-controller="ClubCtrl as vm"`. */
 const SCOPE_ATTR_RE = /(?:^|\s)(?:(x-data)|(?:data-)?(ng-controller))\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
 /** The name a scope attribute states ("" for an inline `x-data="{ … }"`, which no registered component answers), or null when the tag opens none. */
@@ -384,6 +393,8 @@ export function extractHtmlInteractiveElements(lines: string[], opts: { requests
     opts.requests && request ? { ...el, handler: handlerOf(request.method, request.target), request } : el;
   for (let i = 0; i < markup.length; i++) {
     const ln = i + 1;
+    // How far the masked line still reads as the given one, found once per line (a minified page is one line of megabytes).
+    let sameUpTo: number | undefined;
     for (const m of markup[i]!.matchAll(TAG_RE)) {
       const tag = m[1]!.toLowerCase();
       if (m[0][1] === "/") {
@@ -427,7 +438,7 @@ export function extractHtmlInteractiveElements(lines: string[], opts: { requests
       // What a page script can find a handler-less element by.
       const selector = inline ? undefined : selectorOf(tag, attrs);
       // The tag's column, only while the masked line still reads as the given one up to it (a removed comment shifts it).
-      const column = lines[i]!.startsWith(markup[i]!.slice(0, m.index!)) ? m.index! : undefined;
+      const column = m.index! <= (sameUpTo ??= commonPrefixLength(lines[i]!, markup[i]!)) ? m.index! : undefined;
       const add = (el: InteractiveElementInfo): void => {
         if (column !== undefined && (el.request || el.ownViewPost)) el = { ...el, column };
         const scope = ownScope ?? scopes[scopes.length - 1]?.name;
