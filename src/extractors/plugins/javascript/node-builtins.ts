@@ -14,7 +14,11 @@ export const NODE_BUILTINS: ReadonlySet<string> = new Set([
  * basename match finds. Undefined for everything else (the generic rules decide).
  */
 export function jsImportedFile(_importingFile: string, source: string): null | undefined {
-  if (source.startsWith("node:")) return null;
-  const root = source.split("/")[0]!;
-  return NODE_BUILTINS.has(root) ? null : undefined;
+  return isNodeBuiltinImport(_importingFile, source) ? null : undefined;
+}
+
+/** Whether a JS/TS import names a Node built-in (`path`, `fs/promises`, `node:test`): the manifest's `standardImport`. */
+export function isNodeBuiltinImport(_importingFile: string, source: string): boolean {
+  if (source.startsWith("node:")) return true;
+  return NODE_BUILTINS.has(source.split("/")[0]!);
 }

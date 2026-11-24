@@ -97,7 +97,8 @@ import { reactRouterResolver } from "./routes/react-router-resolver.js";
 import { angularRouterResolver } from "./routes/angular-router-resolver.js";
 import { jsGrpcStub } from "../shared/grpc-stubs.js";
 import { firstStub, jsThriftStub } from "../shared/thrift-stubs.js";
-import { judgeHtmlAssignment } from "./html-escapes.js";
+import { judgeHtmlAssignment, judgeLiteralShellCommand } from "./html-escapes.js";
+import { jsLiteralAt } from "./literal-spans.js";
 import { nuxtAutoImports } from "./nuxt-auto-imports.js";
 
 const TS_BUILTINS: ReadonlySet<string> = new Set<string>([
@@ -157,6 +158,7 @@ const SECURITY_RULES: readonly SecurityRule[] = [
     pattern: /new\s+Function\s*\(/,
     message: "Function constructor is similar to eval(). Consider alternatives.",
     priority: 31,
+    excludeTest: true,
   },
   // A shell command built from values: `exec(\`git log ${ref}\`)`,
   // `execSync("rm -rf " + dir)`. The rule used to fire on every
@@ -178,6 +180,7 @@ const SECURITY_RULES: readonly SecurityRule[] = [
     message: "A process started through a shell (shell: true): its arguments are parsed by the shell. Drop the shell or quote every value.",
     priority: 32,
     excludeTest: true,
+    judge: judgeLiteralShellCommand,
   },
   {
     category: "insecure-config",
@@ -355,6 +358,7 @@ export const typescriptMeta: LanguagePluginMeta = {
   regexControlFlow: REGEX_CONTROL_FLOW,
   securityRules: SECURITY_RULES,
   securityPostScan: consolePostScan,
+  securityInLiteral: jsLiteralAt,
   knownPackages: npmPackages,
   apiCallRoots: API_CALL_ROOTS,
   dbCallRoots: DB_CALL_ROOTS,
@@ -387,6 +391,7 @@ export const javascriptMeta: LanguagePluginMeta = {
   regexControlFlow: REGEX_CONTROL_FLOW,
   securityRules: SECURITY_RULES,
   securityPostScan: consolePostScan,
+  securityInLiteral: jsLiteralAt,
   knownPackages: npmPackages,
   apiCallRoots: API_CALL_ROOTS,
   dbCallRoots: DB_CALL_ROOTS,

@@ -6,6 +6,7 @@ import {
   collectExternalPackages,
   collectInstalledOwners,
   attachPackageUsage,
+  declaredPackageImports,
   markLocalPackages,
   deriveFrameworksFromPackages,
   mergeFrameworkDetections,
@@ -383,6 +384,26 @@ function fileWith(language: Language, sources: string[]): FileAnalysis {
 function pkg(eco: PackageEcosystem, name: string): ExternalPackage {
   return { name, version: null, ecosystem: eco, scope: "prod", category: "other", declaredIn: "m" };
 }
+
+describe("declaredPackageImports", () => {
+  it("answers for a declared package and its subpaths, never for a local one or a project path", () => {
+    const declared = declaredPackageImports([
+      pkg("npm", "track-parser"),
+      pkg("npm", "@pitwall/timing"),
+      { ...pkg("npm", "@league/kit"), local: "kit" },
+      pkg("go", "gorm.io/gorm"),
+    ]);
+    expect(declared("track-parser", "typescript")).toBe(true);
+    expect(declared("@pitwall/timing/laps", "javascript")).toBe(true);
+    expect(declared("@league/kit", "typescript")).toBe(false);
+    expect(declared("./track-parser", "typescript")).toBe(false);
+    expect(declared("@/garage", "typescript")).toBe(false);
+    expect(declared("gorm.io/gorm/clause", "go")).toBe(true);
+    expect(declared("gorm.io/gormx", "go")).toBe(false);
+    // Another ecosystem's declaration says nothing about this language's import.
+    expect(declared("gorm.io/gorm", "typescript")).toBe(false);
+  });
+});
 
 describe("attachPackageUsage", () => {
   it("marks npm packages used/unused (reliable ecosystem asserts unused)", () => {

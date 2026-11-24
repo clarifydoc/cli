@@ -1,4 +1,22 @@
-import type { SecurityRule } from "../../../types/language-plugin.js";
+import type { SecurityJudgement, SecurityRule } from "../../../types/language-plugin.js";
+
+/**
+ * `proc_open` handed an array (PHP 7.4+) starts the program with those
+ * arguments and no shell: nothing in them is read as a command. An array
+ * written in the call, or a variable whose nearest assignment before the call
+ * is an array (`[…]`, `array(…)`, `array_merge([…], …)`), drops the finding.
+ */
+function judgeProcOpenArgv(source: string, at: number): SecurityJudgement | undefined {
+  const call = /^proc_open\s*\(\s*/.exec(source.slice(at, at + 200));
+  if (!call) return undefined;
+  const arg = source.slice(at + call[0].length, at + call[0].length + 120);
+  if (/^(?:\[|array\s*\()/i.test(arg)) return { drop: true };
+  const name = /^\$(\w+)\s*[,)]/.exec(arg)?.[1];
+  if (!name) return undefined;
+  const before = source.slice(Math.max(0, at - 4000), at);
+  const assigned = [...before.matchAll(new RegExp(String.raw`\$${name}\s*=(?!=)\s*([^;]{0,40})`, "g"))].at(-1)?.[1];
+  return assigned !== undefined && /^(?:\[|array\s*\(|array_merge\s*\(\s*(?:\[|array\s*\())/i.test(assigned) ? { drop: true } : undefined;
+}
 
 /** PHP sinks and configuration that weaken an application (see the JVM rules for the stance). */
 export const PHP_SECURITY_RULES: readonly SecurityRule[] = [
@@ -25,6 +43,7 @@ export const PHP_SECURITY_RULES: readonly SecurityRule[] = [
     message: "An OS command is built from a variable. Escape every argument with escapeshellarg(), or avoid the shell.",
     priority: 52,
     excludeTest: true,
+    judge: judgeProcOpenArgv,
   },
   {
     category: "weak-crypto",

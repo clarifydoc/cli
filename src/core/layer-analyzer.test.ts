@@ -140,6 +140,36 @@ describe("detectLayerViolations", () => {
     expect(layers["web/vite.config.js"]).toBe("config"); // display keeps the layer
     expect(detectLayerViolations(analyses, graph, layers)).toHaveLength(0);
   });
+
+  // (real-repo FP) a `routes/` folder (ui) whose `minimal-api.ts` reads as services by its name imported its neighbour.
+  it("never flags a file importing its neighbour in the same folder", () => {
+    const files = ["src/routes/minimal-api.ts", "src/routes/garage.ts", "src/pages/pit/lane.ts"];
+    const layers = classifyFileLayers(files);
+    expect(layers["src/routes/minimal-api.ts"]).toBe("services");
+    expect(layers["src/routes/garage.ts"]).toBe("ui");
+    expect(detectLayerViolations(analyses, { "src/routes/minimal-api.ts": ["src/routes/garage.ts"] }, layers)).toHaveLength(0);
+    // A file in another folder is no neighbour.
+    expect(layers["src/pages/pit/lane.ts"]).toBe("ui");
+    expect(detectLayerViolations(analyses, { "src/routes/minimal-api.ts": ["src/pages/pit/lane.ts"] }, layers)).toHaveLength(1);
+  });
+
+  it("judges a file reaching into its own folder's subtree at its folder's layer too", () => {
+    const files = ["app/routers/api.py", "app/routers/clubs/__init__.py", "src/store.ts", "src/pages/Home.vue"];
+    const layers = classifyFileLayers(files);
+    expect(layers["app/routers/api.py"]).toBe("services");
+    expect(layers["app/routers/clubs/__init__.py"]).toBe("ui");
+    expect(detectLayerViolations(analyses, { "app/routers/api.py": ["app/routers/clubs/__init__.py"] }, layers)).toHaveLength(0);
+    // A folder that states no layer leaves the file's own: a store reaching up into the pages stays one.
+    expect(detectLayerViolations(analyses, { "src/store.ts": ["src/pages/Home.vue"] }, layers)).toHaveLength(1);
+  });
+
+  // (real-repo FP) a Vue `router/index.ts` importing the views it routes to was services → ui.
+  it("puts a router folder at the top of the stack with routes", () => {
+    const files = ["web/src/router/index.ts", "web/src/views/Clubs.vue"];
+    const layers = classifyFileLayers(files);
+    expect(layers["web/src/router/index.ts"]).toBe("ui");
+    expect(detectLayerViolations(analyses, { "web/src/router/index.ts": ["web/src/views/Clubs.vue"] }, layers)).toHaveLength(0);
+  });
 });
 
 describe("Struts/WebFlow Action + JVM form-bean classification (real-repo FPs)", () => {

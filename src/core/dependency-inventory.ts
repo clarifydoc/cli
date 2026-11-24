@@ -322,6 +322,54 @@ export async function collectInstalledOwners(
 // ecosystems a language imports from is its manifest's `packageEcosystems`.
 
 /**
+ * Whether an import names a third-party package a manifest of the repository
+ * declares (`import type { Node } from "web-tree-sitter"` beside a package.json
+ * listing `web-tree-sitter`): such an import is no project file, and a name it
+ * binds is never a project namesake. A package of this repository (`local`) is
+ * left to the import rules. Matched as usage is (`importKey`, `packageKey`,
+ * `prefixMatch` one way: the import under the declared name); an ecosystem
+ * whose imports name no package (Maven, NuGet) never answers true.
+ */
+export function declaredPackageImports(packages: readonly ExternalPackage[]): (source: string, language: Language) => boolean {
+  const exact = new Map<PackageEcosystem, Set<string>>();
+  for (const pkg of packages) {
+    if (pkg.local !== undefined) continue;
+    const spec = packageMatchingFor(pkg.ecosystem);
+    if (!spec?.importKey) continue;
+    let set = exact.get(pkg.ecosystem);
+    if (!set) exact.set(pkg.ecosystem, (set = new Set()));
+    set.add(spec.prefixMatch ? pkg.name.toLowerCase() : (spec.packageKey?.(pkg.name) ?? pkg.name.toLowerCase()));
+  }
+  const memo = new Map<string, boolean>();
+  return (source, language) => {
+    if (exact.size === 0) return false;
+    const memoKey = `${language}\0${source}`;
+    const known = memo.get(memoKey);
+    if (known !== undefined) return known;
+    let hit = false;
+    for (const eco of packageEcosystemsFor(language)) {
+      const names = exact.get(eco);
+      const spec = packageMatchingFor(eco);
+      const key = names && spec?.importKey?.(source.trim());
+      if (!key) continue;
+      if (names!.has(key)) hit = true;
+      else if (spec!.prefixMatch) {
+        const sep = spec!.prefixMatch.separator;
+        for (const name of names!) {
+          if (key.startsWith(name + sep)) {
+            hit = true;
+            break;
+          }
+        }
+      }
+      if (hit) break;
+    }
+    memo.set(memoKey, hit);
+    return hit;
+  };
+}
+
+/**
  * Mark each package used/unused by cross-referencing declarations against the
  * imports in analyzed files. An ecosystem whose every import is visible
  * (`assertsUnused`: npm, Go, Cargo, pub) reports a declared package nothing

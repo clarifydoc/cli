@@ -2409,6 +2409,13 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
   securityRules?: readonly SecurityRule[];
   /** Pre-filter applied to source before security regexes run (e.g. strip Python strings/comments). */
   securityPreprocess?(sourceText: string): string;
+  /**
+   * Whether an offset of the scanned source lies inside a literal the language
+   * writes as data (a quoted string, a regex literal): a rule's match that
+   * starts there is no code (`message: "eval() …"`, `pattern: /httpOnly: false/`)
+   * and is dropped. Raw rules (credentials) are matched wherever they are written.
+   */
+  securityInLiteral?(sourceText: string): (offset: number) => boolean;
   /** Extra whole-file checks run after the regex rules (e.g. console.log counting). */
   securityPostScan?(lines: string[], filePath: string): SecurityIssue[];
   /** Skip security scanning entirely (resource formats). */

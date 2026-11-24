@@ -19,7 +19,7 @@ function seg(names: string): RegExp {
  */
 const LAYER_PATTERNS: [RegExp, ArchLayer][] = [
   [seg("models?|entities|repositories|stores?|data|schemas?|serializers?|migrations?|persistence|dtos?"), "data"],
-  [seg("services?|api|clients|httpclients?|hooks|controllers?|endpoints?|routers?|middleware|handlers?|signals?"), "services"],
+  [seg("services?|api|clients|httpclients?|hooks|controllers?|endpoints?|middleware|handlers?|signals?"), "services"],
   [seg("components|widgets"), "components"],
   // `routes` sits with ui: in FE frameworks route dirs hold pages, in BE
   // frameworks endpoint surfaces — both top-of-stack, so their imports of
@@ -29,8 +29,10 @@ const LAYER_PATTERNS: [RegExp, ArchLayer][] = [
   // made every `app/Enums/X.php` a phantom violation target.
   // `flows?` sits with ui for the same reason as `routes`: a Spring WebFlow
   // definition binds view-states to JSPs AND invokes services — top-of-stack,
-  // so neither direction reads as an upward violation.
-  [seg("pages|views|screens|forms|routes?|flows?"), "ui"],
+  // so neither direction reads as an upward violation. So does `routers?`: a
+  // frontend's `router/index.ts` imports the views it routes to, a backend's
+  // `routers/` mounts its endpoints.
+  [seg("pages|views|screens|forms|routes?|routers?|flows?"), "ui"],
   [seg("utils?|helpers?|lib|shared|common|types?|typings|interfaces?|enums?"), "utils"],
   [seg("config|settings|constants|env"), "config"],
 ];
@@ -245,15 +247,24 @@ export function detectLayerViolations(
     const sourceLevel = LAYER_LEVEL[sourceLayer];
     if (sourceLevel < 0) continue; // exempt
 
+    const sourceDir = sourceFile.slice(0, sourceFile.lastIndexOf("/") + 1);
+    // The layer the source's folder states (`routers/` for `routers/api.py`, which its name makes services).
+    const folderLevel = sourceDir ? LAYER_LEVEL[LAYER_PATTERNS.find(([p]) => p.test(sourceDir.slice(0, -1)))?.[1] ?? "unknown"] : -1;
     for (const targetFile of targets) {
+      // A folder is one unit: its files may be named for different layers (`routes/minimal-api.ts`
+      // beside `routes/aspnet.ts`), and one using its neighbour crosses no boundary.
+      if (targetFile.startsWith(sourceDir) && !targetFile.slice(sourceDir.length).includes("/")) continue;
       const targetLayer = fileLayerMap[targetFile] ?? "unknown";
       const targetLevel = LAYER_LEVEL[targetLayer];
       if (targetLevel < 0) continue; // exempt
+      // Into its own folder's subtree a file also sits at its folder's layer, the higher of the two:
+      // `routers/api.py` mounting `routers/clubs/__init__.py` is the routers folder using its own parts.
+      const level = targetFile.startsWith(sourceDir) ? Math.max(sourceLevel, folderLevel) : sourceLevel;
 
       // Violation: source is in a lower layer and imports from a significantly higher layer
       // Allow 1-level proximity (e.g., services importing from components is ok)
       // Only flag 2+ level jumps (e.g., data importing from ui)
-      if (sourceLevel < targetLevel && (targetLevel - sourceLevel) > 1) {
+      if (level < targetLevel && (targetLevel - level) > 1) {
         const importLine = importLineOf(analyses, sourceFile, targetFile);
 
         violations.push({

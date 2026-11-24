@@ -132,6 +132,117 @@ describe("scanSecurity — xss innerHTML rule", () => {
     // A call handed only a string literal reads what it names; it escapes nothing.
     expect(xss('this.innerHTML = `<span>${this.getAttribute("score")}</span>`;').map((i) => i.severity)).toEqual(["high"]);
   });
+
+  // (real-repo FP) graph tooltips: the markup is built in a local, handed in as a parameter, or kept on a row object.
+  it("follows a local built before the statement, appends included", () => {
+    const tip = (row: string) => [
+      "const showCard = (e: MouseEvent, d: Club) => {",
+      "  let html = `<div class=\"name\">${esc(d.name)}</div>`;",
+      `  d.rows.forEach((row) => { html += ${row}; });`,
+      "  html += `<span style=\"color:${PALETTE.blue}\">Open the squad</span>`;",
+      "  tip.innerHTML = html;",
+      "};",
+    ].join("\n");
+    expect(xss(tip("`<div>${esc(String(row[0]))}</div>`")).map((i) => i.severity)).toEqual(["low"]);
+    expect(xss(tip("`<div>${row.coach}</div>`")).map((i) => i.severity)).toEqual(["high"]);
+  });
+
+  it("follows a parameter to the arguments every call passes", () => {
+    const flow = (second: string) => [
+      "const showCard = (ev: MouseEvent, html: string) => {",
+      "  tip.innerHTML = html;",
+      "};",
+      "node.on('mouseenter', (ev, n) => showCard(ev, `<b>${esc(n.name)}</b>`));",
+      `edge.on('mouseenter', (ev, e) => showCard(ev, ${second}));`,
+    ].join("\n");
+    expect(xss(flow("`<i>${esc(e.via)}</i>`")).map((i) => i.severity)).toEqual(["low"]);
+    expect(xss(flow("`<i>${e.via}</i>`")).map((i) => i.severity)).toEqual(["high"]);
+  });
+
+  it("reads an argument's names where the call is, a count included", () => {
+    const flow = (kind: string) => [
+      "const showCard = (ev: MouseEvent, html: string) => {",
+      "  tip.innerHTML = html;",
+      "};",
+      "node.on('mouseenter', (ev, n) => {",
+      "  const outs = edges.filter((e) => e.from === n.id).length, ins = edges.filter((e) => e.to === n.id).length;",
+      `  const what = ${kind};`,
+      "  showCard(ev, `<b>${esc(n.name)}</b><span>${what}</span><span>${ins} in · ${outs} out</span>`);",
+      "});",
+    ].join("\n");
+    expect(xss(flow('n.kind === "dialog" ? "dialog" : "page"')).map((i) => i.severity)).toEqual(["low"]);
+    expect(xss(flow('n.kind === "dialog" ? "dialog" : n.kind === "shell" ? "app shell" : "page"')).map((i) => i.severity)).toEqual(["low"]);
+    expect(xss(flow('n.kind === "dialog" ? "dialog" : n.kind === "shell" ? n.label : "page"')).map((i) => i.severity)).toEqual(["high"]);
+    expect(xss(flow("n.kind")).map((i) => i.severity)).toEqual(["high"]);
+  });
+
+  it("follows a member to every value the file gives it", () => {
+    const rows = (second: string) => [
+      "interface Row { tip: string; label: string }",
+      "rows.push({ label: c.name, tip: `<b>${escapeHtml(c.name)}</b>` });",
+      `rows.push({ label: p.name, tip: ${second} });`,
+      "cell.on('mouseenter', (r: Row) => { tip.innerHTML = r.tip; });",
+    ].join("\n");
+    expect(xss(rows('""')).map((i) => i.severity)).toEqual(["low"]);
+    expect(xss(rows("p.bio")).map((i) => i.severity)).toEqual(["high"]);
+  });
+
+  it("takes Mermaid's rendered SVG as sanitized, unless the file turns sanitizing off", () => {
+    const draw = (level: string) => [
+      `mermaid.initialize({ startOnLoad: false, securityLevel: "${level}" });`,
+      "mermaid.render('lineup', diagram).then(({ svg }) => {",
+      "  pitch.innerHTML = svg;",
+      "});",
+    ].join("\n");
+    expect(xss(draw("strict")).map((i) => i.severity)).toEqual(["low"]);
+    expect(xss(draw("loose")).map((i) => i.severity)).toEqual(["high"]);
+  });
+});
+
+// ─── Matches inside the code's own data ─────────────────────────────────────
+
+describe("scanSecurity — a match inside a string or regex literal is no code", () => {
+  // (real-repo FP) a scanner's own rule table: its patterns and messages name the sinks they look for.
+  const table = [
+    "const RULES = [",
+    "  { pattern: /dangerouslySetInnerHTML/, message: \"dangerouslySetInnerHTML can lead to XSS attacks.\" },",
+    "  { pattern: /new\\s+Function\\s*\\(/, message: \"Function constructor is similar to eval(). Consider alternatives.\" },",
+    "  { pattern: /\\bhttpOnly\\s*:\\s*false\\b/, message: \"A cookie readable from JavaScript (httpOnly: false).\" },",
+    "];",
+  ].join("\n");
+
+  it("drops a match that starts in a quoted string or a regex literal", () => {
+    expect(scanSecurity(table, "src/rules/garage.ts", "typescript").map((i) => i.category)).toEqual([]);
+  });
+
+  it("still reads code, and a template literal's text", () => {
+    const code = [
+      "const panel = <div dangerouslySetInnerHTML={{ __html: bio }} />;",
+      "const run = eval(input);",
+      "res.cookie('session', id, { httpOnly: false });",
+      "const page = `<script>el.innerHTML = clubName;</script>`;",
+    ].join("\n");
+    const found = scanSecurity(code, "src/pages/club.tsx", "typescript").map((i) => `${i.category}:${i.line}`);
+    expect(found).toEqual(expect.arrayContaining(["xss:1", "eval-exec:2", "insecure-config:3", "xss:4"]));
+  });
+});
+
+describe("scanSecurity — eval", () => {
+  it("never reads a method or function declared under the name", () => {
+    const evaluator = [
+      "class Scoreboard {",
+      "  private eval(expr: Expr, lookup: (name: string) => number): number {",
+      "    return this.eval(expr.left, lookup) + 1;",
+      "  }",
+      "}",
+    ].join("\n");
+    expect(scanSecurity(evaluator, "src/score/board.ts", "typescript").filter((i) => i.category === "eval-exec")).toEqual([]);
+    expect(scanSecurity("def eval(self, fixture):\n    return fixture.goals\n", "league/table.py", "python").filter((i) => i.category === "eval-exec")).toEqual([]);
+  });
+
+  it("skips test files", () => {
+    expect(scanSecurity("const score = eval(req.query.score);", "src/score.test.ts", "typescript").filter((i) => i.category === "eval-exec")).toEqual([]);
+  });
 });
 
 // ─── Hardcoded secrets: route paths and key-name constants (pit-stop FPs) ────
@@ -359,14 +470,22 @@ describe("scanSecurity — credentials by their format", () => {
   // Assembled at run time so no credential-shaped literal sits in the repository.
   const aws = "AKIA" + "Q3EGRT7" + "LMNP4XYZA";
   const stripe = "sk_" + "live_" + "4eC39HqLyjWDarjtT1zdp7dc";
+  const pemLine = "MIIEowIBAAKCAQEA" + "q7Tz9GarageKnVw2Lp8Rx4Ys6Bm1Hd3Fj5Kc0Nu7Qe2Wt9Zr";
 
   it("finds keys whatever the variable is called, in Python too", () => {
     expect(secrets(`const client = new Stripe("${stripe}");`)).toHaveLength(1);
     expect(secrets(`AWS_KEY_ID = "${aws}"`, "app/settings.py", "python")).toHaveLength(1);
-    expect(secrets("-----BEGIN RSA PRIVATE KEY-----\nMIIEow...", "deploy/key.ts")).toHaveLength(1);
+    expect(secrets("-----BEGIN RSA PRIVATE KEY-----\n" + pemLine + "\n" + pemLine, "deploy/key.ts")).toHaveLength(1);
+    expect(secrets(`const key = "-----BEGIN OPENSSH PRIVATE KEY-----\\n" +\n  "${pemLine}\\n";`, "deploy/key.ts")).toHaveLength(1);
     expect(secrets('const url = "postgres://admin:Pr0d-Hunter2@db.internal/app";')).toHaveLength(1);
     // A key pasted into a comment has leaked all the same.
     expect(secrets(`// old key: ${aws}`)).toHaveLength(1);
+  });
+
+  // (real-repo FP) a form's placeholder shows the header and no key.
+  it("skips a private key header with no key after it", () => {
+    expect(secrets('<textarea placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\\n…"} />', "src/garage/KeyForm.tsx")).toEqual([]);
+    expect(secrets('const PEM_START = "-----BEGIN RSA PRIVATE KEY-----";\nif (text.startsWith(PEM_START)) load(text);', "src/garage/keys.ts")).toEqual([]);
   });
 
   it("skips documentation values and placeholders", () => {
@@ -440,5 +559,33 @@ describe("scanSecurity — eval-exec", () => {
     expect(evals("model = Car()\nmodel.eval()\nself.engine.eval(x)\n", "league/a.py", "python")).toBe(0);
     expect(evals("window.eval(code);\neval(code);\n", "src/a.ts", "typescript")).toBe(2);
     expect(evals("garage.eval(code)\n", "src/a.ts", "typescript")).toBe(0);
+  });
+});
+
+describe("scanSecurity — PHP proc_open", () => {
+  const cmd = (src: string) => scanSecurity(src, "app/Garage/Runner.php", "php").filter((i) => i.category === "command-injection");
+  // (real-repo FP) an argument list starts the program with no shell.
+  it("drops proc_open handed an array, written in the call or in the variable", () => {
+    expect(cmd("<?php\n$proc = proc_open(['node', $script, $car], $spec, $pipes);\n")).toEqual([]);
+    expect(cmd("<?php\n$cmd = array_merge([$config['NODE'], __DIR__ . '/lap.js'], $args);\n$proc = proc_open($cmd, $spec, $pipes);\n")).toEqual([]);
+  });
+
+  it("keeps proc_open handed a command line", () => {
+    expect(cmd("<?php\n$cmd = 'node lap.js ' . $car;\n$proc = proc_open($cmd, $spec, $pipes);\n")).toHaveLength(1);
+    expect(cmd("<?php\n$proc = proc_open(\"node lap.js $car\", $spec, $pipes);\n")).toHaveLength(1);
+  });
+});
+
+describe("scanSecurity — a process started through a shell", () => {
+  const shell = (src: string) => scanSecurity(src, "tools/pit-crew.mjs", "javascript").filter((i) => i.category === "command-injection");
+  // (real-repo FP) `shell: true` kept so Windows finds `npm.cmd`, every value written in the call.
+  it("drops a command whose every value is a literal", () => {
+    expect(shell('const crew = spawn("npm", ["run", "dev"], {\n  cwd: garage,\n  shell: true,\n});')).toEqual([]);
+  });
+
+  it("keeps one carrying a value the call does not spell", () => {
+    expect(shell('const crew = spawn("npm", ["run", task], { shell: true });')).toHaveLength(1);
+    expect(shell("const crew = spawn(tool, [\"run\"], { shell: true });")).toHaveLength(1);
+    expect(shell("const crew = spawn(`npm run ${task}`, { shell: true });")).toHaveLength(1);
   });
 });

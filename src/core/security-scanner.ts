@@ -204,12 +204,28 @@ const GENERIC_RULES: SecurityRule[] = [
   {
     category: "eval-exec",
     severity: "medium",
-    // The bare builtin, or `eval` on a global object — never a method of some value (`model.eval()`).
-    pattern: /(?:(?<![.\w$>:])|(?<=\b(?:window|globalThis|self|global|Kernel|builtins|binding)\.))eval\s*\(/,
+    // The bare builtin, or `eval` on a global object — never a method of some value (`model.eval()`),
+    // nor a method or function declared under that name (`private eval(expr: Expr)`, `def eval(self, …)`).
+    pattern: /(?:(?<![.\w$>:])(?<!\b(?:def|function|func|fun|fn|sub|private|public|protected|internal|static|async|override|abstract|readonly)\s+)|(?<=\b(?:window|globalThis|self|global|Kernel|builtins|binding)\.))eval\s*\(/,
     message: "eval() executes arbitrary code. Avoid or validate input strictly.",
     priority: 30,
+    excludeTest: true,
   },
 ];
+
+/**
+ * Whether key material follows a private key's header: a base64 run of 40 or
+ * more characters within the rest of its line and the next four, read through
+ * string escapes (`\\n`), quotes, concatenation and PEM header fields.
+ */
+function pemBodyFollows(lines: readonly string[], row: number, col: number): boolean {
+  const after = [lines[row]!.slice(col), ...lines.slice(row + 1, row + 5)]
+    .join("\n")
+    .replace(/\\[nr]/g, "\n")
+    .replace(/^[A-Za-z-]+:.*$/gm, "")
+    .replace(/["'`+,\s]/g, "");
+  return /[A-Za-z0-9+/]{40,}/.test(after);
+}
 
 /**
  * Minified or bundled build artifact — not authored source. Findings in these
@@ -403,6 +419,8 @@ export function scanSecurity(
   const lines = splitLines(effectiveSource);
   let originalLines: string[] | null = null; // for snippets, split on first hit
   const isTest = isTestFile(filePath, language);
+  // Where the language writes data (a quoted string, a regex literal): a match starting there is no code.
+  let inLiteral: ((offset: number) => boolean) | undefined;
 
   // A finding at line `i` (0-based) whose match `text` starts at column `col`,
   // unless the line says it is not one: a comment, a suppression, a secret
@@ -420,7 +438,14 @@ export function scanSecurity(
       // A trailing comment (`x = 1; // token="…"`, `<!-- … -->`): the match is not code.
       if (TRAILING_COMMENT_RE.test(line.slice(0, col))) return;
     }
+    if (!rule.raw && plugin?.securityInLiteral) {
+      inLiteral ??= plugin.securityInLiteral(effectiveSource);
+      lineStarts ??= startsOfLines(effectiveSource);
+      if (inLiteral(lineStarts[i]! + col)) return;
+    }
     if (rule.category === "hardcoded-secret" && (isPlaceholderSecret(text) || isKeyShapedValue(text))) return;
+    // A private key's header with no key after it: a form's placeholder (`"-----BEGIN … PRIVATE KEY-----\\n…"`), a parser's marker.
+    if (rule.category === "hardcoded-secret" && /PRIVATE KEY/.test(text) && !pemBodyFollows(originalLines, i, col + text.length)) return;
     // Suppressed on the line (`nosec`, `NOSONAR`, `clarifydoc-ignore [rule…]`) or by
     // the line before (`clarifydoc-ignore-next-line [rule…]`), every rule or the
     // ones named. Read from the source as written: a plugin's pre-filter may

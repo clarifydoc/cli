@@ -357,3 +357,36 @@ describe("buildComponentGraph — packages of the repository", () => {
     expect(graph["apps/pitwall/src/main.ts"]).toBeUndefined();
   });
 });
+
+describe("buildComponentGraph — third-party and built-in imports", () => {
+  const ts = (path: string, o: Parameters<typeof file>[1] = {}) => file(path, { language: "typescript", ...o });
+  // (real-repo FP) an engine's `import type { Node } from "<parser package>"` and `import { basename } from "path"`
+  // were edges to another sub-project's `class Node` and its `basename` helper.
+  const files = () => [
+    ts("garage/src/tree.ts", { exports: ["Node"] }),
+    ts("pitwall/src/ui.ts", { exports: ["basename"] }),
+    ts("engine/src/helpers.ts", {
+      imports: [
+        { source: "track-parser", specifiers: ["Node"], isNamespace: false, isType: true },
+        { source: "path", specifiers: ["basename"], isNamespace: false },
+        { source: "node:fs", specifiers: ["readFileSync"], isNamespace: false },
+      ],
+    }),
+  ];
+
+  it("binds no project namesake through a Node built-in", () => {
+    const graph = buildComponentGraph(files());
+    expect(graph["engine/src/helpers.ts"] ?? []).not.toContain("pitwall/src/ui.ts");
+  });
+
+  it("binds no project namesake through a package a manifest declares", () => {
+    const declared = (source: string) => source === "track-parser";
+    const graph = buildComponentGraph(files(), undefined, undefined, undefined, undefined, undefined, undefined, declared);
+    expect(graph["engine/src/helpers.ts"]).toBeUndefined();
+  });
+
+  it("still guesses for an import no manifest declares", () => {
+    const graph = buildComponentGraph(files(), undefined, undefined, undefined, undefined, undefined, undefined, () => false);
+    expect(graph["engine/src/helpers.ts"]).toEqual(["garage/src/tree.ts"]);
+  });
+});

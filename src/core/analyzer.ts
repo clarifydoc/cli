@@ -28,6 +28,7 @@ import {
   collectExternalPackages,
   collectInstalledOwners,
   attachPackageUsage,
+  declaredPackageImports,
   deriveFrameworksFromPackages,
   markLocalPackages,
   mergeFrameworkDetections,
@@ -1355,7 +1356,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const typeOnlyImports: Record<string, string[]> = {};
   // Edges only a dynamic `import()` states: loaded on demand, so no cycle they close is a load-order cycle.
   const dynamicImportEdges: Record<string, string[]> = {};
-  const componentGraph = buildComponentGraph(allAnalyses, typeOnlyImports, dynamicImportEdges, importDirectory, (source) => namesWorkspacePackage(projectRoot, source), subProjects, pluginScope);
+  const componentGraph = buildComponentGraph(allAnalyses, typeOnlyImports, dynamicImportEdges, importDirectory, (source) => namesWorkspacePackage(projectRoot, source), subProjects, pluginScope, declaredPackageImports(externalPackages));
   progress.status("Building link graph...");
   const linkGraph = buildLinkGraph(allAnalyses);
   progress.status("Resolving cross-file symbols...");
@@ -3832,6 +3833,8 @@ export function buildComponentGraph(
   subProjects?: readonly SubProject[],
   /** The analysis's plugins (`pluginScopeOf`): only their package tables say an import is a third party's. */
   packageScope?: ReadonlySet<Language>,
+  /** Whether an import names a third-party package a manifest of the repository declares (`declaredPackageImports`). */
+  declaredPackage?: (source: string, language: Language) => boolean,
 ): Record<string, string[]> {
   const graph: Record<string, string[]> = {};
 
@@ -4122,7 +4125,8 @@ export function buildComponentGraph(
         isExternalPackage(imp.source) ||
         isStandardImport(a.filePath, imp.source, (p) => byPath.has(p)) ||
         classifyKnownPackage(imp.source, fileScope) !== undefined ||
-        classifyKnownPackage(packageRoot, fileScope) !== undefined;
+        classifyKnownPackage(packageRoot, fileScope) !== undefined ||
+        declaredPackage?.(imp.source, a.language as Language) === true;
       if (isExternal) continue;
       // A package of the repository its rewrite (step 1b) did not reach: which
       // file it means is unknown, and a namesake elsewhere is a decoy.

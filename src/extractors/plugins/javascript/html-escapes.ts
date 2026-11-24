@@ -142,6 +142,35 @@ function splitTop(s: string, seps: string): string[] {
   return out.map((p) => p.trim()).filter((p) => p.length > 0);
 }
 
+/**
+ * The two branches of a conditional expression spanning all of `e` (`c ? a : b`; a nested one in the
+ * else branch, `c ? a : d ? b : x`, stays whole there), or undefined. `?.` and `??` are no conditional.
+ */
+function ternaryBranches(e: string): [string, string] | undefined {
+  let q = -1;
+  let colon = -1;
+  let nested = 0;
+  let j = 0;
+  while (j < e.length) {
+    const c = e[j]!;
+    if (c === "'" || c === '"' || c === "`") { j = skipQuoted(e, j); continue; }
+    if (c === "(" || c === "[" || c === "{") { j = skipBalanced(e, j); continue; }
+    if (c === "?") {
+      if (e[j + 1] === "?" || (e[j + 1] === "." && !/\d/.test(e[j + 2] ?? ""))) { j += 2; continue; }
+      if (q < 0) q = j;
+      else nested++;
+    } else if (c === ":" && q >= 0) {
+      if (nested === 0) { colon = j; break; }
+      nested--;
+    }
+    j++;
+  }
+  if (q < 0 || colon < 0) return undefined;
+  const a = e.slice(q + 1, colon).trim();
+  const b = e.slice(colon + 1).trim();
+  return a && b ? [a, b] : undefined;
+}
+
 /** Whether the bracket group opening at 0 spans all of `s`. */
 const spans = (s: string): boolean => skipBalanced(s, 0) === s.length;
 
@@ -154,16 +183,15 @@ function isSafeValue(e: string, locals: Locals, seen = new Set<string>(), number
   while (v.startsWith("(") && spans(v)) v = v.slice(1, -1).trim();
   if (isStringLiteral(v)) return !numbersOnly;
   if (/^-?\d+(?:\.\d+)?$/.test(v)) return true;
-  if (/^[\w$.]+\.length$/.test(v)) return true;
+  // A length (`squad.length`, `edges.filter((e) => e.to === id).length`) is a number.
+  if (/\.length$/.test(v) && concatOperands(v).length === 1 && !ternaryBranches(v)) return true;
   if (/\.toFixed\(\s*\d*\s*\)$/.test(v) && !v.includes("`")) return true;
-  // A lookup in a constant table (`COLOURS[type]`): the table's values, not the key, land in the markup.
-  if (/^[A-Z][A-Z0-9_]*\[[^\]]*\]$/.test(v)) return true;
+  // A lookup in a constant table (`COLOURS[type]`, `PALETTE.blue`, `LIVERY[team].colour`): the table's values,
+  // not the key, land in the markup.
+  if (/^[A-Z][A-Z0-9_]*(?:\[[^\]]*\]|\.[\w$]+)+$/.test(v)) return true;
   // `cond ? a : b` — safe when both branches are.
-  const q = splitTop(v, "?");
-  if (q.length === 2) {
-    const branches = splitTop(q[1]!, ":");
-    if (branches.length === 2) return branches.every((b) => isSafeValue(b, locals, seen, numbersOnly));
-  }
+  const branches = ternaryBranches(v);
+  if (branches) return branches.every((b) => isSafeValue(b, locals, seen, numbersOnly));
   const ident = /^[A-Za-z_$][\w$]*$/.exec(v);
   if (ident) {
     const def = locals.get(v);
@@ -182,8 +210,14 @@ function isSafeValue(e: string, locals: Locals, seen = new Set<string>(), number
   return false;
 }
 
-/** Holes judged so far; `ok` false once one is neither safe nor a markup-building expression to look into. */
-interface Tally { holes: number; ok: boolean }
+/**
+ * Holes judged so far; `ok` false once one is neither safe nor a markup-building expression to look into.
+ * `outer` reads what a name holds where the statement does not say: the file before it (`outerValues`).
+ */
+interface Tally { holes: number; ok: boolean; outer?: { source: string; at: number }; followed?: Set<string> }
+
+/** An expression the file writes into a name, and where: the names IT reads are looked up from there. */
+interface Written { expr: string; at: number }
 
 /**
  * One value that lands in the markup. Safe values count; a value that builds
@@ -196,13 +230,10 @@ function judgeHole(raw: string, locals: Locals, t: Tally): void {
   while (hole.startsWith("(") && spans(hole)) hole = hole.slice(1, -1).trim();
   if (isStringLiteral(hole)) return;
   if (isSafeValue(hole, locals)) { t.holes++; return; }
-  const q = splitTop(hole, "?");
-  if (q.length === 2) {
-    const branches = splitTop(q[1]!, ":");
-    if (branches.length === 2) {
-      for (const b of branches) judgeHole(b, locals, t);
-      return;
-    }
+  const branches = ternaryBranches(hole);
+  if (branches) {
+    for (const b of branches) judgeHole(b, locals, t);
+    return;
   }
   if (isTemplateLiteral(hole)) {
     for (const h of templateHoles(hole)) judgeHole(h, locals, t);
@@ -218,7 +249,131 @@ function judgeHole(raw: string, locals: Locals, t: Tally): void {
     if (t.holes === before) t.ok = false;
     return;
   }
+  // A name the statement does not declare (`tip.innerHTML = html`, `${rows}`, `= r.tip`): every value the file
+  // writes into it before the statement, each judged as markup.
+  const outer = t.outer;
+  if (outer && /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?$/.test(hole) && !locals.has(hole)) {
+    const followed = (t.followed ??= new Set());
+    const key = `${outer.at}:${hole}`;
+    const values = followed.has(key) ? undefined : outerValues(outer.source, outer.at, hole);
+    if (values && values.length > 0) {
+      followed.add(key);
+      for (const v of values) {
+        if (!t.ok) break;
+        if (v.expr === SANITIZED) {
+          t.holes++;
+          continue;
+        }
+        t.outer = { source: outer.source, at: v.at };
+        judgeExpr(v.expr, locals, t);
+      }
+      t.outer = outer;
+      return;
+    }
+  }
   t.ok = false;
+}
+
+/** A value a sanitizer produced (Mermaid's rendered SVG): it counts as one safe hole. */
+const SANITIZED = "\0sanitized";
+
+/** Type words a property written in an interface or a type holds (`tip: string;`): no value. */
+const TYPE_WORD = /^(?:string|number|boolean|unknown|any|null|undefined|never|object)\b/;
+
+/**
+ * What the file writes into `name` before offset `at`, as the expressions it
+ * writes: a local's declaration and each `name = …` / `name += …` after it; a
+ * parameter of the function the statement sits in, the argument each call of
+ * that function passes; a member read (`r.tip`), every value an object
+ * literal or an assignment gives the member (`tip: \`…\``, `.tip = …`).
+ * Undefined when the file says nothing, or something no judge reads.
+ */
+function outerValues(source: string, at: number, name: string): Written[] | undefined {
+  const dot = name.indexOf(".");
+  if (dot >= 0) return memberValues(source, name.slice(dot + 1));
+  const esc = name.replace(/\$/g, "\\$");
+  const before = source.slice(0, at);
+  // Mermaid's render output (`.then(({ svg }) => …)`, `const { svg } = await mermaid.render(…)`) is sanitized
+  // unless the file turns its sanitizing off (`securityLevel: "loose"`).
+  const rendered = new RegExp(String.raw`\bmermaid\s*\.\s*render\s*\([\s\S]{0,400}?\.then\s*\(\s*(?:async\s*)?\(\s*\{[^}]*\b${esc}\b|\{[^}]*\b${esc}\b[^}]*\}\s*=\s*await\s+mermaid\s*\.\s*render\s*\(`);
+  if (rendered.test(before.slice(-2000)) && !/securityLevel\s*:\s*["'`](?:loose|sandbox)/.test(source)) return [{ expr: SANITIZED, at }];
+  // `const html = …`, and the later names of one declaration (`const outs = …, ins = …`).
+  const decl = [...before.matchAll(new RegExp(String.raw`(?:\b(?:const|let|var)\s+|,\s*)${esc}\s*(?::[^=;\n,]+)?=(?![=>])`, "g"))].at(-1);
+  if (decl) {
+    const out: Written[] = [];
+    const first = valueAt(source, decl.index! + decl[0].length);
+    if (first === null) return undefined;
+    out.push({ expr: first, at: decl.index! });
+    const writes = new RegExp(String.raw`(?<![\w$.])${esc}\s*\+?=(?![=>])`, "g");
+    writes.lastIndex = decl.index! + decl[0].length;
+    for (let m = writes.exec(before); m; m = writes.exec(before)) {
+      const v = valueAt(source, m.index + m[0].length);
+      if (v === null) return undefined;
+      out.push({ expr: v, at: m.index });
+    }
+    return out;
+  }
+  return parameterArguments(source, before, name);
+}
+
+/** The expression starting at `from`: up to the `;`, `,` or closing bracket at depth 0, or the line end that ends it. */
+function valueAt(source: string, from: number): string | null {
+  let j = from;
+  const end = Math.min(source.length, from + MAX_STATEMENT);
+  while (j < end) {
+    const c = source[j]!;
+    if (c === "'" || c === '"' || c === "`") { j = skipQuoted(source, j); continue; }
+    if (c === "(" || c === "[" || c === "{") { j = skipBalanced(source, j); continue; }
+    if (c === ";" || c === "," || c === ")" || c === "}" || c === "]") break;
+    if (c === "\n") {
+      const head = source.slice(from, j).trimEnd();
+      const after = source.slice(j + 1, j + 200).trimStart();
+      if (head.length > 0 && !/[+(,?:=]$/.test(head) && !/^[.+?:]/.test(after)) break;
+    }
+    j++;
+  }
+  if (j >= end && end < source.length) return null;
+  const v = source.slice(from, j).trim();
+  return v.length > 0 ? v : null;
+}
+
+/** The arguments the file's calls pass for `name`, a parameter of the function declared nearest before the statement. */
+function parameterArguments(source: string, before: string, name: string): Written[] | undefined {
+  const heads = [...before.matchAll(/(?:\bfunction\s+([A-Za-z_$][\w$]*)\s*|\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?)\(/g)];
+  for (let h = heads.length - 1; h >= 0; h--) {
+    const head = heads[h]!;
+    const open = head.index! + head[0].length - 1;
+    const close = skipBalanced(source, open);
+    const params = splitTop(source.slice(open + 1, close - 1), ",").map((p) => /^[A-Za-z_$][\w$]*/.exec(p)?.[0]);
+    const index = params.indexOf(name);
+    if (index < 0) continue;
+    const fn = head[1] ?? head[2]!;
+    const out: Written[] = [];
+    const calls = new RegExp(String.raw`(?<![\w$.])${fn.replace(/\$/g, "\\$")}\s*\(`, "g");
+    for (let m = calls.exec(source); m; m = calls.exec(source)) {
+      const at = m.index + m[0].length - 1;
+      if (at === open) continue;
+      const args = splitTop(source.slice(at + 1, skipBalanced(source, at) - 1), ",");
+      if (args[index] === undefined) return undefined;
+      out.push({ expr: args[index]!, at });
+    }
+    return out.length > 0 ? out : undefined;
+  }
+  return undefined;
+}
+
+/** Every value the file gives a member: `prop: value` in an object literal, `.prop = value`. Types (`prop: string;`) are none. */
+function memberValues(source: string, prop: string): Written[] | undefined {
+  const out: Written[] = [];
+  const esc = prop.replace(/\$/g, "\\$");
+  const writes = new RegExp(String.raw`(?:(?<![\w$.?])${esc}\s*:(?!:)|\.${esc}\s*=(?!=))\s*`, "g");
+  for (let m = writes.exec(source); m; m = writes.exec(source)) {
+    const v = valueAt(source, m.index + m[0].length);
+    if (v === null) return undefined;
+    if (TYPE_WORD.test(v)) continue;
+    out.push({ expr: v, at: m.index });
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 /** The values a right-hand side puts in the markup, tallied into `t`: every operand of a concatenation is one. */
@@ -325,11 +480,29 @@ function judgeStatements(body: string, locals: Locals, t: Tally): void {
 export function judgeHtmlAssignment(source: string, at: number): SecurityJudgement | undefined {
   const rhs = rightHandSide(source, at);
   if (!rhs) return undefined;
-  const tally: Tally = { holes: 0, ok: true };
+  const tally: Tally = { holes: 0, ok: true, outer: { source, at } };
   judgeExpr(rhs, new Map(), tally);
   if (!tally.ok || tally.holes === 0) return undefined;
   return {
     severity: "low",
     message: "innerHTML assignment whose every interpolated value passes an escaper or a number conversion. Check the escaper suits where the value lands (an attribute needs quotes escaped too).",
   };
+}
+
+/**
+ * `SecurityRule.judge` for the `shell: true` rule: a process whose command and every argument are string
+ * literals (`spawn("npm", ["run", "dev"], { shell: true })`, kept for Windows' `npm.cmd`) hands the shell
+ * nothing anyone else wrote, so the finding is dropped. One value the call does not spell keeps it.
+ */
+export function judgeLiteralShellCommand(source: string, at: number): SecurityJudgement | undefined {
+  const open = source.indexOf("(", at);
+  if (open < 0) return undefined;
+  const close = skipBalanced(source, open);
+  const args = splitTop(source.slice(open + 1, close - 1), ",");
+  if (args.length < 2 || !isStringLiteral(args[0]!)) return undefined;
+  const list = args[1]!;
+  if (!list.startsWith("[") || !spans(list)) return undefined;
+  return splitTop(list.slice(1, -1), ",").every((a) => isStringLiteral(a) || (a.startsWith("`") && isTemplateLiteral(a) && !a.includes("${")))
+    ? { drop: true }
+    : undefined;
 }

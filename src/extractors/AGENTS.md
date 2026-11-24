@@ -38,7 +38,7 @@ instance across member metas) plus:
 - `extensions` + `parsing` ("tree-sitter" | "regex" | "custom") — drives discovery and `file-analyzer`'s parse strategy
 - `grammar` (tree-sitter wasm location + per-file variant selection), `regexSpec` (RegexLangSpec), `customParse` (dedicated parsers like .dfm), `preprocess` (container formats like Vue SFC)
 - `builtinTypes`, `externalModulePrefixes`, `externalNamespaceRoots`, `standardImport` (the language's own standard library, asked only for its files) — import/type-resolution data
-- `complexity` (branch nodes / logical ops), `securityRules` (+ `securityPreprocess`/`securityPostScan`/`skipSecurityScan`)
+- `complexity` (branch nodes / logical ops), `securityRules` (+ `securityPreprocess`/`securityInLiteral`/`securityPostScan`/`skipSecurityScan`)
 - `frameworkImportHints`, `apiCallRoots`, `dbCallRoots`
 - `ast` hooks: `typeReferences`, `interactiveElements`, `subComponents`, `events`, `variableAliases`
 - `calls` hooks: `callNodeTypes`, scope/callback node types, name resolution, auto-imported classification
