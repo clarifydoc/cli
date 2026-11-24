@@ -1023,6 +1023,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     this.routerReceivers = null;
     this.clientKinds = null;
     this.instances = null;
+    this.fetchHeld = null;
     this.optionsApi = /\b(?:props|data)\s*[:(]/.test(sourceText);
   }
 
@@ -1569,6 +1570,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
 
   /** Names this file binds to an HTTP client instance: `const clubAPI = axios.create({ baseURL })`, `ky.extend(…)`. */
   private instances: Set<string> | null = null;
+  /** Per file: the names bound to a fetch root through `??` / `||` (see `injectedFetch`). */
+  private fetchHeld: Set<string> | null = null;
 
   private httpInstances(): Set<string> {
     if (!this.instances) {
@@ -1652,10 +1655,19 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     if (fn.type === "member_expression" && fn.childForFieldName("object")?.type === "this") {
       const name = fn.childForFieldName("property")?.text;
       if (!name || !this.sourceText.includes("fetch")) return false;
-      const re = new RegExp(`(?:\\bthis\\s*\\.\\s*|^\\s*)${escapeRegex(name)}\\s*=(?!=)\\s*([^;\\n]+)`, "gm");
-      for (const m of this.sourceText.matchAll(re)) {
-        if (/\?\?|\|\|/.test(m[1]!) && m[1]!.split(/\?\?|\|\|/).some((o) => FETCH_OPERAND_RE.test(o.trim()))) return true;
+      const holdsFetch = (rhs: string): boolean => /\?\?|\|\|/.test(rhs) && rhs.split(/\?\?|\|\|/).some((o) => FETCH_OPERAND_RE.test(o.trim()));
+      if (!/^[\w$]+$/.test(name)) {
+        const re = new RegExp(`(?:\\bthis\\s*\\.\\s*|^\\s*)${escapeRegex(name)}\\s*=(?!=)\\s*([^;\\n]+)`, "gm");
+        for (const m of this.sourceText.matchAll(re)) if (holdsFetch(m[1]!)) return true;
+        return false;
       }
+      // One pass over the file names every field or local assigned from a fetch root (the right side is read in a
+      // lookahead, so one assignment never hides another on the same line), instead of one scan per name asked.
+      if (!this.fetchHeld) {
+        this.fetchHeld = new Set();
+        for (const m of this.sourceText.matchAll(/(?:\bthis\s*\.\s*|^\s*)([\w$]+)\s*=(?!=)(?=\s*([^;\n]+))/gm)) if (holdsFetch(m[2]!)) this.fetchHeld.add(m[1]!);
+      }
+      return this.fetchHeld.has(name);
     }
     return false;
   }
