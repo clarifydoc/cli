@@ -96,7 +96,7 @@ refuses pays for it twice (the conditionals as written, then first branches), so
 settled too: a qualified name's scope (`std::vector<Club>`: the optional scope of a simple type and each turn of its loop),
 whether a declaration starts with specifiers, and a definition's `(…)` followed by a body or `;`. A settled decision must
 agree with what prediction picks: a lookahead that sees past the predicate decides some cases (`size_t i, j;` is not two
-types), so the specifier LOOP is not settled; each rule is gated by the corpus' per-file readings, byte-identical.
+types), so the specifier LOOP settles only what a lookahead cannot overturn: a name the predicate refuses ends the list, a name followed by `*`, `&`, `&&` or another plain name reads on, a keyword that only starts or only ends a list decides (`settleSpecifierLoop`, the sets read off the ATN), a name before `,`/`)`/`;` stays with prediction; `typeSpecifier` takes a trailing type for any token no class or enum starts with and `struct X {` / `struct X*` by the token after the name (`settleTypeSpecifier`); each rule is gated by the corpus' per-file readings, byte-identical.
 To find the next one, log `execATNWithFullContext` per decision (rule, line, tokens consumed) on the refused files.
 A lexer predicate is worse still: it turns off the lexer's DFA, and a predicate re-reading text from each token's
 start makes lexing quadratic (C++ raw strings took minutes on a large file). What only a predicate could lex is

@@ -4,7 +4,7 @@
  * changes added: where C++ cannot be read without knowing which names are types and templates, they read what the
  * file's first pass (CppTypes.ts, `prepare`) says of each token, fixed for the whole parse.
  */
-import { Parser, RuleTransition, StarLoopEntryState, Token, type ATN, type ATNState, type CommonTokenStream, type ParserRuleContext, type TokenStream } from "antlr4ng";
+import { Parser, PlusLoopbackState, RuleTransition, StarLoopEntryState, Token, type ATN, type ATNState, type CommonTokenStream, type ParserRuleContext, type TokenStream } from "antlr4ng";
 import { CPP14Lexer } from "./CPP14Lexer.js";
 import { CLASS_KEYWORDS, SPECIFIER_KEYWORDS, TYPE_KEYWORDS, readTypes, type CppTokenFacts } from "./CppTypes.js";
 
@@ -154,6 +154,57 @@ function decisionOf(atn: ATN, rule: number, rules: number[]): number {
   throw new Error(`C++ grammar: no decision of rule ${rule} reaches rules ${rules.join(", ")}`);
 }
 
+/**
+ * The tokens that may follow `rule` wherever it is used: what each use's next state can start, and, where a use ends its
+ * own rule, what may follow that rule in turn.
+ */
+function followOf(atn: ATN, rule: number, seen = new Set<number>()): Set<number> {
+  const out = new Set<number>();
+  if (seen.has(rule)) return out;
+  seen.add(rule);
+  for (const state of atn.states) {
+    for (const t of state?.transitions ?? []) {
+      if (!(t instanceof RuleTransition) || t.ruleIndex !== rule) continue;
+      const next = atn.nextTokens(t.followState);
+      for (const token of next.toArray()) {
+        if (token === Token.EPSILON) for (const inherited of followOf(atn, t.followState.ruleIndex, seen)) out.add(inherited);
+        else out.add(token);
+      }
+    }
+  }
+  return out;
+}
+
+/** The tokens `rule` may start with. */
+function startOf(atn: ATN, rule: number): Set<number> {
+  return new Set(atn.nextTokens(atn.ruleToStartState[rule]!).toArray().filter((t) => t !== Token.EPSILON));
+}
+
+/** `typeSpecifier`'s alternatives: a class or enum with its body, or a trailing type (an elaborated `struct Club` among them). */
+interface TypeAlts {
+  trailing: number;
+  classBody: number;
+  enumBody: number;
+  /** The tokens a class or an enum specifier starts with. */
+  heads: ReadonlySet<number>;
+}
+
+/** What may follow `struct Club` as an elaborated type, never a class head's `{` or base clause. */
+const AFTER_ELABORATED: ReadonlySet<number> = new Set([
+  CPP14Lexer.Semi, CPP14Lexer.Comma, CPP14Lexer.RightParen, CPP14Lexer.Star, CPP14Lexer.And, CPP14Lexer.AndAnd,
+  CPP14Lexer.TemplateGreater, CPP14Lexer.Assign,
+]);
+
+/** One `declSpecifier+` loop: which alternative reads another specifier, which ends the list, and the tokens each is possible on. */
+interface SpecifierLoop {
+  more: number;
+  end: number;
+  /** Tokens a specifier starts with. */
+  starts: ReadonlySet<number>;
+  /** Tokens that may follow the list: its attributes, then whatever the rule is used before. */
+  ends: ReadonlySet<number>;
+}
+
 let table: Map<number, (parser: CPP14ParserBase) => number> | null = null;
 
 /** The settled decisions, found in the ATN by the rules their alternatives start, so a grammar change cannot misnumber them. */
@@ -207,6 +258,33 @@ function dispatch(atn: ATN, ruleNames: readonly string[]): Map<number, (parser: 
       if (state.ruleIndex === rule(name) && state.transitions.length === 2 && altReaching(atn, n, specifierSeq) === 1) specifierStarts.push(n);
     }
   }
+  // `declSpecifier+`: after each specifier, another or the end of the list.
+  const [declSpecifier, attributeSpecifierSeq] = [rule("declSpecifier"), rule("attributeSpecifierSeq")];
+  const loops: Array<{ decision: number; loop: SpecifierLoop }> = [];
+  for (let n = 0; n < atn.decisionToState.length; n++) {
+    const state = atn.decisionToState[n]!;
+    if (state.ruleIndex !== specifierSeq || !(state instanceof PlusLoopbackState) || state.transitions.length !== 2) continue;
+    const more = altReaching(atn, n, declSpecifier);
+    if (more === 0) continue;
+    loops.push({
+      decision: n,
+      loop: { more, end: more === 1 ? 2 : 1, starts: startOf(atn, declSpecifier), ends: new Set([...startOf(atn, attributeSpecifierSeq), ...followOf(atn, specifierSeq)]) },
+    });
+  }
+  // `typeSpecifier`: a class or an enum, or else a trailing type specifier, which no token of the first two starts.
+  const [typeSpecifier, classSpecifier, enumSpecifier, trailingTypeSpecifier] = ["typeSpecifier", "classSpecifier", "enumSpecifier", "trailingTypeSpecifier"].map(rule) as [number, number, number, number];
+  const typeStarts: number[] = [];
+  for (let n = 0; n < atn.decisionToState.length; n++) {
+    if (atn.decisionToState[n]!.ruleIndex === typeSpecifier && altReaching(atn, n, classSpecifier) > 0 && altReaching(atn, n, trailingTypeSpecifier) > 0) typeStarts.push(n);
+  }
+  if (typeStarts.length !== 1) throw new Error("C++ grammar: no typeSpecifier decision");
+  const typeAlts: TypeAlts = {
+    trailing: altReaching(atn, typeStarts[0]!, trailingTypeSpecifier),
+    classBody: altReaching(atn, typeStarts[0]!, classSpecifier),
+    enumBody: altReaching(atn, typeStarts[0]!, enumSpecifier),
+    heads: new Set([...startOf(atn, classSpecifier), ...startOf(atn, enumSpecifier)]),
+  };
+  if (loops.length !== 1) throw new Error("C++ grammar: no declSpecifier loop");
   const functionDefinition = rule("functionDefinition");
   const atScope = decisionBetween(atn, declaration, functionDefinition, declarationTail);
   const inClass = decisionBetween(atn, memberDeclaration, functionDefinition, memberDeclaratorList);
@@ -223,6 +301,8 @@ function dispatch(atn: ATN, ruleNames: readonly string[]): Map<number, (parser: 
   for (const n of scopeStarts) table.set(n, (p) => p.settleScopeStart());
   for (const n of scopeLoops) table.set(n, (p) => p.settleScopeStep());
   for (const n of specifierStarts) table.set(n, (p) => p.settleSpecifiers());
+  table.set(typeStarts[0]!, (p) => p.settleTypeSpecifier(typeAlts));
+  for (const { decision, loop } of loops) table.set(decision, (p) => p.settleSpecifierLoop(loop));
   const inits = decisionsBetween(atn, selectionStatement, initStatement, condition);
   if (inits.length === 0) throw new Error("C++ grammar: no init-statement decision");
   for (const init of inits) table.set(init.decision, (p) => p.settleInit(init.function, init.declarators));
@@ -412,6 +492,51 @@ export abstract class CPP14ParserBase extends Parser {
     if (t !== CPP14Lexer.Identifier && t !== CPP14Lexer.Doublecolon) return 0;
     if (this.IsDeclSpecifierType()) return 1;
     return this.IsMacroSpecifier(true) || this.IsMacroSpecifier(false) ? 0 : 2;
+  }
+
+  /**
+   * After a specifier: another when the next token starts one and nothing after a list may start with it, the end of the
+   * list when only what follows it may. A name is a specifier by the same predicate as at the list's start. 0 where a
+   * token may be either (`const`, `&&`), which prediction reads on.
+   */
+  settleSpecifierLoop(loop: SpecifierLoop): number {
+    const t = this.lt(1).type;
+    if (t === CPP14Lexer.Identifier || t === CPP14Lexer.Doublecolon) return this.settleNameInLoop(loop);
+    if (t === CPP14Lexer.MacroName) return 0;
+    const starts = loop.starts.has(t);
+    const ends = loop.ends.has(t);
+    return starts === ends ? 0 : starts ? loop.more : loop.end;
+  }
+
+  /**
+   * A name after a specifier. The predicate answering false ends the list; answering true proves nothing alone
+   * (`std::string ckey, cvalue;` passes it for `ckey`, `f(Club, Player)` needs it to), prediction deciding by what
+   * follows the name: another list reads on only when the name is followed by what no declarator is followed by.
+   */
+  private settleNameInLoop(loop: SpecifierLoop): number {
+    if (this.IsMacroSpecifier(true) || this.IsMacroSpecifier(false)) return 0;
+    if (!this.IsDeclSpecifierType()) return loop.end;
+    const path = this.pathAt(this.lt(1).tokenIndex);
+    if (!path) return 0;
+    const after = this.typeAt(path.after);
+    if (after === CPP14Lexer.Star || after === CPP14Lexer.And || after === CPP14Lexer.AndAnd) return loop.more;
+    return after === CPP14Lexer.Identifier && !this.macro(path.after) ? loop.more : 0;
+  }
+
+  /**
+   * A token no class or enum starts with starts a trailing type specifier. After a class key and one qualified name,
+   * `{` is a class's body and what ends a type (`struct Club* c`, `struct Club;`) an elaborated one, which prediction
+   * found by reading the whole head; a base clause, a second name, attributes and an enum are left to it.
+   */
+  settleTypeSpecifier(alts: TypeAlts): number {
+    const first = this.lt(1);
+    if (!alts.heads.has(first.type)) return alts.trailing;
+    if (first.type === CPP14Lexer.Enum) return 0;
+    const path = this.pathAt(this.following(first.tokenIndex));
+    if (!path) return 0;
+    const after = this.typeAt(path.after);
+    if (after === CPP14Lexer.LeftBrace) return alts.classBody;
+    return AFTER_ELABORATED.has(after) ? alts.trailing : 0;
   }
 
   settleInit(init: number, condition: number): number {
