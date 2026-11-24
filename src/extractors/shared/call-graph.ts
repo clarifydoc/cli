@@ -49,6 +49,8 @@ const CALLBACK_ARG_BY_LANGUAGE = new Map<Language, ReadonlySet<string>>();
 type FieldTable = ReadonlyMap<string, ReadonlySet<string>>;
 interface BindingTables { sites: FieldTable; patterns: FieldTable }
 const BINDINGS_BY_LANGUAGE = new Map<Language, BindingTables>();
+/** Per language: the node types the `extractCalls` walk reads on a node — scope boundaries, binding sites, calls. */
+const READ_TYPES_BY_LANGUAGE = new Map<Language, ReadonlySet<string>>();
 const NO_BINDINGS: BindingTables = { sites: new Map(), patterns: new Map() };
 
 /** The leaves of a bound pattern. */
@@ -68,7 +70,9 @@ export function registerCallExtraction(language: Language, hooks: CallExtraction
   NAMED_BINDING_BY_LANGUAGE.set(language, new Set(["variable_declarator", ...(hooks.namedBindingTypes ?? [])]));
   LOCAL_DECLARATION_BY_LANGUAGE.set(language, new Set(hooks.localDeclarationTypes ?? []));
   CALLBACK_ARG_BY_LANGUAGE.set(language, new Set(hooks.callbackArgNodeTypes ?? []));
-  BINDINGS_BY_LANGUAGE.set(language, { sites: fieldTable(hooks.bindingSites), patterns: fieldTable(hooks.bindingPatterns) });
+  const bindings = { sites: fieldTable(hooks.bindingSites), patterns: fieldTable(hooks.bindingPatterns) };
+  BINDINGS_BY_LANGUAGE.set(language, bindings);
+  READ_TYPES_BY_LANGUAGE.set(language, new Set([...(hooks.nestedScopeTypes ?? []), ...hooks.callNodeTypes, ...bindings.sites.keys()]));
 }
 
 /**
@@ -193,6 +197,12 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
   const bindings = BINDINGS_BY_LANGUAGE.get(language) ?? NO_BINDINGS;
 
   const resolve = (n: Node) => resolveCallName(n, language);
+
+  // A childless node whose type no step of the walk reads does nothing: no scope boundary, no binding site,
+  // no call, and (where the plugin states no per-node hook) nothing extra. Such a child (an anonymous
+  // token, an identifier, a literal) is not entered. About 60 % of a C# body's nodes.
+  const inertLeaves = !skip && !hooks.readNames && !hooks.collectExtraCalls && !hooks.destructuredFromCall && !hooks.heldFunction;
+  const readTypes = READ_TYPES_BY_LANGUAGE.get(language) ?? NO_TYPES;
 
   // Candidates in walk order. A callback-argument reference is only kept if
   // the scope does not bind that name itself, which is known once the walk
@@ -319,8 +329,15 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
     const destructured = hooks?.destructuredFromCall?.(node);
     if (destructured) for (const name of destructured) fromFactory.add(name);
 
-    for (const child of node.children) {
-      walk(child, false);
+    if (inertLeaves) {
+      for (const child of node.children) {
+        if (child.childCount === 0 && !readTypes.has(child.type)) continue;
+        walk(child, false);
+      }
+    } else {
+      for (const child of node.children) {
+        walk(child, false);
+      }
     }
   }
 

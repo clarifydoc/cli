@@ -15,17 +15,24 @@ type Origin = CallArgOrigin["origin"];
 export function csharpArgOriginsOf(node: Node): CallArgOrigin[] | null {
   if (node.type !== "invocation_expression" && node.type !== "object_creation_expression") return null;
   const list = node.childForFieldName("arguments") ?? node.namedChildren.find((c) => c.type === "argument_list");
-  const args = list?.namedChildren.filter((c) => c.type === "argument") ?? [];
-  if (args.length === 0 || args.length > 12) return null;
+  const listed = list?.namedChildren;
+  if (!listed || listed.length === 0) return null;
+  let count = 0;
+  for (const c of listed) if (c.type === "argument") count++;
+  if (count === 0 || count > 12) return null;
   const out: CallArgOrigin[] = [];
-  args.forEach((arg, index) => {
-    const name = arg.childForFieldName("name")?.text;
+  let index = -1;
+  for (const arg of listed) {
+    if (arg.type !== "argument") continue;
+    index++;
+    const nameNode = arg.childForFieldName("name");
+    const name = nameNode?.text;
     const raw = arg.namedChildren[arg.namedChildren.length - 1];
-    if (!raw || raw === arg.childForFieldName("name")) return;
+    if (!raw || raw === arg.childForFieldName("name")) continue;
     const { node: v, transform } = unwrap(raw);
     const origin = valueOrigin(v);
     if (origin) out.push({ index, ...(name ? { param: name } : {}), origin, ...(transform ? { transform } : {}) });
-  });
+  }
   return out.some((a) => a.origin.kind !== "literal") ? out : null;
 }
 

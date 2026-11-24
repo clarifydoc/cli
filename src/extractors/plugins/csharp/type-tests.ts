@@ -81,7 +81,8 @@ function terminates(stmt: Node | null | undefined): boolean {
 export function typeTestNarrowedType(call: Node, name: string): { type: string } | null {
   let seen = mentionsIs.get(call.tree);
   if (seen === undefined) {
-    seen = /\bis\b/.test(call.tree.rootNode.text);
+    // A narrowing is only ever read off an `is_pattern_expression`: a tree with none has nothing to find.
+    seen = /\bis\b/.test(call.tree.rootNode.text) && call.tree.rootNode.descendantsOfType("is_pattern_expression").length > 0;
     mentionsIs.set(call.tree, seen);
   }
   if (!seen) return null;

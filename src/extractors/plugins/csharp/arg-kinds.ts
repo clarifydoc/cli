@@ -139,8 +139,15 @@ export function csharpArgKinds(node: Node): string[] | null {
   const kinds: string[] = [];
   for (const arg of args.namedChildren) {
     if (arg.type !== "argument") continue;
-    if (arg.childForFieldName("name") || arg.children.some((c) => c.type === ":" || c.type === "name_colon")) return null;
-    if (arg.children.some((c) => c.type === "ref" || c.type === "out" || c.type === "in")) {
+    if (arg.childForFieldName("name")) return null;
+    // One pass over the argument's children: a name colon ends the list, a `ref` / `out` / `in` makes it unknown.
+    let byRef = false;
+    for (const c of arg.children) {
+      const t = c.type;
+      if (t === ":" || t === "name_colon") return null;
+      if (t === "ref" || t === "out" || t === "in") byRef = true;
+    }
+    if (byRef) {
       kinds.push("?");
       continue;
     }

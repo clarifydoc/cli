@@ -80,7 +80,7 @@ export class FlatNode {
     return this.tree.namedChildrenOf(this.index);
   }
   get childCount(): number {
-    return this.tree.childrenOf(this.index).length;
+    return this.tree.childCountOf(this.index);
   }
   get namedChildCount(): number {
     return this.tree.namedChildrenOf(this.index).length;
@@ -233,6 +233,15 @@ export class FlatTree {
       this.kids[i] = list;
     }
     return list;
+  }
+
+  /** The number of children, without building the list of a node that has none (a token, an identifier). */
+  childCountOf(i: number): number {
+    const list = this.kids[i];
+    if (list) return list.length;
+    let n = 0;
+    for (let c = this.firstChilds[i]!; c >= 0; c = this.nextSiblings[c]!) n++;
+    return n;
   }
 
   namedChildrenOf(i: number): FlatNode[] {

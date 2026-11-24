@@ -91,7 +91,10 @@ export const csharpCallHooks: CallExtractionHooks = {
 function csharpTableArgs(node: Node): string[] | null {
   if (node.type !== "invocation_expression") return null;
   const fn = node.childForFieldName("function");
-  if (fn?.type !== "member_access_expression" || fn.childForFieldName("name")?.text !== "ToTable") return null;
+  if (fn?.type !== "member_access_expression") return null;
+  const nameNode = fn.childForFieldName("name");
+  // "ToTable" is 7 characters: the length rules out the name before its text is cut.
+  if (!nameNode || nameNode.endIndex - nameNode.startIndex !== 7 || nameNode.text !== "ToTable") return null;
   const first = node.childForFieldName("arguments")?.namedChildren.find((c) => c.type === "argument")?.namedChildren[0];
   return first?.type === "string_literal" ? [first.text] : null;
 }

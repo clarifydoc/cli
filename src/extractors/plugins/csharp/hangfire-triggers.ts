@@ -28,6 +28,8 @@ export function csharpHangfireArgs(node: Node): string[] | null {
   if (fn?.type !== "member_access_expression") return null;
   const nameNode = fn.childForFieldName("name");
   const name = nameNode?.type === "generic_name" ? nameNode.namedChildren[0]?.text : nameNode?.text;
+  // Only these three methods state anything below; most calls are neither, so the receiver is not read for them.
+  if (name !== "TriggerJob" && name !== "Trigger" && name !== "AddOrUpdate") return null;
   const receiver = fn.childForFieldName("expression")?.text ?? "";
   if (!name || !/^(?:[\w.]*\.)?\w*[rR]ecurringJob\w*$/.test(receiver)) return null;
   const args = (node.childForFieldName("arguments")?.namedChildren ?? []).filter((c) => c.type === "argument").map((c) => c.namedChildren[0]);
