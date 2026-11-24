@@ -85,6 +85,12 @@ describe("MCP lookup leftovers", () => {
     expect(await call("clarifydoc_rename_plan", { symbol: "Garage::park", to: "stow" })).not.toContain("No function, method or class named");
   });
 
+  it("trace reads `to` as Garage::park too", async () => {
+    const text = await call("clarifydoc_trace", { symbol: "enter", to: "Garage::park" });
+    expect(text).toContain("park");
+    expect(text).not.toMatch(/^No /);
+  });
+
   it("symbolSpellings: as written first, then `::` and `->` read as `.`", () => {
     expect(symbolSpellings("Garage::park")).toEqual(["Garage::park", "Garage.park"]);
     expect(symbolSpellings("Garage->park")).toEqual(["Garage->park", "Garage.park"]);

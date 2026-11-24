@@ -1050,7 +1050,8 @@ export function traceTool(ctx: ToolContext): McpTool {
         };
       }
 
-      const to = stringArg(args, "to");
+      const toArg = stringArg(args, "to");
+      const to = toArg === undefined ? undefined : resolveSymbolArg(loaded.summary, toArg);
       // A bare name several definitions share (`create_one` in 25 controllers):
       // a walk from all of them at once answers nobody's question. Name them,
       // each as the call that picks it.
