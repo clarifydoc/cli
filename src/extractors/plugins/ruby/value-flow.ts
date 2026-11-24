@@ -419,7 +419,7 @@ class Reader {
     };
     void line;
     // `x.call(…)` / `x.(…)`: a held value runs.
-    for (const m of text.matchAll(/(@?[A-Za-z_]\w*(?:\s*\[[^\[\]]*\])?)\.(call\b|\()/g)) {
+    if (text.includes(".call") || text.includes(".(")) for (const m of text.matchAll(/(@?[A-Za-z_]\w*(?:\s*\[[^\[\]]*\])?)\.(call\b|\()/g)) {
       const at = lineAt(m.index ?? 0);
       const recv = m[1]!;
       const isCall = m[2] === "call";
@@ -428,12 +428,12 @@ class Reader {
       this.invoke(recv, at, this.label(`${recv}.call`), open ? open.inner : null);
     }
     // `x[…]` runs a value this method put in `x`.
-    for (const m of text.matchAll(/(?<![\w.@:])([a-z_]\w*)\[([^\[\]]*)\]/g)) {
+    if (this.seeded.size > 0) for (const m of text.matchAll(/(?<![\w.@:])([a-z_]\w*)\[([^\[\]]*)\]/g)) {
       if (!this.seeded.has(m[1]!) || /^\s*[:'"]/.test(m[2]!)) continue;
       this.invoke(m[1]!, lineAt(m.index ?? 0), `${m[1]}[]`, m[2]!);
     }
     // Arguments of a call: `run(g)`, `@runner.run(f, 3)`, `Club.make(&method(:x))`.
-    for (const m of text.matchAll(/(?<![\w@:$])((?:@?[A-Za-z_]\w*(?:::\w+)*\.)?[a-z_]\w*[?!]?)\(/g)) {
+    if (text.includes("(")) for (const m of text.matchAll(/(?<![\w@:$])((?:@?[A-Za-z_]\w*(?:::\w+)*\.)?[a-z_]\w*[?!]?)\(/g)) {
       const name = m[1]!;
       if (KEYWORDS.has(name) || /\.(?:call|method)$/.test(name)) continue;
       const open = balanced(text, (m.index ?? 0) + m[0].length, "(", ")");

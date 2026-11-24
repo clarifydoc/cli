@@ -496,7 +496,10 @@ function addSymbolListDispatchCalls(lines: readonly string[], code: readonly str
 function addParenlessParams(lines: readonly string[], fn: FunctionInfo): void {
   if (fn.params.length > 0) return;
   const decl = lines[fn.line - 1] ?? "";
-  const name = fn.name.replace(/^self\./, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const bare = fn.name.replace(/^self\./, "");
+  // The pattern needs blank space right after the name: a declaration without it has no unparenthesised list.
+  if (!decl.includes(`${bare} `) && !decl.includes(`${bare}\t`)) return;
+  const name = bare.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const m = new RegExp(`\\bdef\\s+(?:(?:self|[A-Z]\\w*)\\.)?${name}[ \\t]+(?![=(;#])([^;#]+)`).exec(decl);
   if (!m) return;
   for (const p of splitBracketedArgs(m[1]!.trim())) {

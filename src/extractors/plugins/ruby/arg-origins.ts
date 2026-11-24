@@ -37,7 +37,7 @@ const CONVERSION_CALL = /^(Integer|String)\(\s*([\s\S]+)\s*\)$/;
 const STRING_LIT = /^"((?:[^"\\#]|\\.)*)"$|^'((?:[^'\\]|\\.)*)'$/;
 const IDENT = /^[a-z_]\w*$/;
 
-const stripComment = (line: string): string => line.replace(/(^|\s)#(?![{]).*$/, "$1");
+const stripComment = (line: string): string => (line.includes("#") ? line.replace(/(^|\s)#(?![{]).*$/, "$1") : line);
 
 /** Text split at its top-level commas, quotes and brackets honoured. */
 function splitRubyArgs(text: string): string[] {
@@ -62,10 +62,16 @@ function closeAt(text: string, open: number): number {
 /** The values `name` is assigned in the method's lines (`x = v`, `x ||= v`). */
 function assignmentsOf(lines: readonly string[], scope: Scope, name: string): string[] {
   const out: string[] = [];
-  const re = new RegExp(String.raw`^\s*${name}\s*(?:\|\||&&|\+|-)?=(?!=|~)\s*(.+)$`);
-  const multi = new RegExp(String.raw`^\s*[\w\s,*]*\b${name}\b[\w\s,*]*,[\w\s,*]*=(?!=)|^\s*[\w\s,*]*,\s*${name}\s*=(?!=)`);
+  let re: RegExp | undefined;
+  let multi: RegExp | undefined;
   for (let i = scope.line; i < scope.endLine - 1 && i < lines.length; i++) {
+    // Both patterns need the name itself on the line, and stripping a comment only removes text.
+    if (!lines[i]!.includes(name)) continue;
+    re ??= new RegExp(String.raw`^\s*${name}\s*(?:\|\||&&|\+|-)?=(?!=|~)\s*(.+)$`);
+    multi ??= new RegExp(String.raw`^\s*[\w\s,*]*\b${name}\b[\w\s,*]*,[\w\s,*]*=(?!=)|^\s*[\w\s,*]*,\s*${name}\s*=(?!=)`);
     const code = stripComment(lines[i]!);
+    // Both patterns need an `=`.
+    if (!code.includes("=")) continue;
     const m = re.exec(code);
     if (m) out.push(m[1]!.trim().replace(/\s+(?:if|unless)\s.+$/, ""));
     else if (multi.test(code)) out.push("");
@@ -121,8 +127,22 @@ function argsAfter(text: string, at: number): string[] | null {
 
 /** The call named `name` on 1-based `line`: its argument texts. */
 function callArgsAt(lines: readonly string[], line: number, name: string): string[] | null {
-  const text = stripComment(lines[line - 1] ?? "");
   const leaf = name.replace(/\(\)/g, "").split(/\.|::/).pop()!;
+  const wordy = /^\w[\w!?]*$/.test(leaf);
+  // The pattern needs the leaf on the line, and stripping a comment only removes text.
+  if (wordy && !(lines[line - 1] ?? "").includes(leaf)) return null;
+  const text = stripComment(lines[line - 1] ?? "");
+  if (wordy) {
+    // `(?<![\w])leaf(?![\w!?])`, found by hand: no pattern compiled for every call.
+    for (let at = text.indexOf(leaf); at >= 0; at = text.indexOf(leaf, at + 1)) {
+      if (at > 0 && /\w/.test(text[at - 1]!)) continue;
+      if (/[\w!?]/.test(text[at + leaf.length] ?? "")) continue;
+      const args = argsAfter(text, at + leaf.length);
+      if (args) return args;
+      at += leaf.length - 1;
+    }
+    return null;
+  }
   const re = new RegExp(String.raw`(?<![\w])${leaf.replace(/[!?]/g, (c) => `\\${c}`)}(?![\w!?])`, "g");
   for (const m of text.matchAll(re)) {
     const args = argsAfter(text, m.index! + m[0].length);

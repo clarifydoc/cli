@@ -59,6 +59,11 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
   private canvas = false;
   private sourceText = "";
   private plainImportSet: Set<string> | null = null;
+  /** Per-file, on first use: whether the file assigns a model's manager to a name (`MANAGER_ASSIGNED` over the whole text, once). */
+  private managerAssignedMemo: boolean | null = null;
+  private managerAssigned(): boolean {
+    return (this.managerAssignedMemo ??= MANAGER_ASSIGNED.test(this.sourceText));
+  }
   /** Per-file, on first use: only a `.save(` call asks. */
   private plainImports(): Set<string> {
     return (this.plainImportSet ??= plainImportNames(this.sourceText));
@@ -89,6 +94,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
     this.signatures = new Map();
     this.sourceText = sourceText;
     this.plainImportSet = null;
+    this.managerAssignedMemo = null;
     this.baseClients = new Set(extractPythonHttpClientRegistrations(tree as Tree, sourceText).map((r) => r.client));
     this.canvas = this.celery || /\b(?:chord|group|chain)\s*\(|\blink(?:_error)?\s*=/.test(sourceText);
     if (sourceText.includes(".s(") || sourceText.includes(".si(") || sourceText.includes(".signature(")) {
@@ -400,7 +406,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
         // A model's Django manager queried, whatever the verb or custom manager method
         // (`Site.objects.annotate(…)`, `ContentType.objects.get_for_model(…)`, `.bulk_update(…)`).
         // A manager held in a local (`manager = Doc.global_objects if deleted else Doc.objects`): its model.
-        const heldManager = parts.length >= 2 && /^[a-z_]\w*$/.test(parts[0]!) && parts[0] !== "self" && MANAGER_ASSIGNED.test(this.sourceText)
+        const heldManager = parts.length >= 2 && /^[a-z_]\w*$/.test(parts[0]!) && parts[0] !== "self" && this.managerAssigned()
           ? heldManagerModel(parts[0]!, node) : null;
         const djangoManager = (/\.\w*objects\./.test(fnName) && managerModel(fnName) !== null) || heldManager !== null;
         // `db.session.get(Club, id)`: a session read of the model it is handed (a string or `url` first argument is no model).

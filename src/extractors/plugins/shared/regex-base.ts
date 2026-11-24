@@ -1003,6 +1003,8 @@ export function extractParamsFromDeclaration(
   groups = false,
 ): ParamInfo[] {
   const first = lines[i] ?? "";
+  // Both ways of finding the list start at a `(` of this line.
+  if (!first.includes("(")) return [];
   let start = -1;
   if (name) {
     // `name(`, `name (`, VB `[name](`, Perl `name :Path(...)` (attributes carry
