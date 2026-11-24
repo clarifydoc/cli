@@ -1797,7 +1797,23 @@ function memberDeclaredType(node: Node, name: string): string | null {
   if (parameterType(node, name)) return null;
   let cls: Node | null = node.parent;
   while (cls && cls.type !== "class_declaration" && cls.type !== "record_declaration" && cls.type !== "struct_declaration") cls = cls.parent;
-  const body = cls?.childForFieldName("body");
+  if (!cls) return null;
+  let perTree = CLASS_MEMBER_TYPES.get(cls.tree);
+  if (!perTree) CLASS_MEMBER_TYPES.set(cls.tree, (perTree = new Map()));
+  let types = perTree.get(cls.id);
+  if (!types) perTree.set(cls.id, (types = new Map()));
+  const held = types.get(name);
+  if (held !== undefined) return held;
+  const found = classMemberType(cls, name);
+  types.set(name, found);
+  return found;
+}
+
+/** Per class (by tree, then class id), name → the declared type `memberDeclaredType` found for it, null when none. */
+const CLASS_MEMBER_TYPES = new WeakMap<object, Map<number, Map<string, string | null>>>();
+
+function classMemberType(cls: Node, name: string): string | null {
+  const body = cls.childForFieldName("body");
   for (const m of body?.namedChildren ?? []) {
     if (m?.type === "field_declaration") {
       const decl = m.namedChildren.find((c) => c?.type === "variable_declaration");
