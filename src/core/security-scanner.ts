@@ -103,6 +103,9 @@ export function isSecretConstant(name: string, value: string): boolean {
   if (urlPass !== undefined) return !isPlaceholderSecret(quoted);
   if (!SECRET_NAME.test(leaf)) return false;
   if (/\s/.test(value) || ENDPOINT_VALUE.test(value) || /^[\s.+]/.test(value) || NAMESPACED_NAME.test(value)) return false;
+  // Judged by its name alone, a short letters-only word is a key the code looks
+  // things up by (a container token `const TOKEN = 'pitch'`, an event name), not a credential.
+  if (value.length < 16 && /^[A-Za-z_-]+$/.test(value)) return false;
   return !isPlaceholderSecret(quoted);
 }
 

@@ -224,6 +224,8 @@ describe("isSecretConstant / dropSecretConstants", () => {
     expect(isSecretConstant("FETCH_TOKEN", "auth/fetchToken")).toBe(false);
     expect(isSecretConstant("API_KEY", "API_KEY")).toBe(false);
     expect(isSecretConstant("password", "changeme")).toBe(false);
+    expect(isSecretConstant("TOKEN", "pitch")).toBe(false);
+    expect(isSecretConstant("webhook_secret", "whsec_9fK2qLmw83kd")).toBe(true);
   });
   it("drops secrets from constants, module values and field values, keeping URL bases", () => {
     const a = {
