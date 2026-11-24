@@ -1,4 +1,5 @@
 import type { FunctionInfo, ParamInfo } from "../../../types/analysis.js";
+import { splitTopLevel } from "../../shared/split-top-level.js";
 import { blankStringLiterals } from "../shared/regex-base.js";
 import { GO_TYPE_KEYWORDS, matchingClose, stripGoComment } from "./syntax.js";
 import { collectionBuilt, goCollection, goElementInit, goExprType, type GoTypeEnv } from "./element-types.js";
@@ -269,9 +270,37 @@ function fieldAlias(rhs: string): string | null {
 }
 
 /** `repo.Find(id)` / `store.NewRepo()` — the whole expression is ONE call: its chain as a call names it, `repo.Find()`. */
+const GO_PREDECLARED_TYPES = new Set([
+  "any", "bool", "byte", "comparable", "complex64", "complex128", "error", "float32", "float64", "int", "int8", "int16", "int32",
+  "int64", "rune", "string", "uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
+]);
+
+/** Whether one bracketed element is written as a type (`int`, `*Club`, `[]string`, `pkg.Club`, `map[string]int`), not as an index value. */
+function writtenAsType(part: string): boolean {
+  const bare = part.trim().replace(/^(?:\*|\[\d*\])+/, "");
+  if (/^map\[/.test(bare) || /^[A-Za-z_]\w*\.[A-Za-z_]\w*/.test(bare)) return true;
+  return GO_PREDECLARED_TYPES.has(bare) || /^[A-Z][\w]*(?:\[.*\])?$/.test(bare);
+}
+
+/**
+ * An explicit type-argument list after the callee dropped (`NewBox[int](x)` → `NewBox(x)`, `pkg.New[Club, *Player]()`),
+ * only where every element is written as a type; an index expression (`handlers[k]()`, `fns[0]()`) stays as written.
+ */
+export function dropTypeArguments(text: string): string {
+  const m = /^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\[/.exec(text);
+  if (!m) return text;
+  const open = m[0].length - 1;
+  const close = matchingClose(text, open);
+  if (close < 0 || !/^\s*\(/.test(text.slice(close + 1))) return text;
+  const inner = text.slice(open + 1, close);
+  const parts = splitTopLevel(inner, { trim: true, dropBlank: true });
+  if (parts.length === 0 || !parts.every(writtenAsType)) return text;
+  return m[1] + text.slice(close + 1);
+}
+
 export function singleCall(rhs: string): string | null {
   // A dereferenced receiver calls the same method: `(*c).Response()` → `c.Response()`.
-  const text = rhs.trim().replace(/;\s*$/, "").replace(/^\(\s*\*\s*([A-Za-z_]\w*)\s*\)\./, "$1.");
+  const text = dropTypeArguments(rhs.trim().replace(/;\s*$/, "").replace(/^\(\s*\*\s*([A-Za-z_]\w*)\s*\)\./, "$1."));
   const m = /^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*\(/.exec(text);
   if (!m || GO_TYPE_KEYWORDS.has(m[1]!) || /^(?:make|new|len|cap|append|string|int|float64|byte|rune)$/.test(m[1]!)) return null;
   const close = matchingClose(text, m[0].length - 1);
@@ -325,7 +354,7 @@ function splitNames(text: string): string[] {
  * initialises, or null when the expression does not state it.
  */
 export function initializerType(rhs: string, index: number, count: number, constructors?: GoConstructors): string | null {
-  const text = rhs.trim().replace(/;\s*$/, "");
+  const text = dropTypeArguments(rhs.trim().replace(/;\s*$/, ""));
   if (count === 1) {
     // `&T{…}` / `T{…}` / `pkg.T{…}` — a composite literal of a named type.
     const lit = /^(&?)\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)\s*\{/.exec(text);

@@ -43,6 +43,48 @@ function callsFrom(analyses: FileAnalysis[], from: string): string[] {
 }
 
 describe("chained call results", () => {
+  it("Java: a builder chain of eight hops types every hop and the final call", async () => {
+    const hops = Array.from({ length: 8 }, (_, i) => `.with("h${i}")`).join("");
+    const analyses = await analyzeAll(
+      {
+        "com/example/league/ClubBuilder.java": [
+          "package com.example.league;", "public class ClubBuilder {", "  public ClubBuilder with(String s) { return this; }",
+          "  public Club build() { return new Club(); }", "}", "",
+        ].join("\n"),
+        "com/example/league/Club.java": ["package com.example.league;", "public class Club { }", ""].join("\n"),
+        "com/example/cars/ClubBuilder.java": [
+          "package com.example.cars;", "public class ClubBuilder {", "  public ClubBuilder with(String s) { return this; }",
+          "  public Object build() { return null; }", "}", "",
+        ].join("\n"),
+        "com/example/league/Main.java": [
+          "package com.example.league;", "public class Main {", "  public void run() {",
+          `    new ClubBuilder()${hops}.build();`, "  }", "}", "",
+        ].join("\n"),
+      },
+      "java",
+    );
+    const calls = callsFrom(analyses, "com/example/league/Main.java");
+    expect(calls.filter((c) => c.endsWith("league/ClubBuilder.java::ClubBuilder.with")).length).toBe(8);
+    expect(calls.some((c) => c.endsWith("league/ClubBuilder.java::ClubBuilder.build"))).toBe(true);
+    expect(calls.join("\n")).not.toContain("cars/");
+  });
+
+  it("Go: a local built by a generic constructor with explicit type arguments is typed by its return", async () => {
+    const analyses = await analyzeAll(
+      {
+        "league/box.go": [
+          "package league", "type Box[T any] struct{ v T }", "func NewBox[T any]() *Box[T] { return &Box[T]{} }",
+          "func (b *Box[T]) Put() {}", "type Crate[T any] struct{ v T }", "func (c *Crate[T]) Put() {}", "",
+        ].join("\n"),
+        "league/run.go": ["package league", "func Run() {", "\tb := NewBox[int]()", "\tb.Put()", "}", ""].join("\n"),
+      },
+      "go",
+    );
+    const calls = callsFrom(analyses, "league/run.go");
+    expect(calls).toContain("b.Put -> league/box.go::Box.Put");
+    expect(calls.join("\n")).not.toContain("Crate");
+  });
+
   it("Go: a local initialized by a call chain is typed by the last method's declared return", async () => {
     const analyses = await analyzeAll(
       {

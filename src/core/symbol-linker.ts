@@ -7391,8 +7391,8 @@ function filesByDirectory(analyses: FileAnalysis[]): Map<string, string[]> {
   return out;
 }
 
-/** Longest receiver chain followed through member and return types (`this.a.b.c.m()`, `a.getB().getC().m()`). */
-const MAX_RECEIVER_CHAIN = 4;
+/** Longest receiver chain followed through member and return types (`this.a.b.c.m()`, `a.getB().getC().m()`); each hop types its own prefix, so the cap only bounds a pathological chain. */
+const MAX_RECEIVER_CHAIN = 64;
 
 /**
  * Strategy 2: resolve a qualified call through its receiver's DECLARED type.
