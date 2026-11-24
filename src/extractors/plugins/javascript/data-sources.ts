@@ -861,7 +861,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
    * where the file imports `httpResource` from `@angular/common/http`.
    */
   private httpResourceCall(node: Node, fn: Node | null, sources: DataSourceInfo[]): boolean {
-    if (!this.sourceText.includes("httpResource")) return false;
+    if (!(this.httpResourceFile ??= this.sourceText.includes("httpResource"))) return false;
     const callee = fn?.type === "member_expression" && /^(?:text|json|blob|arrayBuffer)$/.test(fn.childForFieldName("property")?.text ?? "") ? fn.childForFieldName("object") : fn;
     if (callee?.type !== "identifier" || !this.httpResourceNames().has(callee.text)) return false;
     let value: Node | null = node.childForFieldName("arguments")?.namedChildren.find((a) => a.type !== "comment") ?? null;
@@ -898,7 +898,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
 
   /** Whether an object literal is what an `httpResource` call returns or is handed — read by `httpResourceCall`. */
   private isHttpResourceOptions(obj: Node): boolean {
-    if (!this.sourceText.includes("httpResource")) return false;
+    if (!(this.httpResourceFile ??= this.sourceText.includes("httpResource"))) return false;
     let up: Node | null = obj.parent;
     while (up && (up.type === "parenthesized_expression" || up.type === "arrow_function" || up.type === "return_statement" || up.type === "statement_block" || up.type === "function_expression")) up = up.parent;
     if (up?.type !== "arguments") return false;
@@ -909,6 +909,8 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
 
   /** The local names `httpResource` is imported under (`import { httpResource as hr }` → `hr`). */
   private httpResourceLocals?: Set<string>;
+  /** Whether the file spells `httpResource` at all, asked once per file: every call asks it. */
+  private httpResourceFile: boolean | null = null;
 
   private httpResourceNames(): Set<string> {
     if (this.httpResourceLocals) return this.httpResourceLocals;
@@ -1015,6 +1017,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     this.sqlTags = null;
     this.rtk = null;
     this.httpResourceLocals = undefined;
+    this.httpResourceFile = null;
     this.rtkTriggers = null;
     this.collectionReceivers = null;
     this.routerReceivers = null;

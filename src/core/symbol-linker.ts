@@ -1282,8 +1282,10 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[], a
     touched.add(link);
   }
   if (unfit.size > 0) {
-    const kept = links.filter((l) => !unfit.has(l));
-    links.splice(0, links.length, ...kept);
+    // In place, one pass: a spread of a six-figure link list into splice overflows the call stack.
+    let kept = 0;
+    for (const l of links) if (!unfit.has(l)) links[kept++] = l;
+    links.length = kept;
   }
   return touched;
 }

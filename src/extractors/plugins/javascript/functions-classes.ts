@@ -903,10 +903,25 @@ function declaredLocal(
   return { local: qualifier ? { name, type, qualifier } : { name, type }, annotated: annotation !== null };
 }
 
+/** The identifiers `text` writes to as collections, read in one pass; the last text asked is kept (callers ask one text many times). */
+let mutatedIn: { text: string; names: Set<string> } | null = null;
+const MUTATING_WRITE = String.raw`(?:\.\s*(?:push|unshift|splice|fill|copyWithin|sort|reverse|pop|shift)\b|\[[^\]]*\]\s*=(?!=))`;
+
 /** Whether the code writes to the collection `name` (`name.push(…)`, `name[i] = …`), which opens it past what its literal states. */
 function mutatesCollection(text: string, name: string): boolean {
+  // A plain identifier is looked up in the set of every written name (one scan of the text, not one per name);
+  // the lookahead leaves the write itself unconsumed, so a write inside another's brackets is still found.
+  if (/^[\w$]+$/.test(name)) {
+    if (mutatedIn?.text !== text) {
+      const names = new Set<string>();
+      const all = new RegExp(String.raw`(?<![\w$.])([\w$]+)(?=\s*${MUTATING_WRITE})`, "g");
+      for (let m = all.exec(text); m; m = all.exec(text)) names.add(m[1]!);
+      mutatedIn = { text, names };
+    }
+    return mutatedIn.names.has(name);
+  }
   const n = name.replace(/\$/g, "\\$");
-  return new RegExp(`(?<![\\w$.])${n}\\s*(?:\\.\\s*(?:push|unshift|splice|fill|copyWithin|sort|reverse|pop|shift)\\b|\\[[^\\]]*\\]\\s*=(?!=))`).test(text);
+  return new RegExp(`(?<![\\w$.])${n}\\s*${MUTATING_WRITE}`).test(text);
 }
 
 /**
