@@ -2106,6 +2106,12 @@ interface LinkMemos {
   methodLeaves?: Map<string, Array<{ file: string; symbol: string; className: string }>>;
   bindingFilesByDir?: Map<string, FileAnalysis[]>;
   globalMembers?: Map<string, Array<{ a: FileAnalysis; g: GlobalMemberDef }>>;
+  /** `typeRefFor` per (type, file, sub-project, written type), kept only where the answer did not ask for the namespace scope. */
+  typeRef?: Map<string, { typeName: string; typeFile: string } | null>;
+  /** `scopedName` per (file, symbol, consumer, name, depth, whether branches are wanted): the point and the branches it pushed. */
+  scopedName?: Map<string, { point: InjectionPoint | null; branches: InjectionPoint[] }>;
+  /** `directoryFunction` per (caller file, name); the answers are shared, so callers only read them. */
+  directoryFunction?: Map<string, { file: string; def: SymbolDef } | null>;
   /** `ownerPathType` per (from file, sub-project, written path). */
   ownerPathType?: Map<string, { typeName: string; typeFile: string } | null>;
   /** The value-flow host's `classOfType` per (file, written type). */
@@ -7375,6 +7381,22 @@ function directoryFunction(
   sourceFile: string,
   name: string,
 ): { file: string; def: SymbolDef } | null {
+  // Every call of a file naming the same function walks the folder's files again.
+  const memo = (ctx.memos.directoryFunction ??= new Map<string, { file: string; def: SymbolDef } | null>());
+  const key = `${analysis.filePath}\0${sourceFile}\0${name}`;
+  const hit = memo.get(key);
+  if (hit !== undefined) return hit;
+  const found = directoryFunctionUncached(ctx, analysis, sourceFile, name);
+  memo.set(key, found);
+  return found;
+}
+
+function directoryFunctionUncached(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceFile: string,
+  name: string,
+): { file: string; def: SymbolDef } | null {
   const dir = sourceFile.slice(0, sourceFile.lastIndexOf("/") + 1);
   ctx.directoryFiles ??= filesByDirectory(ctx.analyses);
   const sourceIsTest = isTestFile(sourceFile, analysis.language);
@@ -8754,7 +8776,30 @@ function globalMember(ctx: LinkContext, sourceFile: string, name: string): Injec
 }
 
 /** A bare name as the enclosing callable sees it: local, then parameter, then field. */
+/** `scopedNameUncached`, once per (file, symbol, consumer, name, depth): every call of a function on one local asks again. Callers get copies. */
 function scopedName(
+  ctx: LinkContext,
+  analysis: FileAnalysis,
+  sourceFile: string,
+  sourceSymbol: string,
+  consumer: string,
+  name: string,
+  depth = 0,
+  branches?: InjectionPoint[],
+): InjectionPoint | null {
+  const memo = (ctx.memos.scopedName ??= new Map<string, { point: InjectionPoint | null; branches: InjectionPoint[] }>());
+  const key = `${analysis.filePath}\0${sourceFile}\0${sourceSymbol}\0${consumer}\0${name}\0${depth}\0${branches ? 1 : 0}`;
+  let hit = memo.get(key);
+  if (!hit) {
+    const pushed: InjectionPoint[] | undefined = branches ? [] : undefined;
+    hit = { point: scopedNameUncached(ctx, analysis, sourceFile, sourceSymbol, consumer, name, depth, pushed), branches: pushed ?? [] };
+    memo.set(key, hit);
+  }
+  if (branches && hit.branches.length > 0) branches.push(...hit.branches.map((b) => ({ ...b })));
+  return hit.point ? { ...hit.point } : null;
+}
+
+function scopedNameUncached(
   ctx: LinkContext,
   analysis: FileAnalysis,
   sourceFile: string,
@@ -9093,10 +9138,22 @@ function typeRefFor(
   scope?: () => NamespaceScope,
   written?: string | null,
 ): { typeName: string; typeFile: string } | null {
-  const ref = typeRefForInner(ctx, typeName, sourceFile, projectId, scope, written);
+  // The same type is named again and again by the calls of one file; the answer reads the namespace scope (which
+  // depends on the naming symbol) only where `scope` is called, so an answer that never called it holds for any caller.
+  const memo = (ctx.memos.typeRef ??= new Map());
+  const memoKey = `${typeName}\0${sourceFile}\0${projectId}\0${written ?? ""}`;
+  if (memo.has(memoKey)) {
+    const hit = memo.get(memoKey)!;
+    return hit ? { ...hit } : null;
+  }
+  let scopeAsked = false;
+  const watched = scope ? () => { scopeAsked = true; return scope(); } : undefined;
+  const ref = typeRefForInner(ctx, typeName, sourceFile, projectId, watched, written);
   // A type written through a namespace (`other::Valve`) is never a class of an anonymous namespace that is not
   // that namespace's: the file's own `Valve` stays out of it, whatever the bare name resolves to.
-  return ref && written && declaredInOtherNamespace(ref, written, typeName, (n) => ctx.classFiles.has(n), (f, n) => ctx.classAt.get(memberKey(f, n))) ? null : ref;
+  const answer = ref && written && declaredInOtherNamespace(ref, written, typeName, (n) => ctx.classFiles.has(n), (f, n) => ctx.classAt.get(memberKey(f, n))) ? null : ref;
+  if (!scopeAsked) memo.set(memoKey, answer ? { ...answer } : null);
+  return answer;
 }
 
 function declaredInOtherNamespace(
@@ -9147,7 +9204,7 @@ function typeRefForInner(
   typeName = dealias(ctx, typeName, sourceFile);
   const reexported = reexportedType(ctx, typeName, sourceFile);
   if (reexported) return reexported;
-  const namespaced = namespacedTypeRef(ctx, writtenTypePath(written, typeName) ?? typeName, sourceFile, scope?.());
+  const namespaced = namespacedTypeRef(ctx, writtenTypePath(written, typeName) ?? typeName, sourceFile, scope);
   if (namespaced !== undefined) return namespaced;
   const typeFile = typeFileFor(ctx, typeName, sourceFile, projectId);
   if (typeFile) return { typeName, typeFile };
@@ -10034,7 +10091,8 @@ function namespacedTypeRef(
   ctx: LinkContext,
   written: string,
   sourceFile: string,
-  scope: NamespaceScope | undefined,
+  /** The naming code's namespace scope, asked for only where a declaration has a namespace to tell apart. */
+  scopeOf: (() => NamespaceScope) | undefined,
 ): { typeName: string; typeFile: string } | null | undefined {
   const path = written.replace(/^::/, "");
   const segments = path.split("::");
@@ -10050,6 +10108,7 @@ function namespacedTypeRef(
   if (segments.length === 1) {
     const decls = declarations(path);
     if (!decls.some((d) => d.cls.namespace)) return undefined;
+    const scope = scopeOf?.();
     if (scope) {
       const usedBy = (d: Decl) => scope.usings.some((u) => {
         const ns = d.cls.namespace ?? "";
@@ -10067,6 +10126,7 @@ function namespacedTypeRef(
     if (!declarations(leaf).some((d) => d.cls.namespace)) return undefined;
     // A namespace alias (`namespace lib = home;`) rewrites the qualifier before matching.
     const aliasOf = (q: string): string => (ctx.typeAliases ? followTypeAlias(ctx.typeAliases, q, sourceFile, () => false) : q);
+    const scope = scopeOf?.();
     search: for (let k = segments.length - 1; k >= 1; k--) {
       const name = segments.slice(k).join("::");
       const qualifier = segments.slice(0, k).join("::");
