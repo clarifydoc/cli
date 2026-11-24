@@ -1139,6 +1139,12 @@ export interface CallExtractionHooks {
     resolve: (node: Node) => string | null,
   ): void;
   /**
+   * Every node type `collectExtraCalls`, `destructuredFromCall` and `heldFunction` act on. Stated, the call walk
+   * skips a childless child of any other type, as it does for a plugin with none of those hooks; unstated, a
+   * plugin with one of them is shown every node.
+   */
+  perNodeTypes?: readonly string[];
+  /**
    * Whether a call is one its own file states is a member of a project value, whatever its leaf name says:
    * `ACTIONS.send(club)` on `const ACTIONS = { send: sendClub }` is the map's `send`, never a response's. Such a
    * call is kept though its leaf is in the noise list.

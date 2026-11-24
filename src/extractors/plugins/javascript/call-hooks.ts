@@ -103,6 +103,7 @@ export const javascriptCallHooks: CallExtractionHooks = {
   // <ComponentName ... /> counts as using ComponentName, and an attribute whose
   // value names a function (`onClick={saveClub}`, `renderItem={CarTile}`,
   // `onRefresh={clubs.loadLatest}`) hands that function on.
+  perNodeTypes: ["jsx_opening_element", "jsx_self_closing_element", "jsx_attribute", "return_statement", "variable_declarator", "assignment_expression"],
   collectExtraCalls(node, addResult) {
     if (node.type === "jsx_opening_element" || node.type === "jsx_self_closing_element") {
       const nameNode = node.childForFieldName("name") ?? node.child(1);

@@ -1687,13 +1687,14 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   }
 
   protected visitNode(node: Node, sources: DataSourceInfo[]): void {
+    const type = node.type;
     // One-time gql-operation scan (no whole-file hook exists in the fused walk).
     if (!this.gqlScanned) this.scanGql(sources);
 
     // Vue Options API: `export default { props: {…}, data() { return {…} } }` /
     // `defineComponent({…})` declares what `<script setup>` declares with
     // `defineProps` and `ref`: one prop row per prop, one state row per data key.
-    if (node.type === "object" && this.optionsApi && isOptionsComponent(node)) {
+    if (type === "object" && this.optionsApi && isOptionsComponent(node)) {
       for (const pair of node.namedChildren) {
         const key = optionKey(pair);
         if (key === "props") {
@@ -1707,7 +1708,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
 
     // Vuex `...mapGetters('league', ['standings'])` / `...mapState({ club: 'club' })`:
     // the store reads a component binds, one row per key it names.
-    if (node.type === "call_expression") {
+    if (type === "call_expression") {
       const helper = node.childForFieldName("function")?.text;
       if (helper === "mapGetters" || helper === "mapState") {
         for (const target of mappedStoreKeys(node)) sources.push(this.ds({ kind: "store", name: helper, target, line: node.startPosition.row + 1 }));
@@ -1716,14 +1717,14 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     }
 
     // BullMQ: `new Worker("emails", processor)` consumes the queue it names.
-    if (node.type === "new_expression" && node.childForFieldName("constructor")?.text === "Worker") {
+    if (type === "new_expression" && node.childForFieldName("constructor")?.text === "Worker") {
       const mq = (this.mq ??= mqEvidence(this.sourceText));
       const queue = mq.bullQueues ? literalString(node.childForFieldName("arguments")?.namedChildren[0] ?? null) : null;
       if (queue) sources.push(this.ds({ kind: "queue-consume", name: "BullMQ: Worker", target: queue, line: node.startPosition.row + 1 }));
       return;
     }
     // NestJS: `@Processor("audio") class AudioConsumer { process(job) }` consumes the queue; the row sits on `process`.
-    if (node.type === "call_expression" && node.parent?.type === "decorator" && node.childForFieldName("function")?.text === "Processor") {
+    if (type === "call_expression" && node.parent?.type === "decorator" && node.childForFieldName("function")?.text === "Processor") {
       const queue = (this.mq ??= mqEvidence(this.sourceText)).bullQueues ? literalString(node.childForFieldName("arguments")?.namedChildren[0] ?? null) : null;
       if (queue) {
         const holder = node.parent.parent;
@@ -1736,7 +1737,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     }
 
     // NestJS events: `@OnEvent("order.created") handle(…)` consumes the event; the row sits on the method.
-    if (node.type === "call_expression" && node.parent?.type === "decorator" && node.childForFieldName("function")?.text === "OnEvent") {
+    if (type === "call_expression" && node.parent?.type === "decorator" && node.childForFieldName("function")?.text === "OnEvent") {
       const event = (this.mq ??= mqEvidence(this.sourceText)).nestEvents ? literalString(node.childForFieldName("arguments")?.namedChildren[0] ?? null) : null;
       if (event) {
         let method = node.parent.nextNamedSibling;
@@ -1748,7 +1749,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     // A SQL template tag sends its template to the database: postgres.js / Neon / Vercel
     // `sql`select … from cars``, slonik / drizzle / kysely `sql`…``, Prisma `prisma.$queryRaw`…``.
     // The statement names the table, as a string handed to `pool.query(…)` does.
-    if (node.type === "call_expression" || node.type === "binary_expression") {
+    if (type === "call_expression" || type === "binary_expression") {
       const tagged = taggedSqlTemplate(node, () => (this.sqlTags ??= sqlTagNames(this.sourceText)));
       const rawSql = tagged ? rawSqlAccess(tagged.template) : null;
       if (rawSql) {
@@ -1777,7 +1778,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     }
 
     // DynamoDB: `docClient.get({ TableName }).promise()`, `ddb.send(new GetCommand({ TableName }))`.
-    if ((node.type === "call_expression" || node.type === "new_expression") && (this.dynamoFile ??= DYNAMO_FILE_RE.test(this.sourceText))) {
+    if ((type === "call_expression" || type === "new_expression") && (this.dynamoFile ??= DYNAMO_FILE_RE.test(this.sourceText))) {
       const ddb = dynamoAccess(node, this.sourceText);
       if (ddb) {
         sources.push(this.ds({
@@ -1795,7 +1796,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     }
 
     // AWS SDK v3: `new SendMessageCommand({ QueueUrl, … })`, `new PublishCommand({ TopicArn })`, `new ReceiveMessageCommand(…)`.
-    if (node.type === "new_expression") {
+    if (type === "new_expression") {
       const op = AWS_SEND_COMMANDS.get(node.childForFieldName("constructor")?.text ?? "");
       const desc = node.childForFieldName("arguments")?.namedChildren[0];
       if (op && desc?.type === "object") {
@@ -1805,7 +1806,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       }
     }
 
-    if (node.type === "call_expression") {
+    if (type === "call_expression") {
       let fn = node.childForFieldName("function");
       // `await foo<T>(args)` mis-nests as call(function: await_expression(await,
       // foo), type_arguments, arguments) — the generic forces the await to bind
@@ -2457,7 +2458,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     // endpoint literal lives in a `url` property rather than a string argument —
     // including the URL-builder helper `{ method, url: `/api/x` }` whose value is
     // referenced indirectly at the call site.
-    if (node.type === "object" && !this.isHttpResourceOptions(node)) {
+    if (type === "object" && !this.isHttpResourceOptions(node)) {
       // `type` is jQuery's spelling of the method (`$.ajax({ type: 'POST', url })`);
       // either only counts when its value IS an HTTP verb.
       const verb = heldLiteral(node, "method") ?? literalString(objectPropValue(node, "type"));
@@ -2518,13 +2519,13 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     }
 
     // A generated OpenAPI client's operation (see generated-clients.ts).
-    if (node.type === "variable_declarator" && this.generatedClient) {
+    if (type === "variable_declarator" && this.generatedClient) {
       const op = generatedClientCall(node);
       if (op) sources.push(op);
     }
 
     // process.env access
-    if (node.type === "member_expression") {
+    if (type === "member_expression") {
       const obj = node.childForFieldName("object");
       if (obj?.text === "process.env" || obj?.text === "import.meta.env") {
         const prop = node.childForFieldName("property");
@@ -2706,8 +2707,10 @@ function hasProp(obj: Node, key: string): boolean {
 
 /** The URL a stream or API-document loader requests, and the verb (see `visitNode`). */
 function loaderRequest(node: Node): { url: Node; verb: string } | null {
+  const type = node.type;
+  if (type !== "new_expression" && type !== "call_expression") return null;
   const args = node.childForFieldName("arguments")?.namedChildren.filter((a) => a.type !== "comment") ?? [];
-  if (node.type === "new_expression") {
+  if (type === "new_expression") {
     const ctor = node.childForFieldName("constructor")?.text;
     if (!args[0]) return null;
     // A WebSocket opens with an HTTP GET upgrade request to its URL.

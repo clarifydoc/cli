@@ -810,7 +810,8 @@ function scanBody(
     }
 
     const childOwn = ownBody && (isRoot || !FUNCTION_EXPRESSIONS.has(type));
-    for (const child of children) walk(child, false, childScope, type, childOwn);
+    // A childless child (a token, an identifier, a literal) is none of the types read above.
+    for (const child of children) if (child.childCount > 0) walk(child, false, childScope, type, childOwn);
   };
   walk(body, true, true, "", true);
 

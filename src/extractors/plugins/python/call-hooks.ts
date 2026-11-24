@@ -66,6 +66,7 @@ export const pythonCallHooks: CallExtractionHooks = {
   },
 
   // @decorator counts as a call to decorator
+  perNodeTypes: ["decorator"],
   collectExtraCalls(node, addResult, resolve) {
     if (node.type === "decorator") {
       const expr = node.child(1); // after @

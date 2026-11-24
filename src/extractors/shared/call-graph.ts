@@ -72,7 +72,7 @@ export function registerCallExtraction(language: Language, hooks: CallExtraction
   CALLBACK_ARG_BY_LANGUAGE.set(language, new Set(hooks.callbackArgNodeTypes ?? []));
   const bindings = { sites: fieldTable(hooks.bindingSites), patterns: fieldTable(hooks.bindingPatterns) };
   BINDINGS_BY_LANGUAGE.set(language, bindings);
-  READ_TYPES_BY_LANGUAGE.set(language, new Set([...(hooks.nestedScopeTypes ?? []), ...hooks.callNodeTypes, ...bindings.sites.keys()]));
+  READ_TYPES_BY_LANGUAGE.set(language, new Set([...(hooks.nestedScopeTypes ?? []), ...hooks.callNodeTypes, ...bindings.sites.keys(), ...(hooks.perNodeTypes ?? [])]));
 }
 
 /**
@@ -201,7 +201,7 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
   // A childless node whose type no step of the walk reads does nothing: no scope boundary, no binding site,
   // no call, and (where the plugin states no per-node hook) nothing extra. Such a child (an anonymous
   // token, an identifier, a literal) is not entered. About 60 % of a C# body's nodes.
-  const inertLeaves = !skip && !hooks.readNames && !hooks.collectExtraCalls && !hooks.destructuredFromCall && !hooks.heldFunction;
+  const inertLeaves = !skip && !hooks.readNames && (hooks.perNodeTypes !== undefined || (!hooks.collectExtraCalls && !hooks.destructuredFromCall && !hooks.heldFunction));
   const readTypes = READ_TYPES_BY_LANGUAGE.get(language) ?? NO_TYPES;
 
   // Candidates in walk order. A callback-argument reference is only kept if
