@@ -24,9 +24,12 @@ export function extractPythonRoutes(root: Node, routes: RouteInfo[], facts?: Rou
   const consts = collectModuleStrings(root);
   const routers = collectRouterDecls(root, consts);
   const receiverLines = new Map<string, number[]>();
-  walkForPythonRoutes(root, routes, routers, receiverLines);
-  walkForRouterMounts(root, routes, routers, consts, receiverLines);
-  walkForRegistrationCalls(root, root, routes, routers, consts, receiverLines);
+  const owners = new Map<RouteInfo, string>();
+  walkForPythonRoutes(root, routes, routers, receiverLines, owners);
+  const localIncludes: LocalInclude[] = [];
+  walkForRouterMounts(root, routes, routers, consts, receiverLines, localIncludes);
+  walkForRegistrationCalls(root, root, routes, routers, consts, receiverLines, owners);
+  applyLocalIncludes(routes, routers, owners, localIncludes);
   if (facts) collectGuardFacts(root, routers, receiverLines, facts);
 }
 
@@ -96,6 +99,7 @@ function walkForRouterMounts(
   routers: ReadonlyMap<string, RouterDecl>,
   consts: ReadonlyMap<string, string>,
   receiverLines: Map<string, number[]>,
+  localIncludes: LocalInclude[],
 ): void {
   if (node.type === "call") {
     const fn = node.childForFieldName("function");
@@ -131,7 +135,19 @@ function walkForRouterMounts(
       const receiverNode = fn!.childForFieldName("object");
       const receiver = receiverNode?.type === "identifier" ? routers.get(receiverNode.text) : undefined;
       const prefix = args ? stringKeyword(args, leaf === "include_router" ? "prefix" : "url_prefix", consts) : undefined;
-      if (handler) {
+      // `app.include_router(clubs, prefix=…)` of a router this file declares: its owned routes take the prefix here, no mount.
+      const receiverName = receiverNode?.type === "identifier" ? receiverNode.text : null;
+      if (leaf === "include_router" && router?.type === "identifier" && routers.has(router.text) && receiverName && receiverName !== router.text) {
+        const includeDeps = args ? keywordArg(args, "dependencies") : null;
+        localIncludes.push({
+          child: router.text,
+          receiver: receiverName,
+          prefix: joinPrefix(receiver?.prefix ?? "", prefix ?? ""),
+          unresolved: prefix === null ? `mount:${collapse(keywordArg(args!, "prefix")!.text)}` : undefined,
+          guards: includeDeps ? guardsFromDependencies(includeDeps) : [],
+        });
+        pushLine(receiverLines, receiverName, node.startPosition.row + 1);
+      } else if (handler) {
         const mount: RouteInfo = {
           path: joinPrefix(receiver?.prefix ?? "", prefix ?? ""),
           httpMethod: null,
@@ -152,7 +168,72 @@ function walkForRouterMounts(
       }
     }
   }
-  for (const child of node.children) walkForRouterMounts(child, routes, routers, consts, receiverLines);
+  for (const child of node.children) walkForRouterMounts(child, routes, routers, consts, receiverLines, localIncludes);
+}
+
+/** An `include_router` of a router declared in the same file, the prefix as the receiving router's own joined with the include's. */
+interface LocalInclude {
+  child: string;
+  receiver: string;
+  prefix: string;
+  unresolved?: string;
+  guards: GuardAttr[];
+}
+
+/**
+ * Applies same-file includes: a router variable owns the routes decorated on it, so each
+ * `include_router(clubs, prefix=…)` prefixes `clubs`' routes only (one copy per include;
+ * through a receiver that is itself included, the receiver's prefixes first). The include
+ * is wiring and adds no row.
+ */
+function applyLocalIncludes(routes: RouteInfo[], routers: ReadonlyMap<string, RouterDecl>, owners: ReadonlyMap<RouteInfo, string>, includes: LocalInclude[]): void {
+  if (includes.length === 0) return;
+  interface Placement { prefix: string; guards: GuardAttr[]; unresolved?: string }
+  const memo = new Map<string, Placement[]>();
+  const stack = new Set<string>();
+  const placements = (name: string): Placement[] => {
+    const cached = memo.get(name);
+    if (cached) return cached;
+    const incoming = includes.filter((i) => i.child === name);
+    if (incoming.length === 0 || stack.has(name)) return [{ prefix: "", guards: [] }];
+    stack.add(name);
+    const out: Placement[] = [];
+    for (const inc of incoming) {
+      const receiverGuards = routers.get(inc.receiver)?.guards ?? [];
+      for (const base of placements(inc.receiver)) {
+        out.push({ prefix: joinPrefix(base.prefix, inc.prefix), guards: [...base.guards, ...receiverGuards, ...inc.guards], unresolved: inc.unresolved ?? base.unresolved });
+      }
+    }
+    stack.delete(name);
+    memo.set(name, out);
+    return out;
+  };
+  const next: RouteInfo[] = [];
+  for (const r of routes) {
+    const owner = owners.get(r);
+    const where = owner && includes.some((i) => i.child === owner) ? placements(owner) : null;
+    if (!where) {
+      next.push(r);
+      continue;
+    }
+    for (const p of where) {
+      const copy: RouteInfo = { ...r, path: joinPrefix(p.prefix, r.path) };
+      if (r.pathTemplate) copy.pathTemplate = joinPrefix(p.prefix, r.pathTemplate);
+      if (p.unresolved) copy.prefixUnresolved = p.unresolved;
+      if (p.guards.length > 0) {
+        const stub = applyRouteMeta({ ...copy, middleware: [] }, { guards: p.guards });
+        copy.middleware = [...stub.middleware, ...r.middleware];
+        if (stub.auth) {
+          const uniq = (xs: string[]) => [...new Set(xs)];
+          copy.auth = r.auth
+            ? { ...r.auth, policies: uniq([...stub.auth.policies, ...r.auth.policies]), roles: uniq([...stub.auth.roles, ...r.auth.roles]), schemes: uniq([...stub.auth.schemes, ...r.auth.schemes]) }
+            : { ...stub.auth, inherited: true };
+        }
+      }
+      next.push(copy);
+    }
+  }
+  routes.splice(0, routes.length, ...next);
 }
 
 const sourceTexts = new WeakMap<object, string>();
@@ -518,6 +599,7 @@ function walkForRegistrationCalls(
   routers: ReadonlyMap<string, RouterDecl>,
   consts: ReadonlyMap<string, string>,
   receiverLines: Map<string, number[]>,
+  owners: Map<RouteInfo, string>,
 ): void {
   if (node.type === "call") {
     const fn = node.childForFieldName("function");
@@ -557,12 +639,13 @@ function walkForRegistrationCalls(
           applyRouteMeta(route, { inheritedGuards: router?.guards, guards: [...(deps ? guardsFromDependencies(deps) : []), ...signature.guards], params });
           const middlewareCalls = [...new Set([...(router?.dependencyCalls ?? []), ...(deps ? dependencyCallNames(deps) : [])])];
           if (middlewareCalls.length > 0) route.middlewareCalls = middlewareCalls;
+          if (router && receiverNode?.type === "identifier") owners.set(route, receiverNode.text);
           routes.push(route);
         }
       }
     }
   }
-  for (const child of node.namedChildren) walkForRegistrationCalls(root, child, routes, routers, consts, receiverLines);
+  for (const child of node.namedChildren) walkForRegistrationCalls(root, child, routes, routers, consts, receiverLines, owners);
 }
 
 /** The module-level `def name(…)` of this file (decorated or not). */
@@ -580,7 +663,7 @@ function joinPrefix(prefix: string, path: string): string {
   return prefix + path;
 }
 
-function walkForPythonRoutes(node: Node, routes: RouteInfo[], routers: Map<string, RouterDecl>, receiverLines: Map<string, number[]>): void {
+function walkForPythonRoutes(node: Node, routes: RouteInfo[], routers: Map<string, RouterDecl>, receiverLines: Map<string, number[]>, owners: Map<RouteInfo, string>): void {
   if (node.type === "decorated_definition") {
     const routeDecs: RouteDecorator[] = [];
     const guards: GuardAttr[] = [];
@@ -641,6 +724,7 @@ function walkForPythonRoutes(node: Node, routes: RouteInfo[], routers: Map<strin
           });
           const middlewareCalls = [...new Set([...(router?.dependencyCalls ?? []), ...rd.dependencyCalls])];
           if (middlewareCalls.length > 0) route.middlewareCalls = middlewareCalls;
+          if (rd.receiver && router) owners.set(route, rd.receiver);
           routes.push(route);
         }
       }
@@ -648,7 +732,7 @@ function walkForPythonRoutes(node: Node, routes: RouteInfo[], routers: Map<strin
   }
 
   for (const child of node.children) {
-    walkForPythonRoutes(child, routes, routers, receiverLines);
+    walkForPythonRoutes(child, routes, routers, receiverLines, owners);
   }
 }
 

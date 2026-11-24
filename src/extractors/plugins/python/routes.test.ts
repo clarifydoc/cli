@@ -13,6 +13,54 @@ async function routesOf(src: string): Promise<RouteInfo[]> {
   return routes;
 }
 
+describe("FastAPI routers declared and included in one file", () => {
+  const src = `
+app = FastAPI()
+clubs = APIRouter()
+garages = APIRouter()
+@clubs.get("/")
+def list_clubs(): ...
+@garages.get("/")
+def list_garages(): ...
+@garages.get("/{gid}")
+def get_garage(gid: int): ...
+app.include_router(clubs, prefix="/api/clubs")
+app.include_router(garages, prefix="/api/garages")
+`;
+
+  it("prefixes each router's own routes and adds no mount row", async () => {
+    const routes = await routesOf(src);
+    expect(routes.map((r) => [r.httpMethod, r.path, r.handler, r.mount ?? false])).toEqual([
+      ["GET", "/api/clubs/", "list_clubs", false],
+      ["GET", "/api/garages/", "list_garages", false],
+      ["GET", "/api/garages/{gid}", "get_garage", false],
+    ]);
+  });
+
+  it("composes through a receiver router that is itself included, with guards", async () => {
+    const routes = await routesOf(`
+api = APIRouter(prefix="/v2", dependencies=[Depends(verify_token)])
+kits = APIRouter()
+@kits.get("/")
+def list_kits(): ...
+api.include_router(kits, prefix="/kits")
+app.include_router(api, prefix="/api")
+`);
+    expect(routes.map((r) => r.path)).toEqual(["/api/v2/kits/"]);
+    expect(routes[0].middleware.length).toBe(1);
+  });
+
+  it("keeps a router mounted from another file as a mount and leaves its routes alone", async () => {
+    const routes = await routesOf(`
+router = APIRouter()
+@router.get("/")
+def list_clubs(): ...
+app.include_router(other.router, prefix="/api/x")
+`);
+    expect(routes.map((r) => [r.path, r.mount ?? false])).toEqual([["/", false], ["/api/x", true]]);
+  });
+});
+
 describe("FastAPI include_router mounts", () => {
   it("emits a mount carrying the prefix and the module identifier", async () => {
     const routes = await routesOf(`
