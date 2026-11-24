@@ -43,8 +43,7 @@ import { buildScreenFlow } from "./screen-flow.js";
 import { joinTestNavigations, pagePartsOf } from "./test-navigations.js";
 import { linkRenderedViews } from "./rendered-views.js";
 import { linkOwnViewPosts } from "./own-view-posts.js";
-import { detectFileBasedRoutes } from "../extractors/plugins/javascript/routes/file-based.js";
-import { resolveAngularExternalTemplates } from "../extractors/plugins/javascript/angular-external-templates.js";
+import { runProjectPasses } from "../extractors/project-passes.js";
 import { resolveRouterMounts } from "../extractors/shared/router-mounts.js";
 import { gitArgs } from "./git-safe.js";
 import {
@@ -1231,31 +1230,10 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   }
 
   progress.status("Resolving routes and imports across files...");
-  // File-based ("auto") frontend routes: plugins like unplugin-vue-router /
-  // vite-plugin-pages generate the route table from a page-file directory, so
-  // the routes are not present as source. Synthesize them from the file tree
-  // (reads each candidate root's Vite config to detect the convention) and push
-  // them onto the page files' analyses so they flow into the route map, screens,
-  // and the screen→API links below. Runs BEFORE buildSymbolLinks so these routes
-  // get trace anchors like any extracted route (they used to be invisible to the
-  // linker and the Routes tab had no handler links for them). Project-level +
-  // in-memory (no per-file JSON change), so it needs no version bump.
-  const autoRouteCount = await detectFileBasedRoutes(
-    allAnalyses,
-    projectRoot,
-    subProjects.map((sp) => sp.root),
-  );
-  if (autoRouteCount > 0 && verbose) {
-    progress.detail(`  file-based routes: ${autoRouteCount}`);
-  }
-
-  // Angular external templates (`templateUrl: './x.html'`): read each sibling
-  // .html and back-fill the component's interactiveElements/templateTree, so an
-  // external-template component gets the same screen + button→handler→API chain
-  // an inline-template one does. Project-level + in-memory, before screens/links.
-  const angularTplCount = await resolveAngularExternalTemplates(allAnalyses, projectRoot);
-  if (angularTplCount > 0 && verbose) {
-    progress.detail(`  angular external templates: ${angularTplCount}`);
+  // Plugin project passes (routes generated from a page folder, a component's external template): they add
+  // routes and screen facts in memory, so they run BEFORE buildSymbolLinks, which anchors every route.
+  for (const { label, count } of await runProjectPasses(allAnalyses, { projectRoot, subProjectRoots: subProjects.map((sp) => sp.root) })) {
+    if (count > 0 && verbose) progress.detail(`  ${label}: ${count}`);
   }
 
   // A team's own wrappers, declared in .clarifydoc/config.json: their call

@@ -2,7 +2,7 @@ import { existsSync } from "fs";
 import { join, posix, resolve } from "path";
 import { globUnignored as glob } from "./clarifydoc-ignore.js";
 import { byOrdinal } from "./ordinal.js";
-import { parseOpenApiDocument, type SpecNode } from "../extractors/plugins/openapi/index.js";
+import { parseSpecDocument, type SpecNode } from "../extractors/shared/spec-document.js";
 import type { DeployedServiceKind } from "../types/analysis.js";
 import type { RawService } from "./deployment.js";
 import type { TerraformDeployment } from "./deployment-terraform.js";
@@ -103,7 +103,7 @@ export async function collectCloudFormation(projectRoot: string, ignore: readonl
     const text = texts[i];
     if (text === undefined) continue;
     if (text.length > 2_000_000 || !GATE.test(text) || !/\bResources\b/.test(text)) continue;
-    const root = parseOpenApiDocument(text.split(/\r?\n/));
+    const root = parseSpecDocument(text.split(/\r?\n/));
     const resources = root.children.get("Resources");
     if (!resources || resources.children.size === 0) continue;
     const services = readTemplate(absRoot, rel, root, resources, out.edges, logicalNames);

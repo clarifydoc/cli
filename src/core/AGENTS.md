@@ -11,7 +11,10 @@ conventions here; ask the registry. Even a **cross-file** join that needs
 language knowledge stays in the plugin: core calls a generic hook (e.g.
 `reconcileProjectEntities` → each entity extractor's `reconcileProject`), it
 never names the language. A `schema.rb` parser or a pluralization rule in
-`src/core/` is a layering bug.
+`src/core/` is a layering bug, and so is an import of
+`extractors/plugins/<language>/` from production code here —
+[core-imports.test.ts](core-imports.test.ts) fails on one (`plugins/shared/`
+holds language-free helpers and is allowed).
 
 ## Entry point
 

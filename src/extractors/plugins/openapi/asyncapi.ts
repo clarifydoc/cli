@@ -1,5 +1,6 @@
 import type { ClassInfo, DataSourceInfo, EntityRelation } from "../../../types/analysis.js";
-import { extractOpenApiEntities, extractOpenApiRelations, parseOpenApiDocument, refName, schemaClass, type SpecNode } from "./index.js";
+import { extractOpenApiEntities, extractOpenApiRelations, refName, schemaClass } from "./index.js";
+import { parseSpecDocument, type SpecNode } from "../../shared/spec-document.js";
 
 /**
  * AsyncAPI documents (`asyncapi: 2.x | 3.x`, YAML or JSON) — the contract of a
@@ -114,7 +115,7 @@ export interface AsyncApiFacts {
 }
 
 export function extractAsyncApi(lines: string[]): AsyncApiFacts {
-  const root = parseOpenApiDocument(lines);
+  const root = parseSpecDocument(lines);
   const v3 = (root.children.get("asyncapi")?.value ?? "").startsWith("3");
   const brokerOfServer = new Map<string, string | undefined>();
   for (const [name, s] of root.children.get("servers")?.children ?? []) {

@@ -71,6 +71,23 @@ export function resolvePythonImport(importingFile: string, source: string, speci
   return null;
 }
 
+/**
+ * A Python import read from the file set alone (`LanguagePluginManifest.resolveImportByFiles`): a dotted import by
+ * `resolvePythonModule`; a relative one only where the specifier names a module below it (`from . import graph` →
+ * `./graph.py`), any other relative import left to the generic path rules. Asked for `.py` importers only.
+ */
+export function resolvePythonImportByFiles(importingFile: string, source: string, specifier: string | undefined, hasFile: (path: string) => boolean): string | null | undefined {
+  if (!importingFile.endsWith(".py")) return undefined;
+  if (!source.startsWith(".") && !source.startsWith("/")) return resolvePythonModule(importingFile, source, hasFile, specifier);
+  if (!specifier) return undefined;
+  const dir = importingFile.includes("/") ? importingFile.slice(0, importingFile.lastIndexOf("/")) : "";
+  const joined = normalizeJoin(dir, relativeModulePath(source));
+  for (const ext of [`/${specifier}.py`, `/${specifier}/__init__.py`]) {
+    if (hasFile(joined + ext)) return joined + ext;
+  }
+  return undefined;
+}
+
 /** Join a directory and a relative path, resolving `.` and `..` segments, posix-style. */
 function normalizeJoin(dir: string, rel: string): string {
   const out: string[] = [];

@@ -1,5 +1,8 @@
 import { extractJavaScriptFilePathReads } from "./file-path-reads.js";
 import { screenTableResolver } from "./routes/screen-tables.js";
+import { detectFileBasedRoutes } from "./routes/file-based.js";
+import { placedRoutes } from "./routes/placed-routes.js";
+import { resolveAngularExternalTemplates } from "./angular-external-templates.js";
 import { extractAttributeReads } from "./attribute-reads.js";
 import { extractBrowserNavigations } from "./browser-navigations.js";
 import { extractAppMount } from "./app-mounts.js";
@@ -32,7 +35,7 @@ import { convexBuilderResolver } from "./routes/convex.js";
 import { extractEntryPoints } from "./entry-points.js";
 import type { Language, SecurityIssue } from "../../../types/analysis.js";
 import type { Tree } from "web-tree-sitter";
-import type { LanguagePluginManifest, LanguagePluginMeta, SecurityRule, AstExtractorHooks } from "../../../types/language-plugin.js";
+import type { LanguagePluginManifest, LanguagePluginMeta, ProjectPass, SecurityRule, AstExtractorHooks } from "../../../types/language-plugin.js";
 import { COMMON_PRIMITIVES } from "../../shared/builtin-types.js";
 import { extractTsTypeReferences } from "./type-references.js";
 import { extractInteractiveElements } from "./interactive-elements.js";
@@ -314,6 +317,7 @@ function astHooks(language: Language, manifest: LanguagePluginManifest): AstExtr
     attributeReads: extractAttributeReads,
     browserNavigations: extractBrowserNavigations,
     appMount: extractAppMount,
+    fileRoutes: placedRoutes,
     pathReferences: (sourceText) => extractPathReferences(sourceText),
     variableAliases: extractJsVariableAliases,
     diBindings: extractJsDiBindings,
@@ -333,6 +337,12 @@ const dataSources = new JavaScriptDataSourceExtractor();
 const dataMutations = new JavaScriptMutationExtractor();
 const entities = new JavaScriptEntityExtractor();
 const dispatchResolvers = ([new JsComponentEmitResolver(), new VuexDispatchResolver(), new VuexStateWatchResolver(), new JsPropCallbackResolver(), new JsComponentRenderResolver(), new JsComponentRenderResolver(true), new JsProvideInjectResolver(), new JsPropFlowResolver(), new JsStoreWatchResolver(), new JsContextTypeResolver(), new JsParamTypeResolver(), new JsSlotScopeResolver(), new JsLoopItemCallbackResolver(), new JsEventBusResolver(), new JsSubjectResolver(), new JsTemplateRefResolver(), new ScopedHandlerResolver(), new DomBindingResolver(), new JobEventResolver(), new LwcTemplateResolver()]).map(seeingNamespaceTags);
+// Before linking: routes generated from a page folder (unplugin-vue-router, vite-plugin-pages), then Angular
+// `templateUrl` templates read into their components.
+const projectPasses: readonly ProjectPass[] = [
+  { label: "file-based routes", run: (analyses, ctx) => detectFileBasedRoutes(analyses, ctx.projectRoot, [...ctx.subProjectRoots]) },
+  { label: "angular external templates", run: (analyses, ctx) => resolveAngularExternalTemplates(analyses, ctx.projectRoot) },
+];
 const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, convexBuilderResolver, cdkRouteResolver, nestInheritedGuards, nestGlobalGuards, nestGlobalInterceptors, koaAppMiddleware, nextMiddlewareGuards, renderModeResolver, astroMiddlewareGuards, screenTableResolver, pathHelperResolver];
 
 export const typescriptMeta: LanguagePluginMeta = {
@@ -347,6 +357,7 @@ export const typescriptMeta: LanguagePluginMeta = {
   routeResolvers,
   recordChoice,
   autoImports: nuxtAutoImports,
+  projectPasses,
   // .vue/.svelte/.astro files map to typescript; the SFC preprocess swaps in the
   // <script> block (dispatched by extension).
   // A call's import-type argument the grammar misreads is rewritten over whichever text is parsed.
@@ -382,6 +393,7 @@ export const javascriptMeta: LanguagePluginMeta = {
   routeResolvers,
   recordChoice,
   autoImports: nuxtAutoImports,
+  projectPasses,
   // A committed build (`public/js/app.js` from webpack) is skipped: its
   // modules are the project's own, bundled, and their facts come from the source.
   preprocess: (raw, path) => withMixinScope(withWiredAdapters(auraScriptPreprocess(raw, path) ?? bundlePreprocess(raw) ?? templateEscapePreprocess(raw, "javascript"), raw, "javascript"), raw, "javascript", path),

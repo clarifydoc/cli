@@ -1,5 +1,5 @@
 import type { RouteFact } from "../../../types/analysis.js";
-import { parseOpenApiDocument, type SpecNode } from "../openapi/index.js";
+import { parseSpecDocument, type SpecNode } from "../../shared/spec-document.js";
 
 /**
  * The environment a descriptor gives its functions, as literal values:
@@ -75,7 +75,7 @@ const join = (dir: string | null, file: string): string => {
 
 export function extractLambdaEnv(lines: string[], facts: RouteFact[] | undefined): void {
   if (!facts) return;
-  const root = parseOpenApiDocument(lines);
+  const root = parseSpecDocument(lines);
   const push = (line: number, owner: string | undefined, data: LambdaEnv): void => {
     if (Object.keys(data.env).length > 0) facts.push({ kind: "lambda-env", line, ...(owner ? { owner } : {}), data });
   };

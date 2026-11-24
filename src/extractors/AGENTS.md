@@ -62,6 +62,16 @@ them; core runs every pass generically and never names a framework:
   puts in scope without an import line (Nuxt's `composables/` and `utils/`): add the `ImportInfo` the file
   would have written and classify those calls cross-file, before the import index and the linker. In memory
   only. A member of an unimported factory's result carries the factory in `CallInfo.via` for it.
+- `projectPasses` ([project-passes.ts](project-passes.ts)) — async passes that read what they need from
+  disk and add to the analyses in memory, before the import index and the linker: routes a build plugin
+  generates from a page folder (unplugin-vue-router, vite-plugin-pages), a component's `templateUrl`
+  template. Each returns a count `analyze --verbose` prints under its `label`.
+
+Two per-file and static hooks serve the same rule: `ast.fileRoutes` gives the routes a file's place states
+(file-based routing — Next.js, Nuxt, SvelteKit, Astro, Expo Router, flat routes), and the manifest's
+`resolveImportByFiles` reads an import from the file set alone for core's generic `resolveImportSource`
+(Python's dotted modules). A YAML/JSON document skeleton that plugins and core both read is
+[shared/spec-document.ts](shared/spec-document.ts).
 
 Each receives a `ProjectContext` ([../types/project.ts](../types/project.ts)):
 the import index, a class index (`resolve`, `supertypes`, `ancestors`,

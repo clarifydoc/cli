@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from "fs";
+import { readFileSync } from "fs";
 import { createHash } from "crypto";
 import { parseErrorsOf } from "./coverage.js";
 import { readFile } from "fs/promises";
@@ -34,19 +34,6 @@ import type { BuildMacros, ParsedStructure, VariableAliasBinding } from "../type
 import { featureEnabled } from "./feature-flags.js";
 import type { CallInfo, ClassInfo, FunctionInfo, ImportInfo, RouteFact } from "../types/analysis.js";
 import { isTestFile } from "./test-file-detector.js";
-import {
-  inferExpoRouterRoutes,
-  inferFlatRoutes,
-  inferNextRoutes,
-  inferNuxtServerRoutes,
-  inferReactRouterConfig,
-  inferSvelteKitRoutes,
-  inferAstroRoutes,
-  inferTrpcEndpointFacts,
-} from "../extractors/plugins/javascript/routes/file-routes.js";
-import { inferNextMiddlewareFacts } from "../extractors/plugins/javascript/routes/next-middleware.js";
-import { inferRenderModeFacts } from "../extractors/plugins/javascript/routes/render-mode.js";
-import { inferAstroMiddlewareFacts } from "../extractors/plugins/javascript/routes/astro-middleware.js";
 import { restoreTypedReceiverCalls } from "./typed-receivers.js";
 import {
   createEmptyAnalysis,
@@ -56,33 +43,6 @@ import {
   type SecurityIssue,
   type TaintFacts,
 } from "../types/analysis.js";
-
-/** Whether a React Router 7 project's `app/routes.ts` delegates to `flatRoutes()`, per sub-project root. */
-const flatRoutesByRoot = new Map<string, boolean>();
-function usesFlatRoutes(absolutePath: string, routePath: string): boolean {
-  const abs = absolutePath.replace(/\\/g, "/");
-  const rel = routePath.replace(/\\/g, "/");
-  if (!abs.endsWith(rel)) return false;
-  const root = abs.slice(0, abs.length - rel.length);
-  // Keyed by the config's mtime too: a long-lived process (the MCP server) sees an edit.
-  const dir = rel.split("/")[0];
-  for (const ext of ["ts", "js", "mts", "mjs"]) {
-    const config = `${root}${dir}/routes.${ext}`;
-    let key: string;
-    try {
-      key = `${config}:${statSync(config).mtimeMs}`;
-    } catch {
-      continue;
-    }
-    let hit = flatRoutesByRoot.get(key);
-    if (hit === undefined) {
-      hit = /\bflatRoutes\s*\(/.test(readFileSync(config, "utf-8"));
-      flatRoutesByRoot.set(key, hit);
-    }
-    return hit;
-  }
-  return false;
-}
 
 // ─── Per-file analysis task / result ─────────────────────────────────────
 
@@ -934,29 +894,12 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       }
     }
 
-    // File-based routing (Next.js, Nuxt, SvelteKit, Expo Router): the route
-    // comes from where the file sits. Skipped for test files, same as
-    // AST-extracted routes. API endpoints read the file's exported handlers.
-    if (!isTest) {
-      const { relativePath: routePath, frameworkIds: routeFrameworks } = routeScope;
-      analysis.routes.push(
-        ...inferNextRoutes(routePath, analysis, routeFrameworks, sourceText),
-        ...inferNuxtServerRoutes(routePath, analysis, routeFrameworks, sourceText),
-        ...inferSvelteKitRoutes(routePath, analysis, routeFrameworks, sourceText),
-        ...inferAstroRoutes(routePath, analysis, routeFrameworks, rawSource),
-        ...inferExpoRouterRoutes(routePath, analysis, routeFrameworks),
-        ...inferReactRouterConfig(routePath, sourceText, routeFrameworks).routes,
-        ...inferFlatRoutes(routePath, analysis, routeFrameworks, {
-          flatRoutes: routeFrameworks.includes("react-router-framework") && /^(?:app|src)\/routes\//.test(routePath.replace(/\\/g, "/")) && usesFlatRoutes(file.absolutePath, routePath),
-        }),
-      );
-      const endpoints = [
-        ...inferTrpcEndpointFacts(routePath, sourceText, routeFrameworks),
-        ...inferNextMiddlewareFacts(routePath, sourceText, routeFrameworks),
-        ...inferAstroMiddlewareFacts(routePath, sourceText, routeFrameworks),
-        ...inferRenderModeFacts(routePath, sourceText, rawSource, routeFrameworks),
-      ];
-      if (endpoints.length > 0) analysis.routeFacts = [...(analysis.routeFacts ?? []), ...endpoints];
+    // File-based routing: the route comes from where the file sits, read by the language's own hook with the
+    // file's sub-project frameworks and its path below that root. Skipped for test files, as AST routes are.
+    if (!isTest && hooks?.fileRoutes) {
+      const placed = hooks.fileRoutes({ relativePath: routeScope.relativePath, frameworkIds: routeScope.frameworkIds, absolutePath: file.absolutePath, analysis, sourceText, rawSource });
+      analysis.routes.push(...placed.routes);
+      if (placed.facts.length > 0) analysis.routeFacts = [...(analysis.routeFacts ?? []), ...placed.facts];
     }
 
     // Detect React directives: 'use client' / 'use server'

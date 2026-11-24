@@ -7,7 +7,7 @@ import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { pythonFrameworkRules } from "./frameworks.js";
 import { distributionNamesOfImport, pypiPackageManager } from "./package-manifests.js";
 import { pythonStandardImport } from "./standard-library.js";
-import { resolvePythonImport } from "./module-resolver.js";
+import { resolvePythonImport, resolvePythonImportByFiles } from "./module-resolver.js";
 import { azureHostJson, azureRouteBase } from "../shared/azure-functions.js";
 import { PYTHON_DOCS } from "../../shared/doc-comment-specs.js";
 
@@ -97,6 +97,8 @@ export const pythonManifest: LanguagePluginManifest = {
   standardImport: pythonStandardImport,
   // A dotted import names the module file from a source root (`from clubs.models import Club` → `clubs/models.py`).
   resolveImport: resolvePythonImport,
+  // The same rules from the file set alone, for core's generic resolver.
+  resolveImportByFiles: resolvePythonImportByFiles,
   frameworkImportHints: { sqlalchemy: "sqlalchemy", "django.db.models": "django-orm", "django.db": "django-orm", tortoise: "tortoise-orm", peewee: "peewee", pony: "pony-orm", "pony.orm": "pony-orm" },
   frameworkRules: pythonFrameworkRules,
   activationFiles: ["requirements.txt", "pyproject.toml"],

@@ -46,6 +46,36 @@ import type { RouteResolver } from "../extractors/route-resolvers/base.js";
  * framework-specific knowledge, exactly like `knownPackages`. Rule ids must be
  * unique across ALL plugins (asserted at registry build time).
  */
+/** What `AstExtractorHooks.fileRoutes` reads: the file's place and what was extracted from it. */
+export interface FileRouteInput {
+  /** The file's path relative to its own sub-project's root (an Expo app in `mobile/` routes `mobile/app/x.tsx` as `app/x.tsx`). */
+  relativePath: string;
+  /** That sub-project's frameworks. */
+  frameworkIds: string[];
+  /** The file on disk, for a config read beside it. */
+  absolutePath: string;
+  analysis: FileAnalysis;
+  /** The text parsed (after the plugin's preprocess). */
+  sourceText: string;
+  /** The text as written. */
+  rawSource: string;
+}
+
+/** What a plugin's project pass is handed besides the analyses (`LanguagePluginMeta.projectPasses`). */
+export interface ProjectPassContext {
+  /** The analysis root, absolute. */
+  projectRoot: string;
+  /** Every sub-project's root, relative to `projectRoot` (`""` for the root itself). */
+  subProjectRoots: readonly string[];
+}
+
+/** One project pass (`LanguagePluginMeta.projectPasses`). */
+export interface ProjectPass {
+  /** What `analyze --verbose` prints before the count the pass returns (`file-based routes`). */
+  label: string;
+  run(analyses: FileAnalysis[], ctx: ProjectPassContext): Promise<number>;
+}
+
 export interface FrameworkRule {
   id: string;
   name: string;
@@ -855,6 +885,12 @@ export interface AstExtractorHooks {
   attributeReads?(tree: Tree, sourceText: string): Array<{ attribute: string; method?: string; line: number }>;
   /** Pages a browser driver opens by address (`page.goto`, `cy.visit`) → `FileAnalysis.browserNavigations`. */
   browserNavigations?(tree: Tree, sourceText: string): import("./analysis.js").BrowserNavigation[];
+  /**
+   * The routes and route facts the file's place states — file-based routing (a `pages/` or `app/` folder) —
+   * read with its own sub-project's frameworks and its path below that root. Asked for every file but tests,
+   * after the extractors; `routes` are appended to `FileAnalysis.routes`, `facts` to `routeFacts`.
+   */
+  fileRoutes?(input: FileRouteInput): { routes: import("./analysis.js").RouteInfo[]; facts: import("./analysis.js").RouteFact[] };
   /** The call mounting a browser app's root component, when the file makes one → `FileAnalysis.appMount`. */
   appMount?(tree: Tree, sourceText: string, filePath?: string, frameworkIds?: readonly string[]): { line: number; routed?: true } | undefined;
   /**
@@ -2017,6 +2053,16 @@ export interface LanguagePluginManifest {
    */
   standardImport?(importingFile: string, source: string, hasFile: (path: string) => boolean): boolean;
   /**
+   * The project file an import of this language names, read from the project's
+   * files alone (`hasFile`, posix paths from the analysis root) — what core's
+   * generic `resolveImportSource` asks before its path rules, for the callers
+   * that hold no `ImportResolveContext` (the entity graph, the screen builder).
+   * `undefined` leaves the import to the generic rules; `null` says it names no
+   * project file. Asked for a non-relative import first thing, and for a
+   * relative one before the generic extension list. Leaf code.
+   */
+  resolveImportByFiles?(importingFile: string, source: string, specifier: string | undefined, hasFile: (path: string) => boolean): string | null | undefined;
+  /**
    * Namespace roots (first path segment) that mark an import as external for
    * directory-import resolution (e.g. "System", "java", "com").
    */
@@ -2490,6 +2536,15 @@ export interface LanguagePluginMeta extends LanguagePluginManifest {
    * many imports it added. Shared by a family's metas (run once by identity).
    */
   autoImports?: (analyses: FileAnalysis[]) => number;
+  /**
+   * Project passes this plugin runs once after per-file analysis, before
+   * imports are indexed and calls linked: routes a build plugin generates from
+   * a folder of page files, a component's external template read from the file
+   * it names. Each reads what it needs from disk, adds to `analyses` in memory
+   * (never to the per-file JSON) and returns how many facts it added. Run in
+   * the order listed, each once (a family's metas share one array).
+   */
+  projectPasses?: readonly ProjectPass[];
   /**
    * Project-level route passes this plugin contributes (inherited controller
    * route templates, urlconf includes, router registrations). Each sees the

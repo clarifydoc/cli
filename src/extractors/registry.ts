@@ -718,6 +718,17 @@ export function isStandardImport(importingFile: string, source: string, hasFile:
 }
 
 /**
+ * The importing file's language's own reading of an import from the file set
+ * alone (`LanguagePluginManifest.resolveImportByFiles`); `undefined` when the
+ * language states none or leaves this import to the generic path rules.
+ */
+export function resolveImportByFiles(importingFile: string, source: string, specifier: string | undefined, hasFile: (path: string) => boolean): string | null | undefined {
+  const dot = importingFile.lastIndexOf(".");
+  const language = dot >= 0 ? EXTENSION_TO_LANGUAGE[importingFile.slice(dot).toLowerCase()] : undefined;
+  return language ? manifestFor(language)?.resolveImportByFiles?.(importingFile, source, specifier, hasFile) : undefined;
+}
+
+/**
  * Matches import sources whose first segment is a well-known external
  * namespace root (e.g. "System.Windows.Forms", "com.example.app") — used to
  * skip directory-name matching for such imports.

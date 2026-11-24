@@ -1,5 +1,5 @@
 import type { EntryPointInfo, RouteAuthInfo, RouteInfo } from "../../../types/analysis.js";
-import { parseOpenApiDocument, type SpecNode } from "../openapi/index.js";
+import { parseSpecDocument, type SpecNode } from "../../shared/spec-document.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractDaprSubscriptions } from "./dapr.js";
 import { extractLambdaEnv } from "./environment.js";
@@ -224,7 +224,7 @@ function eventEntry(type: string, ev: SpecNode | undefined, name: string, handle
 
 /** Functions a clock or a queue runs, as the descriptor states it (see `eventEntry`). */
 export function extractServerlessEntryPoints(lines: string[]): EntryPointInfo[] {
-  const root = parseOpenApiDocument(lines);
+  const root = parseSpecDocument(lines);
   const out: EntryPointInfo[] = [];
   if (root.children.has("Resources")) {
     const globals = childOf(childOf(root, "Globals"), "Function");
@@ -254,7 +254,7 @@ export function extractServerlessEntryPoints(lines: string[]): EntryPointInfo[] 
 }
 
 export function extractServerlessRoutes(lines: string[]): RouteInfo[] {
-  const root = parseOpenApiDocument(lines);
+  const root = parseSpecDocument(lines);
   return root.children.has("Resources") ? samRoutes(root) : serverlessRoutes(root);
 }
 

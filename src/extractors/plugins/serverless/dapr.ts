@@ -1,6 +1,6 @@
 import type { DataSourceInfo, FileAnalysis, Language, RouteFact, RouteInfo } from "../../../types/analysis.js";
 import type { RouteResolver } from "../../route-resolvers/base.js";
-import { parseOpenApiDocument, type SpecNode } from "../openapi/index.js";
+import { parseSpecDocument, type SpecNode } from "../../shared/spec-document.js";
 
 /**
  * Dapr declarative subscriptions: a `kind: Subscription` resource says the
@@ -46,7 +46,7 @@ export function extractDaprSubscriptions(lines: string[], facts?: RouteFact[]): 
   for (let i = 0; i <= lines.length; i++) {
     if (i < lines.length && !/^---\s*$/.test(lines[i]!)) continue;
     const doc = lines.slice(start, i);
-    const root = parseOpenApiDocument(doc);
+    const root = parseSpecDocument(doc);
     const sub = subscriptionOf(root);
     if (sub) facts.push({ kind: "dapr-subscription", line: start + (root.children.get("kind")?.line ?? 1), data: sub });
     start = i + 1;

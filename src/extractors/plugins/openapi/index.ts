@@ -1,6 +1,7 @@
 import type { ClassInfo, EntityRelation, PropertyInfo, RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../types/analysis.js";
 import { applyRouteMeta, type GuardAttr } from "../../shared/route-metadata.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
+import { newSpecNode, parseSpecDocument, type SpecNode } from "../../shared/spec-document.js";
 
 /**
  * OpenAPI / Swagger API-description documents (`.yaml`/`.yml`/`.json`) — the
@@ -44,216 +45,6 @@ import type { RegexLangSpec } from "../shared/regex-base.js";
 
 const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "head", "options", "trace"]);
 
-// ─── Minimal structural parser (YAML maps + sequences, JSON) ───────────────────
-// OpenAPI's routing/schema skeleton is a tree of string-keyed maps and lists of
-// maps; we need keys, nesting, scalar leaf values, list items and `$ref`
-// strings — not full YAML (no anchors, no multi-line scalars). A focused indent
-// parser avoids a YAML dependency (and the perf cost of one on every sniffed
-// yaml). JSON specs are parsed with JSON.parse and folded into the same shape.
-
-export interface SpecNode {
-  value: string | null;
-  line: number;
-  children: Map<string, SpecNode>;
-  /** Sequence items (`- name: id` / `- $ref: …` / `- read:users`), in order. */
-  items?: SpecNode[];
-}
-
-function newNode(line: number): SpecNode {
-  return { value: null, line, children: new Map() };
-}
-
-function stripQuotes(s: string): string {
-  const t = s.trim();
-  if (t.length >= 2 && (t[0] === '"' || t[0] === "'") && t[t.length - 1] === t[0]) {
-    return t.slice(1, -1);
-  }
-  return t;
-}
-
-/** The `$ref` of a node itself or, legacy shape, of its first `$ref` sequence item. */
-function surfaceRef(parent: SpecNode, item: SpecNode): void {
-  const ref = item.children.get("$ref");
-  if (ref && !parent.children.has("$ref")) parent.children.set("$ref", ref);
-}
-
-/** Split `a, b: [c, d], {e: f}` at depth-0 commas. */
-function splitFlow(inner: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let cur = "";
-  let quote: string | null = null;
-  for (const ch of inner) {
-    if (quote) {
-      cur += ch;
-      if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === '"' || ch === "'") quote = ch;
-    else if (ch === "[" || ch === "{") depth++;
-    else if (ch === "]" || ch === "}") depth--;
-    if (ch === "," && depth === 0) {
-      out.push(cur);
-      cur = "";
-      continue;
-    }
-    cur += ch;
-  }
-  if (cur.trim()) out.push(cur);
-  return out;
-}
-
-/** `key: value` / `key:` — a mapping needs whitespace (or the end) after the colon, so `read:users` stays a scalar. */
-const FLOW_KEY_RE = /^\s*("(?:[^"\\]|\\.)*"|'[^']*'|[^\s:\[\]{},][^:]*?)\s*:(?:\s+(.*))?$/s;
-
-/**
- * Fill `node` from a flow-style scalar (`[a, b]`, `{ type: integer }`,
- * `[bearerAuth: []]`, or a plain value). Recursive over nested flow syntax.
- */
-function setFlowValue(node: SpecNode, raw: string): void {
-  const text = raw.trim();
-  if (text.startsWith("[") && text.endsWith("]")) {
-    node.items = [];
-    for (const part of splitFlow(text.slice(1, -1))) {
-      const item = newNode(node.line);
-      const kv = FLOW_KEY_RE.exec(part);
-      if (kv && !/^[\[{]/.test(part.trim())) {
-        const child = newNode(node.line);
-        setFlowValue(child, kv[2] ?? "");
-        item.children.set(stripQuotes(kv[1]!), child);
-      } else if (/^\s*[\[{]/.test(part)) {
-        setFlowValue(item, part);
-      } else {
-        item.value = stripQuotes(part);
-      }
-      node.items.push(item);
-      surfaceRef(node, item);
-    }
-    return;
-  }
-  if (text.startsWith("{") && text.endsWith("}")) {
-    for (const part of splitFlow(text.slice(1, -1))) {
-      const kv = FLOW_KEY_RE.exec(part);
-      if (!kv) continue;
-      const child = newNode(node.line);
-      setFlowValue(child, kv[2] ?? "");
-      node.children.set(stripQuotes(kv[1]!), child);
-    }
-    return;
-  }
-  if (text && text !== "|" && text !== ">") node.value = stripQuotes(text);
-}
-
-/** Parse the map/sequence skeleton of a YAML document. */
-function parseYaml(lines: string[]): SpecNode {
-  const root = newNode(1);
-  const stack: Array<{ indent: number; node: SpecNode; isItem?: boolean }> = [{ indent: -1, node: root }];
-  // A key may hold a colon not followed by a space (`Fn::GetAtt`, `x:y`), as YAML allows.
-  const keyRe = /^(\s*)("(?:[^"\\]|\\.)*"|'[^']*'|[^\s:](?:[^:]|:(?!\s|$))*?)\s*:(?:\s+|$)(.*)$/;
-
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i]!;
-    if (/^\s*#/.test(raw) || raw.trim() === "") continue;
-    const seq = /^(\s*)-(?:\s+(.*))?$/.exec(raw);
-    if (seq) {
-      const indent = seq[1]!.length;
-      const inline = (seq[2] ?? "").replace(/\s+#.*$/, "").trim();
-      // Items sit deeper than their key but may share its column
-      // (`security:\n- bearerAuth: []`): pop anything deeper, plus the
-      // previous item at this same column — never the key itself.
-      while (stack.length > 1) {
-        const top = stack[stack.length - 1]!;
-        if (top.indent > indent || (top.indent === indent && top.isItem)) stack.pop();
-        else break;
-      }
-      const parent = stack[stack.length - 1]!.node;
-      const item = newNode(i + 1);
-      (parent.items ??= []).push(item);
-      stack.push({ indent, node: item, isItem: true });
-      const kv = FLOW_KEY_RE.exec(inline);
-      if (inline && kv && !/^[\[{]/.test(inline)) {
-        const child = newNode(i + 1);
-        setFlowValue(child, kv[2] ?? "");
-        item.children.set(stripQuotes(kv[1]!), child);
-        // The inline key's siblings follow at the key's own column.
-        const col = indent + 1 + (raw.slice(indent + 1).match(/^\s*/)?.[0].length ?? 1);
-        stack.push({ indent: col, node: child });
-      } else if (inline) {
-        setFlowValue(item, inline);
-      }
-      surfaceRef(parent, item);
-      continue;
-    }
-    const m = keyRe.exec(raw);
-    if (!m) continue;
-    const indent = m[1]!.length;
-    const key = stripQuotes(m[2]!);
-    const rest = m[3]!.replace(/\s+#.*$/, "").trim();
-
-    while (stack.length > 1 && stack[stack.length - 1]!.indent >= indent) stack.pop();
-    const parent = stack[stack.length - 1]!.node;
-    const node = newNode(i + 1);
-    setFlowValue(node, rest);
-    parent.children.set(key, node);
-    stack.push({ indent, node });
-  }
-  return root;
-}
-
-/** Fold a JSON.parse result into the SpecNode shape, tracking a best-effort line. */
-function fromJson(obj: unknown, lines: string[], key: string, fromLine: number): SpecNode {
-  const line = key ? findLine(lines, key, fromLine) : fromLine;
-  const node = newNode(line);
-  if (obj && typeof obj === "object" && !Array.isArray(obj)) {
-    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
-      node.children.set(k, fromJson(v, lines, k, line));
-    }
-  } else if (Array.isArray(obj)) {
-    node.items = [];
-    for (const el of obj) {
-      const item = fromJson(el, lines, "", line);
-      node.items.push(item);
-      // Surface a $ref buried in an array (schema `allOf`) at this node.
-      surfaceRef(node, item);
-    }
-  } else if (obj != null) {
-    node.value = String(obj);
-  }
-  return node;
-}
-
-function findLine(lines: string[], key: string, fromLine: number): number {
-  const needle = `"${key}"`;
-  for (let i = Math.max(0, fromLine - 1); i < lines.length; i++) {
-    if (lines[i]!.includes(needle)) return i + 1;
-  }
-  return fromLine;
-}
-
-const PARSE_CACHE = new WeakMap<string[], SpecNode>();
-
-function parsedOf(lines: string[]): SpecNode {
-  let root = PARSE_CACHE.get(lines);
-  if (!root) {
-    const text = lines.join("\n");
-    if (/^\s*\{/.test(text)) {
-      try {
-        root = fromJson(JSON.parse(text), lines, "", 1);
-      } catch {
-        root = newNode(1);
-      }
-    } else {
-      root = parseYaml(lines);
-    }
-    PARSE_CACHE.set(lines, root);
-  }
-  return root;
-}
-
-/** Exposed for tests: the parsed skeleton of a document. */
-export function parseOpenApiDocument(lines: string[]): SpecNode {
-  return parsedOf(lines);
-}
 
 function itemsOf(node: SpecNode | undefined): SpecNode[] {
   return node?.items ?? [];
@@ -378,7 +169,7 @@ function paramsOf(root: SpecNode, pathNode: SpecNode, opNode: SpecNode): RoutePa
     }
   }
   const out = [...byKey.values()];
-  const body = resolveRef(root, opNode.children.get("requestBody") ?? newNode(0), "requestBodies");
+  const body = resolveRef(root, opNode.children.get("requestBody") ?? newSpecNode(0), "requestBodies");
   const content = body.children.get("content");
   if (content) {
     const first = content.children.values().next().value as SpecNode | undefined;
@@ -446,7 +237,7 @@ function serversBasePath(servers: SpecNode | undefined): string | undefined {
 }
 
 export function extractOpenApiRoutes(lines: string[]): RouteInfo[] {
-  const root = parsedOf(lines);
+  const root = parseSpecDocument(lines);
   const paths = root.children.get("paths");
   if (!paths) return [];
   const routes: RouteInfo[] = [];
@@ -525,7 +316,7 @@ function requiredNames(schema: SpecNode): Set<string> {
 }
 
 export function extractOpenApiEntities(lines: string[]): ClassInfo[] {
-  const schemas = schemasNode(parsedOf(lines));
+  const schemas = schemasNode(parseSpecDocument(lines));
   if (!schemas) return [];
   const out: ClassInfo[] = [];
   for (const [name, schema] of schemas.children) {
@@ -572,7 +363,7 @@ export function schemaClass(name: string, schema: SpecNode): ClassInfo {
 }
 
 export function extractOpenApiRelations(lines: string[], classes: ClassInfo[]): EntityRelation[] {
-  const schemas = schemasNode(parsedOf(lines));
+  const schemas = schemasNode(parseSpecDocument(lines));
   if (!schemas) return [];
   const known = new Set(classes.map((c) => c.name));
   return [...schemas.children].flatMap(([name, schema]) => schemaRelations(name, schema, known));
@@ -622,7 +413,7 @@ function schemaRelations(name: string, schema: SpecNode, known: ReadonlySet<stri
  * after the file.
  */
 export function extractSchemaFragment(lines: string[], name: string): { classes: ClassInfo[]; relations: EntityRelation[] } {
-  const root = parsedOf(lines);
+  const root = parseSpecDocument(lines);
   return { classes: [schemaClass(name, root)], relations: schemaRelations(name, root, new Set()) };
 }
 

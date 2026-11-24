@@ -2,8 +2,7 @@ import type { FileAnalysis, ImportInfo, SubProject } from "../types/analysis.js"
 import { packageRootLookup, packageRootsOf } from "./import-directories.js";
 import type { ImportIndex } from "../types/project.js";
 import { extensionFamily, relativeModulePath } from "../extractors/plugins/shared/path-utils.js";
-import { resolvePythonModule } from "../extractors/plugins/python/module-resolver.js";
-import { EXTENSION_TO_LANGUAGE, PARTIAL_PREFIX_BY_LANGUAGE, extensionsOfFamily, isStandardImport, manifestFor } from "../extractors/registry.js";
+import { EXTENSION_TO_LANGUAGE, PARTIAL_PREFIX_BY_LANGUAGE, extensionsOfFamily, isStandardImport, manifestFor, resolveImportByFiles } from "../extractors/registry.js";
 import type { ImportResolveContext } from "../types/language-plugin.js";
 import { isExternalPackage } from "../extractors/shared/link-scoring.js";
 
@@ -515,7 +514,9 @@ export function resolveImportSource(
   if (!src.startsWith(".") && !src.startsWith("/")) {
     // The language's standard library (`import types`), unless a project module shadows it.
     if (isStandardImport(norm, src, (p) => knownFiles.has(p))) return null;
-    if (norm.endsWith(".py")) return resolvePythonModule(norm, src, (p) => knownFiles.has(p), specifier);
+    // A language that reads its own imports from the file set (a dotted module path).
+    const own = resolveImportByFiles(norm, src, specifier, (p) => knownFiles.has(p));
+    if (own !== undefined) return own;
     // A tsconfig alias (`@/foo`, a `baseUrl` path) is rewritten to a
     // project-relative path before this runs; it names a project file only if
     // one is there — a package import (`lodash/fp`) never matches.
@@ -534,14 +535,10 @@ export function resolveImportSource(
   // `knownFiles`; a decoy hidden file is never admitted and stays unresolved.
   if (!src.startsWith("./") && !src.startsWith("..") && knownFiles.has(src)) return src;
 
+  // A language that names the module in the specifier (`from . import graph`) answers before the generic list.
+  const own = resolveImportByFiles(norm, src, specifier, (p) => knownFiles.has(p));
+  if (own !== undefined) return own;
   const joined = normalizeJoin(dir, relativeModulePath(src));
-  // `from . import graph` / `from .pkg import mod` name the module in the
-  // specifier — tried before the package itself, as for absolute imports.
-  if (norm.endsWith(".py") && specifier) {
-    for (const ext of [`/${specifier}.py`, `/${specifier}/__init__.py`]) {
-      if (knownFiles.has(joined + ext)) return joined + ext;
-    }
-  }
   const exts = ["", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".d.ts", ".vue",
                 "/index.ts", "/index.tsx", "/index.js", "/index.jsx", "/index.vue",
                 // Python relative imports: `from .articles import api`.
