@@ -32,9 +32,23 @@ class Rival {
   def size: Int = 4
 }
 `,
+  "app/Repo.scala": `package league
+
+class Repo {
+  def find(id: Int): Club = new Club
+  def findRival(id: Int): Rival = new Rival
+  def count(id: Int): Int = id
+}
+`,
   "app/Board.scala": `package league
 
-class Board(club: Club, rival: Rival) extends Club {
+class Board(club: Club, rival: Rival, repo: Repo) extends Club {
+  def onResult: Int = repo.find(1).total
+  def onNested: Int = repo.find(Seq(1).head).total
+  def onNamesake: Int = repo.findRival(1).total
+  def onValue: Int = repo.find(1).name.length
+  def onPlain: Int = repo.count(1).toInt
+  def onUnknown(other: Any): Int = other.find(1).total
   def viaField: Int = club.total
   def viaParam(c: Club): Int = c.total
   def viaRival(r: Rival): Int = r.total
@@ -94,6 +108,19 @@ describe.each([["tree-sitter", undefined], ["regex", "no-tree-sitter:scala"]])("
     expect(r.get("Board.viaThis")).toContain("app/Club.scala:Club.total");
     expect(r.get("Board.inherited")).toContain("app/Club.scala:Squad.size");
     expect(r.get("Board.interpolated")).toEqual(expect.arrayContaining(["app/Club.scala:Club.total", "app/Club.scala:Squad.size"]));
+  });
+
+  it("link a read off a call's result, through the call's declared return type", async () => {
+    const r = await links(feature);
+    expect(r.get("Board.onResult")).toContain("app/Club.scala:Club.total");
+    expect(r.get("Board.onNested")).toContain("app/Club.scala:Club.total");
+  });
+
+  it("leave a namesake result, a val, an untyped receiver and a result that is no getter alone", async () => {
+    const r = await links(feature);
+    expect(r.get("Board.onNamesake")).toContain("app/Rival.scala:Rival.total");
+    expect(r.get("Board.onNamesake")).not.toContain("app/Club.scala:Club.total");
+    for (const name of ["onValue", "onPlain", "onUnknown"]) expect((r.get(`Board.${name}`) ?? []).filter((t) => t.endsWith(".total"))).toEqual([]);
   });
 
   it("leave a namesake class, a val, a def with parameters, a binder and a comment alone", async () => {

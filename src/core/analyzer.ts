@@ -85,11 +85,12 @@ import {
   isApiContractLanguage,
   EXTENSION_TO_LANGUAGE,
 } from "../extractors/registry.js";
-import { buildSymbolLinks } from "./symbol-linker.js";
+import { buildSymbolLinks, type AttributeWriteSite } from "./symbol-linker.js";
 import { collectForeignBindingRules, foreignBindingLinks, withForeignBindingLinks } from "./foreign-bindings.js";
 import { placeNamespacedParts } from "./class-namespaces.js";
 import { enrichGraphFromInheritance } from "./inheritance-edges.js";
 import { joinMemberEffects } from "./member-effects.js";
+import { joinAttributeWrites } from "./attribute-writes.js";
 import { applyHttpClientBases } from "./http-client-bases.js";
 import { aggregateComplexity } from "./complexity-analyzer.js";
 import { detectPatterns, type FileStructure } from "./pattern-detector.js";
@@ -1349,7 +1350,8 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   progress.status("Resolving cross-file symbols...");
   // `docker info` against a stopped daemon takes seconds: ask while the linker works, read the answer at the LSP step.
   const dockerProbe = options.lsp !== false && getConfigsForLanguages(new Set(allAnalyses.map((a) => a.language))).length > 0 ? isDockerAvailable() : undefined;
-  let symbolLinks = dedupSymbolLinks(buildSymbolLinks(allAnalyses, subProjects, importDirectory));
+  const attributeWriteSites: AttributeWriteSite[] = [];
+  let symbolLinks = dedupSymbolLinks(buildSymbolLinks(allAnalyses, subProjects, importDirectory, attributeWriteSites));
 
   // Resolve dispatch indirection (mediator / command-bus) the generic linker
   // can't see: a controller's `Send(new XQuery())` has no call edge to the
@@ -2130,6 +2132,13 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // may name the entity of an access whose entity class the project does not
   // declare (a repository typed by an entity from a dependency).
   reconcileProjectEntities(allAnalyses);
+  // An attribute assignment no setter serves is a write of the column the entity pass just joined onto the class.
+  const attributeWrites = joinAttributeWrites(attributeWriteSites, allAnalyses, (f) => !isUnauthored(f) && !isTestFile(f, effectLanguages.get(f)));
+  if (attributeWrites.length > 0) {
+    const have = new Set(memberEffects.fieldWrites.map((w) => `${w.file}\0${w.function}\0${w.line}\0${w.member}`));
+    for (const w of attributeWrites) if (!have.has(`${w.file}\0${w.function}\0${w.line}\0${w.member}`)) memberEffects.fieldWrites.push(w);
+    memberEffects.fieldWrites.sort((x, y) => (x.file < y.file ? -1 : x.file > y.file ? 1 : x.line - y.line || (x.function < y.function ? -1 : x.function > y.function ? 1 : 0)));
+  }
   // Which route parameters a data statement filters on, through the calls between — after the
   // entity passes, which add statements the framework runs for an action (a route-model binding).
   const paramColumns = computeParamColumns({ analyses: allAnalyses, symbolLinks, routes: allRoutes });

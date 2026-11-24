@@ -37,6 +37,19 @@ export function addScalaGetterReads(lines: readonly string[], analysis: FileAnal
       // Every prefix is a read: `club.league.total` reads `club.league`, then `.total` off its result.
       for (let n = 2; n <= names.length; n++) found.push({ name: names.slice(0, n).join("."), at });
     }
+    for (const m of text.matchAll(CHAIN_READ)) {
+      const at = m.index!;
+      if (!isRead(text, at + m[0].length, text.slice(0, at))) continue;
+      const head = m[1]!;
+      if (KEYWORDS.has(head) && head !== "this") continue;
+      const steps = [...m[2]!.matchAll(CHAIN_STEP)].map((s) => ({ name: s[1]!, called: s[2] !== undefined }));
+      if (!steps.some((s) => s.called)) continue;
+      // Every member read along the way (`repo.find().rival`, then `.total` off it): a prefix ending in a call is the call scan's.
+      for (let n = 1; n <= steps.length; n++) {
+        if (steps[n - 1]!.called) continue;
+        found.push({ name: `${head}${steps.slice(0, n).map((s) => `.${s.name}${s.called ? "()" : ""}`).join("")}`, at });
+      }
+    }
     for (const m of text.matchAll(BARE_READ)) {
       const name = m[1]!;
       if (KEYWORDS.has(name) || own.has(name) || fields.has(name)) continue;
@@ -63,6 +76,13 @@ function isParameterless(line: string, name: string): boolean {
 
 /** `a.b`, `this.a.b`, `Club.name`: a head, then lowercase members, none called, indexed or given type arguments. */
 const PATH_READ = /(?<![\w$.@])([A-Za-z_]\w*(?:\s*\.\s*[a-z_]\w*)+)(?![\w$])(?!\s*[(\[])/g;
+/**
+ * `repo.find(1).total`, `Repo.find(1).rival.total`: a head, steps of which at least one is a call with arguments, the
+ * last a member read (not called, indexed or given type arguments). One nested level of arguments is read.
+ */
+const CALL_ARGS = String.raw`\((?:[^()]|\([^()]*\))*\)`;
+const CHAIN_READ = new RegExp(String.raw`(?<![\w$.@])([A-Za-z_]\w*)((?:\s*\.\s*[a-z_]\w*(?:\s*${CALL_ARGS})?)*?\s*\.\s*[a-z_]\w*)(?![\w$])(?!\s*[(\[])`, "g");
+const CHAIN_STEP = new RegExp(String.raw`\.\s*([a-z_]\w*)(\s*${CALL_ARGS})?`, "g");
 /** A lowercase name not after a dot and not called. */
 const BARE_READ = /(?<![\w$.@])([a-z_]\w*)(?![\w$])(?!\s*[(\[])/g;
 

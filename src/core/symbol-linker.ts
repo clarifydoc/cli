@@ -91,6 +91,8 @@ export function buildSymbolLinks(
   subProjects: readonly SubProject[] = [],
   /** The package-import resolver the project shares (built here when absent). */
   importDirectory?: ImportDirectoryResolver,
+  /** Receives each attribute assignment no method serves, with the class its receiver is typed as (`recordAttributeWrite`). */
+  attributeWrites?: AttributeWriteSite[],
 ): SymbolLink[] {
   // In path order, whatever order the caller holds them in: where two
   // candidates tie, which one an index met first must not depend on it.
@@ -124,6 +126,7 @@ export function buildSymbolLinks(
     foldedSymbols: new Map(),
     analyses,
     extraLinks: [],
+    ...(attributeWrites ? { attributeWrites } : {}),
     interfaceImplMap: buildInterfaceImplMap(typeDecls),
     classCatalog: buildClassCatalog(typeDecls),
     classByProject: buildClassCatalogByProject(typeDecls),
@@ -2238,6 +2241,8 @@ interface LinkContext {
    * caller to the interface method a redirected/bound call goes through.
    */
   extraLinks: SymbolLink[];
+  /** The sink `buildSymbolLinks` was handed for attribute assignments; absent when nobody reads them. */
+  attributeWrites?: AttributeWriteSite[];
   interfaceImplMap: Map<string, InterfaceImplInfo>;
   classCatalog: Map<string, ClassCatalogEntry>;
   /** `${projectId}\x00${className}` → {file, count} — for same-project uniqueness
@@ -5627,7 +5632,9 @@ function resolveCallToDefinitionBody(
   if (call.syntax) {
     const { syntax: _syntax, ...plain } = call;
     const link = resolveCallToDefinition(sourceFile, sourceSymbol, plain, analysis, ctx, reference);
-    return link && !(link.strategy && GUESSING_STRATEGIES.has(link.strategy)) ? link : null;
+    if (link && !(link.strategy && GUESSING_STRATEGIES.has(link.strategy))) return link;
+    if (!reference) recordAttributeWrite(sourceFile, sourceSymbol, call, analysis, ctx);
+    return null;
   }
   const { filePathMap, symbolIndex, classCatalog, leafCatalog, classNameIndex } = ctx;
 
@@ -7691,6 +7698,42 @@ function resolveThroughDeclaredType(
   if (new Set(out.map((o) => `${o.targetFile}|${o.targetSymbol}`)).size > 1) for (const o of out) o.confidence = "AMBIGUOUS";
   ctx.extraLinks.push(...out.slice(1));
   return out[0]!;
+}
+
+/** An attribute assignment (`club.status = x`) no method `status=` serves, and the project class its receiver is typed as. */
+export interface AttributeWriteSite {
+  /** The writing function as symbols name it (`Class.method`), its file and the line of the assignment. */
+  function: string;
+  file: string;
+  line: number;
+  /** The attribute, without the `=`. */
+  member: string;
+  /** The receiver's class and the file declaring it. */
+  typeName: string;
+  typeFile: string;
+}
+
+/**
+ * A `CallInfo.syntax` setter (`club.status=`) that reached no method may still assign a field the receiver's class
+ * declares — an ORM column no `def` backs. The receiver is typed as any call's is (a typed local, each hop of a chain
+ * by its declared return); whether the class declares the member is decided by `joinAttributeWrites` once the
+ * languages' project passes have added what the source never writes (schema columns).
+ */
+function recordAttributeWrite(sourceFile: string, sourceSymbol: string, call: CallInfo, analysis: FileAnalysis, ctx: LinkContext): void {
+  if (!ctx.attributeWrites) return;
+  const member = /^([A-Za-z_]\w*)=$/.exec(call.name.slice(call.name.lastIndexOf(".") + 1))?.[1];
+  if (!member || call.name.indexOf(".") < 0) return;
+  const receiver = receiverChainOf(call.name, analysis.language);
+  if (!receiver || receiver.length === 0 || receiver.length > MAX_RECEIVER_CHAIN + 1 || receiverCutName(analysis, call)) return;
+  const dot = sourceSymbol.indexOf(".");
+  const consumer = dot > 0 && !sourceSymbol.startsWith("route:") ? sourceSymbol.slice(0, dot) : "";
+  // `self.status = x` is the enclosing class's own attribute; any other head is typed as a call's receiver is.
+  const own = receiver.length === 1 && !receiver[0]!.call && SELF_HEADS.has(receiver[0]!.name) && consumer;
+  const point = own ? { typeName: consumer, typeFile: typeFileFor(ctx, consumer, sourceFile, analysis.projectId), qualifier: undefined } : chainPoint(ctx, analysis, sourceFile, sourceSymbol, consumer, receiver, 0, false);
+  if (!point?.typeName || !point.typeFile || point.qualifier) return;
+  const typeName = declaredTypeName(ctx, point.typeFile, point.typeName);
+  if (!ctx.classAt.has(memberKey(point.typeFile, typeName))) return;
+  ctx.attributeWrites.push({ function: sourceSymbol, file: sourceFile, line: call.line, member, typeName, typeFile: point.typeFile });
 }
 
 /**

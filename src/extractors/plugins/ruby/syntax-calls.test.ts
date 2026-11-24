@@ -12,7 +12,11 @@ import "./meta.js";
  * with no such operator, and plain arithmetic, strings and hashes draw no edge.
  */
 const FILES: Record<string, string> = {
-  "app/club.rb": `class Club
+  "app/application_record.rb": `class ApplicationRecord < ActiveRecord::Base
+  self.abstract_class = true
+end
+`,
+  "app/club.rb": `class Club < ApplicationRecord
   attr_accessor :nickname
   attr_writer :motto
 
@@ -56,7 +60,21 @@ class Plain
   end
 end
 `,
-  "app/rival.rb": `class Rival
+  "app/repo.rb": `class Repo
+  def find(id)
+    Club.find_by(id: id)
+  end
+
+  def rival(id)
+    Rival.find_by(id: id)
+  end
+
+  def total(id)
+    3
+  end
+end
+`,
+  "app/rival.rb": `class Rival < ApplicationRecord
   def name=(value)
     @name = value
   end
@@ -123,6 +141,26 @@ end
     plain.total = 1
   end
 
+  def onResults(other)
+    repo = Repo.new
+    repo.find(1) + other
+    repo.find(other.id).name = "x"
+    repo.find(1)[2]
+  end
+
+  def onNamesake(other)
+    repo = Repo.new
+    repo.rival(1) + other
+    repo.rival(1)[0]
+  end
+
+  def onUntyped(other)
+    repo = Repo.new
+    repo.total(1) + other
+    repo.nothing(1) + other
+    other.find(1) + other
+  end
+
   def plainValues(params)
     total = 0
     total = total + 1
@@ -150,6 +188,7 @@ async function links(): Promise<Map<string, string[]>> {
   const byCaller = new Map<string, string[]>();
   for (const l of summary.symbolLinks ?? []) {
     if (l.sourceFile !== "app/board.rb" && l.sourceFile !== "app/club.rb") continue;
+    if (l.callName === "Repo.new" || /^repo\.[a-z]+$/.test(l.callName)) continue;
     const list = byCaller.get(l.sourceSymbol) ?? [];
     list.push(`${l.targetFile}:${l.targetSymbol}`);
     byCaller.set(l.sourceSymbol, list);
@@ -176,6 +215,17 @@ describe("Ruby calls the syntax hides", () => {
   it("links a write or an operator on self to the enclosing class", async () => {
     const r = await links();
     expect(r.get("Club.reset")).toEqual(expect.arrayContaining(["app/club.rb:Club.name=", "app/club.rb:Club.==", "app/club.rb:Club.[]"]));
+  });
+
+  it("links a setter, an operator and an index off a call's result, through the call's declared return", async () => {
+    const r = await links();
+    expect(r.get("Board.onResults")).toEqual(expect.arrayContaining(["app/club.rb:Club.+", "app/club.rb:Club.name=", "app/club.rb:Club.[]"]));
+  });
+
+  it("follows the chain to the class it returns, never a namesake, an untyped result or an untyped head", async () => {
+    const r = await links();
+    expect(r.get("Board.onNamesake")).toEqual(["app/rival.rb:Rival.+", "app/rival.rb:Rival.[]"]);
+    expect(r.get("Board.onUntyped")).toBeUndefined();
   });
 
   it("leaves an untyped receiver, a class with no such member and plain values alone", async () => {

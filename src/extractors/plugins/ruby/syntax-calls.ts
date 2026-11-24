@@ -9,9 +9,12 @@ import { rubyCodeLinesOf } from "./blocks.js";
  * enclosing class for `self`, declares the member, never by the name alone. `!=` runs `==`.
  *
  * Read from the code lines (comments and heredocs blanked, string literals emptied here), one call per name per
- * function, and only for a receiver whose type can be stated: `self`, an instance variable, a parameter, or a local
- * with a `localTypes` entry. A call result or reader path (`page.to_i`), an index chain, a literal-bound local
- * (`total = 0`) and the framework's own hashes (`params[:id]`) state nothing.
+ * function, and only for a receiver whose HEAD can be typed: `self`, an instance variable, a parameter, or a local
+ * with a `localTypes` entry. The receiver may be a path of readers and calls off that head (`repo.find(1) + other`,
+ * `self.club.name = x`); the arguments are dropped from the name (`repo.find.+`) and the linker types each hop by its
+ * declared return, so a chain it cannot type links nowhere. A setter may follow any reader path (`self.club.name = x`,
+ * a column write once typed); an operator or an index only a call's result. An index chain, a literal-bound local (`total = 0`) and
+ * the framework's own hashes (`params[:id]`) state nothing.
  */
 export function addRubySyntaxCalls(lines: readonly string[], analysis: FileAnalysis): void {
   const code = rubyCodeLinesOf(lines);
@@ -27,11 +30,15 @@ export function addRubySyntaxCalls(lines: readonly string[], analysis: FileAnaly
       if (k === 0) text = text.replace(/^(\s*)def\s+(?:self\.)?[^\s(;]+/, "$1");
       if (!/[=+\-*\/%<>\[&|^]/.test(text)) return;
       for (const found of syntaxCallsOf(text)) {
-        // Only a receiver whose type can be stated: `self`, an instance variable, a parameter, a local with a type entry.
-        // Never a call result or a reader path (`page.to_i`), an index chain, the framework's hashes or a literal-bound local.
-        const receiver = found.receiver.replace(/^@/, "");
-        if (receiver.includes(".") || REQUEST_OBJECTS.has(receiver) || KEYWORDS.has(receiver) || literals.has(receiver)) continue;
-        if (receiver !== "self" && !found.receiver.startsWith("@") && !typed.has(receiver)) continue;
+        // Only a receiver whose head can be typed: `self`, an instance variable, a parameter, a local with a type entry.
+        // Never an index chain, the framework's hashes or a literal-bound local.
+        const receiver = withoutArguments(found.receiver.replace(/^@/, ""));
+        const head = receiver.split(".")[0]!;
+        // An operator or an index off a bare reader path (`order.id == other`, `msg.attrs[:k]`) reads a column or a value a
+        // reader returns: only a call's result (`repo.find(1) + other`) can be a project class with the operator.
+        if (receiver.includes(".") && !found.receiver.includes("(") && !/^[a-z_]\w*=$/.test(found.member)) continue;
+        if (REQUEST_OBJECTS.has(head) || KEYWORDS.has(head) || literals.has(head)) continue;
+        if (head !== "self" && !found.receiver.startsWith("@") && !typed.has(head)) continue;
         const name = `${receiver}.${found.member}`;
         if (have.has(name)) continue;
         have.add(name);
@@ -60,8 +67,14 @@ function literalLocals(body: readonly string[]): Set<string> {
   return out;
 }
 
-/** A receiver: a local, an instance variable or `self`, with a path of readers after it. */
-const RECEIVER = String.raw`(?<![\w.@$:)\]}"'])(@?(?:self|[a-z_]\w*)(?:&?\.[a-z_]\w*[?!]?){0,4})`;
+/** A receiver: a local, an instance variable or `self`, with a path of readers and calls (one nested level of arguments) after it. */
+const RECEIVER = String.raw`(?<![\w.@$:)\]}"'])(@?(?:self|[a-z_]\w*)(?:&?\.[a-z_]\w*[?!]?(?:\((?:[^()]|\([^()]*\))*\))?){0,4})`;
+const ARGUMENTS = /\((?:[^()]|\([^()]*\))*\)/g;
+
+/** `repo.find(1).total` as the call patterns name a chain: `repo.find.total`. */
+function withoutArguments(path: string): string {
+  return path.includes("(") ? path.replace(ARGUMENTS, "") : path;
+}
 const SETTER = new RegExp(`${RECEIVER}&?\\.([a-z_]\\w*)[ \\t]*(?:\\|\\||&&|\\*\\*|<<|>>|[-+*/%|&^])?=(?![=~>])`, "g");
 const OPERATOR = new RegExp(`${RECEIVER}\\s+(<=>|===|==|!=|<<|>>|\\*\\*|<=|>=|[-+*/%<>&|^])\\s+(?=[\\w@:"'(\\[{!~-])`, "g");
 const INDEXED = new RegExp(`${RECEIVER}\\[`, "g");
