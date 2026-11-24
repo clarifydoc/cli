@@ -832,6 +832,21 @@ describe("JS fetch-style calls carry their verb in the options", () => {
   });
 });
 
+describe("fetch options held by a named const", () => {
+  it("reads the method from a const object literal, never from a spread or a variable method", async () => {
+    const calls = await apiCallsOf(`
+      const gone = { method: "DELETE" };
+      export function a() { fetch("/api/garages", gone); }
+      export function b() { const opts = { method: "PUT" }; fetch("/api/cars", opts); }
+      export function c(m: string) { const opts = { method: m }; fetch("/api/x", opts); }
+      export function d(base: object) { const opts = { ...base, method: "DELETE" }; fetch("/api/y", opts); }
+      export function e() { let opts = { method: "DELETE" }; fetch("/api/z", opts); }`);
+    expect(calls.map((c) => [c.name, c.target])).toEqual([
+      ["delete", "/api/garages"], ["put", "/api/cars"], ["fetch", "/api/x"], ["fetch", "/api/y"], ["fetch", "/api/z"],
+    ]);
+  });
+});
+
 describe("openapi-generator wrappers", () => {
   it("does not read `request(this.axios, this.basePath)` as a request to the client", async () => {
     const { parseSource } = await import("../../../parsers/parser-manager.js");

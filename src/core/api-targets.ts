@@ -100,10 +100,11 @@ export function splitUnknownBase(url: string): { target: string; baseExpr?: stri
   if (holes) base = stripHole(holes);
   if (holeHost) base = holes ? `${holeHost[0]} + ${base}` : holeHost[0];
   // A scheme left as a hole, then the host (`${protocol}//${host}/ws/x`): the host is part of the base.
-  const lateHost = holes && !holeHost && !origin ? HOLE_HOST_ORIGIN.exec(s) : null;
+  // `${protocol}://${host}:${port}/api/x` spells the scheme's colon too; a literal host after it stays a host.
+  const lateHost = holes && !holeHost && !origin ? HOLE_HOST_ORIGIN.exec(s.startsWith("://") ? s.slice(1) : s) : null;
   if (lateHost) {
     base = `${base} + ${lateHost[0]}`;
-    s = s.slice(lateHost[0].length) || "/";
+    s = s.slice(lateHost[0].length + (s.startsWith("://") ? 1 : 0)) || "/";
   }
   if (!holes && !origin && !holeHost) {
     // `session` on a client with a base: as unknown a base as a hole.

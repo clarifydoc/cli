@@ -2659,9 +2659,20 @@ function heldLiteral(obj: Node, key: string): string | null {
   return literalString(init);
 }
 
+function constObjectLiteral(ref: Node): Node | null {
+  if (declaredParamInScope(ref.text, ref)) return null;
+  const init = localInitializer(ref);
+  const decl = init?.parent;
+  if (init?.type !== "object" || decl?.type !== "variable_declarator" || !/^const\b/.test(decl.parent?.text ?? "")) return null;
+  return init.namedChildren.some((c) => c.type === "spread_element") ? null : init;
+}
+
 function optionsMethod(arg: Node | undefined): string | null {
   let obj = arg ?? null;
   if (obj?.type === "call_expression") obj = obj.childForFieldName("arguments")?.namedChildren[0] ?? null;
+  // `const opts = { method: "DELETE" }; fetch(url, opts)`: a `const` object literal of the scope, with no spread
+  // that could bring another method; a parameter or a `let` is not followed.
+  if (obj?.type === "identifier") obj = constObjectLiteral(obj);
   if (obj?.type !== "object") return null;
   const verb = heldLiteral(obj, "method");
   return verb && HTTP_VERBS.has(verb.toLowerCase()) ? verb.toLowerCase() : null;

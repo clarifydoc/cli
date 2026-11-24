@@ -4,6 +4,12 @@ import type { DataSourceInfo, FileAnalysis, FunctionInfo, PathArgCall } from "..
 import type { ClassIndex, ImportIndex } from "../types/project.js";
 
 describe("splitUnknownBase", () => {
+  it("reads a scheme hole, then a host hole (and a port hole), as an absolute URL of unknown origin", () => {
+    expect(splitUnknownBase("${protocol}://${host}/api/clubs")?.target).toBe("/api/clubs");
+    expect(splitUnknownBase("${protocol}://${host}:${port}/api/clubs/1")?.target).toBe("/api/clubs/1");
+    // A literal host after the scheme hole is a host, not an unknown base.
+    expect(splitUnknownBase("${protocol}://league.example/api/clubs")?.target).not.toBe("/api/clubs");
+  });
   it("splits a leading hole off, at the segment boundary it implies", () => {
     expect(splitUnknownBase("${this.baseUrl}email/all")).toEqual({ target: "/email/all", baseExpr: "this.baseUrl" });
     expect(splitUnknownBase("${environment.apiBaseUrl}statistics/")).toEqual({
