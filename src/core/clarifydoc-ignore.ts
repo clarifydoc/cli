@@ -208,11 +208,13 @@ function matches(path: string, rootPosix: string, pattern: IgnorePattern): boole
  * `/dist` covers `dist/a.js` but never `src/dist/a.js`.
  */
 function matchesAnchored(rel: string, glob: string): boolean {
-  const parts = rel.split("/");
-  for (let i = 0; i < parts.length; i++) {
-    if (fnmatch(parts.slice(0, i + 1).join("/"), glob)) return true;
+  // Every leading run of segments, shortest first, cut by position rather than split and rejoined.
+  let end = rel.indexOf("/");
+  while (end !== -1) {
+    if (fnmatch(rel.slice(0, end), glob)) return true;
+    end = rel.indexOf("/", end + 1);
   }
-  return false;
+  return fnmatch(rel, glob);
 }
 
 /** Unanchored: any single segment, so the name may sit at any depth. */

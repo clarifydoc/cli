@@ -276,3 +276,16 @@ describe("ignoredDirectories — what a walk may skip", () => {
     expect(asked.filter((d) => d.startsWith("data/"))).toEqual([]);
   });
 });
+
+describe("an anchored pattern against the leading directories of a path", () => {
+  const anchored = (glob: string) => ({ glob, pattern: `/${glob}`, negated: false, anchored: true, anchor: "/r" }) as never;
+  it("matches the whole path or any leading run of segments, never a later one", () => {
+    const patterns = [anchored("dist")];
+    expect(isIgnored("/r/dist", "/r", patterns)).toBe(true);
+    expect(isIgnored("/r/dist/a/b.js", "/r", patterns)).toBe(true);
+    expect(isIgnored("/r/src/dist/a.js", "/r", patterns)).toBe(false);
+    expect(isIgnored("/r/distant/a.js", "/r", patterns)).toBe(false);
+    expect(isIgnored("/r/lib/gen/a.js", "/r", [anchored("lib/gen")])).toBe(true);
+    expect(isIgnored("/r/lib/other/a.js", "/r", [anchored("lib/gen")])).toBe(false);
+  });
+});
