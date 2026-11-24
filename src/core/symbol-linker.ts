@@ -2116,6 +2116,10 @@ interface LinkMemos {
   ownerPathType?: Map<string, { typeName: string; typeFile: string } | null>;
   /** The value-flow host's `classOfType` per (file, written type). */
   classOfType?: Map<string, { file: string; name: string } | null>;
+  /** `namespaceHeadMember` of a path of three or more names, per (caller file, path): the member found, or null. */
+  namespaceHead?: Map<string, { file: string; symbol: string; line: number } | null>;
+  /** Every name some file declares, folded to lower case (`declaredLeafNames`). */
+  declaredLeaves?: Set<string>;
 }
 
 /** Lookup tables built once per buildSymbolLinks run, shared by every call resolution. */
@@ -5408,6 +5412,81 @@ function isCallableSymbol(analysis: FileAnalysis, symbol: string): boolean {
  * the class NAME finds the later one. The call site's own scope decides — the class its function declares, else the
  * top-level one — and a member the chosen class lacks is no link (it was the namesake's).
  */
+const PLAIN_LEAF = /^[A-Za-z_$][\w$]*$/;
+
+/** The plain identifier after the last dot written outside brackets (`b.HasOne("X").ToTable` → `ToTable`); null when none or when it is no plain name. */
+function dottedLeaf(name: string): string | null {
+  let depth = 0;
+  for (let i = name.length - 1; i > 0; i--) {
+    const ch = name[i]!;
+    if (ch === ")" || ch === "]" || ch === "}") depth++;
+    else if (ch === "(" || ch === "[" || ch === "{") { if (--depth < 0) return null; }
+    else if (ch === "." && depth === 0) {
+      const leaf = name.slice(i + 1);
+      return PLAIN_LEAF.test(leaf) ? leaf : null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Every name a file of the run declares or binds, folded to lower case: the names of functions, methods, classes,
+ * properties, events, aliases, exports, imports and bindings, the segments of every symbol, the mixin renames, the
+ * constructor names. A call whose last name is none of them reaches no project definition by that name.
+ */
+function declaredLeafNames(ctx: LinkContext): Set<string> {
+  let names = ctx.memos.declaredLeaves;
+  if (names) return names;
+  names = new Set(["new", ...CTOR_NAMES].map((n) => n.toLowerCase()));
+  // The same written name comes back for every class that declares it: fold and split it once.
+  const written = new Set<string>();
+  const add = (name: string | undefined): void => {
+    if (!name || written.has(name)) return;
+    written.add(name);
+    const lower = name.toLowerCase();
+    names!.add(lower);
+    if (/[.:\\/#]/.test(lower)) for (const part of lower.split(/[.:\\/#]+/)) if (part) names!.add(part);
+  };
+  for (const syms of ctx.symbolIndex.values()) for (const [name, def] of syms) { add(name); add(def.name); }
+  for (const a of ctx.analyses) {
+    const plugin = pluginFor(a.language as Language);
+    for (const n of plugin?.constructorNames ?? []) add(n);
+    for (const n of plugin?.constructorCalls ?? []) add(n);
+    for (const f of a.functions) { add(f.name); for (const m of f.returnedMembers ?? []) add(m.key); }
+    for (const alias of a.nameAliases ?? []) { add(alias.name); add(alias.target); }
+    for (const e of a.exports) add(e.name);
+    for (const i of a.imports) {
+      for (const spec of i.specifiers) add(spec);
+      for (const [local, exported] of Object.entries(i.aliases ?? {})) { add(local); add(exported); }
+    }
+    for (const b of a.moduleBindings ?? []) add(b.name);
+    for (const c of a.classes) {
+      add(c.name);
+      for (const m of c.methods) { add(m.name); for (const r of m.returnedMembers ?? []) add(r.key); }
+      for (const p of c.properties) add(p.name);
+      for (const e of c.events ?? []) add(e);
+      for (const mixin of c.mixins ?? []) for (const [called, own] of Object.entries(mixin.aliases ?? {})) { add(called); add(own); }
+    }
+  }
+  ctx.memos.declaredLeaves = names;
+  return names;
+}
+
+/**
+ * A dotted call of an internal name (`b.ToTable(…)`, a chain `b.HasOne(…).ToTable(…)`) whose last name no file of the run declares: no strategy has a
+ * definition to land on, so resolving it only walks its receiver. A call that is read, passed, a construction, a
+ * syntax form, a literal's value or carries an alternative or fallback name is resolved by the rules that read those,
+ * and a dispatch-map key or a record entry (asked before this) is no declared name.
+ */
+function namesNothingDeclared(ctx: LinkContext, call: CallInfo): boolean {
+  if (call.kind !== "internal" || call.passed || call.read || call.withSubjects || call.mapMember || call.syntax || call.fallbackName
+    || call.alternative || call.via || call.construction || call.moduleMember || call.boundLocally) return false;
+  // A type argument written in the name (`Set<Club>().Add`) is a reference to that type, whatever the member is.
+  if (call.name.includes("<")) return false;
+  const leaf = dottedLeaf(call.name);
+  return leaf !== null && !declaredLeafNames(ctx).has(leaf.toLowerCase());
+}
+
 function resolveCallToDefinition(
   sourceFile: string,
   sourceSymbol: string,
@@ -5565,6 +5644,7 @@ function resolveCallToDefinitionBody(
   // `m = importlib.import_module("other")`): the call is that module's own top-level function.
   const viaModuleLocal = parts.length === 2 && !reference ? moduleLocalCall(ctx, analysis, sourceFile, sourceSymbol, parts[0]!, leafName, mkLink) : null;
   if (viaModuleLocal) return viaModuleLocal;
+  if (!reference && namesNothingDeclared(ctx, call)) return null;
   const throughDeclaredType = (): SymbolLink | null =>
     isQualified ? resolveThroughDeclaredType(sourceFile, sourceSymbol, call, analysis, ctx, parts, leafName, mkLink) : null;
 
@@ -9347,15 +9427,21 @@ function withinImportConfinement(ctx: LinkContext, source: string, importingFile
  */
 function namespaceHeadMember(ctx: LinkContext, analysis: FileAnalysis, parts: string[], mkLink: MkLink, line: number): SymbolLink | null {
   if (parts.length === 2) return ctx.classNameIndex.has(parts[0]!) ? classNameMember(ctx, analysis, analysis.filePath, parts, mkLink, line) : null;
-  const className = parts[parts.length - 2]!;
-  const qualifier = parts.slice(0, -2).join(".");
-  ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
-  const own = analysis.packageName?.split(".") ?? [];
-  const roots = [...own.map((_, i) => own.slice(0, own.length - i).join(".")), "", ...analysis.imports.filter((i) => i.isNamespace).map((i) => i.source)];
-  const wanted = new Set(roots.map((r) => (r ? `${r}.${qualifier}` : qualifier)));
-  const hits = (ctx.classNameIndex.get(className) ?? []).filter((f) => wanted.has(ctx.analysisByFile!.get(f)?.packageName ?? "\0") && ctx.projectOf.get(f) === analysis.projectId);
-  if (hits.length !== 1) return null;
-  const hit = findMethodInClass(ctx, className, hits[0]!, parts[parts.length - 1]!, analysis.filePath);
+  // The member found depends on the caller's file and the written path only; the same path is written many times in a file.
+  const memo = (ctx.memos.namespaceHead ??= new Map());
+  const key = `${analysis.filePath}\0${parts.join(".")}`;
+  let hit = memo.get(key);
+  if (hit === undefined) {
+    const className = parts[parts.length - 2]!;
+    const qualifier = parts.slice(0, -2).join(".");
+    ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+    const own = analysis.packageName?.split(".") ?? [];
+    const roots = [...own.map((_, i) => own.slice(0, own.length - i).join(".")), "", ...analysis.imports.filter((i) => i.isNamespace).map((i) => i.source)];
+    const wanted = new Set(roots.map((r) => (r ? `${r}.${qualifier}` : qualifier)));
+    const hits = (ctx.classNameIndex.get(className) ?? []).filter((f) => wanted.has(ctx.analysisByFile!.get(f)?.packageName ?? "\0") && ctx.projectOf.get(f) === analysis.projectId);
+    hit = hits.length !== 1 ? null : findMethodInClass(ctx, className, hits[0]!, parts[parts.length - 1]!, analysis.filePath);
+    memo.set(key, hit);
+  }
   return hit ? mkLink(hit.file, hit.symbol, hit.line, "INFERRED", "class-name") : null;
 }
 
