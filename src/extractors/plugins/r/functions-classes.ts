@@ -2,7 +2,10 @@ import type { Node } from "web-tree-sitter";
 import { FunctionClassExtractor } from "../../functions-classes/base.js";
 import type { FunctionInfo, ClassInfo, ParamInfo, Language } from "../../functions-classes/base.js";
 import { extractCalls } from "../../shared/call-graph.js";
-import { assignment, callArgs, callName, leafOf, stringValue } from "./syntax.js";
+import { assignment, callArgs, callName, leafOf, r6Locals, stringValue } from "./syntax.js";
+
+/** Marks the function a `setGeneric` declares: the dispatch resolver fans a call to it out to the `setMethod` bodies. */
+export const GENERIC_DECORATOR = "setGeneric";
 
 /** Class generators whose `public` / `private` / `active` / `methods` lists hold methods. */
 const CLASS_GENERATORS = new Set(["R6Class", "setRefClass"]);
@@ -24,6 +27,18 @@ export class RExtractor extends FunctionClassExtractor {
     for (const node of root.namedChildren) {
       const bound = assignment(node);
       if (bound?.value.type === "function_definition") functions.push(fn(bound.name, bound.value, node));
+      else if (!bound && node.type === "call" && callName(node) === "setGeneric") {
+        // `setGeneric("describe", function(x) standardGeneric("describe"))` declares the function `describe`; the
+        // `setMethod("describe", …)` bodies are what a call to it runs (`RS4GenericResolver`).
+        const args = callArgs(node);
+        const name = stringValue(args[0]?.value);
+        const def = args.find((a) => a.value?.type === "function_definition")?.value;
+        if (name && !functions.some((f) => f.name === name)) {
+          const generic = def ? fn(name, def, node) : { ...fn(name, node, node), params: [], calls: [] };
+          generic.decorators = [GENERIC_DECORATOR];
+          functions.push(generic);
+        }
+      }
     }
   }
 
@@ -77,7 +92,7 @@ export class RExtractor extends FunctionClassExtractor {
         const owner = stringValue(args[1]?.value);
         const def = args.find((a) => a.value?.type === "function_definition")?.value;
         if (!method || !owner || !def) continue;
-        let cls = s4.get(owner);
+        let cls = s4.get(owner) ?? classes.find((c) => c.name === owner);
         if (!cls) {
           cls = classInfo(owner, node);
           s4.set(owner, cls);
@@ -108,7 +123,13 @@ function fn(name: string, def: Node, span: Node): FunctionInfo {
     isExported: !name.startsWith("."),
     decorators: [],
     calls: extractCalls(def.childForFieldName("body"), "r"),
+    ...localTypesOf(def.childForFieldName("body")),
     line: span.startPosition.row + 1,
     endLine: span.endPosition.row + 1,
   };
+}
+
+function localTypesOf(body: Node | null): Pick<FunctionInfo, "localTypes"> | Record<string, never> {
+  const localTypes = body ? r6Locals(body) : [];
+  return localTypes.length ? { localTypes } : {};
 }

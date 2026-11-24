@@ -8,6 +8,9 @@ import { RDataSourceExtractor } from "./data-sources.js";
 import { rRouteExtractor } from "./routes.js";
 import { rReachability } from "./reachability.js";
 import { cranPackages } from "./packages.js";
+import { r6Locals } from "./syntax.js";
+import { RGenericResolver } from "./generic-resolver.js";
+import { rPackagePass } from "./package-pass.js";
 import { extractShinyInteractions, extractShinyScreens } from "./shiny.js";
 
 export const rMeta: LanguagePluginMeta = {
@@ -32,6 +35,10 @@ export const rMeta: LanguagePluginMeta = {
     // Shiny: the UI page as a screen, and the server's observers as what its inputs do.
     screens: (tree, sourceText, filePath) => extractShinyScreens(tree, sourceText, filePath),
     interactiveElements: (tree, sourceText) => extractShinyInteractions(tree, sourceText),
+    // Top-level scripts: `p <- Player$new()` types `p` for the file's own statements.
+    topLevelLocalTypes: (tree) => r6Locals(tree.rootNode, true),
   },
+  dispatchResolvers: [new RGenericResolver()],
+  projectPasses: [rPackagePass],
   calls: rCallHooks,
 };
