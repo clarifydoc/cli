@@ -63,7 +63,11 @@ export function readGo(source: string): ParsedStructure {
   const { tree, errors } = parseWithAntlr(
     source,
     (input) => new GoReadLexer(input),
-    (tokens) => new GoParser(tokens),
+    (tokens) => {
+      const parser = new GoParser(tokens);
+      parser.settleStatements();
+      return parser;
+    },
     (parser) => parser.sourceFile(),
   );
   const functions: ParsedFunctionSpan[] = [];
