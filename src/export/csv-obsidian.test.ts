@@ -96,3 +96,29 @@ describe("Obsidian vault", () => {
     }
   });
 });
+
+describe("note names and XML text", () => {
+  it("cuts a note name by bytes, suffix included", async () => {
+    const { noteName, namer } = await import("./obsidian.js");
+    const route = `/api/球队/${"球".repeat(150)}`;
+    const name = noteName(route);
+    expect(Buffer.byteLength(name)).toBeLessThanOrEqual(200);
+    expect(route.startsWith(name.replace(/∕/g, "/"))).toBe(true);
+    const subs = noteName(`${"/:".repeat(100)}`);
+    expect(Buffer.byteLength(subs)).toBeLessThanOrEqual(200);
+    const next = namer("Routes");
+    const a = next("a", route).split("/").pop()!;
+    const b = next("b", route).split("/").pop()!;
+    expect(b.endsWith(" (2)")).toBe(true);
+    expect(Buffer.byteLength(`${a}.md`)).toBeLessThanOrEqual(255);
+    expect(Buffer.byteLength(`${b}.md`)).toBeLessThanOrEqual(200 + 4 + 3);
+    expect(a).not.toBe(b);
+  });
+
+  it("drops characters XML 1.0 cannot hold", async () => {
+    const { xml } = await import("./text.js");
+    const out = xml("Car\u0001&\u000B<Club>\uD800x￾\u{1F697}\t\n");
+    expect(out).toBe("Car&amp;&lt;Club&gt;x\u{1F697}\t\n");
+    expect(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(out)).toBe(false);
+  });
+});

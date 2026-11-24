@@ -218,18 +218,74 @@ export function searchTerm(input: HookInput): string | null {
 /** Flags of grep/rg/ag whose value is the next word (not the pattern). */
 const VALUE_FLAGS = new Set(["-t", "--type", "-T", "--type-not", "-g", "--glob", "-A", "-B", "-C", "-m", "--max-count", "--include", "--exclude", "-f", "--file", "-j", "--threads"]);
 
-/** The pattern of the first grep/rg/ag/ack in a shell command (`-e PATTERN` included). */
-function shellSearchPattern(command: string): string | null {
-  const m = /(?:^|[;&|]\s*|\s)(?:git\s+grep|rg|grep|egrep|ag|ack)\s+(.*)$/.exec(command);
-  if (!m) return null;
-  const words = m[1]!.match(/'[^']*'|"[^"]*"|\S+/g) ?? [];
-  for (let i = 0; i < words.length; i++) {
+/** Commands that run another command: skipped (with their own flags) to reach the one that leads. */
+const WRAPPERS = new Set(["sudo", "npx", "env", "command", "time", "nice", "exec"]);
+const SEARCHERS = new Set(["rg", "grep", "egrep", "ag", "ack"]);
+
+/** Words of each segment of a shell command: split on `;` `&&` `||` `&` and newlines (not inside quotes); a pipeline keeps only its first stage. */
+function shellSegments(command: string): string[][] {
+  const segments: string[][] = [];
+  let words: string[] = [];
+  let word = "";
+  let piped = false;
+  const endWord = () => {
+    if (word && !piped) words.push(word);
+    word = "";
+  };
+  const endSegment = () => {
+    endWord();
+    if (words.length) segments.push(words);
+    words = [];
+    piped = false;
+  };
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i]!;
+    if (ch === "'" || ch === '"') {
+      const close = command.indexOf(ch, i + 1);
+      const end = close < 0 ? command.length : close + 1;
+      word += command.slice(i, end);
+      i = end - 1;
+    } else if (ch === "\\" && i + 1 < command.length) word += ch + command[++i];
+    else if (ch === ";" || ch === "\n" || ch === "&") endSegment();
+    else if (ch === "|") {
+      if (command[i + 1] === "|") (i++, endSegment());
+      else (endWord(), (piped = true));
+    } else if (/\s/.test(ch)) endWord();
+    else word += ch;
+  }
+  endSegment();
+  return segments;
+}
+
+/** The words after the search command of a segment, when its leading command (past wrappers and a path) is a search. */
+function searchArguments(words: string[]): string[] | null {
+  let i = 0;
+  while (i < words.length) {
     const w = words[i]!;
-    if (w === "-e" || w === "--regexp") return unquote(words[i + 1] ?? "") || null;
-    if (VALUE_FLAGS.has(w)) { i++; continue; }
-    if (w.startsWith("-")) continue;
-    if (/^[|;&]/.test(w)) return null;
-    return unquote(w);
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) i++;
+    else if (WRAPPERS.has(w.replace(/^.*\//, ""))) {
+      i++;
+      while (words[i]?.startsWith("-") || (w === "nice" && /^\d+$/.test(words[i] ?? "")) || (w === "env" && /^[A-Za-z_]\w*=/.test(words[i] ?? ""))) i++;
+    } else break;
+  }
+  const lead = (words[i] ?? "").replace(/^.*\//, "");
+  if (lead === "git" && words[i + 1] === "grep") return words.slice(i + 2);
+  return SEARCHERS.has(lead) ? words.slice(i + 1) : null;
+}
+
+/** The pattern of the first search a command leads with (`-e PATTERN` included); a pipeline's later stages and plain text never count. */
+function shellSearchPattern(command: string): string | null {
+  for (const segment of shellSegments(command)) {
+    const words = searchArguments(segment);
+    if (!words) continue;
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i]!;
+      if (w === "-e" || w === "--regexp") return unquote(words[i + 1] ?? "") || null;
+      if (VALUE_FLAGS.has(w)) { i++; continue; }
+      if (w.startsWith("-")) continue;
+      return unquote(w);
+    }
+    return null;
   }
   return null;
 }

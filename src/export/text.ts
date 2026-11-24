@@ -46,6 +46,8 @@ export function commentLine(value: unknown): string {
 
 export function xml(value: unknown): string {
   return String(value ?? "")
+    // XML 1.0 has no spelling for these: control characters, lone surrogates, U+FFFE/U+FFFF.
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")

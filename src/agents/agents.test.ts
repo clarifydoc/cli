@@ -677,3 +677,31 @@ describe("install --remove", () => {
     }
   });
 });
+
+describe("shell search detection", () => {
+  // A segment's leading command (after wrappers and a path) is the search; a later pipeline stage or text is not.
+  // `make && grep X` is recognised: `grep X` leads its own `&&` segment.
+  const table: Array<[string, string | null]> = [
+    ["rg getPlayerById src", "getPlayerById"],
+    ["npx rg getPlayerById", "getPlayerById"],
+    ["/usr/bin/rg getPlayerById", "getPlayerById"],
+    ["sudo grep -r getPlayerById src", "getPlayerById"],
+    ["git grep getPlayerById", "getPlayerById"],
+    ["command rg getPlayerById", "getPlayerById"],
+    ["env X=1 rg getPlayerById", "getPlayerById"],
+    ["FOO=1 time nice -n 5 egrep getPlayerById .", "getPlayerById"],
+    ["cd src; rg -n --type ts 'getPlayerById' .", "getPlayerById"],
+    ["make && grep getPlayerById log", "getPlayerById"],
+    ["false || ag getPlayerById", "getPlayerById"],
+    ["echo hi\nack getPlayerById", "getPlayerById"],
+    ["rg -e getPlayerById src | head", "getPlayerById"],
+    ["cat x | grep getPlayerById", null],
+    ["echo grep getPlayerById", null],
+    ["echo 'a; grep getPlayerById'", null],
+    ["git log --grep getPlayerById", null],
+    ["ls | rg getPlayerById", null],
+  ];
+  it.each(table)("%s", (command, expected) => {
+    expect(searchTerm({ tool_input: { command } })).toBe(expected);
+  });
+});

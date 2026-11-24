@@ -27,7 +27,7 @@ const NOTE_CAP = 5_000;
 const LIST_CAP = 200;
 
 /** A file name Obsidian (and Windows) accepts, readable as the original. */
-function noteName(text: string): string {
+export function noteName(text: string, budget = NAME_BYTES): string {
   const name = text
     .replace(/\//g, "∕")
     .replace(/:/g, "꞉")
@@ -35,7 +35,24 @@ function noteName(text: string): string {
     .replace(/\s+/g, " ")
     .trim()
     .replace(/^\.+/, "_");
-  return (name || "_").slice(0, 120);
+  return cutBytes(name || "_", budget);
+}
+
+/** Bytes of a note name before ` (n)` and `.md`; file systems allow 255. */
+const NAME_BYTES = 200;
+
+/** The longest prefix of `text` within `max` UTF-8 bytes, cut on a code-point boundary. */
+function cutBytes(text: string, max: number): string {
+  if (Buffer.byteLength(text) <= max) return text;
+  let out = "";
+  let used = 0;
+  for (const ch of text) {
+    const size = Buffer.byteLength(ch);
+    if (used + size > max) break;
+    out += ch;
+    used += size;
+  }
+  return out.trimEnd() || "_";
 }
 
 /** `[[Folder/Note|shown text]]`; the alias cannot hold `|` or `]`. */
@@ -59,7 +76,7 @@ function at(file: string, line?: number): string {
 }
 
 /** One name per key, made unique with ` (2)`, ` (3)` … in the order asked. */
-function namer(folder: string) {
+export function namer(folder: string) {
   const taken = new Map<string, number>();
   const byKey = new Map<string, string>();
   return (key: string, text: string): string => {
@@ -68,7 +85,8 @@ function namer(folder: string) {
     const base = noteName(text);
     const n = (taken.get(base.toLowerCase()) ?? 0) + 1;
     taken.set(base.toLowerCase(), n);
-    const path = `${folder}/${n === 1 ? base : `${base} (${n})`}`;
+    const suffix = n === 1 ? "" : ` (${n})`;
+    const path = `${folder}/${cutBytes(base, NAME_BYTES - Buffer.byteLength(suffix))}${suffix}`;
     byKey.set(key, path);
     return path;
   };
