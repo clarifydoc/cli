@@ -115,8 +115,12 @@ export function extractGoClasses(lines: string[], fns: FunctionInfo[], parsePara
  * variable of a pair).
  */
 function statedDeclarationType(code: string, name: string, constructors?: GoConstructors): string | null {
-  const v = new RegExp(`\\bvar\\s+${name}\\s+([*\\[\\]\\w.]+)\\s*(?:=|$)`).exec(code);
+  // A declaration is a `var` or a `:=`: a line with neither states no type, and no pattern is built for it.
+  const hasVar = code.includes("var");
+  if (!hasVar && !code.includes(":=")) return null;
+  const v = hasVar ? new RegExp(`\\bvar\\s+${name}\\s+([*\\[\\]\\w.]+)\\s*(?:=|$)`).exec(code) : null;
   if (v) return v[1]!;
+  if (!code.includes(":=")) return null;
   const d = new RegExp(`(?:^|[\\s(;])((?:[A-Za-z_]\\w*\\s*,\\s*)*${name}(?:\\s*,\\s*[A-Za-z_]\\w*)*)\\s*:=\\s*([^;]+)`).exec(code);
   if (!d) return null;
   const names = d[1]!.split(",").map((n) => n.trim());
@@ -162,6 +166,9 @@ export function hideShadowedTypes(lines: readonly string[], fn: FunctionInfo): v
   fn.calls = fn.calls.filter((c) => !hides(c.name, c.line) && !hides(bare(c.receiverType ?? ""), c.line));
 }
 
+const QUOTE_CHAR_RE = /["`']/;
+const BODY_TOKEN_RE = /(?<![\w.])[A-Za-z_]\w*/g;
+
 /**
  * A name the body declares in several blocks with different stated types (`s := NewClub()` in one `if`, `s :=
  * NewPlayer()` in the next): Go scopes each to its block, and the function-wide reading leaves the name untyped
@@ -170,14 +177,27 @@ export function hideShadowedTypes(lines: readonly string[], fn: FunctionInfo): v
  */
 function typeBlockLocalCalls(lines: readonly string[], fn: FunctionInfo, declared: ReadonlySet<string>, locals: ReadonlyArray<{ name: string }>, receiverName: string | undefined, constructors?: GoConstructors): void {
   let codeLines: string[] | undefined;
+  // Each identifier of the body (not one after a `.`) → the lines it stands on, read once for every declared name.
+  let tokenLines: Map<string, number[]> | undefined;
   for (const name of declared) {
     if (name === "_" || name === receiverName || fn.params.some((p) => p.name === name) || locals.some((l) => l.name === name)) continue;
-    codeLines ??= lines.slice(fn.line, fn.endLine).map((l) => stripGoComment(l).replace(/"(?:[^"\\]|\\.)*"|`[^`]*`|'(?:[^'\\]|\\.)*'/g, '""'));
-    const word = new RegExp(`(?<![\\w.])${name}(?![\\w])`);
+    codeLines ??= lines.slice(fn.line, fn.endLine).map((l) => {
+      const c = stripGoComment(l);
+      return QUOTE_CHAR_RE.test(c) ? c.replace(/"(?:[^"\\]|\\.)*"|`[^`]*`|'(?:[^'\\]|\\.)*'/g, '""') : c;
+    });
+    if (!tokenLines) {
+      tokenLines = new Map();
+      for (let k = 0; k < codeLines.length; k++) {
+        for (const m of codeLines[k]!.matchAll(BODY_TOKEN_RE)) {
+          const rows = tokenLines.get(m[0]);
+          if (!rows) tokenLines.set(m[0], [k]);
+          else if (rows[rows.length - 1] !== k) rows.push(k);
+        }
+      }
+    }
     const types = new Set<string>();
-    for (const code of codeLines) {
-      if (!code.includes(name) || !word.test(code)) continue;
-      const type = statedDeclarationType(code, name, constructors);
+    for (const k of tokenLines.get(name) ?? []) {
+      const type = statedDeclarationType(codeLines[k]!, name, constructors);
       if (type) types.add(type.replace(/^[*&]/, ""));
     }
     if (types.size >= 2) typeShadowedCalls(lines, fn, name, null, constructors);

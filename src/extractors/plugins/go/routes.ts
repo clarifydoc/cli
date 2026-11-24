@@ -96,6 +96,9 @@ const ROUTER_METHODS = new Set(["Group", "Use", "Route", "Mount", "With", "Handl
 const NOT_A_REGISTRAR = /^(?:http|log|fmt|os|signal|context|errors|strings|time|slog|httptest)\.|(?:^|\.)(?:ListenAndServe(?:TLS)?|Serve(?:TLS)?|Run(?:TLS)?|Start(?:TLS)?|Listen|Handler|ServeHTTP|Shutdown)$/;
 
 
+/** A line that can hold none of the route patterns above: they all name one of these after a `.`, or a router constructor. */
+const ROUTE_WORD_RE = /\.\s*(?:Handle|GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD|Get|Post|Put|Patch|Delete|Options|Head|Method|With|Add|Use|Route|Group|Combo|Match|Any|Path|Mount)|NewRouter|NewMux|NewServeMux|Default|gin\.New|echo\.New|fiber\.New/;
+
 /** Echo's import path. */
 const ECHO_IMPORT_RE = /(?:^|\/)labstack\/echo(?:\/v\d+)?$/;
 /** Router libraries other than Echo: with one imported, a receiver of unstated type may be theirs. */
@@ -208,6 +211,7 @@ const CHAIN_VERB_RE = /\.\s*(Get|Post|Put|Patch|Delete|Options|Head|Any)\s*\(/g;
 
 /** Net brace change on a line, ignoring braces inside string literals. */
 function braceDelta(line: string): number {
+  if (!line.includes("{") && !line.includes("}")) return 0;
   const stripped = line.replace(/(["'`])(?:\\.|(?!\1).)*\1/g, "");
   let d = 0;
   for (const ch of stripped) {
@@ -728,6 +732,14 @@ export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCal
       const types = literalReturnTypes(lines, i, composite.index + composite[0].length - 1);
       if (types.length > 0) builtTypes.set(composite[1]!, types);
       else builtTypes.delete(composite[1]!);
+    }
+
+    // Every registration, group, middleware and router-building pattern below names one of these words after a `.`
+    // (or builds a router by one of these constructors): a line without them is read only for a router handed on.
+    if (!ROUTE_WORD_RE.test(line) && !(facts && (routerVars.size > 0 || packageRouters.size > 0) && line.includes("("))) {
+      depth += braceDelta(line);
+      while (routeStack.length > 0 && depth < routeStack[routeStack.length - 1]!.depth) routeStack.pop();
+      continue;
     }
 
     const builtEngine = line.match(ENGINE_RE);

@@ -41,40 +41,74 @@ export function code(lines: readonly string[]): string[] {
   return out;
 }
 
+const RECEIVER_RE = /^\s*func\s*\([^)]*\)/;
+const LOCAL_COMPOSITE_RE = new RegExp(`(${IDENT})\\s*:?=\\s*(?:\\w+\\.)?(${IDENT})\\s*\\{`, "g");
+const LOCAL_PARAM_RE = new RegExp(`(?:\\bvar\\s+|[(,]\\s*)(${IDENT})\\s+(?:\\w+\\.)?([A-Z]\\w*)\\b`, "g");
+const VALUE_COMPOSITE_RE = /(?:\]|\b)\s*(?:\w+\.)?([A-Z]\w*)\s*\{/g;
+const VALUE_DECLARED_RE = new RegExp(`(?:\\[\\w*\\]|\\bmap\\[[^\\]]*\\]|\\b${IDENT}\\s)\\s*(?:\\w+\\.)?([A-Z]\\w*)\\b`, "g");
+const STAR_RE = new RegExp(`\\*\\s*(?:\\w+\\.)*(${IDENT})`, "g");
+const PAREN_STAR_RE = new RegExp(`\\)\\s*\\*\\s*(?:\\w+\\.)*(${IDENT})`, "g");
+const AMP_LITERAL_RE = new RegExp(`&\\s*(?:\\w+\\.)*(${IDENT})\\s*[{\\[]`, "g");
+const NEW_RE = new RegExp(`\\bnew\\s*\\(\\s*(?:\\w+\\.)*(${IDENT})`, "g");
+const AMP_VALUE_RE = new RegExp(`&\\s*(${IDENT})\\b(?!\\s*[{(])`, "g");
+
 export function goAddressedTypes(lines: string[]): string[] {
   const found = new Set<string>();
   const text = code(lines);
+  // The `&x` of a value (`&x`, `&x[i]`, `&x.f`) is the one read that needs the types of locals and of value forms, so
+  // a file with none reads neither, and the locals are kept only for the names an `&` takes.
+  const ampNames = new Set<string>();
+  for (const line of text) {
+    if (!line.includes("&")) continue;
+    for (const m of line.matchAll(AMP_VALUE_RE)) ampNames.add(m[1]!);
+  }
   // Locals declared as a value of a type: `c := Club{…}`, `var c Club`, `var c = Club{…}`.
   const valueLocals = new Map<string, Set<string>>();
-  for (const line of text) {
-    const t = line.replace(/^\s*func\s*\([^)]*\)/, "func ");
-    for (const m of t.matchAll(new RegExp(`(${IDENT})\\s*:?=\\s*(?:\\w+\\.)?(${IDENT})\\s*\\{`, "g"))) (valueLocals.get(m[1]!) ?? valueLocals.set(m[1]!, new Set()).get(m[1]!)!).add(m[2]!);
-    // A parameter or a `var`: `c Club`, `var c Club`.
-    for (const m of t.matchAll(new RegExp(`(?:\\bvar\\s+|[(,]\\s*)(${IDENT})\\s+(?:\\w+\\.)?([A-Z]\\w*)\\b`, "g"))) (valueLocals.get(m[1]!) ?? valueLocals.set(m[1]!, new Set()).get(m[1]!)!).add(m[2]!);
+  const addLocal = (name: string, type: string): void => {
+    if (!ampNames.has(name)) return;
+    (valueLocals.get(name) ?? valueLocals.set(name, new Set()).get(name)!).add(type);
+  };
+  if (ampNames.size > 0) {
+    for (const line of text) {
+      const t = line.includes("func") ? line.replace(RECEIVER_RE, "func ") : line;
+      if (t.includes("{") && t.includes("=")) for (const m of t.matchAll(LOCAL_COMPOSITE_RE)) addLocal(m[1]!, m[2]!);
+      // A parameter or a `var`: `c Club`, `var c Club`.
+      for (const m of t.matchAll(LOCAL_PARAM_RE)) addLocal(m[1]!, m[2]!);
+    }
   }
-  // Every type the file names in value form: composites, `var`, parameters, slices and maps of one.
-  const valueTypes = new Set<string>();
-  for (const line of text) {
-    for (const m of line.matchAll(new RegExp(`(?:\\]|\\b)\\s*(?:\\w+\\.)?([A-Z]\\w*)\\s*\\{`, "g"))) valueTypes.add(m[1]!);
-    for (const m of line.matchAll(new RegExp(`(?:\\[\\w*\\]|\\bmap\\[[^\\]]*\\]|\\b${IDENT}\\s)\\s*(?:\\w+\\.)?([A-Z]\\w*)\\b`, "g"))) valueTypes.add(m[1]!);
-  }
+  // Every type the file names in value form: composites, `var`, parameters, slices and maps of one. Read once, when
+  // an `&x` names a local the file does not declare.
+  let valueTypes: Set<string> | undefined;
+  const valueTypesOf = (): Set<string> => {
+    if (valueTypes) return valueTypes;
+    valueTypes = new Set<string>();
+    for (const line of text) {
+      if (line.includes("{")) for (const m of line.matchAll(VALUE_COMPOSITE_RE)) valueTypes.add(m[1]!);
+      for (const m of line.matchAll(VALUE_DECLARED_RE)) valueTypes.add(m[1]!);
+    }
+    return valueTypes;
+  };
   for (const line of text) {
     // A method's receiver declares the pointer form, it does not use it.
-    const t = line.replace(/^\s*func\s*\([^)]*\)/, "func ");
+    const t = line.includes("func") ? line.replace(RECEIVER_RE, "func ") : line;
     // A `*` that does not follow a value (an identifier, `)` or `]`) is a pointer type. The `*` is found first and its
     // left side judged once, so a long whitespace run is no start position of its own.
-    for (const m of t.matchAll(new RegExp(`\\*\\s*(?:\\w+\\.)*(${IDENT})`, "g"))) {
-      if (m.index > 0 && /[\w)\]]/.test(t[m.index - 1]!)) continue;
-      found.add(m[1]!);
+    if (t.includes("*")) {
+      for (const m of t.matchAll(STAR_RE)) {
+        if (m.index > 0 && /[\w)\]]/.test(t[m.index - 1]!)) continue;
+        found.add(m[1]!);
+      }
+      for (const m of t.matchAll(PAREN_STAR_RE)) found.add(m[1]!);
     }
-    for (const m of t.matchAll(new RegExp(`\\)\\s*\\*\\s*(?:\\w+\\.)*(${IDENT})`, "g"))) found.add(m[1]!);
-    for (const m of t.matchAll(new RegExp(`&\\s*(?:\\w+\\.)*(${IDENT})\\s*[{\\[]`, "g"))) found.add(m[1]!);
-    for (const m of t.matchAll(new RegExp(`\\bnew\\s*\\(\\s*(?:\\w+\\.)*(${IDENT})`, "g"))) found.add(m[1]!);
-    // `&x`, `&x[i]`, `&x.f` of a value: its type when the file states it, else every value type the file names.
-    for (const m of t.matchAll(new RegExp(`&\\s*(${IDENT})\\b(?!\\s*[{(])`, "g"))) {
-      const known = valueLocals.get(m[1]!);
-      for (const ty of known ?? valueTypes) found.add(ty);
+    if (t.includes("&")) {
+      for (const m of t.matchAll(AMP_LITERAL_RE)) found.add(m[1]!);
+      // `&x`, `&x[i]`, `&x.f` of a value: its type when the file states it, else every value type the file names.
+      for (const m of t.matchAll(AMP_VALUE_RE)) {
+        const known = valueLocals.get(m[1]!);
+        for (const ty of known ?? valueTypesOf()) found.add(ty);
+      }
     }
+    if (t.includes("new")) for (const m of t.matchAll(NEW_RE)) found.add(m[1]!);
   }
   return [...found].sort();
 }
