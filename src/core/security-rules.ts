@@ -37,7 +37,12 @@ export function ruleCategory(name: string): SecurityCategory | null {
 export function suppressionOf(line: string, next = false): "all" | Set<SecurityCategory> | null {
   const marker = next ? /\bclarifydoc-ignore-next-line\b(.*)$/ : /\bclarifydoc-ignore(?!-next-line)\b(.*)$/;
   const m = marker.exec(line);
-  if (!m) return !next && /\b(?:nosec|NOSONAR)\b/.test(line) ? "all" : null;
+  if (!m) {
+    if (next) return null;
+    if (/\b(?:nosec|NOSONAR)\b/.test(line)) return "all";
+    // Bandit's hardcoded-password codes (`# noqa: S105`, S106, S107) silence that rule only.
+    return /#\s*noqa\b[^#\n]*\bS10[567]\b/.test(line) ? new Set<SecurityCategory>(["hardcoded-secret"]) : null;
+  }
   const named = new Set<SecurityCategory>();
   for (const word of m[1]!.split(/[\s,:;]+/)) {
     const c = word ? ruleCategory(word.replace(/[^\w/-]+$/, "")) : null;

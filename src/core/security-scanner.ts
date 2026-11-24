@@ -107,6 +107,19 @@ export function isSecretConstant(name: string, value: string): boolean {
 }
 
 /**
+ * A matched `name = "value"` whose value is prose (`"password compromised"`) or a
+ * namespaced identifier (`"github.token"`) and has no known key format: what
+ * `isSecretConstant` keeps, so the finding and the per-file JSON judge alike.
+ */
+function isKeyShapedValue(text: string): boolean {
+  const quoted = /['"`]([^'"`]*)['"`]\s*$/.exec(text);
+  if (!quoted) return false;
+  const value = quoted[1]!.trim();
+  if (SECRET_FORMATS.some(([, re]) => re.test(value)) || urlPassword(value) !== undefined) return false;
+  return /\s/.test(value) || NAMESPACED_NAME.test(value);
+}
+
+/**
  * A matched secret that is a placeholder, not a credential: documentation
  * values (`AKIAIOSFODNN7EXAMPLE`, `your-api-key-here`), template holes
  * (`${PASSWORD}`, `{{token}}`, `<password>`), masks (`****`, `xxxx`) and the
@@ -404,7 +417,7 @@ export function scanSecurity(
       // A trailing comment (`x = 1; // token="…"`, `<!-- … -->`): the match is not code.
       if (TRAILING_COMMENT_RE.test(line.slice(0, col))) return;
     }
-    if (rule.category === "hardcoded-secret" && isPlaceholderSecret(text)) return;
+    if (rule.category === "hardcoded-secret" && (isPlaceholderSecret(text) || isKeyShapedValue(text))) return;
     // Suppressed on the line (`nosec`, `NOSONAR`, `clarifydoc-ignore [rule…]`) or by
     // the line before (`clarifydoc-ignore-next-line [rule…]`), every rule or the
     // ones named. Read from the source as written: a plugin's pre-filter may

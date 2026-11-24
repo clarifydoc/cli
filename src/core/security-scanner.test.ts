@@ -206,6 +206,12 @@ describe("scanSecurity — Python judges the shapes TypeScript does", () => {
     expect(py('db_password = os.environ["DB_PASSWORD"]\n')).toEqual([]);
     expect(py('db_password = "changeme"\n')).toEqual([]);
   });
+  it("leaves prose, namespaced key names and bandit-suppressed lines alone (real-repo FP)", () => {
+    expect(py('class Reason(enum.Enum):\n    CompromisedPassword = "password compromised"\n')).toEqual([]);
+    expect(py('cfg = Config(\n    api_token="league.token",\n)\n')).toEqual([]);
+    expect(py('webhook_secret = "whsec_9fK2qLmw83kd"  # noqa: S105\n')).toEqual([]);
+    expect(py('webhook_secret = "whsec_9fK2qLmw83kd"  # noqa: E501\n')).toHaveLength(1);
+  });
 });
 
 describe("isSecretConstant / dropSecretConstants", () => {
