@@ -1,5 +1,6 @@
 import { readFile, writeFile, stat, mkdir, rename, unlink } from "fs/promises";
 import { createReadStream, existsSync } from "fs";
+import { readSourceText } from "./read-text-file.js";
 import { createHash } from "crypto";
 import { join, resolve, sep } from "path";
 import { getLanguageForFile } from "../parsers/language-map.js";
@@ -363,7 +364,7 @@ function discoveryReads(projectRoot: string): (rel: string, language: Language |
     if (ignored(abs)) return false;
     if (!applies(language, rel)) return true;
     try {
-      const pre = await preprocess(language, await readFile(abs, "utf-8"), rel, { absolutePath: abs, projectRoot: root });
+      const pre = await preprocess(language, await readSourceText(abs), rel, { absolutePath: abs, projectRoot: root });
       return !(pre && "skip" in pre);
     } catch {
       return true;

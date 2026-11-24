@@ -1,4 +1,4 @@
-import { readFile } from "fs/promises";
+import { readTextFile } from "./read-text-file.js";
 import { byOrdinal } from "./ordinal.js";
 import { existsSync } from "fs";
 import { resolve, join } from "path";
@@ -41,7 +41,7 @@ export async function gatherProjectInfo(
   // Read package.json
   let packageJson: Record<string, unknown> | null = null;
   try {
-    const raw = await readFile(join(root, "package.json"), "utf-8");
+    const raw = await readTextFile(join(root, "package.json"));
     packageJson = JSON.parse(raw);
   } catch {
     // No package.json
@@ -59,7 +59,7 @@ export async function gatherProjectInfo(
   let csprojText = "";
   for (const f of csprojFiles.slice(0, 20)) {
     try {
-      csprojText += "\n" + (await readFile(join(root, f), "utf-8"));
+      csprojText += "\n" + (await readTextFile(join(root, f)));
     } catch {
       // Skip unreadable file
     }
@@ -68,7 +68,7 @@ export async function gatherProjectInfo(
   // Read Python manifest (pyproject.toml as JSON-compatible or requirements.txt)
   let pythonManifest: Record<string, unknown> | null = null;
   try {
-    const reqRaw = await readFile(join(root, "requirements.txt"), "utf-8");
+    const reqRaw = await readTextFile(join(root, "requirements.txt"));
     pythonManifest = {
       dependencies: reqRaw
         .split("\n")
@@ -78,7 +78,7 @@ export async function gatherProjectInfo(
   } catch {
     // Try pyproject.toml (basic parse)
     try {
-      const raw = await readFile(join(root, "pyproject.toml"), "utf-8");
+      const raw = await readTextFile(join(root, "pyproject.toml"));
       // The owning plugin's manifest parser reads every layout — PEP 621
       // `[project] dependencies = [...]`, optional-dependencies, Poetry tables —
       // where a section-header scan here missed `[project]` (a real Django app
@@ -100,7 +100,7 @@ export async function gatherProjectInfo(
   let gradleFile: string | null = null;
   for (const name of ["build.gradle.kts", "build.gradle"]) {
     try {
-      gradleFile = await readFile(join(root, name), "utf-8");
+      gradleFile = await readTextFile(join(root, name));
       break;
     } catch {
       // Try next
@@ -110,7 +110,7 @@ export async function gatherProjectInfo(
   // Read Maven pom.xml
   let pomXml: string | null = null;
   try {
-    pomXml = await readFile(join(root, "pom.xml"), "utf-8");
+    pomXml = await readTextFile(join(root, "pom.xml"));
   } catch {
     // No pom.xml
   }
@@ -167,7 +167,7 @@ export async function gatherProjectInfo(
   // still cheap.
   for (const pf of pasFiles.slice(0, 200)) {
     try {
-      const content = await readFile(join(root, pf), "utf-8");
+      const content = await readTextFile(join(root, pf));
       // Simple regex to extract unit names from uses clauses
       const usesMatches = content.matchAll(/\buses\b\s+([\s\S]*?);/gi);
       for (const m of usesMatches) {
@@ -181,30 +181,30 @@ export async function gatherProjectInfo(
 
   // Read go.mod, Cargo.toml, composer.json, Gemfile — for cross-language ORM detection.
   let goMod: string | null = null;
-  try { goMod = await readFile(join(root, "go.mod"), "utf-8"); } catch { /* no go.mod */ }
+  try { goMod = await readTextFile(join(root, "go.mod")); } catch { /* no go.mod */ }
 
   let cargoToml: string | null = null;
-  try { cargoToml = await readFile(join(root, "Cargo.toml"), "utf-8"); } catch { /* no Cargo.toml */ }
+  try { cargoToml = await readTextFile(join(root, "Cargo.toml")); } catch { /* no Cargo.toml */ }
 
   let composerJson: string | null = null;
-  try { composerJson = await readFile(join(root, "composer.json"), "utf-8"); } catch { /* no composer.json */ }
+  try { composerJson = await readTextFile(join(root, "composer.json")); } catch { /* no composer.json */ }
 
   let gemfile: string | null = null;
-  try { gemfile = await readFile(join(root, "Gemfile"), "utf-8"); } catch { /* no Gemfile */ }
+  try { gemfile = await readTextFile(join(root, "Gemfile")); } catch { /* no Gemfile */ }
 
   let pubspecYaml: string | null = null;
-  try { pubspecYaml = await readFile(join(root, "pubspec.yaml"), "utf-8"); } catch { /* no pubspec.yaml */ }
+  try { pubspecYaml = await readTextFile(join(root, "pubspec.yaml")); } catch { /* no pubspec.yaml */ }
 
   let packageSwift: string | null = null;
-  try { packageSwift = await readFile(join(root, "Package.swift"), "utf-8"); } catch { /* no Package.swift */ }
+  try { packageSwift = await readTextFile(join(root, "Package.swift")); } catch { /* no Package.swift */ }
 
   let cljProject: string | null = null;
   for (const name of ["project.clj", "deps.edn"]) {
-    try { cljProject = await readFile(join(root, name), "utf-8"); break; } catch { /* try next */ }
+    try { cljProject = await readTextFile(join(root, name)); break; } catch { /* try next */ }
   }
 
   let cmakeLists: string | null = null;
-  try { cmakeLists = await readFile(join(root, "CMakeLists.txt"), "utf-8"); } catch { /* no CMakeLists.txt */ }
+  try { cmakeLists = await readTextFile(join(root, "CMakeLists.txt")); } catch { /* no CMakeLists.txt */ }
 
   // Find .sql / .ddl files for raw-SQL framework detection
   const sqlFiles = await globFiles("**/*.{sql,ddl,dml,psql,tsql,plsql,mysql}", {

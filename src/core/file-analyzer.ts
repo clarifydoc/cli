@@ -2,6 +2,7 @@ import { readFileSync, statSync } from "fs";
 import { createHash } from "crypto";
 import { parseErrorsOf } from "./coverage.js";
 import { readFile } from "fs/promises";
+import { readSourceText, readSourceTextSync } from "./read-text-file.js";
 import { isMainThread } from "worker_threads";
 import { computeRegexComplexity } from "./complexity-regex.js";
 import { splitLines } from "../extractors/shared/source-lines.js";
@@ -442,7 +443,9 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
     // A worker thread has one file in hand, so it reads without a round trip
     // through the I/O threads; the main thread keeps several files in flight.
     const encoding = filePlugin?.sourceEncoding ?? "utf-8";
-    const rawSource = isMainThread ? await readFile(file.absolutePath, encoding) : readFileSync(file.absolutePath, encoding);
+    const rawSource = encoding === "utf-8"
+      ? (isMainThread ? await readSourceText(file.absolutePath) : readSourceTextSync(file.absolutePath))
+      : isMainThread ? await readFile(file.absolutePath, encoding) : readFileSync(file.absolutePath, encoding);
     // Flag minified/bundled artifacts once; every branch below stamps it on
     // the analysis so project-level detectors can exclude these files.
     let minified = isMinifiedSource(rawSource);

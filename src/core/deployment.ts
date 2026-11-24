@@ -2,7 +2,6 @@ import { globUnignored as glob } from "./clarifydoc-ignore.js";
 import { urlValue } from "./url-values.js";
 import { byOrdinal } from "./ordinal.js";
 import { clusterServiceLabel } from "./service-addresses.js";
-import { readFile } from "fs/promises";
 import { join, posix, resolve } from "path";
 import type {
   DeployedService,
@@ -17,6 +16,7 @@ import { collectK8sManifests } from "./deployment-k8s.js";
 import { entryFileOf, readDockerfile, repoFiles, type DockerfileFacts } from "./dockerfiles.js";
 import { collectTerraform } from "./deployment-terraform.js";
 import { collectCloudFormation } from "./deployment-cloudformation.js";
+import { readTextFile } from "./read-text-file.js";
 
 /**
  * Deployment-topology extraction from docker-compose / compose manifests.
@@ -863,7 +863,7 @@ export async function detectDeployment(
   for (const rel of runtime) {
     let text: string;
     try {
-      text = await readFile(join(absRoot, rel), "utf-8");
+      text = await readTextFile(join(absRoot, rel));
     } catch {
       continue;
     }

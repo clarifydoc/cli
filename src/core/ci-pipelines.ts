@@ -1,12 +1,12 @@
 import { existsSync } from "fs";
 import { insideRoot } from "./inside-root.js";
-import { readFile } from "fs/promises";
 import { join, posix, resolve } from "path";
 import { globUnignored as glob } from "./clarifydoc-ignore.js";
 import { byOrdinal } from "./ordinal.js";
 import { entryFileOf, type RepoFiles } from "./dockerfiles.js";
 import { parseSimpleYaml, projectOfContext, type YamlMap, type YamlValue } from "./deployment.js";
 import type { CiDeploy, SubProject } from "../types/analysis.js";
+import { readTextFile } from "./read-text-file.js";
 
 /**
  * What a repository's CI deploys, and when: the deploy steps of its
@@ -192,7 +192,7 @@ export async function detectCiDeploys(projectRoot: string, subProjects: readonly
   for (const file of files) {
     let raw: string;
     try {
-      raw = await readFile(join(absRoot, file), "utf8");
+      raw = await readTextFile(join(absRoot, file));
     } catch {
       continue;
     }
@@ -338,7 +338,7 @@ export async function ciRunEntries(projectRoot: string, repo: RepoFiles): Promis
   for (const file of found.map((f) => f.split("\\").join("/")).sort(byOrdinal).slice(0, 80)) {
     let raw: string;
     try {
-      raw = await readFile(join(absRoot, file), "utf8");
+      raw = await readTextFile(join(absRoot, file));
     } catch {
       continue;
     }

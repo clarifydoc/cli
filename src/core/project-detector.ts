@@ -1,6 +1,7 @@
 import { glob } from "./glob.js";
 import { byOrdinal } from "./ordinal.js";
-import { readdir, readFile, stat } from "fs/promises";
+import { readdir, stat } from "fs/promises";
+import { readTextFile } from "./read-text-file.js";
 import { join, posix, resolve } from "path";
 import type { PackageEcosystem, SubProject, SubProjectKind } from "../types/analysis.js";
 import { loadIgnorePatterns, isIgnored, ignoredDirectories } from "./clarifydoc-ignore.js";
@@ -76,7 +77,7 @@ export async function detectSubProjects(
     const dir = lastSlash >= 0 ? norm.slice(0, lastSlash) : "";
     const base = norm.slice(lastSlash + 1).toLowerCase();
     for (const { kind, isProjectRoot } of PROJECT_MARKERS.filter((m) => markerMatches(m.pattern, base))) {
-      if (isProjectRoot && !(await isProjectRoot({ dir, text: () => readFile(join(root, match), "utf-8").catch(() => "") }))) continue;
+      if (isProjectRoot && !(await isProjectRoot({ dir, text: () => readTextFile(join(root, match)).catch(() => "") }))) continue;
       let entry = byDir.get(dir);
       if (!entry) {
         entry = { kinds: new Set(), markers: new Set() };
@@ -153,7 +154,7 @@ async function addDeclaredProjects(
   const ids = new Set(subProjects.map((p) => p.id));
   // Only a host whose directory holds the build file (its marker) is read; the reads run together, the results are used in order.
   const reads = [...subProjects].flatMap((host) =>
-    specs.flatMap((spec) => spec.files.filter((file) => host.markers.includes(file)).map((file) => ({ host, spec, file, text: readFile(join(root, host.root, file), "utf-8").catch(() => null) }))));
+    specs.flatMap((spec) => spec.files.filter((file) => host.markers.includes(file)).map((file) => ({ host, spec, file, text: readTextFile(join(root, host.root, file)).catch(() => null) }))));
   for (const { host, spec, file, text: pending } of reads) {
     const text = await pending;
     if (text === null) continue;
@@ -206,7 +207,7 @@ async function implicitImports(root: string, project: SubProject): Promise<strin
         ? entries.filter((e) => spec.files.some((f) => basenameGlob(f).test(e)))
         : spec.files.filter((f) => entries!.includes(f));
       for (const file of files) {
-        const text = await readFile(join(root, project.root, file), "utf-8").catch(() => null);
+        const text = await readTextFile(join(root, project.root, file)).catch(() => null);
         if (text === null) continue;
         for (const name of await spec.projectImports(text, selfNameContext(root, project.root, file))) out.add(name);
       }
@@ -235,7 +236,7 @@ async function declaredReferences(root: string, project: SubProject, subProjects
         ? entries.filter((e) => spec.files.some((f) => basenameGlob(f).test(e)))
         : spec.files.filter((f) => entries!.includes(f));
       for (const file of spec.firstOnly ? files.slice(0, 1) : files) {
-        const text = await readFile(join(root, project.root, file), "utf-8").catch(() => null);
+        const text = await readTextFile(join(root, project.root, file)).catch(() => null);
         if (text === null) continue;
         for (const ref of await spec.projectReferences(text, selfNameContext(root, project.root, file))) {
           if (ref.package) {
@@ -301,7 +302,7 @@ async function declaredPackages(
         entries ??= await readdir(dir).catch(() => []);
         const names = new Set<string>();
         for (const file of entries.filter((e) => spec.files.some((f) => basenameGlob(f).test(e)))) {
-          const text = await readFile(join(dir, file), "utf-8").catch(() => null);
+          const text = await readTextFile(join(dir, file)).catch(() => null);
           const name = text === null ? null : await spec.selfName(text, selfNameContext(root, project.root, file));
           if (name) names.add(name);
         }
@@ -314,7 +315,7 @@ async function declaredPackages(
       for (const file of spec.files) {
         let text: string;
         try {
-          text = await readFile(join(root, project.root, file), "utf-8");
+          text = await readTextFile(join(root, project.root, file));
         } catch {
           continue;
         }
@@ -345,7 +346,7 @@ function basenameGlob(pattern: string): RegExp {
 function selfNameContext(root: string, projectRoot: string, file: string): SelfNameContext {
   const dir = posix.dirname(posix.join(projectRoot.replace(/\\/g, "/"), file));
   const rel = dir === "." ? "" : dir;
-  const read = (path: string) => readFile(join(root, path), "utf-8").catch(() => null);
+  const read = (path: string) => readTextFile(join(root, path)).catch(() => null);
   return {
     fileName: posix.basename(file),
     dirName: rel ? posix.basename(rel) : null,

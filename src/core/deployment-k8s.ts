@@ -1,6 +1,6 @@
 import { globUnignored as glob } from "./clarifydoc-ignore.js";
-import { readFile } from "fs/promises";
 import { join, resolve } from "path";
+import { readTextFile } from "./read-text-file.js";
 import {
   IGNORE,
   NON_RUNTIME_RE,
@@ -38,8 +38,8 @@ import {
  */
 
 const WORKLOAD_KINDS = new Set(["Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob"]);
-const K8S_SNIFF_RE = /^\s*apiVersion\s*:/m;
-const K8S_KIND_RE = /^\s*kind\s*:\s*(Deployment|StatefulSet|DaemonSet|Job|CronJob|Service|ConfigMap|Ingress)\s*$/m;
+const K8S_SNIFF_RE = /^[^\S\r\n\u2028\u2029]*apiVersion\s*:/m;
+const K8S_KIND_RE = /^[^\S\r\n\u2028\u2029]*kind\s*:\s*(Deployment|StatefulSet|DaemonSet|Job|CronJob|Service|ConfigMap|Ingress)\s*$/m;
 
 // ─── Safe YAML traversal ─────────────────────────────────────────────────────
 
@@ -657,11 +657,11 @@ export async function collectK8sManifests(
     if (!/(^|\/)Chart\.ya?ml$/.test(posix)) continue;
     const dir = posix.replace(/\/?Chart\.ya?ml$/i, "");
     try {
-      const chartDoc = parseSimpleYaml(await readFile(join(absRoot, posix), "utf-8"));
+      const chartDoc = parseSimpleYaml(await readTextFile(join(absRoot, posix)));
       let values: YamlMap = {};
       for (const vf of ["values.yaml", "values.yml"]) {
         try {
-          values = parseSimpleYaml(await readFile(join(absRoot, dir, vf), "utf-8"));
+          values = parseSimpleYaml(await readTextFile(join(absRoot, dir, vf)));
           break;
         } catch { /* no values file */ }
       }
@@ -672,7 +672,7 @@ export async function collectK8sManifests(
       const texts: string[] = [];
       for (const f of templateFiles.slice(0, 200)) {
         try {
-          const t = await readFile(join(absRoot, dir, f), "utf-8");
+          const t = await readTextFile(join(absRoot, dir, f));
           if (t.includes("define")) texts.push(t);
         } catch { /* unreadable template */ }
       }
@@ -711,7 +711,7 @@ export async function collectK8sManifests(
   // Read in parallel batches (a sequential read of each candidate idles on the disk), judged in path order.
   const texts: Array<string | undefined> = [];
   for (let i = 0; i < candidates.length; i += 32) {
-    texts.push(...(await Promise.all(candidates.slice(i, i + 32).map((f) => readFile(join(absRoot, f), "utf-8").catch(() => undefined)))));
+    texts.push(...(await Promise.all(candidates.slice(i, i + 32).map((f) => readTextFile(join(absRoot, f)).catch(() => undefined)))));
   }
 
   for (const [at, rel] of candidates.entries()) {

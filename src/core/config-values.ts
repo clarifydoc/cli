@@ -1,4 +1,4 @@
-import { readFile } from "fs/promises";
+import { readTextFile } from "./read-text-file.js";
 import { join, resolve } from "path";
 import { globUnignored as glob } from "./clarifydoc-ignore.js";
 import { isSensitive } from "./file-discovery.js";
@@ -39,7 +39,7 @@ const IGNORE = ["**/node_modules/**", "**/dist/**", "**/.git/**", "**/bin/**", "
 /** Read a file as UTF-8, or null when it cannot be read. */
 async function readIf(abs: string): Promise<string | null> {
   try {
-    return await readFile(abs, "utf-8");
+    return await readTextFile(abs);
   } catch {
     return null;
   }

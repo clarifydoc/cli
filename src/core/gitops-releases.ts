@@ -1,9 +1,9 @@
-import { readFile } from "fs/promises";
 import { join, posix, resolve } from "path";
 import { globUnignored as glob } from "./clarifydoc-ignore.js";
 import { byOrdinal } from "./ordinal.js";
 import { parseSimpleYaml, projectOfContext, type YamlMap, type YamlValue } from "./deployment.js";
 import type { CiDeploy, SubProject } from "../types/analysis.js";
+import { readTextFile } from "./read-text-file.js";
 
 /**
  * Deploys a GitOps controller makes from the repository, as deploy rows beside
@@ -126,7 +126,7 @@ export async function detectGitopsReleases(projectRoot: string, subProjects: rea
   // Read in parallel batches (a locale-heavy repo has hundreds of YAML files), then judge in path order.
   const texts: Array<string | undefined> = [];
   for (let i = 0; i < files.length; i += 32) {
-    texts.push(...(await Promise.all(files.slice(i, i + 32).map((f) => readFile(join(absRoot, f), "utf8").catch(() => undefined)))));
+    texts.push(...(await Promise.all(files.slice(i, i + 32).map((f) => readTextFile(join(absRoot, f)).catch(() => undefined)))));
   }
   const out: CiDeploy[] = [];
   for (const [i, file] of files.entries()) {

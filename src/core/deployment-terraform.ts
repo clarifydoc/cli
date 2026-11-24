@@ -1,11 +1,11 @@
 import { existsSync } from "fs";
-import { readFile } from "fs/promises";
 import { join, posix, resolve } from "path";
 import { globUnignored as glob } from "./clarifydoc-ignore.js";
 import { byOrdinal } from "./ordinal.js";
 import { hclPath, hclRefs, hclString, parseHcl, registryModuleKey, type HclBlock } from "../extractors/shared/hcl.js";
 import type { DeployedServiceKind } from "../types/analysis.js";
 import type { RawService } from "./deployment.js";
+import { readTextFile } from "./read-text-file.js";
 
 /**
  * Deployment evidence from Terraform: what an AWS module runs and attaches.
@@ -75,7 +75,7 @@ export async function collectTerraform(projectRoot: string, ignore: readonly str
   for (const rel of found) {
     let text: string;
     try {
-      text = await readFile(join(absRoot, rel), "utf8");
+      text = await readTextFile(join(absRoot, rel));
     } catch {
       continue;
     }
@@ -135,7 +135,7 @@ export async function collectTerraform(projectRoot: string, ignore: readonly str
         const context = src ? posix.normalize(src).replace(/^\.\/?/, "").replace(/\/$/, "") : undefined;
         const env: Record<string, string> = {};
         const vars = block.blocks.find((b) => b.type === "environment")?.attrs.get("variables");
-        for (const m of (vars ?? "").matchAll(/^\s*([A-Za-z_][\w]*)\s*=\s*(.+?)\s*$/gm)) env[m[1]!] = hclString(m[2]) ?? m[2]!;
+        for (const m of (vars ?? "").matchAll(/^[^\S\r\n\u2028\u2029]*([A-Za-z_][\w]*)\s*=\s*(.+?)\s*$/gm)) env[m[1]!] = hclString(m[2]) ?? m[2]!;
         const svc: RawService = { name, file, entrypoint: handler, env, dependsOn: [], ports: [], ...(context !== undefined && !context.startsWith("..") ? { build: { context } } : {}) };
         if (context !== undefined && handler && handler.includes(".")) {
           const module = handler.slice(0, handler.lastIndexOf(".")).replace(/\./g, "/");
@@ -151,7 +151,7 @@ export async function collectTerraform(projectRoot: string, ignore: readonly str
         nameOf.set(`${type}.${label}`, name);
         files.add(file);
         // Edges from what its env references (resolved once every module is read).
-        for (const m of (vars ?? "").matchAll(/^\s*([A-Za-z_][\w]*)\s*=\s*(.+?)\s*$/gm)) pending.push({ dir, from: `${type}.${label}`, expr: m[2]!, via: m[1]!, how: "env" });
+        for (const m of (vars ?? "").matchAll(/^[^\S\r\n\u2028\u2029]*([A-Za-z_][\w]*)\s*=\s*(.+?)\s*$/gm)) pending.push({ dir, from: `${type}.${label}`, expr: m[2]!, via: m[1]!, how: "env" });
         continue;
       }
       const infra = INFRA[type];

@@ -1,6 +1,7 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { insideRoot } from "./inside-root.js";
 import { join, posix } from "node:path";
+import { readTextFileSync } from "./read-text-file.js";
 
 /**
  * What a Dockerfile says about the program a container runs.
@@ -115,7 +116,7 @@ export function readDockerfile(absRoot: string, rel: string): DockerfileFacts | 
   try {
     const abs = insideRoot(absRoot, rel);
     if (!abs) return undefined;
-    const text = readFileSync(abs, "utf8");
+    const text = readTextFileSync(abs);
     if (text.length > 200_000) return undefined;
     return { dockerfile: rel, ...parseDockerfile(text) };
   } catch {
@@ -142,7 +143,7 @@ export function repoFiles(absRoot: string): RepoFiles {
     read: (rel) => {
       try {
         const abs = insideRoot(absRoot, rel);
-        return abs ? readFileSync(abs, "utf8") : undefined;
+        return abs ? readTextFileSync(abs) : undefined;
       } catch {
         return undefined;
       }

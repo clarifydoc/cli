@@ -1,5 +1,4 @@
 import { existsSync } from "fs";
-import { readFile } from "fs/promises";
 import { join, posix, resolve } from "path";
 import { globUnignored as glob } from "./clarifydoc-ignore.js";
 import { byOrdinal } from "./ordinal.js";
@@ -7,6 +6,7 @@ import { parseOpenApiDocument, type SpecNode } from "../extractors/plugins/opena
 import type { DeployedServiceKind } from "../types/analysis.js";
 import type { RawService } from "./deployment.js";
 import type { TerraformDeployment } from "./deployment-terraform.js";
+import { readTextFile } from "./read-text-file.js";
 
 /**
  * Deployment evidence from CloudFormation and SAM templates (YAML or JSON), the
@@ -97,7 +97,7 @@ export async function collectCloudFormation(projectRoot: string, ignore: readonl
   // Read in parallel batches (templates are found by content, so every YAML and JSON file is opened), judged in path order.
   const texts: Array<string | undefined> = [];
   for (let i = 0; i < found.length; i += 32) {
-    texts.push(...(await Promise.all(found.slice(i, i + 32).map((f) => readFile(join(absRoot, f), "utf8").catch(() => undefined)))));
+    texts.push(...(await Promise.all(found.slice(i, i + 32).map((f) => readTextFile(join(absRoot, f)).catch(() => undefined)))));
   }
   for (const [i, rel] of found.entries()) {
     const text = texts[i];

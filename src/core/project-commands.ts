@@ -1,8 +1,9 @@
-import { existsSync, readdirSync, readFileSync } from "fs";
+import { existsSync, readdirSync } from "fs";
 import { join } from "path";
 import { PROJECT_COMMAND_READERS, TEST_SETUP_READERS } from "../extractors/registry.js";
 import type { FileAnalysis, ProjectAnalysis, SubProject } from "../types/analysis.js";
 import type { ProjectRootView } from "../types/language-plugin.js";
+import { readTextFileSync } from "./read-text-file.js";
 
 /** Characters of a root file a reader may see (a manifest, not a lockfile). */
 const READ_LIMIT = 256 * 1024;
@@ -49,7 +50,7 @@ function projectRootView(dir: string): ProjectRootView | null {
     entries,
     read: (rel) => {
       try {
-        const text = readFileSync(join(dir, rel), "utf8");
+        const text = readTextFileSync(join(dir, rel));
         return text.length > READ_LIMIT ? text.slice(0, READ_LIMIT) : text;
       } catch {
         return undefined;

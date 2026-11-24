@@ -1,4 +1,4 @@
-import { readFile } from "fs/promises";
+import { readTextFile } from "./read-text-file.js";
 import { byOrdinal } from "./ordinal.js";
 import { resolve, join, dirname } from "path";
 import { globUnignored as glob } from "./clarifydoc-ignore.js";
@@ -101,7 +101,7 @@ async function readAbove(dir: string, name: string, projectRoot: string): Promis
 
 async function readIf(absPath: string): Promise<string | null> {
   try {
-    return await readFile(absPath, "utf-8");
+    return await readTextFile(absPath);
   } catch {
     return null;
   }
