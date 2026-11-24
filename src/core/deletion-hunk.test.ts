@@ -57,3 +57,23 @@ describe("a deletion-only hunk", () => {
     expect(found.moduleLevel).toEqual(["match.ts"]);
   });
 });
+
+describe("parseUnifiedHunks — prefixes and quoted names", () => {
+  const body = "@@ -1,1 +1,1 @@\n-a\n+b\n";
+  it("unquotes a C-quoted path", () => {
+    const diff = `diff --git "a/spill\\303\\251.ts" "b/spill\\303\\251.ts"\n--- "a/spill\\303\\251.ts"\n+++ "b/spill\\303\\251.ts"\n${body}`;
+    expect([...parseUnifiedHunks(diff).keys()].filter((k) => k !== "old")).toEqual(["spillé.ts"]);
+  });
+  it("reads mnemonic prefixes and no prefix", () => {
+    const m = `diff --git i/car.ts w/car.ts\n--- i/car.ts\n+++ w/car.ts\n${body}`;
+    expect(parseUnifiedHunks(m).has("car.ts")).toBe(true);
+    const n = `diff --git car.ts car.ts\n--- car.ts\n+++ car.ts\n${body}`;
+    expect(parseUnifiedHunks(n).has("car.ts")).toBe(true);
+  });
+  it("keeps a directory named b/", () => {
+    const d = `diff --git a/b/league.ts b/b/league.ts\n--- a/b/league.ts\n+++ b/b/league.ts\n${body}`;
+    expect(parseUnifiedHunks(d).has("b/league.ts")).toBe(true);
+    const n = `diff --git b/league.ts b/league.ts\n--- b/league.ts\n+++ b/league.ts\n${body}`;
+    expect(parseUnifiedHunks(n).has("b/league.ts")).toBe(true);
+  });
+});

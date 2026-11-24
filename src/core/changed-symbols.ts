@@ -33,6 +33,43 @@ export type ChangedHunks = Map<string, Array<[number, number]>> & {
  * also records those ranges on `old` for symbol matching. A pure insertion on
  * the old side marks the line it follows.
  */
+/** A git C-quoted path (`"spill\\303\\251.ts"`) as the file name it spells; any other text unchanged. */
+export function unquoteGitPath(text: string): string {
+  if (text.length < 2 || !text.startsWith('"') || !text.endsWith('"')) return text;
+  const bytes: number[] = [];
+  const named: Record<string, number> = { a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11 };
+  const body = text.slice(1, -1);
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i]!;
+    if (c !== "\\") {
+      bytes.push(...Buffer.from(c, "utf8"));
+      continue;
+    }
+    const n = body[++i] ?? "";
+    if (/[0-7]/.test(n)) {
+      const oct = /^[0-7]{1,3}/.exec(body.slice(i))![0];
+      bytes.push(parseInt(oct, 8) & 0xff);
+      i += oct.length - 1;
+    } else if (n in named) bytes.push(named[n]!);
+    else bytes.push(...Buffer.from(n, "utf8"));
+  }
+  return Buffer.from(bytes).toString("utf8");
+}
+
+/** The prefix pair a `diff --git` line states: `a/x b/x`, or mnemonic `i/x w/x`; none for `--no-prefix` (`x x`). */
+function prefixPair(rest: string): [string, string] | null {
+  const m = /^("(?:[^"\\]|\\.)*"|\S+) ("(?:[^"\\]|\\.)*"|\S+)$/.exec(rest);
+  if (!m) return ["a/", "b/"];
+  const x = unquoteGitPath(m[1]!);
+  const y = unquoteGitPath(m[2]!);
+  const px = /^[a-z0-9]\//.exec(x)?.[0];
+  const py = /^[a-z0-9]\//.exec(y)?.[0];
+  if (px && py && x.slice(2) === y.slice(2) && px !== py) return [px, py];
+  // `x x` with no prefix on either side: the paths are whole (a `b/` directory keeps its name).
+  if (x === y) return null;
+  return ["a/", "b/"];
+}
+
 export function parseUnifiedHunks(diff: string, side: "new" | "old" = "new"): ChangedHunks {
   const out: ChangedHunks = new Map();
   let file: string | null = null;
@@ -41,19 +78,25 @@ export function parseUnifiedHunks(diff: string, side: "new" | "old" = "new"): Ch
   // A `--- x` / `+++ x` pair is a file header; a lone body line that reads that way (a removed `-- x` comment) is not.
   const lines = diff.split("\n");
   let headerOpen = false;
+  let prefixes: [string, string] | null = ["a/", "b/"];
+  const strip = (p: string, pre: string | undefined): string => (pre && p.startsWith(pre) ? p.slice(pre.length) : p);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
+    if (line.startsWith("diff --git ")) {
+      prefixes = prefixPair(line.slice(11));
+      continue;
+    }
     if (line.startsWith("--- ") && lines[i + 1]?.startsWith("+++ ")) {
       headerOpen = true;
-      const p = line.slice(4).trim();
-      oldFile = p === "/dev/null" ? null : p.replace(/^a\//, "");
+      const p = unquoteGitPath(line.slice(4).trim());
+      oldFile = p === "/dev/null" ? null : strip(p, prefixes?.[0]);
       continue;
     }
     if (headerOpen && line.startsWith("+++ ")) {
       headerOpen = false;
-      const p = line.slice(4).trim();
+      const p = unquoteGitPath(line.slice(4).trim());
       gone = p === "/dev/null" && oldFile !== null && side === "new";
-      file = p === "/dev/null" ? (gone ? oldFile : null) : p.replace(/^b\//, "");
+      file = p === "/dev/null" ? (gone ? oldFile : null) : strip(p, prefixes?.[1]);
       continue;
     }
     const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
