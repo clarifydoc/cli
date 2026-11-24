@@ -25,6 +25,8 @@ describe("R calls the text linker needs help with (E-312)", () => {
       'setClass("Club", representation(id = "numeric"))',
       'setMethod("describe", "Club", function(x) 1)',
       'setMethod("describe", "Squad", function(x) 2)',
+      'setGeneric("rename<-", function(x, value) standardGeneric("rename<-"))',
+      'setReplaceMethod("rename", "Club", function(x, value) x)',
     ].join("\n"),
     "R/main.R": [
       "run <- function(xs) {",
@@ -39,6 +41,7 @@ describe("R calls the text linker needs help with (E-312)", () => {
       "  s <- Squad$new()",
       "  s$add()",
       "  describe(1)",
+      "  rename(s) <- 1",
       "}",
       "other_pkg <- function() thirdparty::promote(1)",
     ].join("\n"),
@@ -70,13 +73,18 @@ describe("R calls the text linker needs help with (E-312)", () => {
     expect(from("run", "%+%")).toEqual(["R/promote.R:%+%:INFERRED"]);
     const main = JSON.parse(await (await import("fs/promises")).readFile(join(dir, "out", "R/main.R.json"), "utf8"));
     expect(main.functions.find((f: { name: string }) => f.name === "run").calls.map((c: { name: string }) => c.name)).toEqual([
-      "league.promote", "rank<-", "%+%", "%nowhere%", "Player.new", "p.sign", "Squad.new", "s.add", "describe",
+      "league.promote", "rank<-", "%+%", "%nowhere%", "Player.new", "p.sign", "Squad.new", "s.add", "describe", "rename<-",
     ]);
   });
 
   it("types a local assigned `X$new()` as X, through its bases", () => {
     expect(from("run", "p.sign")).toEqual(["R/classes.R:Base.sign:INFERRED"]);
     expect(from("run", "s.add")).toEqual(["R/classes.R:Squad.add:INFERRED"]);
+  });
+
+  it("reads setReplaceMethod as the method of the replacement generic", () => {
+    // the generic itself (a direct link) and the method body it fans out to
+    expect(from("run", "rename<-").sort()).toEqual(["R/classes.R:Club.rename<-:INFERRED", expect.stringMatching(/^R\/classes\.R:rename<-:/)]);
   });
 
   it("fans a call to an S4 generic out to its setMethod bodies", () => {

@@ -87,8 +87,10 @@ export class RExtractor extends FunctionClassExtractor {
         }
         s4.set(className, cls);
         classes.push(cls);
-      } else if (leaf === "setMethod") {
-        const method = stringValue(args[0]?.value);
+      } else if (leaf === "setMethod" || leaf === "setReplaceMethod") {
+        // `setReplaceMethod("mcols", "Vector", f)` is `setMethod("mcols<-", …)`.
+        const written = stringValue(args[0]?.value);
+        const method = written && leaf === "setReplaceMethod" ? `${written}<-` : written;
         const owner = stringValue(args[1]?.value);
         const def = args.find((a) => a.value?.type === "function_definition")?.value;
         if (!method || !owner || !def) continue;
