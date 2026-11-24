@@ -9,8 +9,9 @@ import { rubyCodeLinesOf } from "./blocks.js";
  * enclosing class for `self`, declares the member, never by the name alone. `!=` runs `==`.
  *
  * Read from the code lines (comments and heredocs blanked, string literals emptied here), one call per name per
- * function. A receiver the function binds to a literal (`total = 0`, `rows = []`) and the framework's own request
- * objects (`params[:id]`) are no project class and state nothing.
+ * function, and only for a receiver whose type can be stated: `self`, an instance variable, a parameter, or a local
+ * with a `localTypes` entry. A call result or reader path (`page.to_i`), an index chain, a literal-bound local
+ * (`total = 0`) and the framework's own hashes (`params[:id]`) state nothing.
  */
 export function addRubySyntaxCalls(lines: readonly string[], analysis: FileAnalysis): void {
   const code = rubyCodeLinesOf(lines);
@@ -19,15 +20,19 @@ export function addRubySyntaxCalls(lines: readonly string[], analysis: FileAnaly
     if (fn.name === "<setup>" || fn.line < 1 || fn.synthetic || fn.endLine < fn.line) continue;
     const body = code.slice(fn.line - 1, fn.endLine);
     const literals = literalLocals(body);
+    const typed = new Set([...fn.params.map((p) => p.name), ...(fn.localTypes ?? []).map((t) => t.name)]);
     const have = new Set(fn.calls.map((c) => c.name));
     body.forEach((raw, k) => {
       let text = raw.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""');
       if (k === 0) text = text.replace(/^(\s*)def\s+(?:self\.)?[^\s(;]+/, "$1");
       if (!/[=+\-*\/%<>\[&|^]/.test(text)) return;
       for (const found of syntaxCallsOf(text)) {
-        const head = found.receiver.replace(/^self\./, "").split(".")[0]!;
-        if (found.receiver !== "self" && (REQUEST_OBJECTS.has(head) || KEYWORDS.has(head) || (!found.receiver.includes(".") && literals.has(head)))) continue;
-        const name = `${found.receiver}.${found.member}`;
+        // Only a receiver whose type can be stated: `self`, an instance variable, a parameter, a local with a type entry.
+        // Never a call result or a reader path (`page.to_i`), an index chain, the framework's hashes or a literal-bound local.
+        const receiver = found.receiver.replace(/^@/, "");
+        if (receiver.includes(".") || REQUEST_OBJECTS.has(receiver) || KEYWORDS.has(receiver) || literals.has(receiver)) continue;
+        if (receiver !== "self" && !found.receiver.startsWith("@") && !typed.has(receiver)) continue;
+        const name = `${receiver}.${found.member}`;
         if (have.has(name)) continue;
         have.add(name);
         const call: CallInfo = { name, kind: "internal", target: null, line: fn.line + k, column: found.column, syntax: true };
@@ -56,12 +61,13 @@ function literalLocals(body: readonly string[]): Set<string> {
 }
 
 /** A receiver: a local, an instance variable or `self`, with a path of readers after it. */
-const RECEIVER = String.raw`(?<![\w.@$:)\]}"'])@?((?:self|[a-z_]\w*)(?:&?\.[a-z_]\w*[?!]?){0,4})`;
+const RECEIVER = String.raw`(?<![\w.@$:)\]}"'])(@?(?:self|[a-z_]\w*)(?:&?\.[a-z_]\w*[?!]?){0,4})`;
 const SETTER = new RegExp(`${RECEIVER}&?\\.([a-z_]\\w*)[ \\t]*(?:\\|\\||&&|\\*\\*|<<|>>|[-+*/%|&^])?=(?![=~>])`, "g");
 const OPERATOR = new RegExp(`${RECEIVER}\\s+(<=>|===|==|!=|<<|>>|\\*\\*|<=|>=|[-+*/%<>&|^])\\s+(?=[\\w@:"'(\\[{!~-])`, "g");
 const INDEXED = new RegExp(`${RECEIVER}\\[`, "g");
 
 interface Found {
+  /** As written, `@` kept: an instance variable. */
   receiver: string;
   member: string;
   column: number;
