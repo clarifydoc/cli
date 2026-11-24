@@ -76,6 +76,15 @@ write. That is what lets an external agent be configured as nothing but a comman
   `clarifydoc_blast_radius` and `clarifydoc_explain` gets a `⚠ … changed since the analysis` line under the heading
   and each listed dependent a `(changed since the analysis)` suffix (`AnalysisStore.changedSinceAnalysis`: a stat
   per path against the manifest, a hash only where the mtime moved, verdicts kept per mtime). No manifest, no note.
+- **Lookups forgive a spelling.** A symbol argument of `extract`, `trace`, `explain` and `rename_plan` goes through
+  `resolveSymbolArg` ([tools/context.ts](tools/context.ts)): as written first (our own ids use `::` for C++ nested
+  types and Rust inline-module functions), else with `::` and `->` read as `.` — `Garage::park` finds `Garage.park` —
+  and as written again when neither is a name the analysis holds. A file path that matches nothing offers up to three
+  `nearFiles` (same extension, basename within two edits or equal ignoring case and separators, never another
+  language's file). `clarifydoc_search` flags matched definitions in generated files (a generated root, a generator's
+  file name, or the banner — `markGenerated` reads the per-file `generated` flag for the matched files only) and ranks
+  them after shipped ones at equal score, as tests rank. `clarifydoc_explain` of a class adds "Calls out of the class":
+  the callees of its methods outside it, grouped by target file and capped (`classOutCalls`).
 - **Body search is opt-in.** `clarifydoc_search body=true` (or `throws=`) builds a BM25 index over function
   bodies and the doc comments above them — spans from the summary's complexity rows, text from the
   source — once per loaded analysis, in memory (`body-search.ts`). The same call ranks functions and classes by

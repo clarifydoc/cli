@@ -2,10 +2,10 @@
 
 import type { ProjectAnalysis } from "../../types/analysis.js";
 import { assessFreshness, type FreshnessReport } from "../../core/manifest.js";
-import { AnalysisStore, resolveFilePath, type LoadedAnalysis } from "../store.js";
+import { AnalysisStore, normalizePath, resolveFilePath, type LoadedAnalysis } from "../store.js";
 import { ago, countMap, facts, plural, tally } from "../format.js";
 import { STATUS_HINT } from "../empty.js";
-import { nearNames } from "../validate.js";
+import { distance, nearNames } from "../validate.js";
 import { contextIndex } from "./decisions.js";
 import type { ToolCallRecord } from "../usage.js";
 import { commitRelation, describeCommitRelation } from "../../core/source-revision.js";
@@ -33,8 +33,10 @@ export function mustResolveFile(loaded: LoadedAnalysis, query: string): string {
   const { path, candidates } = resolveFilePath(loaded.index, loaded.summary.projectRoot, query);
   if (path) return path;
   if (candidates.length === 0) {
+    const near = nearFiles(loaded.index.pathLookup.values(), query, loaded.summary.projectRoot);
     throw new Error(
       `No analyzed file matches "${query}". Paths are project-relative (e.g. src/api/users.ts). ` +
+        (near.length ? `Did you mean ${near.map((n) => `\`${n}\``).join(", ")}? ` : "") +
         `Use clarifydoc_search to find one.`,
     );
   }
@@ -42,6 +44,85 @@ export function mustResolveFile(loaded: LoadedAnalysis, query: string): string {
     `"${query}" matches ${candidates.length} files — pass one of:\n` +
       candidates.map((c) => `  ${c}`).join("\n"),
   );
+}
+
+/** Suggestions offered for a file that does not exist — more and the list is noise. */
+const NEAR_FILES = 3;
+
+/** A name's comparable stem: no extension, lower case, letters and digits only (`club_service` = `ClubService`). */
+const stemOf = (path: string): { stem: string; ext: string } => {
+  const base = path.slice(path.lastIndexOf("/") + 1);
+  const dot = base.lastIndexOf(".");
+  const ext = dot > 0 ? base.slice(dot).toLowerCase() : "";
+  return { stem: (dot > 0 ? base.slice(0, dot) : base).toLowerCase().replace(/[^a-z0-9]/g, ""), ext };
+};
+
+/**
+ * Up to three analyzed files a mistyped path may mean: the same extension (never another language's
+ * file), a basename within two edits or the same once case and separators are ignored; the query's own
+ * folder first. Empty when none is near.
+ */
+export function nearFiles(paths: Iterable<string>, query: string, projectRoot?: string): string[] {
+  const q = normalizePath(query, projectRoot);
+  const want = stemOf(q);
+  if (!want.stem || !want.ext) return [];
+  const dir = q.slice(0, Math.max(0, q.lastIndexOf("/")));
+  const hits: Array<{ path: string; d: number; sameDir: number }> = [];
+  for (const path of new Set(paths)) {
+    const have = stemOf(path);
+    if (have.ext !== want.ext || have.stem === "") continue;
+    const d = distance(want.stem, have.stem);
+    if (d > 2) continue;
+    hits.push({ path, d, sameDir: path.toLowerCase().startsWith(`${dir}/`) || !dir ? 0 : 1 });
+  }
+  hits.sort((a, b) => a.d - b.d || a.sameDir - b.sameDir || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return hits.slice(0, NEAR_FILES).map((h) => h.path);
+}
+
+/** A symbol argument's spellings, in the order they are tried: as written, then `::` and `->` read as `.` (`Garage::park` is `Garage.park`). */
+export function symbolSpellings(symbol: string): string[] {
+  const dotted = symbol.replace(/::|->/g, ".");
+  return dotted === symbol ? [symbol] : [symbol, dotted];
+}
+
+const symbolNames = new WeakMap<ProjectAnalysis, Set<string>>();
+
+/** Every definition name the analysis holds, lower-cased, each with the dotted tails it can be asked by (`a.b.c`, `b.c`, `c`). */
+function knownSymbolNames(summary: ProjectAnalysis): Set<string> {
+  let names = symbolNames.get(summary);
+  if (names) return names;
+  names = new Set<string>();
+  const add = (n: string | undefined) => {
+    if (!n) return;
+    let rest = n.toLowerCase();
+    for (;;) {
+      if (names!.has(rest)) return;
+      names!.add(rest);
+      const dot = rest.indexOf(".");
+      if (dot < 0) return;
+      rest = rest.slice(dot + 1);
+    }
+  };
+  for (const c of summary.complexity ?? []) for (const f of c.functions) add(f.functionName);
+  for (const n of summary.classGraph?.nodes ?? []) if (!n.isFile && !n.isExternal) add(n.name);
+  for (const l of summary.symbolLinks ?? []) {
+    add(l.sourceSymbol);
+    add(l.targetSymbol);
+  }
+  symbolNames.set(summary, names);
+  return names;
+}
+
+/**
+ * The spelling of a symbol argument the analysis knows: as written first (our own ids use `::` for C++
+ * nested types and Rust inline-module functions), else with `::`/`->` read as `.`. The argument as
+ * written when neither is known, so a miss names what was asked.
+ */
+export function resolveSymbolArg(summary: ProjectAnalysis, symbol: string): string {
+  const spellings = symbolSpellings(symbol);
+  if (spellings.length === 1) return symbol;
+  const known = knownSymbolNames(summary);
+  return spellings.find((s) => known.has(s.toLowerCase())) ?? symbol;
 }
 
 export function projectName(summary: ProjectAnalysis): string {

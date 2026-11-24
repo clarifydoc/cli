@@ -36,6 +36,7 @@ import {
   OFFSET_SCHEMA,
   offsetArg,
 } from "../format.js";
+import { isGeneratedFile } from "../../core/generated-file-detector.js";
 import { isTestPath, projectName, requireAnalysis, stalenessHint, statusReport, type ToolContext } from "./context.js";
 import { latencySection } from "../usage.js";
 import { requestedWorktree, resolveImpactWorktree } from "../impact-worktree.js";
@@ -208,6 +209,35 @@ function pathBelowBase(path: string, localPath?: string): string[] {
   return base ? [path.slice(base.length - 1)] : [];
 }
 const BASES_WITH_SLASH = DEFAULT_BASE_PREFIXES.map((b) => `${b}/`);
+
+/** The most matched files whose generated state is read from their analysis (the summary holds roots only). */
+const GENERATED_CHECKED = 200;
+
+/**
+ * Flags the matched candidates that live in a generated file: under a generated root, named like generator
+ * output, or carrying the generator's banner (`FileAnalysis.generated`, read for the matched files only).
+ * True when any was flagged, so the caller ranks again.
+ */
+async function markGenerated(ctx: ToolContext, loaded: LoadedAnalysis, candidates: Candidate[], ranked: readonly RankedCandidate[]): Promise<boolean> {
+  const roots = (loaded.summary.generatedRoots ?? []).map((r) => `${r.replace(/\\/g, "/").replace(/\/$/, "")}/`);
+  const verdict = new Map<string, boolean>();
+  for (const hit of ranked) {
+    if (!hit.path || verdict.has(hit.path) || verdict.size >= GENERATED_CHECKED) continue;
+    if (roots.some((r) => hit.path!.startsWith(r) || hit.path!.includes(`/${r}`)) || isGeneratedFile(hit.path)) {
+      verdict.set(hit.path, true);
+      continue;
+    }
+    verdict.set(hit.path, (await ctx.store.fileAnalysis(hit.path))?.generated === true);
+  }
+  let any = false;
+  for (const c of candidates) {
+    if (c.path && verdict.get(c.path)) {
+      c.generated = true;
+      any = true;
+    }
+  }
+  return any;
+}
 
 function searchCandidates(loaded: LoadedAnalysis, kinds: Set<SearchKind>, query: string, docs?: DocLookup): Candidate[] {
   const { summary, index } = loaded;
@@ -447,6 +477,10 @@ export function searchTool(ctx: ToolContext): McpTool {
       let ranked = rankCandidates(candidates, query);
       const loose = ranked.length === 0;
       if (loose) ranked = rankCandidates(candidates, query, { loose: true });
+      // A definition in a generated file answers after a shipped one of the same score.
+      if (await markGenerated(ctx, loaded, candidates, ranked)) {
+        ranked = rankCandidates(candidates, query, loose ? { loose: true } : {});
+      }
 
       // Signature filters read each candidate function's declared parameters and return type.
       const signatureOf = signatureLookup(ctx);

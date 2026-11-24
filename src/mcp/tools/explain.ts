@@ -2,7 +2,7 @@ import type { McpTool } from "../protocol.js";
 import { functionEffectsText } from "./member-effects.js";
 import type { FileSeam, ProjectAnalysis, RouteInfo } from "../../types/analysis.js";
 import { numberArg, requiredStringArg, stringArg } from "../format.js";
-import { fileChangedNote, isTestPath, nearSymbols, requireAnalysis, type ToolContext } from "./context.js";
+import { fileChangedNote, isTestPath, nearSymbols, requireAnalysis, resolveSymbolArg, type ToolContext } from "./context.js";
 import { noResults } from "../empty.js";
 import { bestNamed } from "../search-rank.js";
 import { findRoutes, routeAnchor } from "../../core/sequence.js";
@@ -57,10 +57,11 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
     handler: async (args) => {
       const loaded = await requireAnalysis(ctx);
       const { summary } = loaded;
-      const subject = requiredStringArg(args, "subject").trim();
+      const written = requiredStringArg(args, "subject").trim();
       const fileArg = stringArg(args, "file");
       const budget = numberArg(args, "maxTokens", 4000, { min: 500, max: 20000 });
-      const kind = (stringArg(args, "kind") as Kind | undefined) ?? guessKind(subject, summary);
+      const kind = (stringArg(args, "kind") as Kind | undefined) ?? guessKind(written, summary);
+      const subject = kind === "symbol" ? resolveSymbolArg(summary, written) : written;
 
       const parts: Array<{ title: string; get: (left: number) => Promise<string | null>; follow: string }> = [];
       let heading = "";
@@ -126,6 +127,8 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
         heading = `# ${subject}${named ? ` (${named})` : ""}`;
         const where = named ? { file: named } : {};
         parts.push({ title: "Source", get: (left) => extract({ symbol: subject, ...where, depth: 1, maxTokens: Math.max(300, Math.floor(left * 0.6)) }), follow: `clarifydoc_extract symbol="${subject}"` });
+        const cls = (summary.classGraph?.nodes ?? []).filter((n) => !n.isFile && !n.isExternal && n.name === subject && (!named || n.filePath === named));
+        if (cls.length === 1) parts.push({ title: "Calls out of the class", get: async () => classOutCalls(summary, subject, cls[0]!.filePath), follow: `clarifydoc_trace symbol="${subject}.<method>" direction="callees"` });
         parts.push({ title: "Callers", get: () => trace({ symbol: subject, ...where, direction: "callers", depth: 2, limit: 15 }), follow: `clarifydoc_trace symbol="${subject}" direction="callers"` });
         parts.push({ title: "Writes and throws", get: async () => functionEffectsText(summary, subject, named), follow: `clarifydoc_trace symbol="${subject}" direction="writers"` });
         // The files declaring it, by the call graph: one, or the one named.
@@ -177,6 +180,36 @@ export function explainTool(ctx: ToolContext, tools: McpTool[]): McpTool {
       return { text: out.join("\n\n") };
     },
   };
+}
+
+/** Target files listed, and callees named per file, in a class's "Calls out" block. */
+const OUT_FILES = 8;
+const OUT_CALLEES = 4;
+
+/**
+ * What a class's methods call outside it: the union of their callees (the resolved call links whose
+ * caller is `Class.<method>`) that are not the class's own members, grouped by the file they land in with
+ * the methods that call them. Null when no method calls out.
+ */
+export function classOutCalls(summary: ProjectAnalysis, cls: string, file: string): string | null {
+  const own = `${cls}.`;
+  const byFile = new Map<string, Map<string, Set<string>>>();
+  for (const l of summary.symbolLinks ?? []) {
+    if (l.sourceFile !== file || !l.sourceSymbol.startsWith(own) || l.targetSymbol === "(reference)") continue;
+    if (l.targetFile === file && l.targetSymbol.startsWith(own)) continue;
+    const callees = byFile.get(l.targetFile) ?? byFile.set(l.targetFile, new Map()).get(l.targetFile)!;
+    const callers = callees.get(l.targetSymbol) ?? callees.set(l.targetSymbol, new Set()).get(l.targetSymbol)!;
+    callers.add(l.sourceSymbol.slice(own.length));
+  }
+  if (!byFile.size) return null;
+  const files = [...byFile].sort((a, b) => b[1].size - a[1].size || byOrdinal(a[0], b[0]));
+  const rows = files.slice(0, OUT_FILES).map(([target, callees]) => {
+    const names = [...callees].sort((a, b) => byOrdinal(a[0], b[0]));
+    const shown = names.slice(0, OUT_CALLEES).map(([name, callers]) => `${name} (${[...callers].sort(byOrdinal).join(", ")})`);
+    return `- ${target}: ${shown.join(", ")}${names.length > OUT_CALLEES ? `, … ${names.length - OUT_CALLEES} more` : ""}`;
+  });
+  if (files.length > OUT_FILES) rows.push(`- … ${files.length - OUT_FILES} more files`);
+  return rows.join("\n");
 }
 
 const TABLE_EFFECTS = new Set(["db", "db-read", "db-write"]);

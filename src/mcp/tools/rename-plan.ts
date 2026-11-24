@@ -6,7 +6,7 @@ import { inlineRouteDefinitions, routeSymbolPath } from "../../core/route-symbol
 import type { ProjectAnalysis, SymbolLink } from "../../types/analysis.js";
 import { symbolKey, type LoadedAnalysis } from "../store.js";
 import { bulletList, joinLines, loc, numberArg, plural, requiredStringArg, stringArg } from "../format.js";
-import { mustResolveFile, nearSymbols, requireAnalysis, type ToolContext } from "./context.js";
+import { mustResolveFile, nearSymbols, requireAnalysis, resolveSymbolArg, type ToolContext } from "./context.js";
 import { noResults } from "../empty.js";
 
 /** Rows of a refusal shown, however many caused it. */
@@ -167,7 +167,7 @@ export function renamePlanTool(ctx: ToolContext): McpTool {
     handler: async (args) => {
       const loaded = await requireAnalysis(ctx);
       const { summary } = loaded;
-      const symbol = requiredStringArg(args, "symbol");
+      const symbol = resolveSymbolArg(summary, requiredStringArg(args, "symbol"));
       const to = requiredStringArg(args, "to");
       const fileArg = stringArg(args, "file");
       const limit = numberArg(args, "limit", 100, { min: 1, max: 500 });

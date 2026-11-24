@@ -4,7 +4,7 @@ import type { McpTool } from "../protocol.js";
 import type { ClassInfo, FileAnalysis, FunctionInfo, PropertyInfo, SymbolLink } from "../../types/analysis.js";
 import { symbolKey } from "../store.js";
 import { confidenceNote, fenced, joinLines, loc, numberArg, plural, requiredStringArg, stringArg } from "../format.js";
-import { isTestPath, mustResolveFile, nearSymbols, requireAnalysis, stalenessHint, type ToolContext } from "./context.js";
+import { isTestPath, mustResolveFile, nearSymbols, requireAnalysis, resolveSymbolArg, stalenessHint, type ToolContext } from "./context.js";
 import { bestNamed } from "../search-rank.js";
 import { noResults } from "../empty.js";
 import { packageApiText } from "../package-api.js";
@@ -86,7 +86,7 @@ export function extractTool(ctx: ToolContext): McpTool {
       const loaded = await requireAnalysis(ctx);
       const pkg = stringArg(args, "package");
       if (pkg) return { text: await packageApiText(loaded, ctx.store.projectRoot, pkg.trim(), stringArg(args, "symbol")) };
-      const symbol = requiredStringArg(args, "symbol");
+      const symbol = resolveSymbolArg(loaded.summary, requiredStringArg(args, "symbol"));
       const fileArg = stringArg(args, "file");
       const depth = numberArg(args, "depth", 1, { min: 0, max: 3 });
       const maxTokens = numberArg(args, "maxTokens", 6000, { min: 200, max: 30000 });

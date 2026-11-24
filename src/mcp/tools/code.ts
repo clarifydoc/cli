@@ -40,7 +40,7 @@ import {
   page,
   pageFooter,
 } from "../format.js";
-import { fileChangedNote, mustResolveFile, nearSymbols, requireAnalysis, rowFreshness, stalenessHint, type ToolContext } from "./context.js";
+import { fileChangedNote, mustResolveFile, nearSymbols, requireAnalysis, resolveSymbolArg, rowFreshness, stalenessHint, type ToolContext } from "./context.js";
 import { filterToDrop, missHeadline, noResults, type DroppableFilter } from "../empty.js";
 import { decisionsAbout } from "./decisions.js";
 import { filesNaming, namingIndex, rankByUse, targetsFromNames } from "../../core/member-dependents.js";
@@ -994,7 +994,8 @@ export function traceTool(ctx: ToolContext): McpTool {
     },
     handler: async (args) => {
       const loaded = await requireAnalysis(ctx);
-      const symbol = stringArg(args, "symbol");
+      const symbolArg = stringArg(args, "symbol");
+      const symbol = symbolArg === undefined ? undefined : resolveSymbolArg(loaded.summary, symbolArg);
       const fileArg = stringArg(args, "file");
       const direction = enumArg(args, "direction", ["callers", "callees", "both", "overrides", "writers"] as const) ?? "both";
       const depth = numberArg(args, "depth", 2, { min: 1, max: 4 });

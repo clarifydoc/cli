@@ -58,6 +58,8 @@ export interface Candidate {
   path: string | null;
   /** Defined in a test file: at equal score, production code answers first (unless the query asks about tests). */
   test?: boolean;
+  /** Defined in a generated file: below shipped code at equal score, as a test's is. */
+  generated?: boolean;
   /** Line within `path`, when known. A locatable row outranks a bare path at equal score. */
   line: number | null;
   /** The rendered output line. */
@@ -247,12 +249,14 @@ export function rankCandidates(
   const exact = (c: Candidate): number => (namesExactly(c.name, q.raw.trim()) ? 1 : 0);
   const aboutTests = asksAboutTests(query);
   const production = (c: Candidate): number => (c.test && !aboutTests ? 0 : 1);
+  const shipped = (c: Candidate): number => (c.generated ? 0 : 1);
   scored.sort(
     (a, b) =>
       b.score - a.score ||
       affinity(b, q) - affinity(a, q) ||
       exact(b) - exact(a) ||
       production(b) - production(a) ||
+      shipped(b) - shipped(a) ||
       locatable(b) - locatable(a) ||
       b.weight - a.weight ||
       byOrdinal(a.text, b.text),
