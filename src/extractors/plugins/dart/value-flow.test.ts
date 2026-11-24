@@ -371,4 +371,24 @@ void strayWire() {
     expect(found.filter((l) => l.startsWith("OwnTaker.fire:") || l.startsWith("StrayTaker.fire:"))).toEqual([]);
     expect(found).toContain("ForeignTaker.fire: onKick -> cup/lib/actions.dart::scoreGoal");
   });
+
+  it("reads a field's kind from the value after its name, and keeps a default value's construction a call", async () => {
+    const [a] = await analyzeAll({
+      "lib/club.dart": `class Club {
+  Club({this.score = 0, this.wait = const Pause(2)});
+  final int score;
+  final int wait;
+  var kick = () => 1;
+  void play({Pause rest = const Pause(1)}) {}
+}
+class Pause { const Pause(this.n); final int n; }
+`,
+    });
+    const methods = a!.classes.find((c) => c.name === "Club")!.methods;
+    const ctor = methods.find((f) => f.isConstructor);
+    // A typed primitive field with no initializer stays a plain value: no copy of the formal into it.
+    expect(ctor?.valueFlow ?? []).toEqual([]);
+    expect(ctor?.calls?.map((c) => c.name)).toContain("Pause");
+    expect(methods.find((f) => f.name === "play")?.calls?.map((c) => c.name)).toContain("Pause");
+  });
 });
