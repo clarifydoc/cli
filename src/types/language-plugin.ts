@@ -1890,7 +1890,8 @@ export interface LanguagePluginManifest {
   /**
    * A member of the caller's own class, written without `this.`, is the head of a qualified call before a
    * type of that name is (C# "Color Color": a property `Shade Color` makes `Color.Darken()` a call on the
-   * property, never on a class `Color` the project also declares). A member whose declared type is the
+   * property, never on a class `Color` the project also declares); so is a parameter or local of the caller's
+   * callable, whatever its type (`var Audio = Make(); Audio.Click()`). A member whose declared type is the
    * head itself leaves the call to the type, as the language's rule does.
    */
   bareMemberReceivers?: boolean;

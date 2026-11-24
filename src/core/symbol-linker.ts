@@ -3439,6 +3439,21 @@ function ownMemberOfOtherType(ctx: LinkContext, analysis: FileAnalysis, sourceSy
   return false;
 }
 
+/**
+ * Whether the caller's own callable binds `name` as a parameter or local of another type: where a manifest's
+ * `bareMemberReceivers` is set, that binding is the head of a qualified call before a class of the name is
+ * (`var Audio = factory.Make(); Audio.Click()` is a call on the local, never on a project class `Audio`). A binding
+ * typed as the head itself leaves the call to the class, as for a member.
+ */
+function localHidesClassHead(analysis: FileAnalysis, sourceSymbol: string, name: string): boolean {
+  if (!pluginFor(analysis.language)?.bareMemberReceivers) return false;
+  const fn = findEnclosingCallable(analysis, sourceSymbol);
+  if (!fn) return false;
+  const lang = analysis.language as Language;
+  const typed = (type: string | null | undefined): boolean => !type || (receiverTypeName(type, lang) || type) !== name;
+  return fn.params.some((p) => p.name === name && typed(p.type)) || !!fn.localTypes?.some((l) => l.name === name && typed(l.type)) || !!fn.untypedLocals?.includes(name);
+}
+
 /** One callable of a file, placed in the file's nesting of callables. */
 interface ScopeNode {
   name: string;
@@ -6087,7 +6102,7 @@ function resolveCallToDefinitionBody(
   // Without an explicit import this is at best INFERRED.
   // A name that keeps only the last names of a longer path (`CallInfo.receiverCut`: `s.Controller.Delete` read as
   // `Controller.Delete`) names no class — its first name is a field or a value, and a namesake class is a guess.
-  if (!def && isQualified && !cutNameNamesNoType(analysis, call)) {
+  if (!def && isQualified && !cutNameNamesNoType(analysis, call) && !(parts.length === 2 && localHidesClassHead(analysis, sourceSymbol, parts[0]!))) {
     const nestedMiss = { value: false };
     const link = classNameMember(ctx, analysis, sourceFile, parts, mkLink, call.line, isPathCall(analysis, call) ? call : undefined, nestedMiss);
     if (link) return link;

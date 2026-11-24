@@ -7,8 +7,8 @@ import { loadReportSummary } from "./report-payload.js";
 import type { ProjectAnalysis, SymbolLink } from "../types/analysis.js";
 
 /**
- * A name binds only where its scope reaches: an import inside one function is that function's. Each project has a
- * decoy whose right link must stay.
+ * A name binds only where its scope reaches: an import inside one function is that function's, a local or parameter
+ * named like a class is the call head instead of the class. Each project has a decoy whose right link must stay.
  */
 const PROJECTS: Record<string, Record<string, string>> = {
   python: {
@@ -41,6 +41,53 @@ def other_name():
 
 def bench():
     return helper()
+`,
+  },
+  csharp: {
+    "League.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>\n",
+    "Audio.cs": `namespace League
+{
+    public class Audio
+    {
+        public static Audio Instance = new Audio();
+        public void Click() { }
+    }
+}
+`,
+    "Garage.cs": `namespace League
+{
+    public class Garage
+    {
+        public void Click() { }
+    }
+}
+`,
+    "Desk.cs": `namespace League
+{
+    public class Desk
+    {
+        public void Local()
+        {
+            var Audio = new Garage();
+            Audio.Click();
+        }
+
+        public void Param(Garage Audio)
+        {
+            Audio.Click();
+        }
+
+        public void Static()
+        {
+            Audio.Instance.Click();
+        }
+
+        public void Plain()
+        {
+            Audio.Instance.Click();
+        }
+    }
+}
 `,
   },
 };
@@ -79,6 +126,17 @@ describe("symbol-linker — a name binds only where its scope reaches", () => {
     it("keeps the module-level import for every function of the module", () => {
       expect(linksOf("python", "own", "helper")[0]).toMatchObject({ targetSymbol: "helper", targetFile: "league/util.py" });
       expect(linksOf("python", "other_name", "helper")[0]).toMatchObject({ targetSymbol: "helper", targetFile: "league/util.py" });
+    });
+  });
+
+  describe("C#", () => {
+    it("links a local or parameter named like a class to the local's type", () => {
+      expect(linksOf("csharp", "Desk.Local", "Audio.Click")[0]).toMatchObject({ targetSymbol: "Garage.Click" });
+      expect(linksOf("csharp", "Desk.Param", "Audio.Click")[0]).toMatchObject({ targetSymbol: "Garage.Click" });
+    });
+
+    it("keeps the static the class declares when no local hides it", () => {
+      expect(linksOf("csharp", "Desk.Static", "Audio.Instance.Click")[0]).toMatchObject({ targetSymbol: "Audio.Click" });
     });
   });
 });
