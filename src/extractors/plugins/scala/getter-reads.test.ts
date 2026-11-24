@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile } from "fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { analyze } from "../../../core/analyzer.js";
@@ -48,6 +48,12 @@ class Board(club: Club, rival: Rival, repo: Repo) extends Club {
   def onNamesake: Int = repo.findRival(1).total
   def onValue: Int = repo.find(1).name.length
   def onPlain: Int = repo.count(1).toInt
+  def onBlock = repo.find(1).map { c =>
+    c
+  }
+  def onForeach = repo.find(1).foreach(c => c)
+  def onInfix = repo.find(1) map identity
+  def onUnderscore = repo.find(1).map _
   def onUnknown(other: Any): Int = other.find(1).total
   def viaField: Int = club.total
   def viaParam(c: Club): Int = c.total
@@ -96,6 +102,9 @@ async function links(feature?: string): Promise<Map<string, string[]>> {
     list.push(`${l.targetFile}:${l.targetSymbol}`);
     byCaller.set(l.sourceSymbol, list);
   }
+  // The reads each function states, whatever they link to: a call with a block or an infix operand is no getter read.
+  const file = JSON.parse(await readFile(join(out, "app/Board.scala.json"), "utf8")) as { classes: Array<{ methods: Array<{ name: string; calls: Array<{ name: string; read?: string }> }> }> };
+  for (const m of file.classes.flatMap((c) => c.methods)) byCaller.set(`reads:${m.name}`, m.calls.filter((c) => c.read).map((c) => c.name));
   return byCaller;
 }
 
@@ -118,9 +127,11 @@ describe.each([["tree-sitter", undefined], ["regex", "no-tree-sitter:scala"]])("
 
   it("leave a namesake result, a val, an untyped receiver and a result that is no getter alone", async () => {
     const r = await links(feature);
+    for (const name of ["onBlock", "onForeach", "onInfix", "onUnderscore"]) expect(r.get(`reads:${name}`)?.filter((n) => /map|foreach/.test(n))).toEqual([]);
+    expect(r.get("reads:onResult")).toContain("repo.find().total");
     expect(r.get("Board.onNamesake")).toContain("app/Rival.scala:Rival.total");
     expect(r.get("Board.onNamesake")).not.toContain("app/Club.scala:Club.total");
-    for (const name of ["onValue", "onPlain", "onUnknown"]) expect((r.get(`Board.${name}`) ?? []).filter((t) => t.endsWith(".total"))).toEqual([]);
+    for (const name of ["onValue", "onPlain", "onUnknown", "onBlock", "onForeach", "onInfix", "onUnderscore"]) expect((r.get(`Board.${name}`) ?? []).filter((t) => t.endsWith(".total"))).toEqual([]);
   });
 
   it("leave a namesake class, a val, a def with parameters, a binder and a comment alone", async () => {

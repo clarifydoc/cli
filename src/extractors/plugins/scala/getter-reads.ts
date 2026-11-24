@@ -40,6 +40,7 @@ export function addScalaGetterReads(lines: readonly string[], analysis: FileAnal
     for (const m of text.matchAll(CHAIN_READ)) {
       const at = m.index!;
       if (!isRead(text, at + m[0].length, text.slice(0, at))) continue;
+      if (isInfixOperand(text, at + m[0].length)) continue;
       const head = m[1]!;
       if (KEYWORDS.has(head) && head !== "this") continue;
       const steps = [...m[2]!.matchAll(CHAIN_STEP)].map((s) => ({ name: s[1]!, called: s[2] !== undefined }));
@@ -53,7 +54,10 @@ export function addScalaGetterReads(lines: readonly string[], analysis: FileAnal
     for (const m of text.matchAll(BARE_READ)) {
       const name = m[1]!;
       if (KEYWORDS.has(name) || own.has(name) || fields.has(name)) continue;
-      if (!isRead(text, m.index! + name.length, text.slice(0, m.index!))) continue;
+      const before = text.slice(0, m.index!);
+      if (!isRead(text, m.index! + name.length, before)) continue;
+      // `xs map f`, `repo.find(1) foreach g`: an infix call, the name sits between two operands.
+      if (/[\w)\]}]\s+$/.test(before) && !/\b(?:return|yield|if|else|case|match|throw|new|then|do|with|extends|in|val|var|def)\s+$/.test(before) && isInfixOperand(text, m.index! + name.length)) continue;
       found.push({ name, at: m.index! });
     }
     for (const { name, at } of found.sort((a, b) => a.at - b.at)) {
@@ -83,6 +87,17 @@ const PATH_READ = /(?<![\w$.@])([A-Za-z_]\w*(?:\s*\.\s*[a-z_]\w*)+)(?![\w$])(?!\
 const CALL_ARGS = String.raw`\((?:[^()]|\([^()]*\))*\)`;
 const CHAIN_READ = new RegExp(String.raw`(?<![\w$.@])([A-Za-z_]\w*)((?:\s*\.\s*[a-z_]\w*(?:\s*${CALL_ARGS})?)*?\s*\.\s*[a-z_]\w*)(?![\w$])(?!\s*[(\[])`, "g");
 const CHAIN_STEP = new RegExp(String.raw`\.\s*([a-z_]\w*)(\s*${CALL_ARGS})?`, "g");
+/**
+ * Whether what follows the member on its line is an argument written without parentheses — a block (`.map { x => … }`),
+ * an infix operand (`xs map f`, `.map _`, `.foreach "x"`) — so the member is a method called, not a getter read.
+ */
+function isInfixOperand(text: string, end: number): boolean {
+  const m = /^[ \t]*([{_"'(]|\w+)/.exec(text.slice(end, end + 40));
+  if (!m) return false;
+  if (m[1] === "(") return true;
+  return !/^(?:if|else|match|then|yield|with|extends|do|forSome|catch|finally|and|or)$/.test(m[1]!);
+}
+
 /** A lowercase name not after a dot and not called. */
 const BARE_READ = /(?<![\w$.@])([a-z_]\w*)(?![\w$])(?!\s*[(\[])/g;
 
