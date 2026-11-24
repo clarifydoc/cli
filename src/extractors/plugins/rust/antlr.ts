@@ -73,7 +73,11 @@ interface Source {
  * decides what that does not read.
  */
 function parseRust<T extends ParserRuleContext>(text: string, entry: (parser: RustParser) => T): { tree: T; errors: number } {
-  const makeParser = (tokens: CommonTokenStream): RustParser => new RustParser(tokens);
+  const makeParser = (tokens: CommonTokenStream): RustParser => {
+    const parser = new RustParser(tokens);
+    parser.settleExpressions();
+    return parser;
+  };
   return (
     parseSll(text, (input) => new RustReadLexer(input), makeParser, entry) ??
     parseWithAntlr(text, (input) => new RustLexer(input), makeParser, entry)
