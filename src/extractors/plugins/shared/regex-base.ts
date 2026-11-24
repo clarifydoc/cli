@@ -1207,6 +1207,79 @@ function keepInterpolations(body: string, braceHoles = false): string {
  */
 const BASELINE_CALL_RE = /\b([a-zA-Z_]\w*(?:[?!]?\.[a-zA-Z_]\w*)?)\s*\(/g;
 
+/**
+ * Literal strings every match of `re` must contain, read once from its source: the mandatory characters of the
+ * top-level concatenation (outside groups and classes, not quantified by `?`, `*` or `{`), joined where adjacent.
+ * A line lacking one cannot match, so the search is skipped. Empty (no gate) for an alternation at the top level,
+ * a case-insensitive pattern or any shape not understood. Pure in the pattern, so memoized on it.
+ */
+/** The global twin of each call pattern, shared by every body scan (see `globalOf`). */
+const GLOBAL_PATTERNS = new WeakMap<RegExp, RegExp>();
+/** Global twins a scan is inside right now. */
+const GLOBALS_BUSY = new WeakSet<RegExp>();
+const REQUIRED_LITERALS = new WeakMap<RegExp, readonly string[]>();
+export function requiredLiterals(re: RegExp): readonly string[] {
+  const known = REQUIRED_LITERALS.get(re);
+  if (known) return known;
+  const out = requiredLiteralsOf(re);
+  REQUIRED_LITERALS.set(re, out);
+  return out;
+}
+
+function requiredLiteralsOf(re: RegExp): readonly string[] {
+  if (/[ivx]/.test(re.flags)) return [];
+  const src = re.source;
+  const runs: string[] = [];
+  let run = "";
+  const flush = (): void => {
+    if (run) runs.push(run);
+    run = "";
+  };
+  let depth = 0;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i]!;
+    if (c === "\\") {
+      const n = src[i + 1];
+      if (n === undefined) return [];
+      i++;
+      if (depth > 0) continue;
+      if (n === "b" || n === "B") continue;
+      // Escapes that read characters after them (`\k<n>`, `\u00e9`, `\x41`, `\cJ`, `\p{L}`, `\12`): not understood.
+      if (/[kuxcpP0-9]/.test(n)) return [];
+      if (/[\^$.*+?()[\]{}|\/-]/.test(n)) {
+        const q = src[i + 1];
+        if (q === "?" || q === "*" || q === "{") { flush(); continue; }
+        run += n;
+        if (q === "+") flush();
+      } else flush();
+      continue;
+    }
+    if (c === "[") {
+      // A class: skip to its unescaped `]`.
+      let k = i + 1;
+      if (src[k] === "^") k++;
+      if (src[k] === "]") k++;
+      for (; k < src.length && src[k] !== "]"; k++) if (src[k] === "\\") k++;
+      if (k >= src.length) return [];
+      i = k;
+      if (depth === 0) flush();
+      continue;
+    }
+    if (c === "(") { if (depth === 0) flush(); depth++; continue; }
+    if (c === ")") { depth--; if (depth < 0) return []; continue; }
+    if (depth > 0) continue;
+    if (c === "|" || c === "{") return [];
+    if (c === "^" || c === "$") continue;
+    if (c === "." || c === "?" || c === "*" || c === "+") { flush(); continue; }
+    const q = src[i + 1];
+    if (q === "?" || q === "*" || q === "{") { flush(); continue; }
+    run += c;
+    if (q === "+") flush();
+  }
+  flush();
+  return runs;
+}
+
 /** A call as a scan found it: its name, the name's last segment, where it starts, and what a pattern says of its receiver. */
 export type CallRecorder = (
   name: string,
@@ -1308,16 +1381,22 @@ export function extractCallsFromBody(
   const calls: CallInfo[] = [];
   const add = callRecorder(calls);
   const noBaseline = extraCallPatterns.some((cp) => cp.replacesBaseline);
-  // Each pattern as a global one, made once for this body and not once a line:
-  // a search that runs to its end leaves the pattern where the next line starts.
-  let globals: RegExp[] | undefined;
+  // Each pattern as a global one, made once per pattern and not once a body or a line: a search that runs to its
+  // end leaves the pattern where the next line starts, so `lastIndex` is reset at every use. A pattern's
+  // `buildName` that re-enters this scan (the global one is busy) gets a private copy.
   const globalOf = (k: number): RegExp => {
-    globals ??= extraCallPatterns.map((cp) => new RegExp(cp.pattern.source, cp.pattern.flags.includes("g") ? cp.pattern.flags : cp.pattern.flags + "g"));
-    const re = globals[k]!;
+    const cp = extraCallPatterns[k]!;
+    let re = GLOBAL_PATTERNS.get(cp.pattern);
+    if (!re) {
+      re = new RegExp(cp.pattern.source, cp.pattern.flags.includes("g") ? cp.pattern.flags : cp.pattern.flags + "g");
+      GLOBAL_PATTERNS.set(cp.pattern, re);
+    }
+    if (GLOBALS_BUSY.has(re)) re = new RegExp(re.source, re.flags);
     re.lastIndex = 0;
     return re;
   };
 
+  const needs = extraCallPatterns.map((cp) => requiredLiterals(cp.pattern));
   const scanLine = (raw: string, i: number, offset: number): void => {
     const line = blankStringLiterals(raw, commentPrefixes);
     // Text a language pattern already read as a call (`CommentView::read(`).
@@ -1326,18 +1405,28 @@ export function extractCallsFromBody(
     for (let k = 0; k < extraCallPatterns.length; k++) {
       const cp = extraCallPatterns[k]!;
       if (cp.notAfter && offset === 0 && i > 0 && cp.notAfter.test(blankStringLiterals(lines[i - 1] ?? "", commentPrefixes))) continue;
+      const need = needs[k]!;
+      let missing = false;
+      for (let n = 0; n < need.length; n++) if (!line.includes(need[n]!)) { missing = true; break; }
+      if (missing) continue;
       const re = globalOf(k);
-      let pm: RegExpExecArray | null;
-      while ((pm = re.exec(line)) !== null) {
-        const built = cp.buildName(pm, raw);
-        add(built.name, built.leafName, i + 1, pm.index + offset, built);
-        if (built.name) matched.push([pm.index, pm.index + pm[0].length]);
-        if (pm[0].length === 0) re.lastIndex++;
+      const shared = GLOBAL_PATTERNS.get(cp.pattern) === re;
+      if (shared) GLOBALS_BUSY.add(re);
+      try {
+        let pm: RegExpExecArray | null;
+        while ((pm = re.exec(line)) !== null) {
+          const built = cp.buildName(pm, raw);
+          add(built.name, built.leafName, i + 1, pm.index + offset, built);
+          if (built.name) matched.push([pm.index, pm.index + pm[0].length]);
+          if (pm[0].length === 0) re.lastIndex++;
+        }
+      } finally {
+        if (shared) GLOBALS_BUSY.delete(re);
       }
     }
 
     // Baseline: `name(` or `obj.method(`
-    if (noBaseline) return;
+    if (noBaseline || !line.includes("(")) return;
     let m: RegExpExecArray | null;
     BASELINE_CALL_RE.lastIndex = 0;
     while ((m = BASELINE_CALL_RE.exec(line)) !== null) {
