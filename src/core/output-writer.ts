@@ -1,4 +1,5 @@
-import { writeFile, mkdir, access, open } from "fs/promises";
+import { writeFile, mkdir, access, open, rename, rm } from "fs/promises";
+import { writeJsonStream } from "./json-stream.js";
 import { mkdirSync, writeFileSync } from "fs";
 import { resolve, dirname, join, relative, isAbsolute } from "path";
 import type {
@@ -244,11 +245,16 @@ async function writeJson(
   const outPath = join(resolve(options.outputDir), fileName);
   await mkdir(dirname(outPath), { recursive: true });
 
-  const json = options.pretty
-    ? JSON.stringify(data, null, 2)
-    : JSON.stringify(data);
-
-  await writeTextFile(outPath, json);
+  // Streamed (no whole-file string), into a sibling file renamed on success: a value that cannot be
+  // serialized leaves the previous artifact untouched, as stringify-then-write did.
+  const partial = `${outPath}.partial`;
+  try {
+    await writeJsonStream(partial, data, options.pretty ? 2 : 0);
+    await rename(partial, outPath);
+  } catch (err) {
+    await rm(partial, { force: true });
+    throw err;
+  }
   return outPath;
 }
 
