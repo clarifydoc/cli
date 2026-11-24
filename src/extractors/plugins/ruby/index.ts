@@ -52,6 +52,7 @@ import { extractRubyTestRequests } from "./request-specs.js";
 import { extractGrapeRoutes, extractRackMounts, isGrapeFile } from "./grape.js";
 import { rubyModuleBindings } from "./module-bindings.js";
 import { extractRubyModuleValueFlow, extractRubyValueFlow } from "./value-flow.js";
+import { addRubySyntaxCalls } from "./syntax-calls.js";
 
 /** The helper name of a `resources … as: :teams` route: `teams`, `team`, `new_team`, `edit_team`. */
 /**
@@ -1618,6 +1619,9 @@ export const rubySpec: RegexLangSpec = {
   // `HANDLERS = { save: method(:save) }`: a constant holding function values, read by name from every method.
   extractModuleValueFlow: (lines, analysis) =>
     extractRubyModuleValueFlow(rubyCodeLinesOf(lines), [...analysis.functions.filter((f) => f.name !== "<setup>"), ...analysis.classes.flatMap((c) => c.methods)]),
+
+  // `club.name = x` runs `name=`, `club + other` and `club[1]` the class's operator methods: calls the body does not name.
+  extractValueFlow: (lines, analysis) => addRubySyntaxCalls(lines, analysis),
 
   // `repo = UserRepo.new`, `repo = AppContainer[:user_repo]`.
   extractLocalTypes: (bodyLines, fn) => extractRubyLocalTypes(bodyLines, fn),

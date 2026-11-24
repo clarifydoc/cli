@@ -5509,6 +5509,12 @@ function resolveCallToDefinitionBody(
     const link = resolveCallToDefinition(sourceFile, sourceSymbol, plain, analysis, ctx, reference);
     return link && !(link.strategy && GUESSING_STRATEGIES.has(link.strategy)) ? link : null;
   }
+  // An operator, an index or an attribute assignment (`CallInfo.syntax`): a member the receiver's own type gives, never a guess by name.
+  if (call.syntax) {
+    const { syntax: _syntax, ...plain } = call;
+    const link = resolveCallToDefinition(sourceFile, sourceSymbol, plain, analysis, ctx, reference);
+    return link && !(link.strategy && GUESSING_STRATEGIES.has(link.strategy)) ? link : null;
+  }
   const { filePathMap, symbolIndex, classCatalog, leafCatalog, classNameIndex } = ctx;
 
   // Split once: "userStore.fetchUsers" → head "userStore", leaf "fetchUsers"

@@ -1336,6 +1336,13 @@ export interface CallInfo {
    */
   read?: true | "getter";
   /**
+   * The call is one the syntax makes without naming it: an attribute assignment (`club.name = x` calls `name=`), an
+   * operator (`club + other`, `club == other`) or an index (`club[1]`, `club[1] = x`), written `recv.name=`, `recv.+`,
+   * `recv.[]` and `recv.[]=`. Whatever the receiver is — a number, a string, a hash — reads the same, so the linker keeps one
+   * only where the receiver's declared type (or the enclosing class) gives the member, never by its name alone.
+   */
+  syntax?: true;
+  /**
    * For a `passed: "return"` name: the key the function returns it under — `latest` in
    * `return { latest: loadLatest }`, `[1]` in `return [rows, refresh]`. A caller that destructures
    * that key (`const { latest } = useClubActions()`) is handed this function.

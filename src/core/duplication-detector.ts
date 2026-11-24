@@ -148,9 +148,9 @@ const OPTION_CALLBACK = /^<[\w$]+:[\w$]+@\d+>$/;
 function withoutReads(a: FileAnalysis): FileAnalysis {
   let changed = false;
   const functions = a.functions.map((fn) => {
-    if (!fn.calls.some((c) => c.read)) return fn;
+    if (!fn.calls.some((c) => c.read || c.syntax)) return fn;
     changed = true;
-    return { ...fn, calls: fn.calls.filter((c) => !c.read) };
+    return { ...fn, calls: fn.calls.filter((c) => !c.read && !c.syntax) };
   });
   return changed ? { ...a, functions } : a;
 }
