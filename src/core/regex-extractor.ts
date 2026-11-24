@@ -120,6 +120,8 @@ export function extractWithRegex(
   if (macros && macros.length > 0) analysis.macros = macros;
   const packageName = spec.extractPackageName?.(lines, filePath);
   if (packageName) analysis.packageName = packageName;
+  const packageClause = spec.extractPackageClause?.(lines);
+  if (packageClause) analysis.packageClause = packageClause;
   const messageHandlers = spec.extractMessageHandlers?.(lines);
   if (messageHandlers && messageHandlers.length > 0) analysis.messageHandlers = messageHandlers;
   const channelBindings = spec.extractChannelBindings?.(lines);

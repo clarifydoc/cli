@@ -38,6 +38,25 @@ function varNames(lines: readonly string[], indented: boolean): Array<{ name: st
   return out;
 }
 
+/** The name in a Go file's package clause: the first statement after the comments (`package club_test`). */
+export function goPackageClause(lines: readonly string[]): string | null {
+  let inBlock = false;
+  for (const line of lines) {
+    const text = line.trim();
+    if (inBlock) {
+      if (text.includes("*/")) inBlock = false;
+      continue;
+    }
+    if (text === "" || text.startsWith("//")) continue;
+    if (text.startsWith("/*")) {
+      inBlock = !text.includes("*/");
+      continue;
+    }
+    return /^package\s+([A-Za-z_]\w*)/.exec(text)?.[1] ?? null;
+  }
+  return null;
+}
+
 /** The names a file declares with `var` at its top level (`FileAnalysis.packageVariables`), typed or not, with the line. */
 export function goPackageVariableNames(lines: readonly string[]): Array<{ name: string; line: number }> {
   return varNames(lines, false);

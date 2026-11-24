@@ -98,6 +98,7 @@ export const FILE_ANALYSIS_FIELDS: Presence<FileAnalysis> = {
   declaredNamespace: "optional",
   facadeClass: "optional",
   packageName: "optional",
+  packageClause: "optional",
   httpClientBases: "optional",
   storeModules: "optional",
   storeShapes: "optional",

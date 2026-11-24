@@ -8,7 +8,8 @@ import type { ProjectAnalysis, SymbolLink } from "../types/analysis.js";
 
 /**
  * A name binds only where its scope reaches: an import inside one function is that function's, a local or parameter
- * named like a class is the call head instead of the class. Each project has a decoy whose right link must stay.
+ * named like a class is the call head instead of the class, and a Go external test package (`package club_test`) is
+ * a package of its own that reaches `club` through an import. Each project has a decoy whose right link must stay.
  */
 const PROJECTS: Record<string, Record<string, string>> = {
   python: {
@@ -90,6 +91,41 @@ def bench():
 }
 `,
   },
+  go: {
+    "go.mod": "module example.com/league\n\ngo 1.21\n",
+    "club/club.go": `package club
+
+func secret() int { return 1 }
+
+func Public() int { return secret() }
+`,
+    "club/club_ext_test.go": `package club_test
+
+import "testing"
+
+func TestOutside(t *testing.T) {
+	_ = secret()
+}
+`,
+    "club/club_whitebox_test.go": `package club
+
+import "testing"
+
+func TestInside(t *testing.T) {
+	_ = secret()
+}
+`,
+    "club/club_helper_test.go": `package club_test
+
+import "testing"
+
+func helper() int { return 2 }
+
+func TestHelped(t *testing.T) {
+	_ = helper()
+}
+`,
+  },
 };
 
 const results: Record<string, ProjectAnalysis> = {};
@@ -137,6 +173,17 @@ describe("symbol-linker — a name binds only where its scope reaches", () => {
 
     it("keeps the static the class declares when no local hides it", () => {
       expect(linksOf("csharp", "Desk.Static", "Audio.Instance.Click")[0]).toMatchObject({ targetSymbol: "Audio.Click" });
+    });
+  });
+
+  describe("Go", () => {
+    it("reads an external test package as a package of its own", () => {
+      expect(linksOf("go", "TestOutside", "secret")).toEqual([]);
+      expect(linksOf("go", "TestHelped", "helper")[0]).toMatchObject({ targetFile: "club/club_helper_test.go" });
+    });
+
+    it("keeps an in-package test calling the package's unexported name", () => {
+      expect(linksOf("go", "TestInside", "secret")[0]).toMatchObject({ targetFile: "club/club.go" });
     });
   });
 });

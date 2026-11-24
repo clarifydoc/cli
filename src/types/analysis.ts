@@ -786,6 +786,13 @@ export interface FileAnalysis {
    */
   packageName?: string;
   /**
+   * The name in the file's package clause (Go `package club_test`), stated where a directory holds several
+   * packages that share nothing: two files of one directory with different clauses see no name of each other
+   * (`LanguagePluginManifest.directoryNamesShared`). A `_test` package reaches its subject only through an import.
+   * Omitted when the language has no such clause.
+   */
+  packageClause?: string;
+  /**
    * HTTP client instances this file creates with a base URL, by variable name
    * → the base's PATH (`const apiClient = axios.create({ baseURL: "/api" })`
    * → `{ apiClient: "/api" }`; a full URL keeps only its path). Calls through

@@ -2365,6 +2365,14 @@ function packageFilesOf(ctx: LinkContext, dir: string, fromFile: string): string
   );
 }
 
+/**
+ * Whether two files of one directory can share names: not when each states a package clause and the clauses differ
+ * (`package club` and `package club_test`, an external test package that reaches its subject only through an import).
+ */
+function sameDirectoryPackage(a: FileAnalysis | undefined, b: FileAnalysis | undefined): boolean {
+  return !a?.packageClause || !b?.packageClause || a.packageClause === b.packageClause;
+}
+
 /** Files the analysis's imports resolve to (cached per source file). */
 function importedFilesOf(analysis: FileAnalysis, ctx: LinkContext): Set<string> {
   let set = ctx.importedFilesCache.get(analysis.filePath);
@@ -4729,7 +4737,8 @@ function valueFlowLinks(links: readonly SymbolLink[], ctx: LinkContext): SymbolL
       const language = ctx.languageOf.get(file);
       if (!language || !pluginFor(language as Language)?.directoryNamesShared) return [];
       const slash = file.lastIndexOf("/");
-      return packageFilesOf(ctx, slash < 0 ? "" : file.slice(0, slash), file);
+      const self = analysisAt.get(file);
+      return packageFilesOf(ctx, slash < 0 ? "" : file.slice(0, slash), file).filter((f) => sameDirectoryPackage(self, analysisAt.get(f)));
     },
     ...callableQuestions(ctx),
     isTest: (file) => testFileAt(ctx, file),
@@ -7371,6 +7380,8 @@ function directoryFunction(
   for (const file of candidates) {
     if (file === sourceFile || extensionFamily(file) !== family) continue;
     if (!sourceIsTest && isTestFile(file, (ctx.languageOf.get(file) ?? analysis.language) as Language)) continue;
+    ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+    if (!sameDirectoryPackage(analysis, ctx.analysisByFile.get(file))) continue;
     // A file that declares another package than the caller's shares no scope with it, whatever the folder.
     const declared = ctx.analysisByFile?.get(file)?.packageName;
     if (analysis.packageName && declared && declared !== analysis.packageName) continue;
@@ -8910,7 +8921,7 @@ function moduleBindingPoint(ctx: LinkContext, analysis: FileAnalysis, sourceFile
     const dir = analysis.filePath.slice(0, analysis.filePath.lastIndexOf("/") + 1);
     const callerIsTest = isTestFile(analysis.filePath, analysis.language as Language);
     for (const sibling of bindingFilesIn(ctx, analysis.language, dir)) {
-      if (sibling === analysis || (!callerIsTest && isTestFile(sibling.filePath, sibling.language as Language))) continue;
+      if (sibling === analysis || (!callerIsTest && isTestFile(sibling.filePath, sibling.language as Language)) || !sameDirectoryPackage(analysis, sibling)) continue;
       const binding = sibling.moduleBindings?.find((b) => nameKey(sibling.language, b.name) === key);
       if (binding) held.push({ holder: sibling, binding });
     }
