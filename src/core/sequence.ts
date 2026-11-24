@@ -175,7 +175,7 @@ export function buildSequence(summary: ProjectAnalysis, seed: { file: string; sy
     const src = opts.sources?.get(file);
     const range = routeSpans.get(`${file}::${symbol}`) ?? src?.functions.get(symbol);
     if (!src || !range) return legacy();
-    const sites = callSitesIn(src.lines, range.line, range.endLine);
+    const sites = callSitesIn(src.lines, range.line, range.endLine, src.blank);
     const byLeaf = new Map<string, SymbolLink[]>();
     for (const l of links) {
       const leaf = leafName(l.callName);

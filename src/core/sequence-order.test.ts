@@ -4,7 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { buildSequence } from "./sequence.js";
 import { sequenceReading } from "./sequence-frames.js";
-import { callSitesIn } from "./sequence-order.js";
+import { blankSpecFor, callSitesIn } from "./sequence-order.js";
 import type { ProjectAnalysis, SymbolLink } from "../types/analysis.js";
 
 const source = `export async function run(ok: boolean, repo: Repo) {
@@ -36,6 +36,14 @@ describe("callSitesIn", () => {
     expect(names("save(build(make()));")).toEqual(["make", "build", "save"]);
     expect(names("repo.find(id).load(x).map(y);")).toEqual(["find", "load", "map"]);
     expect(names('log("save(x)"); // build()\nlater(a(\n  b()\n));')).toEqual(["log", "b", "a", "later"]);
+  });
+
+  it("reads no call inside a string or a comment, in the language's own syntax", () => {
+    const names = (text: string, language: string) => callSitesIn(text.split("\n"), 1, text.split("\n").length, blankSpecFor(language)).map((s) => s.name);
+    expect(names('log("save(x)")', "typescript")).toEqual(["log"]);
+    expect(names("run()  # audit() later\nstop()", "python")).toEqual(["run", "stop"]);
+    expect(names("run()  // audit()\nstop()", "typescript")).toEqual(["run", "stop"]);
+    expect(names("puts(1) # audit()", "ruby")).toEqual(["puts"]);
   });
 
   it("marks only the call an await introduces", () => {

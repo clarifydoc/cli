@@ -1,6 +1,8 @@
 import { join } from "path";
 import { readFile } from "fs/promises";
 import type { Cfg } from "../types/control-flow.js";
+import type { LanguageRegexControlFlowSpec } from "../types/language-plugin.js";
+import { blankSpecFor } from "./sequence-order.js";
 import { controlFlowForFile } from "./control-flow-file.js";
 
 /**
@@ -94,6 +96,8 @@ export async function sequenceFrames(projectRoot: string, files: Iterable<string
 export interface FileSource {
   lines: string[];
   functions: Map<string, { line: number; endLine: number }>;
+  /** The language's comment and string syntax, for reading call sites. */
+  blank?: LanguageRegexControlFlowSpec;
 }
 
 /** `sequenceFrames`, with each file's source and function spans (`SequenceOptions.sources`) read in the same pass. */
@@ -106,7 +110,7 @@ export async function sequenceReading(projectRoot: string, files: Iterable<strin
       const own = result.cfgs.flatMap(framesOfCfg).sort((a, b) => a.line - b.line || (a.column ?? 0) - (b.column ?? 0) || b.endLine - a.endLine);
       if (own.length) frames.set(file, own);
       const text = await readFile(join(projectRoot, file), "utf8");
-      sources.set(file, { lines: text.split(/\r?\n/), functions: new Map(result.available.map((f) => [f.functionName, { line: f.line, endLine: f.endLine }])) });
+      sources.set(file, { lines: text.split(/\r?\n/), functions: new Map(result.available.map((f) => [f.functionName, { line: f.line, endLine: f.endLine }])), blank: blankSpecFor(result.language) });
     } catch {
       // No graph for this file: its messages are drawn unframed.
     }

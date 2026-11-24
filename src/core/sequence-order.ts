@@ -10,6 +10,30 @@
  * this says where and in which order the body spells it.
  */
 
+import type { LanguageRegexControlFlowSpec } from "../types/language-plugin.js";
+import { manifestFor, regexControlFlowFor } from "../extractors/registry.js";
+import { blankNonCode } from "./control-flow-regex.js";
+
+/**
+ * How a language writes comments and strings, for blanking them before call sites are read: the regex
+ * control-flow spec when the plugin has one, else its doc-comment syntax (the manifest knows `#` from `//`),
+ * else the C-family default.
+ */
+export function blankSpecFor(language: string | undefined): LanguageRegexControlFlowSpec | undefined {
+  if (!language) return undefined;
+  const own = regexControlFlowFor(language);
+  if (own) return own;
+  const docs = manifestFor(language as never)?.docComments;
+  if (!docs?.line) return undefined;
+  return {
+    lineComments: docs.line,
+    blockComment: docs.block?.length ? ([...docs.block.at(-1)!] as [string, string]) : ["", ""],
+    multilineStrings: docs.docstring === true,
+  } as unknown as LanguageRegexControlFlowSpec;
+}
+
+const DEFAULT_BLANK = {} as LanguageRegexControlFlowSpec;
+
 export interface CallSite {
   /** The name before the `(`. */
   name: string;
@@ -20,36 +44,6 @@ export interface CallSite {
   endColumn: number;
   /** The call is awaited (`await save()`, `save().await`). */
   awaited: boolean;
-}
-
-/** Strings and comments blanked to spaces, newlines and offsets kept. */
-function blanked(text: string): string {
-  const out = text.split("");
-  let i = 0;
-  const blank = (from: number, to: number) => {
-    for (let k = from; k < to && k < out.length; k++) if (out[k] !== "\n") out[k] = " ";
-  };
-  while (i < text.length) {
-    const c = text[i]!;
-    const next = text[i + 1];
-    if (c === "/" && next === "/") {
-      let end = text.indexOf("\n", i);
-      if (end < 0) end = text.length;
-      blank(i, end);
-      i = end;
-    } else if (c === "/" && next === "*") {
-      let end = text.indexOf("*/", i + 2);
-      end = end < 0 ? text.length : end + 2;
-      blank(i, end);
-      i = end;
-    } else if (c === '"' || c === "'" || c === "`") {
-      let j = i + 1;
-      while (j < text.length && text[j] !== c && (c === "`" || text[j] !== "\n")) j += text[j] === "\\" ? 2 : 1;
-      blank(i + 1, j);
-      i = j + 1;
-    } else i++;
-  }
-  return out.join("");
 }
 
 const IDENT = /[\w$]/;
@@ -85,9 +79,9 @@ function chainStart(t: string, start: number): number {
 }
 
 /** The call sites of lines `from`..`to` (1-based) of a file, in the order they finish. */
-export function callSitesIn(lines: readonly string[], from: number, to: number): CallSite[] {
+export function callSitesIn(lines: readonly string[], from: number, to: number, spec: LanguageRegexControlFlowSpec = DEFAULT_BLANK): CallSite[] {
   const slice = lines.slice(Math.max(0, from - 1), to);
-  const text = blanked(slice.join("\n"));
+  const text = blankNonCode(slice.join("\n"), spec);
   const starts: number[] = [];
   let off = 0;
   for (const l of slice) {
