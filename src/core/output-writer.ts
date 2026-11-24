@@ -1,4 +1,4 @@
-import { writeFile, mkdir, access } from "fs/promises";
+import { writeFile, mkdir, access, open } from "fs/promises";
 import { mkdirSync, writeFileSync } from "fs";
 import { resolve, dirname, join, relative, isAbsolute } from "path";
 import type {
@@ -206,6 +206,35 @@ export async function writeFileAnalysis(
   return outPath;
 }
 
+/** Characters encoded and written at a time by {@link writeTextFile}. */
+const TEXT_WRITE_CHUNK = 1 << 23;
+
+/**
+ * Write a large string as UTF-8 in slices. `writeFile(path, text)` encodes the whole string into one buffer
+ * first — for a 120 MB artifact a second 120 MB held at once and a slower write; slices keep the same bytes
+ * (a slice never ends inside a surrogate pair) with that buffer never made.
+ */
+export async function writeTextFile(outPath: string, text: string): Promise<void> {
+  if (text.length <= TEXT_WRITE_CHUNK) {
+    await writeFile(outPath, text, "utf-8");
+    return;
+  }
+  const handle = await open(outPath, "w");
+  try {
+    for (let start = 0; start < text.length; ) {
+      let end = Math.min(start + TEXT_WRITE_CHUNK, text.length);
+      if (end < text.length) {
+        const last = text.charCodeAt(end - 1);
+        if (last >= 0xd800 && last < 0xdc00) end--;
+      }
+      await handle.write(text.slice(start, end));
+      start = end;
+    }
+  } finally {
+    await handle.close();
+  }
+}
+
 /** Write a fixed-name JSON artifact into the output dir. */
 async function writeJson(
   fileName: string,
@@ -219,7 +248,7 @@ async function writeJson(
     ? JSON.stringify(data, null, 2)
     : JSON.stringify(data);
 
-  await writeFile(outPath, json, "utf-8");
+  await writeTextFile(outPath, json);
   return outPath;
 }
 
@@ -393,6 +422,6 @@ export async function writeReportData(
 export async function writeHtmlReport(html: string, options: OutputOptions): Promise<string> {
   const htmlPath = join(resolve(options.outputDir), "report.html");
   await mkdir(dirname(htmlPath), { recursive: true });
-  await writeFile(htmlPath, html, "utf-8");
+  await writeTextFile(htmlPath, html);
   return htmlPath;
 }
