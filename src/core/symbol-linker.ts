@@ -2120,6 +2120,10 @@ interface LinkMemos {
   namespaceHead?: Map<string, { file: string; symbol: string; line: number } | null>;
   /** Every name some file declares, folded to lower case (`declaredLeafNames`). */
   declaredLeaves?: Set<string>;
+  /** `packageFilesOf` before the caller's own file is cut out, per (family, directory); callers only read the arrays. */
+  packageDirFiles?: Map<string, string[]>;
+  /** The names files hold dispatch maps under, per language family (`mapHolderNames`; key `""` = every file). */
+  mapHolderNames?: Map<string, Set<string>>;
 }
 
 /** Lookup tables built once per buildSymbolLinks run, shared by every call resolution. */
@@ -2369,12 +2373,18 @@ function definitionsBeside(
 }
 
 /** The files of a package an import names: the directory's files of the importer's family, never its tests. */
-function packageFilesOf(ctx: LinkContext, dir: string, fromFile: string): string[] {
+function packageFilesOf(ctx: LinkContext, dir: string, fromFile: string): readonly string[] {
   ctx.directoryFiles ??= filesByDirectory(ctx.analyses);
   const family = extensionFamily(fromFile);
-  return (ctx.directoryFiles.get(dir ? `${dir}/` : "") ?? []).filter(
-    (f) => f !== fromFile && extensionFamily(f) === family && !packageTest(ctx, f),
-  );
+  // The directory's files of the family that are no tests, once per run; the caller's own file is cut out per call.
+  const key = `${family ?? ""}\0${dir}`;
+  const memo = (ctx.memos.packageDirFiles ??= new Map<string, string[]>());
+  let files: string[] | undefined = memo.get(key);
+  if (!files) {
+    files = (ctx.directoryFiles.get(dir ? `${dir}/` : "") ?? []).filter((f) => extensionFamily(f) === family && !packageTest(ctx, f));
+    memo.set(key, files);
+  }
+  return files.includes(fromFile) ? files.filter((f) => f !== fromFile) : files;
 }
 
 /**
@@ -5091,6 +5101,32 @@ function mapHoldersOf(analysis: FileAnalysis): ReadonlySet<string> {
 }
 
 /**
+ * The names files of `fromFile`'s language family hold dispatch maps under (`mapHoldersOf`), built once per run.
+ * An import resolves within its importer's family, so a map another file holds is one of these; a file of no family
+ * (HTML) reads every file's.
+ */
+function mapHolderNames(ctx: LinkContext, fromFile: string): ReadonlySet<string> {
+  let byFamily = ctx.memos.mapHolderNames;
+  if (!byFamily) {
+    byFamily = new Map([["", new Set<string>()]]);
+    for (const a of ctx.analyses) {
+      const holders = mapHoldersOf(a);
+      if (holders.size === 0) continue;
+      const family = extensionFamily(a.filePath) ?? "";
+      let names = byFamily.get(family);
+      if (!names) byFamily.set(family, (names = new Set()));
+      for (const h of holders) {
+        names.add(h);
+        byFamily.get("")!.add(h);
+      }
+    }
+    ctx.memos.mapHolderNames = byFamily;
+  }
+  return byFamily.get(extensionFamily(fromFile) ?? "") ?? EMPTY_NAMES;
+}
+const EMPTY_NAMES: ReadonlySet<string> = new Set();
+
+/**
  * A call through a dispatch map the caller's scope declares (`CallInfo.passed: "property"`):
  * `ACTIONS.save()` calls the function the map holds under `save`, as stated (EXTRACTED when that
  * value resolves so); `ACTIONS[kind]()` may call any of the map's functions, and `items[].run()`
@@ -5107,7 +5143,10 @@ function dispatchMapCall(
   analysis: FileAnalysis,
   ctx: LinkContext,
 ): SymbolLink | null | undefined {
-  if (!MAP_CALL.test(call.name) && !(DEEP_MEMBER_CALL.test(call.name) && mapHoldersOf(analysis).has(call.name.slice(0, call.name.indexOf("."))))) return undefined;
+  const own = mapHoldersOf(analysis);
+  const simple = MAP_CALL.exec(call.name);
+  // Where no file of the caller's family holds a map, an imported one cannot exist either (its holder is the exporter's own).
+  if (simple ? !own.has(simple[1]!) && mapHolderNames(ctx, sourceFile).size === 0 : !(DEEP_MEMBER_CALL.test(call.name) && own.has(call.name.slice(0, call.name.indexOf("."))))) return undefined;
   // A map entry whose value leads back to the call being resolved names no function: it draws no edge.
   const inFlight = (ctx.mapCallsInFlight ??= new Set());
   const key = `${sourceFile}\0${sourceSymbol}\0${call.name}`;
