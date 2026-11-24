@@ -141,21 +141,34 @@ function paramIndex(fn: Node, name: string): number {
   return -1;
 }
 
+/** Each function's assignments by target text, built in one walk of its body, per tree and function. */
+const assignmentsByFunction = new WeakMap<object, Map<number, Map<string, Node[]>>>();
+const NO_ASSIGNMENTS: Node[] = [];
+
 /** Every value `fn` assigns to `name` in its own body (nested definitions aside). */
 function assignsTo(fn: Node, name: string): Node[] {
-  const out: Node[] = [];
-  const body = fn.childForFieldName("body");
-  if (!body || !body.text.includes(name)) return out;
-  const visit = (n: Node): void => {
-    if (n.type === "function_definition" || n.type === "class_definition" || n.type === "lambda") return;
-    if ((n.type === "assignment" || n.type === "augmented_assignment") && n.childForFieldName("left")?.text === name) {
-      const right = n.childForFieldName("right");
-      out.push(right ?? n);
-    } else if (n.type === "for_statement" && n.childForFieldName("left")?.text === name) out.push(n);
-    for (const c of n.namedChildren) visit(c);
-  };
-  for (const c of body.namedChildren) visit(c);
-  return out;
+  let perTree = assignmentsByFunction.get(fn.tree);
+  if (!perTree) assignmentsByFunction.set(fn.tree, (perTree = new Map()));
+  let table = perTree.get(fn.id);
+  if (!table) {
+    const built = new Map<string, Node[]>();
+    const add = (key: string | undefined, value: Node): void => {
+      if (key === undefined) return;
+      const list = built.get(key);
+      if (list) list.push(value);
+      else built.set(key, [value]);
+    };
+    const visit = (n: Node): void => {
+      if (n.type === "function_definition" || n.type === "class_definition" || n.type === "lambda") return;
+      if (n.type === "assignment" || n.type === "augmented_assignment") add(n.childForFieldName("left")?.text, n.childForFieldName("right") ?? n);
+      else if (n.type === "for_statement") add(n.childForFieldName("left")?.text, n);
+      for (const c of n.namedChildren) visit(c);
+    };
+    const body = fn.childForFieldName("body");
+    if (body) for (const c of body.namedChildren) visit(c);
+    perTree.set(fn.id, (table = built));
+  }
+  return table.get(name) ?? NO_ASSIGNMENTS;
 }
 
 /** Django field lookups: `author__username__iexact` compares `author.username`. */

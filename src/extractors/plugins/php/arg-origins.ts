@@ -74,8 +74,45 @@ function requestRead(v: Node): Origin | null {
   return null;
 }
 
+/** Each function's assignments by variable name, built in one walk of its body, per tree and function. */
+const assignmentsByFunction = new WeakMap<object, Map<number, Map<string, Array<Node | null>>>>();
+const NONE: Array<Node | null> = [];
+
 /** Every value the function assigns to `$name` (`$name = v`, `$name ??= v`, a `list(...)` / `[...] =` target). */
 function assignmentsOf(fn: Node, name: string): Array<Node | null> {
+  // A name with a character `\w` does not read keeps the per-name search (its word boundary is the regex's).
+  if (!/^\$\w+$/.test(name)) return assignmentsOfName(fn, name);
+  let perTree = assignmentsByFunction.get(fn.tree);
+  if (!perTree) assignmentsByFunction.set(fn.tree, (perTree = new Map()));
+  let table = perTree.get(fn.id);
+  if (!table) {
+    table = new Map();
+    const body = fn.childForFieldName("body");
+    const add = (key: string, value: Node | null): void => {
+      const list = table!.get(key);
+      if (list) list.push(value);
+      else table!.set(key, [value]);
+    };
+    const visit = (n: Node): void => {
+      if (FUNCTION_TYPES.test(n.type) && n !== fn) return;
+      if (n.type === "assignment_expression" || n.type === "augmented_assignment_expression") {
+        const left = n.childForFieldName("left");
+        if (left) {
+          if (left.type === "list_literal" || left.type === "array_creation_expression") {
+            // `left.text === name` is tried first by the per-name reading; a list's text is never a bare variable.
+            for (const key of new Set(left.text.match(/\$\w+/g) ?? [])) add(key, null);
+          } else add(left.text, n.type === "assignment_expression" ? n.childForFieldName("right") : null);
+        }
+      }
+      for (const c of n.namedChildren) if (c) visit(c);
+    };
+    if (body) visit(body);
+    perTree.set(fn.id, table);
+  }
+  return table.get(name) ?? NONE;
+}
+
+function assignmentsOfName(fn: Node, name: string): Array<Node | null> {
   const out: Array<Node | null> = [];
   const body = fn.childForFieldName("body");
   if (!body || !body.text.includes(name)) return out;
