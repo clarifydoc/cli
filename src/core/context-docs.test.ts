@@ -24,6 +24,43 @@ describe("decision markers", () => {
   });
 });
 
+describe("decision markers in documentation comments", () => {
+  it("reads a Sphinx marker with its continuation lines as one record", () => {
+    const text = [
+      "#: WHY: keep the old loader because",
+      "#: the new one breaks Match.replay",
+      "",
+      "#: an ordinary attribute doc",
+      "LOADER = 1",
+    ].join("\n");
+    expect(findDecisionMarkers(text, "league.py").map((m) => [m.line, m.tag, m.text])).toEqual([
+      [1, "WHY", "keep the old loader because the new one breaks Match.replay"],
+    ]);
+  });
+
+  it("reads Doxygen markers, and ordinary doc comments with no label give nothing", () => {
+    const text = [
+      "/// Returns the club's table.",
+      "/// WHY: cached per match day",
+      "/// to spare the database",
+      "int table();",
+      "//! DECISION: players are never hard-deleted",
+      "//! see the garage notes",
+      "//! Plain inner doc.",
+      "/// Another doc line.",
+    ].join("\n");
+    expect(findDecisionMarkers(text, "club.h").map((m) => [m.line, m.tag, m.text])).toEqual([
+      [2, "WHY", "cached per match day to spare the database"],
+      [5, "DECISION", "players are never hard-deleted see the garage notes Plain inner doc."],
+    ]);
+    expect(findDecisionMarkers("/// A club.\n//! A player.\n#: A car.", "x.h")).toEqual([]);
+  });
+
+  it("does not join a different style or a code line", () => {
+    expect(findDecisionMarkers("// WHY: a\n# b\nx = 1\n// c", "a.ts").map((m) => m.text)).toEqual(["a"]);
+  });
+});
+
 describe("governed files", () => {
   const files = ["src/clubs/service.ts", "src/players/service.ts", "src/league/table.ts", "README.md"];
   it("names a file by its path, a unique suffix or a unique file name", () => {

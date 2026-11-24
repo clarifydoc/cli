@@ -103,7 +103,7 @@ export function resolveDocLinks(refs: readonly DocReference[], ctx: DocLinkConte
 
 /** Build output and dependencies: a path into them describes what a build makes, not the tree. */
 const OUTPUT_DIR = /(?:^|\/)(?:dist|build|out|target|bin|obj|node_modules|vendor|coverage|\.next|\.nuxt|\.clarifydoc|\.venv|venv|__pycache__)(?:\/|$)/;
-const PLACEHOLDER = /[*?{}<>$%[\]]|\.\.\.|^~|^-|^\//;
+const PLACEHOLDER = /[*?{}<>$%[\]]|\.\.\.|\u2026|^~|^-|^\//;
 /** A name a how-to invents (`src/core/my-analyzer.ts`, `your-plugin/`): an example, not a reference. */
 const EXAMPLE_NAME = /(?:^|\/)(?:my|your|example|sample-name|foo|bar|baz|some|new)[-_.]/i;
 const METHOD = /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(\/\S*)$/;

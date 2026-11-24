@@ -127,17 +127,36 @@ export async function findContextDocs(root: string, declared: readonly ContextDo
   return [...found.values()].sort((a, b) => order[a.kind] - order[b.kind] || (a.path < b.path ? -1 : 1));
 }
 
-const MARKER = /(?:\/\/|\/\*+|^\s*\*|#|--|;|<!--|^\s*')\s*(WHY|DECISION|TRADEOFF|RATIONALE|REJECTED|ADR)\s*:\s*(\S.*?)\s*(?:\*\/|-->)?\s*$/;
+const MARKER = /(?:\/\/!?|\/\*+|^\s*\*|#:?|--|;|<!--|^\s*')\s*(WHY|DECISION|TRADEOFF|RATIONALE|REJECTED|ADR)\s*:\s*(\S.*?)\s*(?:\*\/|-->)?\s*$/;
 const MARKER_GATE = /\b(?:WHY|DECISION|TRADEOFF|RATIONALE|REJECTED|ADR)\s*:/;
 
-/** The decision markers in one file's comments: an upper-case tag after a comment leader, then a colon. */
+/** A whole-line comment in a line style: the leader (`///`, `//!`, `#:`, `#`, `--`, `;`), then the text. */
+const LINE_COMMENT = /^\s*(\/\/[/!]?|#:?|--|;)(?!\1)\s?(.*?)\s*$/;
+/** Continuation lines a marker may take. */
+const MAX_CONTINUATION = 8;
+
+/**
+ * The decision markers in one file's comments: an upper-case tag after a comment leader, then a colon. A
+ * marker on a whole-line comment takes the comment lines after it in the same style (`#:` Sphinx, `///`/`//!`
+ * Doxygen, `//`, `#`) that carry no label of their own, up to a blank comment or a code line.
+ */
 export function findDecisionMarkers(text: string, file: string): DecisionMarker[] {
   if (!MARKER_GATE.test(text)) return [];
   const out: DecisionMarker[] = [];
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const m = MARKER.exec(lines[i]!);
-    if (m) out.push({ file, line: i + 1, tag: m[1]!, text: m[2]!.slice(0, 200) });
+    if (!m) continue;
+    let body = m[2]!;
+    const lead = LINE_COMMENT.exec(lines[i]!);
+    if (lead && !/\*\/|-->\s*$/.test(lines[i]!)) {
+      for (let j = i + 1; j < lines.length && j <= i + MAX_CONTINUATION && body.length < 200; j++) {
+        const next = LINE_COMMENT.exec(lines[j]!);
+        if (!next || next[1] !== lead[1] || !next[2] || MARKER_GATE.test(lines[j]!)) break;
+        body += ` ${next[2]}`;
+      }
+    }
+    out.push({ file, line: i + 1, tag: m[1]!, text: body.slice(0, 200) });
   }
   return out;
 }

@@ -53,6 +53,10 @@ describe("doc drift", () => {
     ].join("\n"))).toEqual([]);
   });
 
+  it("reads a Unicode ellipsis as a placeholder, as it does three dots", () => {
+    expect(findings("README.md", "`src/\u2026/cars.ts` and `src/.../cars.ts` and `src/\u2026`")).toEqual([]);
+  });
+
   it("is sure of a path git saw deleted or renamed", () => {
     const c = ctx({ history: (p) => (p === "src/routes/legacy.ts" ? { renamedTo: "src/routes/cars.ts" } : p === "src/gone.ts" ? { deletedIn: "abc1234" } : null) });
     expect(findings("README.md", "`src/routes/legacy.ts` and `src/gone.ts` and `src/never.ts`", c)).toEqual([
