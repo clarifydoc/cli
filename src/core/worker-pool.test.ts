@@ -102,4 +102,12 @@ describe("AnalysisWorkerPool", () => {
       await pool.destroy();
     }
   });
+
+  it("shrinks to the workers it keeps and still runs tasks on them", async () => {
+    const pool = AnalysisWorkerPool.create(4, vi.fn(async () => null), { workerUrl, deadlineMs: 0 })!;
+    pool.shrinkTo(2);
+    const done = await Promise.all([pool.run(task("a.ts")), pool.run(task("b.ts")), pool.run(task("c.ts"))]);
+    expect(done.map((d) => (d as { analysis: { filePath: string } }).analysis.filePath)).toEqual(["a.ts", "b.ts", "c.ts"]);
+    await pool.destroy();
+  });
 });

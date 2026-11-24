@@ -1163,6 +1163,8 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // below run, and end when they have.
   if (pool) {
     pool.relax();
+    // Writing the held output needs a few workers, not the whole pool's heaps and grammars.
+    pool.shrinkTo(OUTPUT_WRITERS);
     if (heldOutput.length > 0) writeHeldOutput(pool);
   }
   const outputWritten = Promise.all(outputWrites)

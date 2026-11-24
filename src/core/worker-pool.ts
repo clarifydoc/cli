@@ -186,6 +186,20 @@ export class AnalysisWorkerPool<T extends PoolTask = FileTask, R = FileResult | 
     this.bounded = false;
   }
 
+  /**
+   * Stop idle workers until `keep` remain (busy ones are never stopped). Each worker holds a V8 heap and
+   * the WASM memory of its grammars, which a worker only grows: once the files are read and only a few
+   * workers still have work to do, the rest are held memory and nothing else.
+   */
+  shrinkTo(keep: number): void {
+    if (this.destroyed) return;
+    while (this.workers.length > keep && this.idle.length > 0) {
+      const worker = this.idle.pop()!;
+      this.workers = this.workers.filter((w) => w !== worker);
+      void worker.terminate();
+    }
+  }
+
   async destroy(): Promise<void> {
     this.relax();
     this.destroyed = true;
