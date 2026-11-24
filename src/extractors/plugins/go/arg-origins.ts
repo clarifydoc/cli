@@ -66,6 +66,12 @@ const STRING_LIT = /^"((?:[^"\\]|\\.)*)"$|^`([^`]*)`$/;
 const COMPOSITE = /^&?[A-Za-z_][\w.]*\s*\{([\s\S]*)\}$/;
 const IDENT = /^[A-Za-z_]\w*$/;
 
+/** Names the body could assign: the first of an assignment, and those after a comma (`a, x := v`). */
+interface AssignmentTargets {
+  first: ReadonlySet<string>;
+  later: ReadonlySet<string>;
+}
+
 interface Scope {
   params: string[];
   /**
@@ -83,7 +89,7 @@ interface Scope {
   /** `body` with string contents blanked, offsets unchanged. */
   code: string;
   /** What the body's scans answered, by name: every call of a function asks about the same few names again. */
-  memo?: { assigned: Map<string, readonly string[]>; written: Map<string, number> };
+  memo?: { assigned: Map<string, readonly string[]>; written: Map<string, number>; targets?: AssignmentTargets };
 }
 
 /** The index of the bracket closing the one at `open` (strings skipped), or -1. */
@@ -130,20 +136,40 @@ function unwrap(expr: string): { expr: string; transform?: string } {
 function assignmentsOf(scope: Scope, name: string): readonly string[] {
   const memo = (scope.memo ??= { assigned: new Map(), written: new Map() }).assigned;
   let out = memo.get(name);
-  if (!out) memo.set(name, (out = scanAssignments(scope, name)));
+  if (!out) memo.set(name, (out = scanAssignments(scope, name, assignmentTargets(scope))));
   return out;
 }
 
-function scanAssignments(scope: Scope, name: string): string[] {
+/**
+ * The names the body could assign. `scanAssignments` finds nothing for a name outside these (a parameter, `nil`, a
+ * function), so such a name is answered without compiling a pattern and reading the body for it. Each set is a
+ * superset of what its pattern matches: the first holds every identifier an assignment operator follows, alone or after
+ * a comma list (and each name of such a list), the second every identifier a comma precedes and an operator follows.
+ */
+function assignmentTargets(scope: Scope): AssignmentTargets {
+  const memo: NonNullable<Scope["memo"]> = (scope.memo ??= { assigned: new Map(), written: new Map() });
+  if (memo.targets) return memo.targets;
+  const first = new Set<string>();
+  for (const m of scope.code.matchAll(/\b[A-Za-z_]\w*\s*(?:,\s*[\w_]+\s*)*(?::=|=(?!=))/g)) for (const id of m[0].match(/[A-Za-z_]\w*/g)!) first.add(id);
+  const later = new Set<string>();
+  for (const m of scope.code.matchAll(/,\s*([A-Za-z_]\w*)\s*(?::=|=(?!=))/g)) later.add(m[1]!);
+  return (memo.targets = { first, later });
+}
+
+function scanAssignments(scope: Scope, name: string, targets: AssignmentTargets): string[] {
   const out: string[] = [];
-  const re = new RegExp(String.raw`(?:^|[;{(\s])(?:var\s+)?${name}\s*(?:,\s*[\w_]+\s*)*(?::=|=(?!=))\s*([^\n;]+)`, "g");
-  for (const m of scope.code.matchAll(re)) {
-    const start = m.index! + m[0].length - m[1]!.length;
-    out.push(scope.body.slice(start, start + m[1]!.length).trim().replace(/\s*\{\s*$/, ""));
+  if (targets.first.has(name)) {
+    const re = new RegExp(String.raw`(?:^|[;{(\s])(?:var\s+)?${name}\s*(?:,\s*[\w_]+\s*)*(?::=|=(?!=))\s*([^\n;]+)`, "g");
+    for (const m of scope.code.matchAll(re)) {
+      const start = m.index! + m[0].length - m[1]!.length;
+      out.push(scope.body.slice(start, start + m[1]!.length).trim().replace(/\s*\{\s*$/, ""));
+    }
   }
   // `_, x := v` / `a, x = v`: assigned, value unknown here.
-  const later = new RegExp(String.raw`[\w_]+\s*,\s*${name}\s*(?::=|=(?!=))`, "g");
-  for (const _ of scope.code.matchAll(later)) out.push("");
+  if (targets.later.has(name)) {
+    const later = new RegExp(String.raw`[\w_]+\s*,\s*${name}\s*(?::=|=(?!=))`, "g");
+    for (const _ of scope.code.matchAll(later)) out.push("");
+  }
   return out;
 }
 
@@ -245,11 +271,30 @@ function inlineBindings(paramText: string): Scope["bound"] | undefined {
 
 const scopeAt = (scopes: readonly Scope[], line0: number): Scope | undefined => scopes.find((s) => line0 >= s.start && line0 <= s.end);
 
+/** The call patterns by callee leaf, compiled once: a pattern holds no state but its text. */
+const CALL_OPENERS = new Map<string, RegExp>();
+
 /** The argument text of the call named `name` on line `line0` (over following lines), or null. */
 function callArgsAt(lines: readonly string[], line0: number, name: string, end: number): string[] | null {
-  const text = lines.slice(line0, Math.min(end + 1, line0 + 30)).map(stripComment).join("\n");
   const leaf = name.replace(/\(\)/g, "").split(".").pop()!;
-  const re = new RegExp(String.raw`\b${escapeRegex(leaf)}\s*(?:\[[^\]\n]*\]\s*)?\(`, "g");
+  let re = CALL_OPENERS.get(leaf);
+  if (!re) {
+    if (CALL_OPENERS.size > 5000) CALL_OPENERS.clear();
+    CALL_OPENERS.set(leaf, (re = new RegExp(String.raw`\b${escapeRegex(leaf)}\s*(?:\[[^\]\n]*\]\s*)?\(`, "g")));
+  }
+  // The call is on its first line almost always, and its arguments end there: read that line alone, and the following
+  // ones (up to 30, a leaf and its `(` never apart in valid Go) only when it is not.
+  if (line0 <= end) {
+    const head = stripComment(lines[line0] ?? "");
+    re.lastIndex = 0;
+    const here = re.exec(head);
+    re.lastIndex = 0;
+    if (here) {
+      const close = closeAt(head, here.index + here[0].length - 1);
+      if (close >= 0) return splitGoArgs(head.slice(here.index + here[0].length, close));
+    }
+  }
+  const text = lines.slice(line0, Math.min(end + 1, line0 + 30)).map(stripComment).join("\n");
   const first = text.indexOf("\n");
   for (const m of text.matchAll(re)) {
     if (first >= 0 && m.index! > first) break;

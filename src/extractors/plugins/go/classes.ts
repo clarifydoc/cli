@@ -176,7 +176,7 @@ function typeBlockLocalCalls(lines: readonly string[], fn: FunctionInfo, declare
     const word = new RegExp(`(?<![\\w.])${name}(?![\\w])`);
     const types = new Set<string>();
     for (const code of codeLines) {
-      if (!word.test(code)) continue;
+      if (!code.includes(name) || !word.test(code)) continue;
       const type = statedDeclarationType(code, name, constructors);
       if (type) types.add(type.replace(/^[*&]/, ""));
     }
