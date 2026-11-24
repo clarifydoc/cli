@@ -31,6 +31,8 @@ export interface PatternCallName {
   fallbackName?: string;
   /** A bare name the function binds itself — a parameter or a local it calls (`CallInfo.boundLocally`). */
   boundLocally?: true;
+  /** A path call into a project module (`util::format()`): its leaf is no stdlib noise (`callRecorder`'s `keepNoise`). */
+  keepNoise?: true;
   /** The name is handed on, not called here (`CallInfo.passed`): Qt's `&ClubWindow::saveClub` slot argument. */
   passed?: "argument";
   /** The arguments the call passes, as the parse reads them; calls of one name differing in them are separate rows. */
@@ -139,12 +141,13 @@ export function recordPatternCalls(
       for (const b of bound.slice(at)) calls.push({ ...b, boundLocally: true });
       continue;
     }
-    const receiver = c.receiverType || c.receiverQualifier || c.receiverCut || c.fallbackName
+    const receiver = c.receiverType || c.receiverQualifier || c.receiverCut || c.fallbackName || c.keepNoise
       ? {
         ...(c.receiverType ? { receiverType: c.receiverType } : {}),
         ...(c.receiverQualifier ? { receiverQualifier: c.receiverQualifier } : {}),
         ...(c.receiverCut ? { receiverCut: true } : {}),
         ...(c.fallbackName ? { fallbackName: c.fallbackName } : {}),
+        ...(c.keepNoise ? { keepNoise: true } : {}),
       }
       : undefined;
     add(c.name, c.leafName, c.line, c.column, c.args ? { ...receiver, args: c.args } : receiver);

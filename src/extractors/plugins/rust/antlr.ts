@@ -406,8 +406,12 @@ function pathCallName(callee: ParseTree): PatternCallName | null {
   if ((names.length === 2 && owner.name === "self") || /^[A-Z]/.test(leaf.name)) return call(leaf.name, leaf.name, leaf.token);
   // A module path (`tools::wrench(`, `crate::garage::tools::spanner(`, `super::load(`) is named as written,
   // so the plugin can follow it to the module (module-calls.ts).
-  return call(names.map((n) => n.name).join("::"), leaf.name, names[0]!.token);
+  // A path into the standard library keeps its noise rule; a project module's function is no noise.
+  const named = call(names.map((n) => n.name).join("::"), leaf.name, names[0]!.token);
+  return LIBRARY_ROOTS.has(names[0]!.name) ? named : { ...named, keepNoise: true };
 }
+
+const LIBRARY_ROOTS = new Set(["std", "core", "alloc"]);
 
 /** `Html(body)`: a call of a capitalized name builds a value of that tuple struct, so its methods are the type's. */
 function constructedType(attributed: ParseTree): PathName | null {

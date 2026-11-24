@@ -1286,7 +1286,7 @@ export type CallRecorder = (
   shortName: string,
   line: number,
   column: number,
-  receiver?: { receiverType?: string; receiverQualifier?: string; key?: string; receiverCut?: boolean; args?: CallArguments; fallbackName?: string },
+  receiver?: { receiverType?: string; receiverQualifier?: string; key?: string; receiverCut?: boolean; args?: CallArguments; fallbackName?: string; keepNoise?: boolean },
 ) => void;
 
 /**
@@ -1355,7 +1355,8 @@ export function callRecorder(calls: CallInfo[]): CallRecorder {
       keep(withArgs(call));
       return;
     }
-    if (CALL_NOISE.has(shortName)) {
+    // A path through a project's module (`util::format()`) names its function: the leaf is no stdlib noise.
+    if (CALL_NOISE.has(shortName) && !receiver?.keepNoise) {
       // `repo.delete(id)` on a declared repository is a project call, not
       // stdlib noise — held back until the receiver's type is known (see
       // `holdNoiseCall`). A bare `delete(x)` / `print(x)` stays dropped.

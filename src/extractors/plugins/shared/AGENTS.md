@@ -60,7 +60,7 @@ Calls get `kind: "internal"` by default — classification happens later in the 
 
 ### CALL_NOISE
 
-Shared set of method names to skip (`len`, `print`, `append`, `map`, `filter`, etc.). Per-language plugins don't need their own noise lists.
+Shared set of method names to skip (`len`, `print`, `append`, `map`, `filter`, etc.). Per-language plugins don't need their own noise lists. A call a plugin marks `keepNoise` (`PatternCallName.keepNoise`, the recorder's `receiver.keepNoise`) bypasses it: Rust's path call through a project module (`util::format()`, not `std::`/`core::`/`alloc::`) names its function whatever the leaf.
 
 ## Adding logic here vs in a plugin
 

@@ -39,6 +39,19 @@ pub fn main() {
 }
 `,
   "src/util.rs": "pub fn render() {}\n",
+  // A module path into the project reaches a function whose name is a stdlib noise name (`format`, `write`); the
+  // std macro and a std path stay unlinked.
+  "src/noise.rs": `mod fmt_util;
+mod pitch { pub fn write() {} }
+pub fn main() {
+    fmt_util::format();
+    crate::fmt_util::format();
+    pitch::write();
+    let s = format!("{}", 1);
+    let t = std::fmt::format(format_args!("x"));
+}
+`,
+  "src/fmt_util.rs": "pub fn format() {}\n",
   "src/pair.rs": `mod sys { pub fn ignite() {} }
 mod decoy { pub fn ignite() {} pub fn spark() { ignite(); } }
 pub fn go() { sys::ignite(); }
@@ -88,5 +101,12 @@ describe.each([["ANTLR", undefined], ["regex", "no-antlr"]])("Rust inline module
     expect(links.filter((l) => l.endsWith(`${m}::helper`))).toEqual([`${m}:15 helper -> ${m}::helper`]);
     expect(links).toContain(`${m}:11 crate::util::render -> src/util.rs::render`);
     expect(links).toContain(`${m}:16 render -> ${m}::render`);
+  });
+
+  it("links a path call into a project module whose function has a noise name, never the std macro or path", () => {
+    const n = "src/noise.rs";
+    expect(links).toContain(`${n}:5 crate::fmt_util::format -> src/fmt_util.rs::format`);
+    expect(links).toContain(`${n}:6 write -> ${n}::write`);
+    expect(links.filter((l) => l.startsWith(`${n}:7`) || l.startsWith(`${n}:8`))).toEqual([]);
   });
 });

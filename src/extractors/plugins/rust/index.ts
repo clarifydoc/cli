@@ -148,7 +148,9 @@ export const rustSpec: RegexLangSpec = {
       pattern: /(?<![\w:.])((?:[a-z_]\w*\s*::\s*)+)([a-z_]\w*)\s*\(/g,
       buildName: (m) => {
         const path = m[1]!.replace(/\s+/g, "");
-        return path === "self::" ? { name: m[2]!, leafName: m[2]! } : { name: `${path}${m[2]}`, leafName: m[2]! };
+        if (path === "self::") return { name: m[2]!, leafName: m[2]! };
+        // A project module's function is no stdlib noise (`util::format()`); `std::fmt::format` stays.
+        return { name: `${path}${m[2]}`, leafName: m[2]!, ...(/^(?:std|core|alloc)::/.test(path) ? {} : { keepNoise: true }) };
       },
     },
     // A method on a call's result, named as the chain: `Club::new(id).register()` is `Club.new().register`.
