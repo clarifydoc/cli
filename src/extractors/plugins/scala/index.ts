@@ -5,6 +5,7 @@ import { extractPlayRoutes, isPlayRoutesFile } from "./routes.js";
 import { JAXRS_SCALA_GATE_RE, extractScalaJaxrsRoutes } from "./jaxrs.js";
 import { extractScalaRequestAccess } from "./request-schema.js";
 import { SCALA_CODE } from "./blocks.js";
+import { addScalaGetterReads } from "./getter-reads.js";
 import {
   codeOf,
   constructorParamLists,
@@ -278,6 +279,9 @@ export const scalaSpec: RegexLangSpec = {
   attributeLine: { pattern: /^\s*@([\w.]+(?:\([^)]*\))?)\s*$/ },
 
   extractRequestAccess: extractScalaRequestAccess,
+
+  /** A parameterless `def` is read like a field: mark it, and record the reads that may run one. */
+  extractValueFlow: (lines, analysis) => addScalaGetterReads(lines, analysis),
 
   /**
    * Play's `conf/routes` declares a controller's routes (its methods carry no annotation); a
