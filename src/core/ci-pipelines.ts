@@ -1,4 +1,5 @@
 import { existsSync } from "fs";
+import { insideRoot } from "./inside-root.js";
 import { readFile } from "fs/promises";
 import { join, posix, resolve } from "path";
 import { globUnignored as glob } from "./clarifydoc-ignore.js";
@@ -287,7 +288,7 @@ export async function detectCiDeploys(projectRoot: string, subProjects: readonly
     // the path is the part the repository holds.
     if (REMOTE_SCRIPT_ACTIONS.test(d.via)) {
       const parts = d.path.split("/");
-      while (parts.length > 0 && !existsSync(join(absRoot, ...parts))) parts.shift();
+      while (parts.length > 0 && !pathExistsInside(absRoot, parts)) parts.shift();
       if (parts.length === 0) {
         delete d.path;
         continue;
@@ -364,4 +365,10 @@ export async function ciRunEntries(projectRoot: string, repo: RepoFiles): Promis
     walk(parseSimpleYaml(raw), undefined);
   }
   return out;
+}
+
+/** Whether the `cd` path parts name something under the root; a path leaving it is never looked at. */
+function pathExistsInside(absRoot: string, parts: readonly string[]): boolean {
+  const abs = insideRoot(absRoot, parts.join("/"));
+  return abs !== null && existsSync(abs);
 }

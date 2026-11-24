@@ -102,6 +102,7 @@ import { applySecurityRules } from "./security-rules.js";
 import { externalServices } from "./external-services.js";
 import { runtimeGraph, typeOnlyEdges } from "./import-kinds.js";
 import { rankDataFlows } from "./flow-criticality.js";
+import { insideRoot } from "./inside-root.js";
 import { checkDocReferences, docReferences, resolveDocLinks, type DocReference } from "./doc-drift.js";
 import { scanHistorySecrets } from "./history-secrets.js";
 import { findBlockingInAsync, findQueriesInLoops } from "./query-in-loop.js";
@@ -4535,7 +4536,11 @@ async function computeDocDrift(
   }
   const history = useGit ? gitPathHistory(projectRoot) : undefined;
   const findings = checkDocReferences(refs, {
-    exists: (p) => existsSync(join(projectRoot, p)),
+    // A path that leaves the root (a backslash climb, a drive or UNC path) is not ours to judge.
+    exists: (p) => {
+      const abs = insideRoot(projectRoot, p);
+      return abs === null || existsSync(abs);
+    },
     topLevel: new Set(readdirSync(projectRoot)),
     routes: new Set(api.map((r) => `${r.httpMethod!.toUpperCase()} ${normalizeRoutePath(r.path)}`)),
     routeHeads: new Set(api.map((r) => r.path.split("/").filter(Boolean)[0]?.toLowerCase()).filter((h): h is string => !!h)),

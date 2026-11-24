@@ -1,4 +1,5 @@
 import { lstat } from "fs/promises";
+import { insideRoot } from "./inside-root.js";
 import { join, posix, resolve } from "path";
 import { isSensitive } from "./file-discovery.js";
 import { isIgnored, loadIgnorePatterns } from "./clarifydoc-ignore.js";
@@ -82,8 +83,8 @@ export function diskFileExists(projectRoot: string): (file: string) => Promise<b
   return (file) => {
     let hit = seen.get(file);
     if (!hit) {
-      const abs = join(root, file);
-      hit = isSensitive(file) || isIgnored(abs, root, ignore)
+      const abs = insideRoot(root, file) ?? join(root, file);
+      hit = insideRoot(root, file) === null || isSensitive(file) || isIgnored(abs, root, ignore)
         ? Promise.resolve(false)
         : lstat(abs).then((st) => st.isFile(), () => false);
       seen.set(file, hit);

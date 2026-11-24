@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { insideRoot } from "./inside-root.js";
 import { join, posix } from "node:path";
 
 /**
@@ -112,7 +113,9 @@ export function parseDockerfile(text: string): Omit<DockerfileFacts, "dockerfile
 /** Read and parse a Dockerfile; undefined when it cannot be read. */
 export function readDockerfile(absRoot: string, rel: string): DockerfileFacts | undefined {
   try {
-    const text = readFileSync(join(absRoot, rel), "utf8");
+    const abs = insideRoot(absRoot, rel);
+    if (!abs) return undefined;
+    const text = readFileSync(abs, "utf8");
     if (text.length > 200_000) return undefined;
     return { dockerfile: rel, ...parseDockerfile(text) };
   } catch {
@@ -132,10 +135,14 @@ export interface RepoFiles {
 /** The files under `absRoot`. */
 export function repoFiles(absRoot: string): RepoFiles {
   return {
-    exists: (rel) => existsSync(join(absRoot, rel)),
+    exists: (rel) => {
+      const abs = insideRoot(absRoot, rel);
+      return abs !== null && existsSync(abs);
+    },
     read: (rel) => {
       try {
-        return readFileSync(join(absRoot, rel), "utf8");
+        const abs = insideRoot(absRoot, rel);
+        return abs ? readFileSync(abs, "utf8") : undefined;
       } catch {
         return undefined;
       }
