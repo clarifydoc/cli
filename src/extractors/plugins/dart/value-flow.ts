@@ -166,7 +166,10 @@ export function classScopeOf(cls: TSNode, file: { classes: ReadonlySet<string>; 
     for (const item of namedChildren(list)) {
       const id = namedChildren(item).find((c) => c.type === "identifier");
       if (!id) continue;
-      const value = namedChildren(item).slice(namedChildren(item).indexOf(id) + 1);
+      // The whole list, the name included: this line used to look `id` up in a SECOND `namedChildren(item)`, where a
+      // wrapper node is never the same object as the first call's, so it always read from the start. Kept as the
+      // stated result so a node whose identity is stable (a flat copy) reads the same.
+      const value = namedChildren(item);
       const kind = typeText ? kindOfType(typeText, file.classes, file.typedefs) : kindOfInit(value);
       scope.fields.set(id.text, kind === "other" && value.length > 0 && kindOfInit(value) !== "other" ? "may" : kind);
     }

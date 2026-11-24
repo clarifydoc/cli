@@ -272,6 +272,23 @@ const FLAT_TREE_LANGUAGES: ReadonlySet<string> = new Set([
   "fsharp", "bash", "r", "julia", "zig", "ocaml", "pascal",
 ]);
 
+/** The grammars of the regex languages (their tree-sitter front ends and taint readers) that read a flat copy too. */
+const FLAT_GRAMMAR_KEYS: ReadonlySet<string> = new Set(["swift", "dart", "elixir", "scala", "objc", "haskell", "go", "rust", "ruby"]);
+
+/**
+ * A tree a grammar parser (`getGrammarParser`: a regex language's tree-sitter front end or taint reader) returned,
+ * as a flat copy when the `flat-tree` feature covers that grammar; the WebAssembly tree is freed at once. Otherwise
+ * the tree itself, which the caller frees.
+ */
+export function readableTree(tree: TSTree, sourceText: string, grammar: string): TSTree {
+  if (!FLAT_GRAMMAR_KEYS.has(grammar) || !featureEnabled("flat-tree")) return tree;
+  try {
+    return flattenTree(tree, sourceText) as unknown as TSTree;
+  } finally {
+    tree.delete();
+  }
+}
+
 /**
  * Parse source into the WebAssembly tree itself, never a flat copy: what a query runs on and what the flat copy is
  * made from.

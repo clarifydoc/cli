@@ -1,5 +1,5 @@
 import type { ParsedStructure } from "../../../types/language-plugin.js";
-import { getGrammarParser, type TSNode } from "../../../parsers/parser-manager.js";
+import { getGrammarParser, readableTree, type TSNode } from "../../../parsers/parser-manager.js";
 import { normalizeSource } from "../../../parsers/normalize-source.js";
 
 /**
@@ -10,8 +10,9 @@ export async function treeSitterReader(grammar: string, read: (root: TSNode, tex
   const parser = await getGrammarParser(grammar);
   return (source) => {
     const text = normalizeSource(source);
-    const tree = parser.parse(text);
-    if (!tree) throw new Error(`tree-sitter-${grammar} returned no tree`);
+    const parsed = parser.parse(text);
+    if (!parsed) throw new Error(`tree-sitter-${grammar} returned no tree`);
+    const tree = readableTree(parsed, text, grammar);
     try {
       return read(tree.rootNode, text);
     } finally {

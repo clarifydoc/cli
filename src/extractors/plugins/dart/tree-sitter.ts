@@ -141,8 +141,10 @@ function visit(node: TSNode, owner: PatternCallName[] | null, walk: Walk, cls: C
           shape: { sig, decl: child, body, cls, isConstructor },
         });
       }
-      // An initializer list (`: _repo = Repo()`) is the constructor's; its parameters call nothing.
-      for (const part of namedChildren(child)) if (part !== sig) visit(part, calls, walk, cls);
+      // An initializer list (`: _repo = Repo()`) is the constructor's. Every part is visited, the signature too (so a
+      // default value's `const Duration(…)` is a call): a `part !== sig` guard here never held, since a wrapper node is
+      // not the same object as the one `signatureOf` returned, and a node of stable identity must read the same.
+      for (const part of namedChildren(child)) visit(part, calls, walk, cls);
       if (body) {
         visit(body, calls, walk, cls);
         i++;

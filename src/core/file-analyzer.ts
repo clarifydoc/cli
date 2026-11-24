@@ -8,7 +8,7 @@ import { computeRegexComplexity } from "./complexity-regex.js";
 import { splitLines } from "../extractors/shared/source-lines.js";
 import type { DiscoveredFile } from "./file-discovery.js";
 import { serializeFileAnalysis, writeFileAnalysis, type OutputOptions } from "./output-writer.js";
-import { getGrammarParser, parseSource } from "../parsers/parser-manager.js";
+import { getGrammarParser, parseSource, readableTree } from "../parsers/parser-manager.js";
 import { normalizeSource } from "../parsers/normalize-source.js";
 import { extractImports, extractExports } from "../extractors/imports-exports/index.js";
 import { extractFunctions, extractClasses } from "../extractors/functions-classes/index.js";
@@ -351,8 +351,10 @@ async function regexTaintOf(language: Language, sourceText: string, filePath: st
   if (!grammar) return null;
   try {
     const parser = await getGrammarParser(grammar);
-    const tree = parser.parse(normalizeSource(sourceText));
-    if (!tree) return null;
+    const text = normalizeSource(sourceText);
+    const parsed = parser.parse(text);
+    if (!parsed) return null;
+    const tree = readableTree(parsed, text, grammar);
     try {
       if (tree.rootNode.hasError) return null;
       const facts: TaintFacts = { summaries: [], calls: [] };

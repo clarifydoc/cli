@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, statSync } from "fs";
 import { join, relative } from "path";
 import type { Node } from "web-tree-sitter";
 import { ensureLanguagesLoaded, pluginFor } from "../extractors/registry.js"; // side effect: registers tree-sitter grammars
-import { parseSource, parseWebAssemblyTree, runQuery } from "./parser-manager.js";
+import { getGrammarParser, parseSource, parseWebAssemblyTree, runQuery } from "./parser-manager.js";
 import { parseErrorsOf } from "../core/coverage.js";
 import { getLanguageForFile } from "./language-map.js";
 import { flattenTree, FlatNode, FlatTree } from "./flat-tree.js";
@@ -170,6 +170,37 @@ describe("flat tree equals the real tree", () => {
     // Every language the feature covers has real fixture files compared, not only the inline sources above.
     for (const l of ["fsharp", "bash", "r", "julia", "zig", "ocaml", "pascal"]) expect(perLanguage.get(l) ?? 0, l).toBeGreaterThan(2);
     expect(errors.length ? [`${errors.length} files differ: ${errors.map((e) => e.split(":")[0]).join(", ")}`, ...errors.slice(0, 5)] : []).toEqual([]);
+  }, 600_000);
+
+  it("answers every used member alike for the grammars of the regex languages", async () => {
+    const grammars: Record<string, string> = { ".swift": "swift", ".dart": "dart", ".ex": "elixir", ".exs": "elixir", ".scala": "scala", ".m": "objc", ".hs": "haskell", ".go": "go", ".rs": "rust", ".rb": "ruby" };
+    const extra = [
+      { name: "unicode.swift", text: 'let nom = "日本 🚗"\nfunc équipe() -> String { return "⚽" }\n' },
+      { name: "broken.dart", text: "class A { void m( { int x = ; } }\n" },
+      { name: "broken.go", text: "package a\nfunc ( { x := ;\n" },
+      { name: "broken.rb", text: "def m(\n  x = \nend end\n" },
+    ];
+    let compared = 0;
+    const errors: string[] = [];
+    for (const { name, text } of [...sources, ...extra]) {
+      const key = grammars[name.slice(name.lastIndexOf("."))];
+      if (!key) continue;
+      let parser;
+      try {
+        parser = await getGrammarParser(key);
+      } catch {
+        continue;
+      }
+      const tree = parser.parse(text);
+      if (!tree) continue;
+      const flat = flattenTree(tree, text);
+      const diffs: string[] = [];
+      compare(tree.rootNode, flat.rootNode, new Map(), diffs, 25, { n: 0 });
+      if (diffs.length) errors.push(`${name}:\n  ${diffs.slice(0, 4).join("\n  ")}`);
+      compared++;
+    }
+    console.log(`grammar trees compared: ${compared}`);
+    expect(errors).toEqual([]);
   }, 600_000);
 
   it("counts parse errors, runs queries and parses through the feature as the real tree does", async () => {
