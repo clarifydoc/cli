@@ -19,16 +19,37 @@ fn go() { sys::ignite(); t::rank(); }
 fn main() { go(); }
 `,
   // Two functions of one name in one file: each is named by its module, so the call names the one it means.
+  // A bare call finds the block's own item before the file's namesake.
+  "src/main_block.rs": `mod util;
+mod pitch {
+    fn helper() {}
+    pub fn run() { helper(); }
+    pub fn other() { self::helper(); }
+    pub mod stand { pub fn helper() {} pub fn seat() { helper(); super::helper(); } }
+}
+fn helper() {}
+fn render() {}
+pub fn main() {
+    crate::util::render();
+    pitch::helper();
+    pitch::run();
+    pitch::stand::helper();
+    helper();
+    render();
+}
+`,
+  "src/util.rs": "pub fn render() {}\n",
   "src/pair.rs": `mod sys { pub fn ignite() {} }
 mod decoy { pub fn ignite() {} pub fn spark() { ignite(); } }
 pub fn go() { sys::ignite(); }
 `,
 };
 
-describe("Rust inline modules", () => {
+describe.each([["ANTLR", undefined], ["regex", "no-antlr"]])("Rust inline modules (%s front end)", (_name, features) => {
   let dir: string;
   let links: string[];
   beforeAll(async () => {
+    if (features) process.env.CLARIFYDOC_FEATURES = features;
     dir = await mkdtemp(join(tmpdir(), "cd-rust-inline-"));
     for (const [rel, text] of Object.entries(FILES)) {
       await mkdir(dirname(join(dir, "app", rel)), { recursive: true });
@@ -39,6 +60,7 @@ describe("Rust inline modules", () => {
     links = summary.symbolLinks.map((l) => `${l.sourceFile}:${l.sourceLine} ${l.callName} -> ${l.targetFile}::${l.targetSymbol}`);
   }, 120_000);
   afterAll(async () => {
+    delete process.env.CLARIFYDOC_FEATURES;
     await rm(dir, { recursive: true, force: true });
   });
 
@@ -51,5 +73,20 @@ describe("Rust inline modules", () => {
     expect(links).toContain("src/pair.rs:3 sys::ignite -> src/pair.rs::sys::ignite");
     expect(links).toContain("src/pair.rs:2 decoy::ignite -> src/pair.rs::decoy::ignite");
     expect(links.filter((l) => l.startsWith("src/pair.rs:3") && l.includes("decoy"))).toEqual([]);
+  });
+
+  it("links path and bare calls to the block's own items, never the parent module's namesake", () => {
+    const m = "src/main_block.rs";
+    expect(links).toContain(`${m}:4 pitch::helper -> ${m}::pitch::helper`);
+    expect(links).toContain(`${m}:5 pitch::helper -> ${m}::pitch::helper`);
+    expect(links).toContain(`${m}:12 pitch::helper -> ${m}::pitch::helper`);
+    expect(links).toContain(`${m}:13 run -> ${m}::run`);
+    expect(links).toContain(`${m}:14 pitch::stand::helper -> ${m}::pitch::stand::helper`);
+    expect(links).toContain(`${m}:6 pitch::stand::helper -> ${m}::pitch::stand::helper`);
+    expect(links).toContain(`${m}:6 pitch::helper -> ${m}::pitch::helper`);
+    // The file's own `helper` is called only by the bare call in `main`.
+    expect(links.filter((l) => l.endsWith(`${m}::helper`))).toEqual([`${m}:15 helper -> ${m}::helper`]);
+    expect(links).toContain(`${m}:11 crate::util::render -> src/util.rs::render`);
+    expect(links).toContain(`${m}:16 render -> ${m}::render`);
   });
 });

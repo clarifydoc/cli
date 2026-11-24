@@ -105,9 +105,12 @@ function inlineModules(lines: string[]): InlineModule[] {
 }
 
 /**
- * Functions of one name declared in two inline modules of a file (`mod home { fn kick() }`, `mod away { fn kick() }`)
- * are named by their module path (`home::kick`), as a nested type is: the per-file index then tells them apart, and a
- * bare `kick()` from inside one module is the module's own. A bare call is the only call rewritten here.
+ * Functions of one name declared in two inline modules of a file (`mod home { fn kick() }`, `mod away { fn kick() }`),
+ * or in an inline module and beside it (`mod pitch { fn helper() }`, `fn helper()`), are named by their module path
+ * (`home::kick`), as a nested type is: the per-file index then tells them apart, and a bare `kick()` from inside a
+ * module is the module's own — never the parent module's namesake. A function with no namesake keeps its bare name:
+ * another file calls it by that name through its `use`, which a prefixed name would no longer answer. A bare call is
+ * the only call rewritten here; the path calls are resolved by `inlineModuleMember`.
  */
 function nameDuplicatesByModule(analysis: FileAnalysis, modules: InlineModule[]): void {
   if (modules.length === 0) return;
@@ -120,19 +123,24 @@ function nameDuplicatesByModule(analysis: FileAnalysis, modules: InlineModule[])
     if ((count.get(f.name) ?? 0) < 2) continue;
     const mod = innermost(f.line);
     if (!mod) continue;
-    const named = `${mod.path}::${f.name}`;
-    renamed.set(`${mod.path}\0${f.name}`, named);
+    const old = f.name;
+    const named = `${mod.path}::${old}`;
+    renamed.set(`${mod.path}\0${old}`, named);
     f.name = named;
+    // An attribute route (`#[get("/clubs")] fn list`) names its handler.
+    for (const r of analysis.routes) if (r.handler === old && r.line >= mod.from && r.line <= mod.to) r.handler = named;
   }
   if (renamed.size === 0) return;
-  for (const fn of analysis.functions) {
-    for (const c of fn.calls) {
+  const rewrite = (calls: CallInfo[]): void => {
+    for (const c of calls) {
       if (c.kind !== "internal" || c.name.includes("::") || c.name.includes(".")) continue;
       const mod = innermost(c.line);
       const named = mod ? renamed.get(`${mod.path}\0${c.name}`) : undefined;
       if (named) c.name = named;
     }
-  }
+  };
+  for (const fn of analysis.functions) rewrite(fn.calls);
+  for (const cls of analysis.classes) for (const m of cls.methods) rewrite(m.calls);
 }
 
 /** The name of the function the call `path::member` reaches when it is declared directly in an inline module of the same file, else null. */
@@ -167,8 +175,9 @@ function inlineModuleMember(analysis: FileAnalysis, modules: InlineModule[], imp
   if (matched.length !== 1) return null;
   const mod = matched[0]!;
   const deeper = modules.filter((m) => m.from > mod.from && m.to <= mod.to);
-  const same = analysis.functions.filter((f) => f.name === member || f.name === `${mod.path}::${member}`);
+  const own = (f: { line: number }) => f.line >= mod.from && f.line <= mod.to && !deeper.some((m) => f.line >= m.from && f.line <= m.to);
+  const same = analysis.functions.filter((f) => (f.name === member || f.name === `${mod.path}::${member}`) && own(f));
   if (same.length !== 1) return null;
   const fn = same[0]!;
-  return fn.line >= mod.from && fn.line <= mod.to && !deeper.some((m) => fn.line >= m.from && fn.line <= m.to) ? fn.name : null;
+  return fn.name;
 }
