@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "fs/promises";
+import { readFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { analyze } from "../../../core/analyzer.js";
@@ -52,6 +53,15 @@ pub fn main() {
 }
 `,
   "src/fmt_util.rs": "pub fn format() {}\n",
+  // A `use` of the standard library or another crate binds a head that is no project module.
+  "src/disk.rs": `use std::fs;
+use std::io::{self, Write};
+pub fn save() {
+    fs::write("a", "b");
+    io::write(1);
+    std::fs::write("a", "b");
+}
+`,
   "src/pair.rs": `mod sys { pub fn ignite() {} }
 mod decoy { pub fn ignite() {} pub fn spark() { ignite(); } }
 pub fn go() { sys::ignite(); }
@@ -108,5 +118,10 @@ describe.each([["ANTLR", undefined], ["regex", "no-antlr"]])("Rust inline module
     expect(links).toContain(`${n}:5 crate::fmt_util::format -> src/fmt_util.rs::format`);
     expect(links).toContain(`${n}:6 write -> ${n}::write`);
     expect(links.filter((l) => l.startsWith(`${n}:7`) || l.startsWith(`${n}:8`))).toEqual([]);
+  });
+
+  it("keeps no row for a noise-named call through a head `use` binds from std", () => {
+    const calls = JSON.parse(readFileSync(join(dir, "out", "src", "disk.rs.json"), "utf8")).functions.flatMap((f: { calls: Array<{ name: string }> }) => f.calls.map((c) => c.name));
+    expect(calls).toEqual([]);
   });
 });

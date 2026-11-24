@@ -1,5 +1,5 @@
 import type { CallInfo, FileAnalysis } from "../../../types/analysis.js";
-import { blockEndLine } from "../shared/regex-base.js";
+import { CALL_NOISE, blockEndLine } from "../shared/regex-base.js";
 import { rustSpec } from "./index.js";
 
 /**
@@ -30,7 +30,22 @@ export function promoteModuleCalls(analysis: FileAnalysis, lines: string[]): voi
   }
   const modules = inlineModules(lines);
   nameDuplicatesByModule(analysis, modules);
+  // A noise-named leaf (`fs::write`) is kept at extraction only for a path into a project module: a head the file's
+  // `use` binds from the standard library or another crate, or a written `std::`/`core::`/`alloc::` root, is no
+  // project call and its row goes (`keepNoise`).
+  const outside = (c: CallInfo, head: string): boolean => {
+    if (!CALL_NOISE.has(c.name.slice(c.name.lastIndexOf("::") + 2))) return false;
+    if (head === "std" || head === "core" || head === "alloc") return true;
+    const foreign = (src: string): boolean => !/^(?:crate|self|super)(?:::|$)/.test(src) && !src.startsWith(".");
+    const src = imported.get(head);
+    // `use std::io::{self, Write}` binds `io` without naming it as a specifier: the source's last segment is the head.
+    return src !== undefined ? foreign(src) : analysis.imports.some((imp) => imp.source.split("::").at(-1) === head && foreign(imp.source));
+  };
   const promote = (calls: CallInfo[]) => {
+    for (let i = calls.length - 1; i >= 0; i--) {
+      const c = calls[i]!;
+      if (c.kind === "internal" && !c.name.includes(".") && c.name.includes("::") && !c.receiverType && outside(c, c.name.split("::")[0]!)) calls.splice(i, 1);
+    }
     for (const c of calls) {
       if (c.kind !== "internal" || c.name.includes(".") || !c.name.includes("::")) continue;
       const cut = c.name.lastIndexOf("::");
