@@ -54,6 +54,19 @@ const PYTHON_BUILTINS: ReadonlySet<string> = new Set<string>([
 
 const SECURITY_RULES: readonly SecurityRule[] = [
   {
+    // The generic assignment rule reads text whose strings `securityPreprocess`
+    // blanked, so it never sees a Python value. This one reads the source as
+    // written and starts at the line's own identifier (a comment or a trailing
+    // comment never matches); an annotation (`db_password: str = "…"`) is allowed.
+    category: "hardcoded-secret",
+    severity: "high",
+    raw: true,
+    pattern: /^[ \t]*(?:self\.)?\w*(?:password|passwd|pwd|secret|api[_-]?key|apikey|token|auth[_-]?token|private[_-]?key)[ \t]*(?::[^=\n]+)?=[ \t]*[rbu]?(['"])(?![\s./+])[^'"\n]{4,}\1/im,
+    message: "Hardcoded secret detected. Use environment variables or a secrets manager.",
+    priority: 10,
+    excludeTest: true,
+  },
+  {
     category: "command-injection",
     severity: "high",
     pattern: /\bos\.system\s*\(/,

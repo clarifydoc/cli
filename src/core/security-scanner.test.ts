@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scanSecurity, isVendoredSource, vendoredMinoritySet } from "./security-scanner.js";
+import { scanSecurity, isVendoredSource, vendoredMinoritySet, isSecretConstant, dropSecretConstants } from "./security-scanner.js";
 
 const cats = (src: string, filePath = "src/app.ts") =>
   scanSecurity(src, filePath, "typescript").map((i) => i.category);
@@ -168,9 +168,67 @@ describe("scanSecurity — secret snippets", () => {
   it("never quotes the secret itself", () => {
     const [short] = scanSecurity('const dbPassword = "Pr0d-Hunter2!";', "src/db.ts", "typescript");
     expect(short!.snippet).not.toContain("Hunter2");
-    expect(short!.snippet).toMatch(/^const dbPassword = "Pr0d\*+";$/);
+    expect(short!.snippet).toBe('const dbPassword = "********";');
     const [tiny] = scanSecurity("const token = 'abc123';", "src/db.ts", "typescript");
-    expect(tiny!.snippet).toBe("const token = '****';");
+    expect(tiny!.snippet).toBe("const token = '********';");
+  });
+
+  it("keeps no character of a key by format, a connection URL password or a second literal", () => {
+    const [key] = scanSecurity('const stripe = "sk_live_51H9aBcDeFgHiJkLmNoPqRs"; // ok', "src/pay.ts", "typescript");
+    expect(key!.snippet).not.toContain("sk_l");
+    const [url] = scanSecurity('const u = "postgres://app:Xy7qLmw83kd@db.example/league";', "src/db.ts", "typescript");
+    expect(url!.snippet).not.toContain("Xy7q");
+  });
+});
+
+describe("scanSecurity — a value equal to its own name", () => {
+  it("is a key name, not a secret", () => {
+    expect(cats('const API_KEY = "API_KEY";')).not.toContain("hardcoded-secret");
+    expect(cats('const o = { apiKey: "apiKey" };')).not.toContain("hardcoded-secret");
+    expect(scanSecurity('SECRET_TOKEN = "SECRET_TOKEN"', "a.py", "python").map((i) => i.category)).not.toContain("hardcoded-secret");
+    expect(cats('const API_KEY = "abc123def456";')).toContain("hardcoded-secret");
+    // The word naming the kind of value is no value (`PK_TOKEN = "token"`), nor is a shell variable named alike.
+    expect(scanSecurity('PK_TOKEN = "token"', "a.py", "python").map((i) => i.category)).not.toContain("hardcoded-secret");
+    expect(cats('run -e PASSWORD="$PASSWORD"')).not.toContain("hardcoded-secret");
+  });
+});
+
+describe("scanSecurity — Python judges the shapes TypeScript does", () => {
+  const py = (src: string) => scanSecurity(src, "app/settings.py", "python").filter((i) => i.category === "hardcoded-secret");
+  it("flags a credential-named assignment", () => {
+    expect(py('db_password = "Zx9!qLmw83kd"\n')).toHaveLength(1);
+    expect(py('db_password: str = "Zx9!qLmw83kd"\n')).toHaveLength(1);
+    expect(py('db_password = "Zx9!qLmw83kd"\n')[0]!.snippet).not.toContain("Zx9");
+  });
+  it("leaves comments, placeholders and environment reads alone", () => {
+    expect(py('# db_password = "Zx9!qLmw83kd"\n')).toEqual([]);
+    expect(py('x = 1  # db_password = "Zx9!qLmw83kd"\n')).toEqual([]);
+    expect(py('db_password = os.environ["DB_PASSWORD"]\n')).toEqual([]);
+    expect(py('db_password = "changeme"\n')).toEqual([]);
+  });
+});
+
+describe("isSecretConstant / dropSecretConstants", () => {
+  it("judges by format and by name, never an endpoint base", () => {
+    expect(isSecretConstant("stripeKey", "sk_live_51H9aBcDeFgHiJkLmNoPqRs")).toBe(true);
+    expect(isSecretConstant("db_password", "Zx9!qLmw83kd")).toBe(true);
+    expect(isSecretConstant("API_BASE", "https://league.example/api")).toBe(false);
+    expect(isSecretConstant("TOKEN_URL", "https://league.example/token")).toBe(false);
+    expect(isSecretConstant("authToken", "/api/token")).toBe(false);
+    expect(isSecretConstant("FETCH_TOKEN", "auth/fetchToken")).toBe(false);
+    expect(isSecretConstant("API_KEY", "API_KEY")).toBe(false);
+    expect(isSecretConstant("password", "changeme")).toBe(false);
+  });
+  it("drops secrets from constants, module values and field values, keeping URL bases", () => {
+    const a = {
+      stringConstants: { stripeKey: "sk_live_51H9aBcDeFgHiJkLmNoPqRs", API_BASE: "https://league.example/api" },
+      moduleValues: { db_password: "Zx9!qLmw83kd" },
+      classes: [{ fieldValues: { apiKey: "Zx9!qLmw83kd", baseUrl: "${API_BASE}" } }],
+    };
+    dropSecretConstants(a);
+    expect(a.stringConstants).toEqual({ API_BASE: "https://league.example/api" });
+    expect("moduleValues" in a).toBe(false);
+    expect(a.classes[0]!.fieldValues).toEqual({ baseUrl: "${API_BASE}" });
   });
 });
 

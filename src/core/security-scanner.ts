@@ -69,6 +69,43 @@ function angleHole(s: string): boolean {
   return open >= 0 && s.indexOf(">", open + 1) >= 0;
 }
 
+/** A name without case and separators: `API_KEY`, `apiKey` and `api-key` fold alike. */
+function foldName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** Constant names that say their value is a credential: the generic rule's words, at the end of the leaf name. */
+const SECRET_NAME = /(?:password|passwd|pwd|secret|api[_-]?key|apikey|token|auth[_-]?token|private[_-]?key|client[_-]?secret)$/i;
+
+/** A URL (its password aside) or an absolute path: an endpoint base, never a credential. */
+const ENDPOINT_VALUE = /^(?:[a-z][a-z0-9+.-]*:\/\/|\/)/i;
+
+/** A namespaced identifier (`auth/fetchToken`, `club.token`): a key name a store or an event is addressed by. */
+const NAMESPACED_NAME = /^[A-Za-z_][\w-]*(?:[/.:][A-Za-z_][\w-]*)+$/;
+
+/**
+ * Whether a constant the analysis would keep (`stringConstants`, `moduleValues`,
+ * `fieldValues`) is a credential: its value has a known key format, or its name
+ * says credential and the value is neither a placeholder, an endpoint nor a
+ * namespaced identifier. One predicate with the scanner's, so what the finding
+ * reports is what the per-file JSON drops. A URL base is never one, so URL
+ * resolution reads the same values.
+ *
+ * @param name - The constant's name (a dotted path is judged by its last part)
+ * @param value - The literal it holds
+ */
+export function isSecretConstant(name: string, value: string): boolean {
+  if (value.length < 4) return false;
+  const leaf = name.slice(name.lastIndexOf(".") + 1);
+  const quoted = `${leaf} = "${value.replace(/"/g, "")}"`;
+  const urlPass = urlPassword(value);
+  if (SECRET_FORMATS.some(([, re]) => re.test(value)) && !isPlaceholderSecret(quoted)) return true;
+  if (urlPass !== undefined) return !isPlaceholderSecret(quoted);
+  if (!SECRET_NAME.test(leaf)) return false;
+  if (/\s/.test(value) || ENDPOINT_VALUE.test(value) || /^[\s.+]/.test(value) || NAMESPACED_NAME.test(value)) return false;
+  return !isPlaceholderSecret(quoted);
+}
+
 /**
  * A matched secret that is a placeholder, not a credential: documentation
  * values (`AKIAIOSFODNN7EXAMPLE`, `your-api-key-here`), template holes
@@ -79,6 +116,9 @@ export function isPlaceholderSecret(text: string): boolean {
   // The value: the quoted literal of a `name = "value"` match, else all of it.
   const quoted = /['"`]([^'"`]*)['"`]\s*$/.exec(text);
   const value = (quoted ? quoted[1]! : text).trim();
+  // A value equal to its own name, case- and separator-folded (`API_KEY = "API_KEY"`, `apiKey: "apiKey"`), is a key name.
+  const named = quoted ? /([\w$-]+)['"`]?\s*[=:]\s*['"`][^'"`]*['"`]\s*$/.exec(text) : null;
+  if (named && foldName(named[1]!) === foldName(value) && value.length > 0) return true;
   // A connection URL's password is the part between `:` and `@`.
   const secret = urlPassword(value) ?? value;
   // Template holes in any dialect: `${x}`, `{{x}}`, Ruby `#{x}`, ERB/JSP `<%= x %>`, `<x>`, `%(x)s`.
@@ -88,7 +128,7 @@ export function isPlaceholderSecret(text: string): boolean {
   // A counting run no generator produces: a test value typed by hand
   // (`AKIA1234567890…`, `ghp_1234567890abcdefghij…`).
   if (/0123456789|1234567890|abcdefghij|ABCDEFGHIJ/.test(secret)) return true;
-  return /example|placeholder|changeme|change[-_]me|your[-_ ]|dummy|sample|redacted|replace[-_]?me|^pass(?:word)?$|^secret$|^(?:test|fake|todo|none|null|undefined)$|here$/i.test(secret);
+  return /example|placeholder|changeme|change[-_]me|your[-_ ]|dummy|sample|redacted|replace[-_]?me|^pass(?:word)?$|^secret$|^(?:api[-_]?)?(?:token|key)$|^(?:test|fake|todo|none|null|undefined)$|here$/i.test(secret);
 }
 
 const GENERIC_RULES: SecurityRule[] = [
@@ -238,25 +278,23 @@ export function vendoredMinoritySet(
 
 /**
  * The line a finding quotes, trimmed and capped. A hardcoded-secret line has
- * its string values masked: the snippet travels into project-summary.json,
- * report.html and MCP answers, and the report must not be how a credential
- * leaves the repository. A long value keeps its first 4 characters (enough to
- * tell an `AKIA…` key from a `ghp_…` token), a short one keeps none.
+ * every string value replaced by a fixed mask: the snippet travels into
+ * project-summary.json, report.html, SARIF and MCP answers, and none of them
+ * may be how a credential, or a prefix of one, leaves the repository. The
+ * finding is its kind and location; the line shows the name, never the value.
  */
 function snippetOf(line: string, category: SecurityIssue["category"]): string {
   let text = line.trim();
   if (category === "hardcoded-secret") {
-    const mask = (value: string): string =>
-      `${value.length >= 12 ? value.slice(0, 4) : ""}${"*".repeat(Math.min(8, Math.max(4, value.length - 4)))}`;
+    const mask = "********";
     // A connection URL's password, then any credential by its format (quoted
     // or not), then every remaining string literal on the line.
-    text = text.replace(/(:\/\/[^\s:@/'"`]+:)([^\s@/'"`]+)@/g, (_m, head: string, pass: string) => `${head}${mask(pass)}@`);
+    text = text.replace(/(:\/\/[^\s:@/'"`]+:)([^\s@/'"`]+)@/g, (_m, head: string) => `${head}${mask}@`);
     for (const [, re] of SECRET_FORMATS) {
       if (re.source.startsWith("-----")) continue;
-      text = text.replace(new RegExp(re.source, "g"), (m) => mask(m));
+      text = text.replace(new RegExp(re.source, "g"), mask);
     }
-    text = text.replace(/(['"`])((?:\\.|(?!\1)[^\\])+)\1/g, (_m, q: string, value: string) =>
-      value.includes("****") ? `${q}${value}${q}` : `${q}${mask(value)}${q}`);
+    text = text.replace(/(['"`])((?:\\.|(?!\1)[^\\])+)\1/g, (_m, q: string) => `${q}${mask}${q}`);
   }
   return text.substring(0, 100);
 }
@@ -468,4 +506,33 @@ export function scanSecurity(
     if (!issue.cwe && CATEGORY_CWE[issue.category]) issue.cwe = CATEGORY_CWE[issue.category];
   }
   return issues;
+}
+
+/**
+ * Drop every credential from the constants a file's analysis keeps
+ * (`stringConstants`, `moduleValues`, each class's `fieldValues`), in place:
+ * the per-file JSON is committed, shared and uploaded, and no later pass needs
+ * a secret's value. An emptied record is removed.
+ */
+export function dropSecretConstants(analysis: { stringConstants?: Record<string, string>; moduleValues?: Record<string, string>; classes?: Array<{ fieldValues?: Record<string, string> }> }): void {
+  const clean = (record: Record<string, string> | undefined): Record<string, string> | undefined => {
+    if (!record) return record;
+    let out: Record<string, string> | undefined;
+    for (const [name, value] of Object.entries(record)) {
+      if (typeof value !== "string" || !isSecretConstant(name, value)) continue;
+      out ??= { ...record };
+      delete out[name];
+    }
+    return out ?? record;
+  };
+  for (const key of ["stringConstants", "moduleValues"] as const) {
+    const kept = clean(analysis[key]);
+    if (kept && Object.keys(kept).length === 0) delete analysis[key];
+    else if (kept) analysis[key] = kept;
+  }
+  for (const c of analysis.classes ?? []) {
+    const kept = clean(c.fieldValues);
+    if (kept && Object.keys(kept).length === 0) delete c.fieldValues;
+    else if (kept) c.fieldValues = kept;
+  }
 }

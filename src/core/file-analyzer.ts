@@ -24,7 +24,7 @@ import { extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { pluginFor, preprocessFile, astHooksFor, inferFileFrameworks, ensureLanguagesLoaded, manifestFor, regexSpecFor } from "../extractors/registry.js";
 import { computeComplexity } from "./complexity-analyzer.js";
 import { attachDocComments } from "./doc-comments.js";
-import { scanSecurity, isMinifiedSource, isVendoredSource } from "./security-scanner.js";
+import { scanSecurity, isMinifiedSource, isVendoredSource, dropSecretConstants } from "./security-scanner.js";
 import { isSuppressed } from "./security-rules.js";
 import { isGeneratedSource, vendoredLibraryOf } from "./generated-file-detector.js";
 import { extractTypeReferences } from "./type-reference-extractor.js";
@@ -377,6 +377,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
 
   /** Write the file's JSON, or hand it back as bytes for the caller to write (`deferWrite`). */
   const store = async (a: FileAnalysis): Promise<{ json?: Uint8Array }> => {
+    dropSecretConstants(a);
     if (!task.deferWrite) {
       await writeFileAnalysis(a, outputOpts);
       return {};
