@@ -22,8 +22,8 @@ export const KNOWN_FEATURES: Readonly<Record<string, { description: string; defa
     default: true,
   },
   "flat-tree": {
-    description: "Read the syntax trees of the languages validated for it (every tree-sitter plugin) once into plain arrays instead of through web-tree-sitter's nodes; the output is the same",
-    default: false,
+    description: "Read every tree-sitter syntax tree once into plain arrays instead of through web-tree-sitter's nodes (`no-flat-tree` reads the nodes); the output is the same",
+    default: true,
   },
   taint: {
     description: "Follow request input to a sink in Go and Ruby handlers with their tree-sitter grammars; a file with a syntax error is not followed",
