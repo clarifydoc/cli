@@ -944,6 +944,12 @@ export interface ImportInfo {
   isType: boolean;
   line: number;
   /**
+   * The lines of the function whose body holds the import (Python `def f(): from x import y`, decorators
+   * included): the name binds there and in the functions nested in it, not in the rest of the file. Absent for
+   * an import at the module's or a class body's level.
+   */
+  scope?: { line: number; endLine: number };
+  /**
    * The file is RUN as a program of its own (`./scripts/build.sh`, PowerShell
    * `& .\deploy.ps1`), not loaded: a dependency, but none of its names come
    * into the importer's scope. Absent for a real import.

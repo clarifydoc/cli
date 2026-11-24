@@ -69,18 +69,24 @@ export class PythonImportExportExtractor extends ImportExportExtractor {
     return imports;
   }
 
-  protected collectImports(node: Node, imports: ImportInfo[], typeOnly = false): void {
+  protected collectImports(node: Node, imports: ImportInfo[], typeOnly = false, scope?: ImportInfo["scope"]): void {
     let typeCheckingBranch: number | undefined;
     if (node.type === "if_statement" && isTypeCheckingGuard(node)) {
       typeCheckingBranch = node.childForFieldName("consequence")?.id;
     }
     for (const child of node.children) {
-      if (child.type === "import_statement") {
-        this.parseImportStatement(child, imports, typeOnly);
-      } else if (child.type === "import_from_statement") {
-        this.parseImportFromStatement(child, imports, typeOnly);
+      if (child.type === "import_statement" || child.type === "import_from_statement") {
+        const before = imports.length;
+        if (child.type === "import_statement") this.parseImportStatement(child, imports, typeOnly);
+        else this.parseImportFromStatement(child, imports, typeOnly);
+        // An import inside a function binds in that function (and the ones it holds) only.
+        if (scope) for (let i = before; i < imports.length; i++) imports[i]!.scope = scope;
       } else if (STATEMENT_CONTAINERS.has(child.type)) {
-        this.collectImports(child, imports, typeOnly || child.id === typeCheckingBranch);
+        // The span includes the decorators, as the function's own lines do.
+        const own = child.type === "function_definition"
+          ? { line: (child.parent?.type === "decorated_definition" ? child.parent : child).startPosition.row + 1, endLine: child.endPosition.row + 1 }
+          : undefined;
+        this.collectImports(child, imports, typeOnly || child.id === typeCheckingBranch, own ?? scope);
       }
     }
   }

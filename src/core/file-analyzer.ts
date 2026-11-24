@@ -31,7 +31,7 @@ import { extractTypeReferences } from "./type-reference-extractor.js";
 import { enrichFileDataSources } from "./import-index.js";
 import type { BuildMacros, ParsedStructure, VariableAliasBinding } from "../types/language-plugin.js";
 import { featureEnabled } from "./feature-flags.js";
-import type { CallInfo, ClassInfo, FunctionInfo, RouteFact } from "../types/analysis.js";
+import type { CallInfo, ClassInfo, FunctionInfo, ImportInfo, RouteFact } from "../types/analysis.js";
 import { isTestFile } from "./test-file-detector.js";
 import {
   inferExpoRouterRoutes,
@@ -761,12 +761,16 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       }
       return out;
     };
+    // An import inside a function (`ImportInfo.scope`) binds for the callables within its lines only.
+    const scoped = analysis.imports.some((i) => i.scope);
+    const importsFor = (fn: { line: number; endLine: number }): ImportInfo[] =>
+      scoped ? analysis.imports.filter((i) => !i.scope || (i.scope.line <= fn.line && fn.endLine <= i.scope.endLine)) : analysis.imports;
     for (const fn of analysis.functions) {
-      fn.calls = classifyCalls(fn.calls, analysis.imports, language, variableAliases, localSymbols, paramNames(fn), receiverTypes(fn), receiverOrigins(fn), ownFunctions);
+      fn.calls = classifyCalls(fn.calls, importsFor(fn), language, variableAliases, localSymbols, paramNames(fn), receiverTypes(fn), receiverOrigins(fn), ownFunctions);
     }
     for (const cls of analysis.classes) {
       for (const method of cls.methods) {
-        method.calls = classifyCalls(method.calls, analysis.imports, language, variableAliases, localSymbols, paramNames(method), receiverTypes(method, cls), receiverOrigins(method), ownFunctions);
+        method.calls = classifyCalls(method.calls, importsFor(method), language, variableAliases, localSymbols, paramNames(method), receiverTypes(method, cls), receiverOrigins(method), ownFunctions);
       }
     }
     for (const route of analysis.routes) {
