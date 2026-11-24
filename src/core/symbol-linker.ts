@@ -2122,8 +2122,8 @@ interface LinkMemos {
   declaredLeaves?: Set<string>;
   /** `packageFilesOf` before the caller's own file is cut out, per (family, directory); callers only read the arrays. */
   packageDirFiles?: Map<string, string[]>;
-  /** The names files hold dispatch maps under, per language family (`mapHolderNames`; key `""` = every file). */
-  mapHolderNames?: Map<string, Set<string>>;
+  /** The language families in which some file holds a dispatch map (`familyHoldsMaps`; `""` = no family). */
+  mapFamilies?: Set<string>;
 }
 
 /** Lookup tables built once per buildSymbolLinks run, shared by every call resolution. */
@@ -2384,7 +2384,8 @@ function packageFilesOf(ctx: LinkContext, dir: string, fromFile: string): readon
     files = (ctx.directoryFiles.get(dir ? `${dir}/` : "") ?? []).filter((f) => extensionFamily(f) === family && !packageTest(ctx, f));
     memo.set(key, files);
   }
-  return files.includes(fromFile) ? files.filter((f) => f !== fromFile) : files;
+  const slash = fromFile.lastIndexOf("/");
+  return (slash < 0 ? "" : fromFile.slice(0, slash)) === dir ? files.filter((f) => f !== fromFile) : files;
 }
 
 /**
@@ -5101,30 +5102,15 @@ function mapHoldersOf(analysis: FileAnalysis): ReadonlySet<string> {
 }
 
 /**
- * The names files of `fromFile`'s language family hold dispatch maps under (`mapHoldersOf`), built once per run.
- * An import resolves within its importer's family, so a map another file holds is one of these; a file of no family
- * (HTML) reads every file's.
+ * Whether some file of `fromFile`'s language family holds a dispatch map (`mapHoldersOf`), the families built once
+ * per run. An import resolves within its importer's family, so a map another file holds is in one of these; a file
+ * of no family (HTML) asks whether any file holds one.
  */
-function mapHolderNames(ctx: LinkContext, fromFile: string): ReadonlySet<string> {
-  let byFamily = ctx.memos.mapHolderNames;
-  if (!byFamily) {
-    byFamily = new Map([["", new Set<string>()]]);
-    for (const a of ctx.analyses) {
-      const holders = mapHoldersOf(a);
-      if (holders.size === 0) continue;
-      const family = extensionFamily(a.filePath) ?? "";
-      let names = byFamily.get(family);
-      if (!names) byFamily.set(family, (names = new Set()));
-      for (const h of holders) {
-        names.add(h);
-        byFamily.get("")!.add(h);
-      }
-    }
-    ctx.memos.mapHolderNames = byFamily;
-  }
-  return byFamily.get(extensionFamily(fromFile) ?? "") ?? EMPTY_NAMES;
+function familyHoldsMaps(ctx: LinkContext, fromFile: string): boolean {
+  const families = (ctx.memos.mapFamilies ??= new Set(ctx.analyses.filter((a) => mapHoldersOf(a).size > 0).map((a) => extensionFamily(a.filePath) ?? "")));
+  const family = extensionFamily(fromFile);
+  return family === null ? families.size > 0 : families.has(family);
 }
-const EMPTY_NAMES: ReadonlySet<string> = new Set();
 
 /**
  * A call through a dispatch map the caller's scope declares (`CallInfo.passed: "property"`):
@@ -5145,8 +5131,10 @@ function dispatchMapCall(
 ): SymbolLink | null | undefined {
   const own = mapHoldersOf(analysis);
   const simple = MAP_CALL.exec(call.name);
-  // Where no file of the caller's family holds a map, an imported one cannot exist either (its holder is the exporter's own).
-  if (simple ? !own.has(simple[1]!) && mapHolderNames(ctx, sourceFile).size === 0 : !(DEEP_MEMBER_CALL.test(call.name) && own.has(call.name.slice(0, call.name.indexOf("."))))) return undefined;
+  if (simple) {
+    // Where no file of the caller's family holds a map, an imported one cannot exist either (its holder is the exporter's own).
+    if (!own.has(simple[1]!) && !familyHoldsMaps(ctx, sourceFile)) return undefined;
+  } else if (!DEEP_MEMBER_CALL.test(call.name) || !own.has(call.name.slice(0, call.name.indexOf(".")))) return undefined;
   // A map entry whose value leads back to the call being resolved names no function: it draws no edge.
   const inFlight = (ctx.mapCallsInFlight ??= new Set());
   const key = `${sourceFile}\0${sourceSymbol}\0${call.name}`;
