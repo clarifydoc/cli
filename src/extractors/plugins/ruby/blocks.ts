@@ -25,6 +25,9 @@ import { findEndLine } from "../shared/regex-base.js";
 export type RubyBlockEnds = ReadonlyMap<number, number>;
 
 const IDENT = /[A-Za-z0-9_]/;
+/** The ASCII characters the blanking scan acts on in code: a newline, `#`, braces, `$`, quotes, `?`, `<`, `%`, `/`. */
+const SPECIAL = new Uint8Array(128);
+for (const ch of "\n#{}$\"'`?<%/") SPECIAL[ch.charCodeAt(0)] = 1;
 const PAIRS: Record<string, string> = { "(": ")", "[": "]", "{": "}", "<": ">" };
 
 interface Frame {
@@ -82,13 +85,18 @@ export function blankRubyNonCode(source: string, options: BlankOptions = {}): st
   const heredocs: Array<{ id: string; indented: boolean }> = [];
 
   let i = 0;
+  // Declared once, not per character: a literal's frame decides whether it hides, a code frame whether it fills.
+  let current: Frame = stack[0]!;
+  const hide = (from: number, to: number): void => { if (!current.keep) fillIn(from, to); };
+  let hidden = false;
+  const keep = (n: number): void => { if (hidden) fillIn(i, i + n); i += n; };
   while (i < source.length) {
     const frame = stack[stack.length - 1]!;
+    current = frame;
     const c = source[i]!;
     const lineStart = i === 0 || source[i - 1] === "\n";
 
     if (frame.kind === "literal") {
-      const hide = (from: number, to: number): void => { if (!frame.keep) fillIn(from, to); };
       if (c === "\n" && frame.singleLine) { stack.pop(); continue; }
       if (c === "\\") { hide(i, i + 2); i += 2; continue; }
       if (frame.interp && c === "#" && source[i + 1] === "{") {
@@ -119,8 +127,12 @@ export function blankRubyNonCode(source: string, options: BlankOptions = {}): st
     }
 
     // Code (the file's own, or the inside of a `#{…}`, which belongs to its string).
-    const hidden = frame.interp && !frame.reopen;
-    const keep = (n: number): void => { if (hidden) fillIn(i, i + n); i += n; };
+    hidden = frame.interp && !frame.reopen;
+    // A character no rule below reads, in code that is kept: the common case, passed over at once.
+    if (!hidden) {
+      const cc = c.charCodeAt(0);
+      if ((cc >= 128 || !SPECIAL[cc]) && !(lineStart && (cc === 61 || cc === 95))) { i++; continue; }
+    }
 
     if (c === "\n") {
       i++;

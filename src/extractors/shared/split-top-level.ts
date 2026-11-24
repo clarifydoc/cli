@@ -40,7 +40,9 @@ export function splitTopLevel(text: string, o: SplitTopLevelOptions = {}): strin
   let start = 0;
   let quote = "";
   let stopped = false;
-  for (let i = 0; i < text.length; i++) {
+  // No separator in the text: one piece, whatever the brackets and quotes say (a closer ends the list only with `stopAtCloser`).
+  const scan = o.stopAtCloser || (o.anyOf !== undefined ? [...o.anyOf].some((c) => text.includes(c)) : sep !== "" && text.includes(sep));
+  if (scan) for (let i = 0; i < text.length; i++) {
     const ch = text[i]!;
     if (quote) {
       if (ch === "\\" && escapes.includes(quote)) i++;

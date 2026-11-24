@@ -28,6 +28,9 @@ const HOOKS = new Set(["before", "after", "around", "prepend_before", "append_af
  */
 const BLOCK = /^(\s*)(?:RSpec\s*\.\s*)?([a-z_]+)\b(?!:)\s*(\(?)\s*(.*?)\s*\)?\s*(?:do(?:\s*\|[^|]*\|)?|\{(?:\s*\|[^|]*\|)?.*)\s*$/;
 
+/** The word `BLOCK` opens with, found without its lazy argument scan. */
+const LEAD = /^\s*(?:RSpec\s*\.\s*)?([a-z_]+)\b(?!:)/;
+
 /** Cheap gate: a spec file names a group the RSpec way. */
 const GATE = /^\s*(?:RSpec\s*\.\s*)?(?:describe|context|feature|shared_examples)\b/;
 
@@ -135,7 +138,12 @@ export function rspecFunctions(lines: string[], fns: FunctionInfo[], callPattern
   const stack: Block[] = [];
   for (let i = 0; i < lines.length; i++) {
     while (stack.length && stack[stack.length - 1]!.end < i) stack.pop();
-    const m = code[i]!.match(BLOCK);
+    // The block's head ends in `do` or holds a `{`, and opens with a group, example or hook word: the other lines never match.
+    const text = code[i]!;
+    if (!text.includes("do") && !text.includes("{")) continue;
+    const lead = LEAD.exec(text);
+    if (!lead || !(GROUPS.has(lead[1]!) || EXAMPLES.has(lead[1]!) || HOOKS.has(lead[1]!))) continue;
+    const m = text.match(BLOCK);
     if (!m) continue;
     const word = m[2]!;
     const kind = GROUPS.has(word) ? "suite" : EXAMPLES.has(word) ? "case" : HOOKS.has(word) ? "hook" : null;

@@ -597,6 +597,8 @@ function rewriteConstantLocals(lines: readonly string[], fn: FunctionInfo): void
   if (fn.calls.length === 0) return;
   const assigned = new Map<string, string[]>();
   for (const [, text] of bodyLines(lines, fn)) {
+    // Both patterns need an `=`.
+    if (!text.includes("=")) continue;
     const m = /^\s*([a-z_]\w*)\s*=(?!=)\s*((?:::)?[A-Z]\w*(?:::[A-Z]\w*)*)\s*(?:#.*)?$/.exec(text);
     if (m) (assigned.get(m[1]!) ?? assigned.set(m[1]!, []).get(m[1]!)!).push(m[2]!);
     else {
@@ -604,6 +606,7 @@ function rewriteConstantLocals(lines: readonly string[], fn: FunctionInfo): void
       if (other) (assigned.get(other[1]!) ?? assigned.set(other[1]!, []).get(other[1]!)!).push("");
     }
   }
+  if (assigned.size === 0) return;
   const body = bodyLines(lines, fn).map(([, t]) => t).join("\n");
   for (const [name, values] of assigned) {
     // A block parameter of the same name (`|columns|`) is another variable.

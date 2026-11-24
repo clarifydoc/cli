@@ -31,6 +31,8 @@ const STDLIB_CONSTS = new Set(["Time", "File", "Dir", "JSON", "Math", "Kernel", 
 const CLOSURE_HEAD = /^(?:->\s*(?:\(([^)]*)\)|([A-Za-z_][\w\s,*&=]*?))?\s*\{|(?:lambda|proc|Proc\.new)\s*\{)/;
 /** A `do … end` closure's head, the block's own `do` ending the line: `lambda do |x|`, `-> do`, `->(club) do`. */
 const DO_LINE = /(?:\b(?:lambda|proc|Proc\.new)|->\s*(?:\([^)]*\))?)\s+do\b(?:\s*\|[^|]*\|)?\s*$/;
+/** A character the statement reader counts: a quote or a bracket. */
+const BRACKETY = /["'()\[\]{}]/;
 const DO_HEAD = /^(?:->\s*(?:\(([^)]*)\))?|(?:lambda|proc|Proc\.new))\s+do\b/;
 
 /** Builtin iterators that run the block handed to them (`items.each(&handler)`). */
@@ -52,21 +54,23 @@ function statementsOf(code: readonly string[], from: number, to: number): Array<
   const out: Array<{ text: string; line: number; offsets: number[] }> = [];
   let cur: { text: string; line: number; offsets: number[] } | null = null;
   let depth = 0;
-  const ends = rubyBlockEndsOf(code);
+  // The block ends are read only for a `lambda do` / `-> do` closure: most files hold none, and the scan is a whole file's.
+  let ends: ReturnType<typeof rubyBlockEndsOf> | undefined;
   for (let i = from; i < to && i < code.length; i++) {
     // Comments are already blanked in the code lines; a `#` left is inside a string (`"#{id}"`).
     const head = code[i] ?? "";
     if (!cur && head.trim() === "") continue;
     if (!cur) cur = { text: "", line: i + 1, offsets: [] };
     // A `lambda do |x|` / `-> do` closure carries the statement through its `end`, its body lines joined with `; `.
-    const blockEnd = DO_LINE.test(blankStrings(head.trim())) ? ends.get(i) : undefined;
+    const blockEnd = head.includes("do") && DO_LINE.test(blankStrings(head.trim())) ? (ends ??= rubyBlockEndsOf(code)).get(i) : undefined;
     const last = blockEnd !== undefined && blockEnd - 1 > i && blockEnd - 1 < to ? blockEnd - 1 : i;
     for (let k = i; k <= last; k++) {
       const raw = code[k] ?? "";
       cur.offsets.push(cur.text.length);
       if (raw.trim() !== "") cur.text += (cur.text ? (k <= i + 1 ? " " : "; ") : "") + raw.trim();
       let quote: string | null = null;
-      for (const ch of raw) {
+      // A line with no quote or bracket moves neither the depth nor a quote.
+      if (BRACKETY.test(raw)) for (const ch of raw) {
         if (quote) { if (ch === quote) quote = null; continue; }
         if (ch === '"' || ch === "'") quote = ch;
         else if ("([{".includes(ch)) depth++;
@@ -174,7 +178,7 @@ class Reader {
       this.valuesOf(tern[2]!, line, into);
       return into;
     }
-    const alternatives = splitTop(e, "||");
+    const alternatives = e.includes("||") ? splitTop(e, "||") : [e];
     if (alternatives.length > 1) {
       for (const part of alternatives) this.valuesOf(part, line, into);
       return into;
