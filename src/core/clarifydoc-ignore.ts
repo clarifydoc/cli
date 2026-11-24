@@ -245,10 +245,44 @@ export function ignoredDirectories(
   const final = patterns.slice(lastNegated + 1);
   if (final.length === 0) return undefined;
   const rootPosix = toPosix(resolve(root));
+  // A walk asks about a directory after its parent, and `coversSubtree` is a test of every leading
+  // run of the path: the answer for a directory is its parent's, or the one new run. Only where the
+  // parent is neither the root nor a pattern's anchor (a path equal to a base has the empty
+  // relative path, which the leading runs of its children do not repeat).
+  const answers = new Map<string, boolean>();
+  const bases = new Set<string>([rootPosix, ...final.map((p) => toPosix(p.anchor))]);
   return (absDir) => {
     const path = toPosix(absDir);
-    return final.some((pattern) => coversSubtree(path, rootPosix, pattern));
+    const known = answers.get(path);
+    if (known !== undefined) return known;
+    const slash = path.lastIndexOf("/");
+    const parent = slash > 0 && slash < path.length - 1 ? path.slice(0, slash) : null;
+    const parentAnswer = parent !== null && !bases.has(parent) ? answers.get(parent) : undefined;
+    let covered: boolean;
+    if (parentAnswer === true) covered = true;
+    else if (parentAnswer === false) covered = final.some((pattern) => coversNewRun(path, rootPosix, pattern));
+    else covered = final.some((pattern) => coversSubtree(path, rootPosix, pattern));
+    answers.set(path, covered);
+    return covered;
   };
+}
+
+/**
+ * `coversSubtree` for a path whose parent is not covered: only the run that ends at the path itself
+ * (anchored) or its last segment (unanchored) is new.
+ */
+function coversNewRun(path: string, rootPosix: string, pattern: IgnorePattern): boolean {
+  const anchorPosix = toPosix(pattern.anchor);
+  if (pattern.anchored) {
+    const rel = relativeBelow(path, anchorPosix);
+    return rel !== null && fnmatch(rel, pattern.glob);
+  }
+  const lastSegment = (rel: string): string => rel.slice(rel.lastIndexOf("/") + 1);
+  const rel = relativeBelow(path, rootPosix);
+  if (rel !== null && fnmatch(lastSegment(rel), pattern.glob)) return true;
+  if (anchorPosix === rootPosix) return false;
+  const relAnchor = relativeBelow(path, anchorPosix);
+  return relAnchor !== null && fnmatch(lastSegment(relAnchor), pattern.glob);
 }
 
 /** `matches`, minus the whole-path `**` match a path below may not repeat. */

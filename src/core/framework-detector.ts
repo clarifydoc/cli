@@ -299,6 +299,9 @@ export interface MultiRootFrameworks {
   byRoot: Map<string, FrameworkDetection[]>;
 }
 
+/** Sub-project roots read at once by `detectFrameworksAcrossRoots`. */
+const ROOT_READ_BATCH = 32;
+
 /**
  * Detect frameworks at the analyzed root AND at each sub-project root, merging
  * the results. Build manifests (`package.json`, `Gemfile`, `*.csproj`, …) are
@@ -319,11 +322,16 @@ export async function detectFrameworksAcrossRoots(
   const roots = ["", ...subRoots].filter((r, i, a) => a.indexOf(r) === i);
   const byRoot = new Map<string, FrameworkDetection[]>();
   const merged = new Map<string, FrameworkDetection>();
-  for (const rel of roots) {
-    const info = await gatherProjectInfo(rel ? resolve(projectRoot, rel) : projectRoot, projectRoot);
-    const fws = detectFrameworks(info);
-    byRoot.set(rel, fws);
-    for (const f of fws) if (!merged.has(f.id)) merged.set(f.id, f);
+  // Roots are read in parallel batches (a repository with hundreds of sub-projects idled on one
+  // read at a time) and judged in path order, so "first root wins" is unchanged.
+  for (let i = 0; i < roots.length; i += ROOT_READ_BATCH) {
+    const batch = roots.slice(i, i + ROOT_READ_BATCH);
+    const infos = await Promise.all(batch.map((rel) => gatherProjectInfo(rel ? resolve(projectRoot, rel) : projectRoot, projectRoot)));
+    batch.forEach((rel, k) => {
+      const fws = detectFrameworks(infos[k]);
+      byRoot.set(rel, fws);
+      for (const f of fws) if (!merged.has(f.id)) merged.set(f.id, f);
+    });
   }
   return {
     merged: [...merged.values()].sort((a, b) => byOrdinal(a.id, b.id)),

@@ -253,6 +253,25 @@ describe("ignoredDirectories — what a walk may skip", () => {
     expect(pruned("a/b")).toBe(false);
   });
 
+  it("answers a walk's directories the way a fresh question about each does", () => {
+    outputIgnore("/cache/.runs/\nscratch\nsrc/gen*\n/a/*/b\n*.tmp\ndeep/**/x\n");
+    const patterns = loadIgnorePatterns(root);
+    const walked = ignoredDirectories(root, patterns)!;
+    const names = ["cache", ".runs", "scratch", "src", "gen1", "genx", "a", "m", "b", "d.tmp", "deep", "x", "y", "pkg"];
+    let checked = 0;
+    const visit = (rel: string, depth: number): void => {
+      for (const name of names) {
+        const child = rel ? `${rel}/${name}` : name;
+        const fresh = ignoredDirectories(root, patterns)!(join(root, child));
+        expect(walked(join(root, child)), child).toBe(fresh);
+        checked++;
+        if (depth < 3 && !fresh) visit(child, depth + 1);
+      }
+    };
+    visit("", 0);
+    expect(checked).toBeGreaterThan(500);
+  });
+
   it("is undefined when there is nothing to prune", () => {
     expect(ignoredDirectories(root, loadIgnorePatterns(root))).toBeUndefined();
     outputIgnore("x\n!y\n");
