@@ -66,7 +66,27 @@ function boundHeapGrowth(on: boolean): void {
   runningPools += on ? 1 : -1;
   if (on && runningPools === 1) v8.setFlagsFromString(`--heap-growing-percent=${POOL_HEAP_GROWING_PERCENT}`);
   // 0 is V8's own default: growth by its throughput heuristic.
-  if (!on && runningPools === 0) v8.setFlagsFromString("--heap-growing-percent=0");
+  if (!on && runningPools === 0) v8.setFlagsFromString(`--heap-growing-percent=${inProcessBound}`);
+}
+
+/** The in-process bound held now (0 = none), which the end of a pool goes back to. */
+let inProcessBound = 0;
+
+/**
+ * Bounds V8's heap growth, at a pool's percentage (30 cut no more memory and cost more CPU), for a run whose file stage is in this process (no pool: under 200 files or
+ * `CLARIFYDOC_WORKERS=0`), as a pool does for its workers; the returned function lifts it. The ANTLR token
+ * and DFA garbage of one heap otherwise sits in headroom V8 sizes for throughput (a 6,000-file Go repository
+ * in process: about -500 MB peak RSS). Left alone when a pool runs, when the process was started with its own
+ * growth, or with `CLARIFYDOC_HEAP_GROWING_PERCENT=0`.
+ */
+export function boundInProcessHeapGrowth(): () => void {
+  if (POOL_HEAP_GROWING_PERCENT <= 0 || heapGrowthGivenByUser() || runningPools > 0 || inProcessBound > 0) return () => undefined;
+  inProcessBound = POOL_HEAP_GROWING_PERCENT;
+  v8.setFlagsFromString(`--heap-growing-percent=${inProcessBound}`);
+  return () => {
+    inProcessBound = 0;
+    if (runningPools === 0) v8.setFlagsFromString("--heap-growing-percent=0");
+  };
 }
 
 /** How long one file may take in a worker before it is killed and reported failed. */

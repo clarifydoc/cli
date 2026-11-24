@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { pathToFileURL } from "url";
-import { AnalysisWorkerPool } from "./worker-pool.js";
+import { AnalysisWorkerPool, boundInProcessHeapGrowth } from "./worker-pool.js";
 import type { FileTask } from "./file-analyzer.js";
 
 /**
@@ -109,5 +109,17 @@ describe("AnalysisWorkerPool", () => {
     const done = await Promise.all([pool.run(task("a.ts")), pool.run(task("b.ts")), pool.run(task("c.ts"))]);
     expect(done.map((d) => (d as unknown as { analysis: { filePath: string } }).analysis.filePath)).toEqual(["a.ts", "b.ts", "c.ts"]);
     await pool.destroy();
+  });
+});
+
+describe("boundInProcessHeapGrowth", () => {
+  it("is held until lifted, and a second request while held changes nothing", () => {
+    const lift = boundInProcessHeapGrowth();
+    const again = boundInProcessHeapGrowth();
+    expect(() => again()).not.toThrow();
+    expect(() => lift()).not.toThrow();
+    // Held again after the first was lifted.
+    const next = boundInProcessHeapGrowth();
+    next();
   });
 });

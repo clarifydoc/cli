@@ -64,7 +64,7 @@ import {
 import { acquireAnalysisLock, readLockOwner, AnalysisLockedError } from "./analysis-lock.js";
 import { buildReportPayload, loadReportSummary } from "./report-payload.js";
 import { analyzeFileOutcome, importRewriteStamp, type FileTask, type FileResult, type SkippedFile } from "./file-analyzer.js";
-import { AnalysisWorkerPool, type FailedFile } from "./worker-pool.js";
+import { AnalysisWorkerPool, boundInProcessHeapGrowth, type FailedFile } from "./worker-pool.js";
 import { byOrdinal } from "./ordinal.js";
 import { clearTsconfigAliasCache, loadTsconfigAliases } from "../extractors/shared/tsconfig-aliases.js";
 import { shareDirectoryEntries } from "../extractors/shared/dir-listings.js";
@@ -743,6 +743,9 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
  *
  * @returns The counts the CLI prints and the lists of changed/removed files
  */
+/** Lifts the in-process heap-growth bound `runPipeline` set (analyses run one at a time, under the lock). */
+let liftInProcessHeapBound: () => void = () => undefined;
+
 async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Every walk of this run reads a directory once: the listings are shared until it ends.
   const endSharing = shareDirectoryEntries();
@@ -750,6 +753,8 @@ async function analyzeProject(options: AnalyzeOptions): Promise<AnalyzeResult> {
     return await runPipeline(options);
   } finally {
     endSharing();
+    liftInProcessHeapBound();
+    liftInProcessHeapBound = () => undefined;
   }
 }
 
@@ -1062,6 +1067,8 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
 
   progress.status("Reading cached results and analyzing changed files...");
   let results: (FileResult | null)[];
+  // No pool: this heap does the whole file stage, so its growth is bounded like a worker's, to the run's end.
+  if (!pool) liftInProcessHeapBound = boundInProcessHeapGrowth();
   try {
     results = await runWithConcurrency(
       files,
