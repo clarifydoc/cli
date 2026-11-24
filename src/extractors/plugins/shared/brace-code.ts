@@ -180,6 +180,22 @@ export interface BraceCodeHooks {
   startsInCode: (lines: readonly string[], i: number) => boolean;
 }
 
+/** The blanked text of one file's lines, per lexicon and form: the hooks and a plugin's own readers share one blanking. */
+const blankedTexts = new WeakMap<readonly string[], Map<BraceLexicon, [string?, string?]>>();
+
+/**
+ * `blankCode` of the joined `lines`, computed once per lines array, lexicon and `keepSingleLine` form (the array is the
+ * file's, so nothing outlives it).
+ */
+export function blankedText(lines: readonly string[], lex: BraceLexicon, keepSingleLine = false): string {
+  let byLex = blankedTexts.get(lines);
+  if (!byLex) blankedTexts.set(lines, (byLex = new Map()));
+  let forms = byLex.get(lex);
+  if (!forms) byLex.set(lex, (forms = []));
+  const at = keepSingleLine ? 1 : 0;
+  return (forms[at] ??= blankCode(lines.join("\n"), lex, keepSingleLine));
+}
+
 /**
  * The hooks a brace language's `RegexLangSpec` takes from its lexicon,
  * computed once per file. `callCode` may rewrite the call scan's lines
@@ -198,7 +214,7 @@ export function braceCodeHooks(
   const keptOf = (lines: readonly string[]): readonly string[] => {
     let k = kept.get(lines);
     if (!k) {
-      k = blankCode(lines.join("\n"), lex, true).split("\n");
+      k = blankedText(lines, lex, true).split("\n");
       kept.set(lines, k);
     }
     return k;
@@ -206,7 +222,7 @@ export function braceCodeHooks(
   const codeOf = (lines: readonly string[]): string[] => {
     let code = blanked.get(lines);
     if (!code) {
-      code = blankCode(lines.join("\n"), lex).split("\n");
+      code = blankedText(lines, lex).split("\n");
       blanked.set(lines, code);
     }
     return code;

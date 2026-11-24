@@ -1,5 +1,5 @@
 import type { DataSourceInfo, PathArgCall } from "../../../types/analysis.js";
-import { blankCode } from "../shared/brace-code.js";
+import { blankCode, blankedText } from "../shared/brace-code.js";
 import { RUST_LEXICON } from "./lexicon.js";
 import { parseRustParam } from "./params.js";
 import { HTTP_VERBS } from "../../shared/http-verbs.js";
@@ -44,6 +44,8 @@ interface ImplSpan {
 /** A file read once for the wrapper passes: its text, the same text with comments and literals blanked, functions and `impl` blocks. */
 export interface RustCode {
   text: string;
+  /** The lines `text` joins, when the code was read from a file's lines: their blanked forms are shared. */
+  lines?: readonly string[];
   code: string;
   lineStarts: number[];
   fns: RustFn[];
@@ -106,7 +108,7 @@ export function rustTypeName(written: string): string | null {
 
 export function readRustCode(lines: readonly string[]): RustCode {
   const text = lines.join("\n");
-  const code = blankCode(text, RUST_LEXICON);
+  const code = blankedText(lines, RUST_LEXICON);
   const starts = lineStarts(text);
   const fns: RustFn[] = [];
   for (const m of code.matchAll(FN_RE)) {
@@ -136,7 +138,7 @@ export function readRustCode(lines: readonly string[]): RustCode {
     const end = closeOf(code, open);
     if (type && end > 0) impls.push({ from: open, to: end, type });
   }
-  return { text, code, lineStarts: starts, fns, impls };
+  return { text, lines, code, lineStarts: starts, fns, impls };
 }
 
 export function lineAt(rc: RustCode, offset: number): number {
@@ -288,7 +290,7 @@ export function rustPathArgCalls(rc: RustCode): PathArgCall[] {
     });
   };
   // One-line literals kept, so `get("/clubs")` never reads as a getter `get()` of the chain.
-  const chains = blankCode(rc.text, RUST_LEXICON, true);
+  const chains = rc.lines ? blankedText(rc.lines, RUST_LEXICON, true) : blankCode(rc.text, RUST_LEXICON, true);
   for (const m of chains.matchAll(CHAIN_CALL_RE)) {
     if (rc.code[m.index] !== rc.text[m.index]) continue; // inside a literal
     const head = m[1]!;
