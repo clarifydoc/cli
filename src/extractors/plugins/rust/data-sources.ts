@@ -70,7 +70,7 @@ function dieselDslTables(lines: string[]): { tables: Map<string, string>; module
   const out = new Map<string, string>();
   const modules = new Set<string>();
   const text = lines.join("\n");
-  for (const use of text.matchAll(/^\s*(?:pub(?:\([^)]*\))?\s+)?use\b[^;]*;/gm)) {
+  for (const use of text.matchAll(/^[^\S\r\n\u2028\u2029]*(?:pub(?:\([^)]*\))?\s+)?use\b[^;]*;/gm)) {
     for (const m of use[0].matchAll(/\b([a-z][a-z0-9_]*)::dsl\s*(?=[;,}])/g)) modules.add(m[1]!);
     for (const m of use[0].matchAll(DIESEL_DSL_RE)) {
       const table = m[1]!;
@@ -94,7 +94,7 @@ function dieselSchemaModules(lines: string[]): Map<string, string> {
   const out = new Map<string, string>();
   const text = lines.join("\n");
   if (!/\bschema::/.test(text)) return out;
-  for (const use of text.matchAll(/^\s*(?:pub(?:\([^)]*\))?\s+)?use\b[^;]*;/gm)) {
+  for (const use of text.matchAll(/^[^\S\r\n\u2028\u2029]*(?:pub(?:\([^)]*\))?\s+)?use\b[^;]*;/gm)) {
     for (const m of use[0].matchAll(/\bschema::(\{[^}]*\}|[a-z][a-z0-9_]*(?:::dsl)?(?:\s+as\s+[a-z]\w*)?)/g)) {
       for (const item of m[1]!.replace(/[{}]/g, "").split(",")) {
         const [path = "", alias] = item.trim().split(/\s+as\s+/);

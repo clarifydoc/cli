@@ -54,7 +54,7 @@ export const cSpec: RegexLangSpec = {
     {
       // Match definitions like `RETURN name(args) {` — require an opening brace
       // on the same line so prototypes (`int foo(int);`) are skipped.
-      pattern: /^\s*(?!if\b|while\b|for\b|switch\b|do\b|else\b|return\b|case\b|sizeof\b)(?:static\s+|inline\s+|extern\s+|const\s+)*(?:[\w*&\s]+?[*&\s])?([a-zA-Z_]\w*)\s*\([^)]*\)\s*\{/,
+      pattern: /^\s*(?!\s)(?!if\b|while\b|for\b|switch\b|do\b|else\b|return\b|case\b|sizeof\b)(?:static\s+|inline\s+|extern\s+|const\s+)*(?:[\w*&\s]+?[*&\s])?([a-zA-Z_]\w*)\s*\([^)]*\)\s*\{/,
       isExported: (line) => !/^\s*static\b/.test(line),
       isAsync: () => false,
       accept: definitionAt(C_CODE),

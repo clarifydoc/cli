@@ -166,7 +166,7 @@ export function tidySetup(fns: FunctionInfo[]): void {
 
 /** The source with its block comments (opened by a slash-star at a line's start) blanked. Null when there are none. */
 export function blankAhkComments(source: string): string | null {
-  if (!/^\s*\/\*/m.test(source)) return null;
+  if (!/^[^\S\r\n\u2028\u2029]*\/\*/m.test(source)) return null;
   const lines = source.split("\n");
   let inside = false;
   for (let i = 0; i < lines.length; i++) {

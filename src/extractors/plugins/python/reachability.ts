@@ -155,8 +155,8 @@ async function loadPythonReachability(ctx: ReachabilityLoadContext): Promise<Rea
       }
     }
     const distribution =
-      (pyproject !== null && /^\s*\[build-system\]/m.test(pyproject) && !/package-mode\s*=\s*false/.test(pyproject)) ||
-      setupPy !== null || (setupCfg !== null && /^\s*\[metadata\]/m.test(setupCfg));
+      (pyproject !== null && /^[^\S\r\n\u2028\u2029]*\[build-system\]/m.test(pyproject) && !/package-mode\s*=\s*false/.test(pyproject)) ||
+      setupPy !== null || (setupCfg !== null && /^[^\S\r\n\u2028\u2029]*\[metadata\]/m.test(setupCfg));
     if (distribution && !service) publicRoots.push(root);
   }
   // Extension-less `#!/usr/bin/env python` scripts beside the code import it.
@@ -250,7 +250,7 @@ async function loadPythonReachability(ctx: ReachabilityLoadContext): Promise<Rea
  */
 export function extractPythonPathReferences(sourceText: string): string[] {
   const out = new Set<string>();
-  if (/^\s*if\s+__name__\s*==\s*["']__main__["']\s*:/m.test(sourceText)) out.add("__main__");
+  if (/^[^\S\r\n\u2028\u2029]*if\s+__name__\s*==\s*["']__main__["']\s*:/m.test(sourceText)) out.add("__main__");
   for (const m of sourceText.matchAll(/["']([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)(?::[A-Za-z_]\w*)?["']/g)) {
     out.add(`module:${m[1]}`);
   }

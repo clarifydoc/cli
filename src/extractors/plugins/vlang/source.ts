@@ -13,10 +13,10 @@ import { lineEnd } from "../shared/text-scan.js";
  * from the RAW source (`vSqlLines`).
  */
 
-const VERILOG = /^\s*endmodule\b|^\s*(?:always|initial)\s*(?:@|begin\b)|^\s*(?:wire|reg|input|output|inout)\b[^\n=]*;|^\s*module\s+\w+\s*(?:#\s*)?\(/m;
-const COQ = /^\s*(?:Proof\.|Qed\.|Defined\.|Require\s+(?:Import|Export)\b|From\s+\S+\s+Require\b|(?:Theorem|Lemma|Inductive|Fixpoint|Definition)\s+\w+[^\n]*(?::=|:)\s*$)/m;
+const VERILOG = /^[^\S\r\n\u2028\u2029]*endmodule\b|^[^\S\r\n\u2028\u2029]*(?:always|initial)\s*(?:@|begin\b)|^[^\S\r\n\u2028\u2029]*(?:wire|reg|input|output|inout)\b[^\n=]*;|^[^\S\r\n\u2028\u2029]*module\s+\w+\s*(?:#\s*)?\(/m;
+const COQ = /^[^\S\r\n\u2028\u2029]*(?:Proof\.|Qed\.|Defined\.|Require\s+(?:Import|Export)\b|From\s+\S+\s+Require\b|(?:Theorem|Lemma|Inductive|Fixpoint|Definition)\s+\w+[^\n]*(?::=|:)\s*$)/m;
 /** What every V file has: a declaration V's grammar opens a line with. */
-const V_DECLARATION = /^\s*(?:module\s+[\w.]+\s*$|import\s+[\w.]+|(?:pub\s+)?(?:fn|struct|interface|enum|const|type|union)\b)/m;
+const V_DECLARATION = /^[^\S\r\n\u2028\u2029]*(?:module\s+[\w.]+\s*$|import\s+[\w.]+|(?:pub\s+)?(?:fn|struct|interface|enum|const|type|union)\b)/m;
 
 /** Why the file is not V source, or null when it is. A `.vsh` script is V by its extension alone. */
 export function foreignVFile(source: string, path: string): string | null {

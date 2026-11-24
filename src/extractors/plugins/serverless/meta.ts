@@ -6,7 +6,7 @@ import { functionJsonEntryPoints, functionJsonRoutes, parseFunctionJson } from "
 import { daprSubscriptions } from "./dapr.js";
 
 /** A `template.yaml` is SAM's only when it declares a serverless resource. */
-const SAM_RE = /^\s*Transform\s*:.*AWS::Serverless|^\s*Type\s*:\s*["']?AWS::Serverless::(?:Function|Api|HttpApi)\b/m;
+const SAM_RE = /^[^\S\r\n\u2028\u2029]*Transform\s*:.*AWS::Serverless|^[^\S\r\n\u2028\u2029]*Type\s*:\s*["']?AWS::Serverless::(?:Function|Api|HttpApi)\b/m;
 const SLS_RE = /^functions\s*:/m;
 
 /**

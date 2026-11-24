@@ -255,7 +255,7 @@ function interfaceRoutes(lines: string[], classes: ClassInfo[]): RouteInfo[] {
   // Web interfaces: the registered class and the classes it inherits from in
   // this file — and, in a module of `vibe.web.web`, a class whose routes say
   // so themselves (`@path`, `@method`, `@auth`): it is registered elsewhere.
-  const webModule = /^\s*import\s+vibe\.(?:web\.web|vibe|d)\b/m.test(text);
+  const webModule = /^[^\S\r\n\u2028\u2029]*import\s+vibe\.(?:web\.web|vibe|d)\b/m.test(text);
   const webRegistrations = registered("registerWebInterface");
   if (webModule) {
     for (const c of classes) {

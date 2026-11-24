@@ -779,7 +779,7 @@ export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
     this.isCxfWebClientFile = /\borg\.apache\.cxf\.jaxrs\.client\.(?:WebClient|\*)/.test(text);
     this.httpExchange = /@(?:Http|Get|Post|Put|Patch|Delete)Exchange\b/.test(text) && /\binterface\s+\w/.test(text) ? httpExchangeInterface(text) : null;
     this.querydslPaths = /\bcom\.querydsl\b/.test(text)
-      ? new Map([...text.matchAll(/^\s*import\s+static\s+[\w.]*\.Q([A-Z]\w*)\.(\w+)\s*;?\s*$/gm)].map((m) => [m[2]!, m[1]!]))
+      ? new Map([...text.matchAll(/^[^\S\r\n\u2028\u2029]*import\s+static\s+[\w.]*\.Q([A-Z]\w*)\.(\w+)\s*;?\s*$/gm)].map((m) => [m[2]!, m[1]!]))
       : null;
     // Topics a file names by a variable read from the environment with a default
     // (`val topic = System.getenv("TOPIC") ?: "orders"`): the default.

@@ -159,7 +159,7 @@ export function collectServiceBeans(sourceText: string, facts: RouteFact[] | und
   }
   if (types.size === 0) return;
   // Qualify each type the way the file names it: an import, else the file's own package.
-  const pkg = /^\s*package\s+([\w.]+)/m.exec(text)?.[1];
+  const pkg = /^[^\S\r\n\u2028\u2029]*package\s+([\w.]+)/m.exec(text)?.[1];
   const qualified = [...types].map((t) => {
     if (t.includes(".")) return t;
     const imp = new RegExp(`^\\s*import\\s+([\\w.]+\\.${t})\\s*;?\\s*$`, "m").exec(text)?.[1];

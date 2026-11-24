@@ -67,7 +67,7 @@ function blocksIn(text: string, from: number, to: number): Block[] {
   return out;
 }
 
-const packageOf = (text: string): string => /^\s*package\s+([\w.]+)\s*;/m.exec(text)?.[1] ?? "";
+const packageOf = (text: string): string => /^[^\S\r\n\u2028\u2029]*package\s+([\w.]+)\s*;/m.exec(text)?.[1] ?? "";
 
 /** REST path template → route path: `{name=shelves/*}` reads as `{name}`. */
 const restPath = (template: string): string => template.replace(/\{([\w.]+)=[^}]*\}/g, "{$1}");

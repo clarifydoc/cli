@@ -235,7 +235,7 @@ export async function gradleSelfName(text: string, file: SelfNameContext): Promi
   }
   if (!group) {
     const properties = [(await file.readSibling("gradle.properties")) ?? "", ...await file.readAncestors("gradle.properties")];
-    group = properties.map((p) => /^\s*group\s*[=:]\s*(\S+)\s*$/m.exec(p)?.[1]).find(Boolean) ?? null;
+    group = properties.map((p) => /^[^\S\r\n\u2028\u2029]*group\s*[=:]\s*(\S+)\s*$/m.exec(p)?.[1]).find(Boolean) ?? null;
   }
   return artifact && group ? `${group}:${artifact}` : null;
 }

@@ -152,7 +152,7 @@ export const CS_CONTROLLER_FACT = "cs:controller";
 
 /** C#: [HttpGet("path")] / [Route("path")] with class-level prefix merging. */
 export function extractAspnetRoutes(root: Node, routes: RouteInfo[], facts?: RouteFact[], sourceText = ""): void {
-  const scope = /^\s*using\s+System\.Web\.Http\s*;/m.test(sourceText) ? { ...EMPTY_SCOPE, webApi: true } : EMPTY_SCOPE;
+  const scope = /^[^\S\r\n\u2028\u2029]*using\s+System\.Web\.Http\s*;/m.test(sourceText) ? { ...EMPTY_SCOPE, webApi: true } : EMPTY_SCOPE;
   walkForCsharpRoutes(root, routes, scope, facts);
   if (facts) extractConventionalPatterns(root, sourceText, facts);
 }

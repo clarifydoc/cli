@@ -67,8 +67,8 @@ const unquote = (v: string) => v.replace(/^(['"])(.*)\1$/, "$2");
 /** The `[package] name` a Cargo.toml declares. */
 function packageName(toml: string | undefined): string | null {
   if (!toml) return null;
-  const section = /^\s*\[package\]\s*$([\s\S]*?)(?=^\s*\[|(?![\s\S]))/m.exec(toml)?.[1] ?? "";
-  return /^\s*name\s*=\s*"([^"]+)"/m.exec(section)?.[1] ?? null;
+  const section = /^[^\S\r\n\u2028\u2029]*\[package\]\s*$([\s\S]*?)(?=^\s*\[|(?![\s\S]))/m.exec(toml)?.[1] ?? "";
+  return /^[^\S\r\n\u2028\u2029]*name\s*=\s*"([^"]+)"/m.exec(section)?.[1] ?? null;
 }
 
 /** The entry for `name` in a TOML section (`club-kit = { path = "../kit" }`, `club-kit.workspace = true`). */
@@ -108,7 +108,7 @@ function pathDependencyDir(crateDir: string, name: string, read: (path: string) 
   if (entry && /\bworkspace\s*=\s*true\b/.test(entry)) {
     for (let dir = crateDir; ; dir = join(dir, "..")) {
       const toml = read(join(dir, "Cargo.toml"));
-      if (toml && /^\s*\[workspace\]\s*$/m.test(toml)) {
+      if (toml && /^[^\S\r\n\u2028\u2029]*\[workspace\]\s*$/m.test(toml)) {
         const p = path(dependencyEntry(toml, "workspace.dependencies", name));
         return p ? join(dir, p) : null;
       }
@@ -221,7 +221,7 @@ function linkedCrates(crateDir: string, read: (path: string) => string | undefin
   while (queue.length > 0 && out.length < MAX_LINKED_CRATES) {
     const dir = queue.shift()!;
     const toml = read(join(dir, "Cargo.toml"));
-    const body = toml ? /^\s*\[dependencies\]\s*$([\s\S]*?)(?=^\s*\[|(?![\s\S]))/m.exec(toml)?.[1] : undefined;
+    const body = toml ? /^[^\S\r\n\u2028\u2029]*\[dependencies\]\s*$([\s\S]*?)(?=^\s*\[|(?![\s\S]))/m.exec(toml)?.[1] : undefined;
     if (!body) continue;
     const prefix = `${join(dir, "src")}/`;
     const sources = [...files].filter((f) => f.startsWith(prefix) && f.endsWith(".rs")).map((f) => read(f) ?? "");

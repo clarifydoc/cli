@@ -12,7 +12,7 @@ import type { CallBaseRef, HttpClientRegistration } from "../../../types/analysi
 const CLIENT_CTOR_RE = /^(?:httpx\.(?:Client|AsyncClient)|aiohttp\.ClientSession|requests_toolbelt\.sessions\.BaseUrlSession|BaseUrlSession)$/;
 /** Names that are those constructors only when the file imports them from the library. */
 const BARE_CTOR_RE = /^(?:Client|AsyncClient|ClientSession|BaseUrlSession)$/;
-const BARE_CTOR_IMPORT_RE = /^\s*from\s+(?:httpx|aiohttp|requests_toolbelt(?:\.sessions)?)\s+import\b/m;
+const BARE_CTOR_IMPORT_RE = /^[^\S\r\n\u2028\u2029]*from\s+(?:httpx|aiohttp|requests_toolbelt(?:\.sessions)?)\s+import\b/m;
 
 /** The receiver of a request, as the registration and the call row both spell it: `client` or `self.http`. */
 export function pythonClientKey(receiver: Node | null): string | null {

@@ -645,7 +645,7 @@ function methodsFromArgText(argText: string): string[] {
 
 export function extractSpringRoutesRegex(source: string, routes: RouteInfo[]): void {
   // @FeignClient files declare *outbound* calls with the same annotations — skip them.
-  if (/^\s*@FeignClient\b/m.test(source)) return;
+  if (/^[^\S\r\n\u2028\u2029]*@FeignClient\b/m.test(source)) return;
 
   const lines = source.split(/\r?\n/);
   const isMethodLine = (l: string) => /\bfun\s+\w/.test(l) || /\b(public|private|protected|internal)\b.*\(/.test(l);

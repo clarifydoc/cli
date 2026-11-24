@@ -121,9 +121,10 @@ interface Literal { start: number; end: number; value: string }
 const SOQL_STRING = /^\s*SELECT\b[\s\S]*?\bFROM\s+[A-Za-z_]/i;
 
 const DML_VERBS = "insert|update|upsert|delete|undelete|merge";
-const DML = new RegExp(String.raw`(?<=^|[;{}\)]|\belse\b)[ \t\r\n]*\b(${DML_VERBS})\b[ \t\r\n]*(?:as[ \t]+(?:user|system)\b[ \t\r\n]*)?([^;]*);`, "gim");
+const DML = new RegExp(String.raw`(?:(?<=[;{}\)]|\belse\b)(?:(?<![ \t\r\n])[ \t\r\n]+)?|(?<=^)[ \t]*)\b(${DML_VERBS})\b[ \t\r\n]*(?:as[ \t]+(?:user|system)\b[ \t\r\n]*)?([^;]*);`, "gim");
 const DATABASE_DML = /\bDatabase\.(insert|update|upsert|delete|undelete|merge|insertImmediate|deleteImmediate|insertAsync|updateAsync|upsertAsync|deleteAsync)\s*\(/gi;
-const TRIGGER = new RegExp(TRIGGER_HEAD.source, "im");
+// `^\s*` read from a line start, not every blank line of a run: the whole-text reading stays linear.
+const TRIGGER = new RegExp(TRIGGER_HEAD.source.replace("^\\s*", "^[^\\S\\r\\n\\u2028\\u2029]*"), "im");
 
 /**
  * The declared type of variable `name` at `line`: a local or parameter of the method that holds the line (Apex names

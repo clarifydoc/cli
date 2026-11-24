@@ -4,7 +4,7 @@ import { declared } from "../shared/declared-package.js";
 /** CPAN: `requires` / `recommends` / `suggests` lines of a `cpanfile`. */
 function parseCpanfile(text: string, declaredIn: string): DeclaredPackage[] {
   const out: DeclaredPackage[] = [];
-  const re = /^\s*(?:requires|recommends|suggests)\s+['"]([^'"]+)['"]\s*(?:,\s*['"]?([0-9._]+)['"]?)?/gm;
+  const re = /^[^\S\r\n\u2028\u2029]*(?:requires|recommends|suggests)\s+['"]([^'"]+)['"]\s*(?:,\s*['"]?([0-9._]+)['"]?)?/gm;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) out.push(declared(m[1]!, m[2] ?? null, "cpan", "prod", declaredIn));
   return out;

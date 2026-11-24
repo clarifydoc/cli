@@ -11,7 +11,7 @@ function parseHaxelibJson(text: string, declaredIn: string): DeclaredPackage[] {
 /** A build file `*.hxml`: `-lib tink_web`, `--library hxnodejs:12.0.0`. */
 function parseHxml(text: string, declaredIn: string): DeclaredPackage[] {
   const out: DeclaredPackage[] = [];
-  for (const m of text.matchAll(/^\s*(?:-lib|--library)\s+([\w.-]+)(?::([\w.-]+))?/gm)) {
+  for (const m of text.matchAll(/^[^\S\r\n\u2028\u2029]*(?:-lib|--library)\s+([\w.-]+)(?::([\w.-]+))?/gm)) {
     if (!out.some((p) => p.name === m[1])) out.push(declared(m[1]!, m[2] ?? null, "haxelib", "prod", declaredIn));
   }
   return out;

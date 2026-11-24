@@ -78,13 +78,13 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
   private constants = new Map<string, string>();
 
   override beginFile(tree: unknown, sourceText: string): void {
-    this.constants = /^\s*[A-Za-z_]\w*\s*(?::[^=\n]+)?=\s*[rbu]*['"]/m.test(sourceText) ? stringConstants((tree as { rootNode: Node }).rootNode) : new Map();
+    this.constants = /^[^\S\r\n\u2028\u2029]*[A-Za-z_]\w*\s*(?::[^=\n]+)?=\s*[rbu]*['"]/m.test(sourceText) ? stringConstants((tree as { rootNode: Node }).rootNode) : new Map();
     this.vectorClients = new Set();
     this.celery = /\bcelery\b|\bshared_task\b/i.test(sourceText);
-    this.dapr = /^\s*(?:from\s+dapr\b|import\s+dapr\b)/m.test(sourceText);
+    this.dapr = /^[^\S\r\n\u2028\u2029]*(?:from\s+dapr\b|import\s+dapr\b)/m.test(sourceText);
     this.boto3 = /\b(?:boto3|aioboto3)\b/.test(sourceText);
-    this.mqtt = /^\s*(?:import\s+paho\.mqtt|from\s+paho(?:\.mqtt)?(?:\.\w+)*\s+import|import\s+(?:asyncio_mqtt|aiomqtt)|from\s+(?:asyncio_mqtt|aiomqtt)\s+import)\b/m.test(sourceText);
-    this.redis = /^\s*(?:import\s+(?:redis|aioredis)|from\s+(?:redis|aioredis)(?:\.\w+)*\s+import)\b/m.test(sourceText);
+    this.mqtt = /^[^\S\r\n\u2028\u2029]*(?:import\s+paho\.mqtt|from\s+paho(?:\.mqtt)?(?:\.\w+)*\s+import|import\s+(?:asyncio_mqtt|aiomqtt)|from\s+(?:asyncio_mqtt|aiomqtt)\s+import)\b/m.test(sourceText);
+    this.redis = /^[^\S\r\n\u2028\u2029]*(?:import\s+(?:redis|aioredis)|from\s+(?:redis|aioredis)(?:\.\w+)*\s+import)\b/m.test(sourceText);
     this.urllib = /\burllib2?\b/.test(sourceText);
     this.signatures = new Map();
     this.sourceText = sourceText;
@@ -126,7 +126,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
         if (v) return /^[\w$.:+#/-]+$/.test(v) ? { target: v } : null;
         // A name another module defines (`from .topics import SCORES`): the project pass reads its value.
         const head = n.text.split(".")[0]!;
-        const imported = new RegExp(String.raw`^\s*(?:from\s+[\w.]+\s+import\s+(?:\([^)]*|[^\n]*)\b${head}\b|import\s+[\w.,\s]*\b${head}\b)`, "m");
+        const imported = new RegExp(String.raw`^[^\S\r\n\u2028\u2029]*(?:from\s+[\w.]+\s+import\s+(?:\([^)]*|[^\n]*)\b${head}\b|import\s+[\w.,\s]*\b${head}\b)`, "m");
         return /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(n.text) && imported.test(this.sourceText) ? { target: null, ref: n.text } : null;
       }
       return null;
@@ -1271,7 +1271,7 @@ function importedFromNonHttp(type: string, at: Node): boolean {
   let names = pyImportedNames.get(at.tree);
   if (!names) {
     names = new Map();
-    for (const m of at.tree.rootNode.text.matchAll(/^\s*from\s+([\w.]+)\s+import\s+\(?([^)\n]+)/gm)) {
+    for (const m of at.tree.rootNode.text.matchAll(/^[^\S\r\n\u2028\u2029]*from\s+([\w.]+)\s+import\s+\(?([^)\n]+)/gm)) {
       for (const part of m[2]!.split(",")) {
         const local = part.trim().split(/\s+as\s+/).pop()?.trim();
         if (local && /^\w+$/.test(local)) names.set(local, m[1]!);

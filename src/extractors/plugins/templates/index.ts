@@ -201,7 +201,7 @@ export function readTemplate(analysis: FileAnalysis, source: string, dialect: Te
  * follows the file's place under `Pages/` (`Pages/Clubs/Detail.cshtml` → `/Clubs/Detail`; `Index` is the folder).
  */
 function razorPagePath(source: string, filePath: string): string | null {
-  const m = /^\s*@page\b(?:\s+"([^"]*)")?/m.exec(source);
+  const m = /^[^\S\r\n\u2028\u2029]*@page\b(?:\s+"([^"]*)")?/m.exec(source);
   if (!m || !/(?:^|\/)Pages\//.test(filePath)) return m?.[1]?.startsWith("/") ? m[1] : null;
   const t = m[1];
   if (t?.startsWith("/")) return t;

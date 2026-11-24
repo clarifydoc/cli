@@ -116,7 +116,7 @@ const toProps = (fields: Field[]): PropertyInfo[] =>
 
 /** The namespace a service's contract type is qualified with: `java`, else `*`, else the first stated. */
 export function namespaceOf(text: string): string {
-  const all = [...text.matchAll(/^\s*namespace\s+([\w.*]+)\s+([\w.]+)/gm)];
+  const all = [...text.matchAll(/^[^\S\r\n\u2028\u2029]*namespace\s+([\w.*]+)\s+([\w.]+)/gm)];
   return (all.find((m) => m[1] === "java") ?? all.find((m) => m[1] === "*") ?? all[0])?.[2] ?? "";
 }
 

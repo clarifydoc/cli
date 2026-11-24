@@ -9,7 +9,7 @@ import type { EntryPointInfo } from "../../../types/analysis.js";
  */
 export function extractRubyScheduledJobs(lines: string[]): EntryPointInfo[] {
   const text = lines.join("\n");
-  if (!/^\s*every\b|Sidekiq::Cron::Job/m.test(text)) return [];
+  if (!/^[^\S\r\n\u2028\u2029]*every\b|Sidekiq::Cron::Job/m.test(text)) return [];
   const out: EntryPointInfo[] = [];
   let every: { schedule: string; line: number } | null = null;
   lines.forEach((line, i) => {

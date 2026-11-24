@@ -52,7 +52,7 @@ export function servedScriptPath(filePath: string, source: string): string | nul
   const path = plainPagePath(filePath);
   if (path === null) return null;
   const code = [...source.matchAll(PHP_TAGS)].map((m) => m[0]).join("\n");
-  if (/^\s*(?:(?:abstract|final|readonly)\s+)*(?:class|interface|trait|enum|namespace)\s+\w/m.test(code)) return null;
+  if (/^[^\S\r\n\u2028\u2029]*(?:(?:abstract|final|readonly)\s+)*(?:class|interface|trait|enum|namespace)\s+\w/m.test(code)) return null;
   return FRONT_CONTROLLER.test(code) ? null : path;
 }
 

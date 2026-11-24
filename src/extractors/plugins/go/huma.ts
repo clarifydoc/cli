@@ -216,7 +216,7 @@ function handlerOf(arg: string): string | null {
 /** `const X = "…"` and `X = "…"` inside a `const (…)` block. */
 function stringConsts(text: string): Map<string, string> {
   const out = new Map<string, string>();
-  for (const m of text.matchAll(/^\s*(?:const\s+)?([A-Za-z_]\w*)\s*(?:string\s*)?=\s*"((?:[^"\\]|\\.)*)"\s*$/gm)) {
+  for (const m of text.matchAll(/^[^\S\r\n\u2028\u2029]*(?:const\s+)?([A-Za-z_]\w*)\s*(?:string\s*)?=\s*"((?:[^"\\]|\\.)*)"\s*$/gm)) {
     if (!out.has(m[1]!)) out.set(m[1]!, m[2]!);
   }
   return out;

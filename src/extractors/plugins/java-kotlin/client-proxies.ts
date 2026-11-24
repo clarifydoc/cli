@@ -44,7 +44,7 @@ function walk(node: Node, visit: (n: Node) => void): void {
 
 export function extractJavaClientProxies(tree: Tree, sourceText: string): HttpClientRegistration[] {
   if (!sourceText.includes(".class")) return [];
-  const pkg = /^\s*package\s+([\w.]+)\s*;/m.exec(sourceText)?.[1];
+  const pkg = /^[^\S\r\n\u2028\u2029]*package\s+([\w.]+)\s*;/m.exec(sourceText)?.[1];
   const fqnOf = (type: string): string | null => {
     if (type.includes(".")) return type;
     const imported = new RegExp(`^\\s*import\\s+([\\w.]+\\.${type})\\s*;`, "m").exec(sourceText)?.[1];

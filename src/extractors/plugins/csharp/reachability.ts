@@ -22,8 +22,8 @@ export const csharpReachability = conventionReachability({
     methodsOf: /(?:Extensions?|Ext)$/,
     // C# 14 extension blocks (the grammar reads `extension(…) { … }` as one method named `extension`).
     sourceMembers: {
-      when: /^\s*extension\s*(?:<[^>]*>)?\s*\(/m,
-      member: /^\s*public\s+(?:static\s+|async\s+|override\s+|virtual\s+)*(?:[\w<>[\],.?]+\s+)+?([A-Z]\w*)\s*(?:<[^>]*>)?\s*[({]/gm,
+      when: /^[^\S\r\n\u2028\u2029]*extension\s*(?:<[^>]*>)?\s*\(/m,
+      member: /^[^\S\r\n\u2028\u2029]*public\s+(?:static\s+|async\s+|override\s+|virtual\s+)*(?:[\w<>[\],.?]+\s+)+?([A-Z]\w*)\s*(?:<[^>]*>)?\s*[({]/gm,
     },
   },
   mainFunctions: /^Main$/,

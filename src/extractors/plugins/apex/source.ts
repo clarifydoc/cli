@@ -58,7 +58,7 @@ export function apexStructureText(dataText: string): string {
 }
 
 /** A VB6 / VB class carries these; an Apex class never does. */
-const VB_MARKERS = /^\s*(?:VERSION\s+\d|Attribute\s+VB_|Option\s+(?:Explicit|Compare|Strict)\b|End\s+(?:Class|Sub|Function)\b)/im;
+const VB_MARKERS = /^[^\S\r\n\u2028\u2029]*(?:VERSION\s+\d|Attribute\s+VB_|Option\s+(?:Explicit|Compare|Strict)\b|End\s+(?:Class|Sub|Function)\b)/im;
 const CLASS_HEAD = new RegExp(String.raw`^[ \t]*(?:${ANNOTATION}[ \t]*)*${CLASS_MODIFIERS}(?:class|interface|enum)[ \t]+\w+[^{;]*\{`, "im");
 
 /** Whether the text carries a VB6 marker line. */

@@ -133,7 +133,7 @@ export const perlSpec: RegexLangSpec = {
     },
     {
       // release(...), &release(...) — a sub of this package.
-      pattern: /(?<![\w$@%.>:])(?<!\bsub\s+)&?(?!(?:my|our|local|state|sub|qw|q|qq|qr|m|s|tr|y|return|bless|shift|pop|keys|values|each|defined|scalar|ref|exists|delete|die|warn|print|printf|push|unshift|splice|join|map|grep|sort|reverse|wantarray|length|substr|index|sprintf|lc|uc|open|close|chomp|exit|undef)\b)([A-Za-z_]\w*)\s*\(/,
+      pattern: /(?=&?[A-Za-z_])(?<![\w$@%.>:])(?<!\bsub\s+)&?(?!(?:my|our|local|state|sub|qw|q|qq|qr|m|s|tr|y|return|bless|shift|pop|keys|values|each|defined|scalar|ref|exists|delete|die|warn|print|printf|push|unshift|splice|join|map|grep|sort|reverse|wantarray|length|substr|index|sprintf|lc|uc|open|close|chomp|exit|undef)\b)([A-Za-z_]\w*)\s*\(/,
       buildName: (m) => ({ name: m[1]!, leafName: m[1]! }),
       replacesBaseline: true,
     },

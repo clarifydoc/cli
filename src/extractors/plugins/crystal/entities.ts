@@ -30,7 +30,7 @@ export class CrystalEntityExtractor extends EntityExtractor {
       const orm = /<\s*Granite::Base\b/.test(header) ? "granite"
         : /<\s*Jennifer::Model::Base\b/.test(header) ? "jennifer"
         : /\binclude\s+Clear::Model\b/.test(body) ? "clear"
-        : /<\s*(?:Avram::Model|BaseModel)\b/.test(header) || /^\s*table\s*(?::\w+\s*)?do\b/m.test(body) ? "avram"
+        : /<\s*(?:Avram::Model|BaseModel)\b/.test(header) || /^[^\S\r\n\u2028\u2029]*table\s*(?::\w+\s*)?do\b/m.test(body) ? "avram"
         : null;
       if (!orm) continue;
       const name = cls.name.split("::").pop()!;
@@ -39,13 +39,13 @@ export class CrystalEntityExtractor extends EntityExtractor {
       const column = (field: string, type: string | null) => {
         if (!seen.has(field)) { seen.add(field); columns.push(this.column(field, type?.replace(/\s*\?$/, "").trim() || null)); }
       };
-      for (const m of body.matchAll(/^\s*(?:column|primary_key|field)\s+:?([a-z_]\w*)\s*(?::\s*|,\s*)([A-Z][\w:?()]*)?/gm)) column(m[1]!, m[2] ?? null);
+      for (const m of body.matchAll(/^[^\S\r\n\u2028\u2029]*(?:column|primary_key|field)\s+:?([a-z_]\w*)\s*(?::\s*|,\s*)([A-Z][\w:?()]*)?/gm)) column(m[1]!, m[2] ?? null);
       // Jennifer: `mapping(id: Primary32, name: String, age: Int32?)`, possibly over several lines.
       const mapping = /\bmapping\s*\(([\s\S]*?)\)\s*$/m.exec(body)?.[1];
       if (mapping) for (const m of mapping.matchAll(/([a-z_]\w*)\s*:\s*\{?\s*(?:type:\s*)?([A-Z][\w?]*)/g)) column(m[1]!, m[2]!);
 
-      const table = /^\s*table\s+:?"?(?!do\b)([a-z_]\w*)"?/m.exec(body)?.[1]
-        ?? /^\s*table_name\s+"([^"]+)"/m.exec(body)?.[1]
+      const table = /^[^\S\r\n\u2028\u2029]*table\s+:?"?(?!do\b)([a-z_]\w*)"?/m.exec(body)?.[1]
+        ?? /^[^\S\r\n\u2028\u2029]*table_name\s+"([^"]+)"/m.exec(body)?.[1]
         ?? /self\.table\s*=\s*"([^"]+)"/.exec(body)?.[1]
         ?? (orm === "avram" ? pluralize(underscore(name)) : undefined);
       entities.push(this.entity({
@@ -54,7 +54,7 @@ export class CrystalEntityExtractor extends EntityExtractor {
       }));
 
       // `has_many posts : Post` / `has_many :posts, Post` / `has_many :posts, class_name: Post` / `belongs_to :user`.
-      const re = /^\s*(belongs_to|has_many|has_one|has_and_belongs_to_many)\s+:?([a-z_]\w*)\s*(?::\s*([A-Z][\w:]*)|,\s*(?:class_name:\s*|klass:\s*)?"?([A-Z][\w:]*))?/gm;
+      const re = /^[^\S\r\n\u2028\u2029]*(belongs_to|has_many|has_one|has_and_belongs_to_many)\s+:?([a-z_]\w*)\s*(?::\s*([A-Z][\w:]*)|,\s*(?:class_name:\s*|klass:\s*)?"?([A-Z][\w:]*))?/gm;
       for (const m of body.matchAll(re)) {
         const field = m[2]!;
         const explicit = (m[3] ?? m[4])?.split("::").pop();

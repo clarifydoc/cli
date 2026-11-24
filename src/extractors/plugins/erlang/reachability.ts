@@ -14,7 +14,7 @@ export const erlangReachability = conventionReachability({
   entryFiles: [[/\.escript$/, "escript"]],
   entrySource: [
     [/-behaviou?r\(\s*application\s*\)/, "OTP application"],
-    [/^\s*main\s*\(/m, "escript main"],
+    [/^[^\S\r\n\u2028\u2029]*main\s*\(/m, "escript main"],
   ],
   async extend(_ctx, kit) {
     const mentions = new Set<string>();

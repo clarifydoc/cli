@@ -61,7 +61,12 @@ export function goAddressedTypes(lines: string[]): string[] {
   for (const line of text) {
     // A method's receiver declares the pointer form, it does not use it.
     const t = line.replace(/^\s*func\s*\([^)]*\)/, "func ");
-    for (const m of t.matchAll(new RegExp(`(?:^|[^\\w)\\]])\\s*\\*\\s*(?:\\w+\\.)*(${IDENT})`, "g"))) found.add(m[1]!);
+    // A `*` that does not follow a value (an identifier, `)` or `]`) is a pointer type. The `*` is found first and its
+    // left side judged once, so a long whitespace run is no start position of its own.
+    for (const m of t.matchAll(new RegExp(`\\*\\s*(?:\\w+\\.)*(${IDENT})`, "g"))) {
+      if (m.index > 0 && /[\w)\]]/.test(t[m.index - 1]!)) continue;
+      found.add(m[1]!);
+    }
     for (const m of t.matchAll(new RegExp(`\\)\\s*\\*\\s*(?:\\w+\\.)*(${IDENT})`, "g"))) found.add(m[1]!);
     for (const m of t.matchAll(new RegExp(`&\\s*(?:\\w+\\.)*(${IDENT})\\s*[{\\[]`, "g"))) found.add(m[1]!);
     for (const m of t.matchAll(new RegExp(`\\bnew\\s*\\(\\s*(?:\\w+\\.)*(${IDENT})`, "g"))) found.add(m[1]!);

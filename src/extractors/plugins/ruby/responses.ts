@@ -87,7 +87,7 @@ export function extractRubyResponses(bodyLines: string[]): RouteResponseInfo[] {
   };
   // One statement per logical line: join a `render` whose hash continues on the next lines.
   const statements = text.replace(/,\s*\n\s*/g, ", ").split("\n");
-  const sinatraStatus = /^\s*status\s+\(?\s*(\d{3}|:\w+)/m.exec(text);
+  const sinatraStatus = /^[^\S\r\n\u2028\u2029]*status\s+\(?\s*(\d{3}|:\w+)/m.exec(text);
   for (const s of statements) {
     const render = /^\s*render\s*\(?\s*([\s\S]*?)\)?\s*$/.exec(s);
     if (render) {

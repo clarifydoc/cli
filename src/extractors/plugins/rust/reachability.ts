@@ -40,7 +40,7 @@ async function loadRustReachability(ctx: ReachabilityLoadContext): Promise<Reach
     crates.push(root);
     // `[[bin]] path = "…"`, `[lib] path`, `[[example]]`/`[[test]]`/`[[bench]]`
     // paths and a custom `build = "…"` script.
-    for (const m of toml.matchAll(/^\s*(path|build)\s*=\s*"([^"]+\.rs)"/gm)) {
+    for (const m of toml.matchAll(/^[^\S\r\n\u2028\u2029]*(path|build)\s*=\s*"([^"]+\.rs)"/gm)) {
       const file = normalize(root ? `${root}/${m[2]}` : m[2]!);
       if (files.has(file)) manifestEntries.push({ file, reason: `Cargo.toml ${m[1]}` });
     }

@@ -20,7 +20,7 @@ export const goReachability = conventionReachability({
     const modules: Array<{ root: string; path: string }> = [];
     for (const root of kit.roots) {
       const text = await kit.readText(root ? `${root}/go.mod` : "go.mod");
-      const m = text && /^\s*module\s+(\S+)/m.exec(text);
+      const m = text && /^[^\S\r\n\u2028\u2029]*module\s+(\S+)/m.exec(text);
       if (m) modules.push({ root, path: m[1]! });
     }
     const byDir = new Map<string, string[]>();

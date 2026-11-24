@@ -32,7 +32,7 @@ export const scalaMeta: LanguagePluginMeta = {
       return { skip: "not a Scala script (no Scala declaration — SuperCollider?)" };
     }
     // Scala 3 `extension (c: Club) def …`: the block's parameter is its methods' receiver (extensions.ts).
-    return /^\s*extension\s*[(\[]/m.test(rawSource)
+    return /^[^\S\r\n\u2028\u2029]*extension\s*[(\[]/m.test(rawSource)
       ? { sourceText: rawSource, language: "scala", postExtract: applyScalaExtensions }
       : null;
   },

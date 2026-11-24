@@ -149,7 +149,7 @@ export class PhpDataSourceExtractor extends DataSourceExtractor {
         this.clientBases.set(m[1]!, prev !== undefined && prev !== m[2]!.trim() ? "" : m[2]!.trim());
       }
     }
-    this.namespaced = /^\s*(?:namespace\s+[\w\\]+|use\s+\\?[A-Z][\w\\]*)/m.test(sourceText);
+    this.namespaced = /^[^\S\r\n\u2028\u2029]*(?:namespace\s+[\w\\]+|use\s+\\?[A-Z][\w\\]*)/m.test(sourceText);
     if (!sourceText.includes("define") && !sourceText.includes("const")) return;
     for (const m of sourceText.matchAll(/^[ \t]*(?:define\(\s*(['"])(\w+)\1\s*,|(?:(?:public|protected|private)\s+)?const\s+(\w+)\s*=)\s*(['"])([^'"\n]*)\4/gm)) {
       const name = (m[2] ?? m[3])!;

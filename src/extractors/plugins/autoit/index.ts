@@ -50,7 +50,7 @@ function au3DataSources(lines: string[]): DataSourceInfo[] {
 
 /** The source with `#cs … #ce` / `#comments-start … #comments-end` blocks blanked (lines kept). Null when there is none. */
 export function blankAu3Comments(source: string): string | null {
-  if (!/^\s*#(?:cs|comments-start)\b/im.test(source)) return null;
+  if (!/^[^\S\r\n\u2028\u2029]*#(?:cs|comments-start)\b/im.test(source)) return null;
   const lines = source.split("\n");
   let depth = 0;
   for (let i = 0; i < lines.length; i++) {

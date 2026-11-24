@@ -427,7 +427,7 @@ export function extractRustRoutes(lines: string[], facts?: RouteFact[]): RouteIn
 /** `use a::b::c;` / `use a::{b::c, d as e};` as local name → path. */
 function useMap(text: string): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const m of text.matchAll(/^\s*(?:pub(?:\([^)]*\))?\s+)?use\s+([^;]+);/gm)) {
+  for (const m of text.matchAll(/^[^\S\r\n\u2028\u2029]*(?:pub(?:\([^)]*\))?\s+)?use\s+([^;]+);/gm)) {
     const body = m[1]!.trim();
     const brace = body.match(/^((?:\w+::)*)\{([^}]*)\}$/);
     const items = brace ? brace[2]!.split(",").map((i) => brace[1]! + i.trim()) : [body];

@@ -231,7 +231,7 @@ export const cppSpec: RegexLangSpec = {
     {
       // Definitions: `[modifiers] [return] Name(...)` or `ns::Class::Name(...)`
       // followed by `{` or `:` (member-init list) on the same line.
-      pattern: new RegExp(String.raw`^\s*${NOT_A_STATEMENT}${MODIFIERS}(?:[\w:<>,*&\s]+?[*&\s>])?${QUALIFIER}${NAME}\s*\([^)]*\)\s*(?:const\s*)?(?:noexcept\s*)?(?:override\s*)?(?:\{|:[^;:])`),
+      pattern: new RegExp(String.raw`^\s*(?!\s)${NOT_A_STATEMENT}${MODIFIERS}(?:[\w:<>,*&\s]+?[*&\s>])?${QUALIFIER}${NAME}\s*\([^)]*\)\s*(?:const\s*)?(?:noexcept\s*)?(?:override\s*)?(?:\{|:[^;:])`),
       isExported: (line) => !/^\s*static\b/.test(line),
       isAsync: () => false,
       accept: definitionAt(CPP_CODE),
@@ -248,7 +248,7 @@ export const cppSpec: RegexLangSpec = {
       // (`Status Convert(ServerContext* context,` …), or one whose body opens
       // on the next line (`void Club::play() const` / `{`): taken when a body
       // follows the closing `)` — a prototype ends with `;`, a call too.
-      pattern: new RegExp(String.raw`^\s*${NOT_A_STATEMENT}${MODIFIERS}(?:[\w:<>,*&\s]+?[*&\s>])?${QUALIFIER}${NAME}\s*\((?:[^;]*\)[^;{]*|[^;)]*)$`),
+      pattern: new RegExp(String.raw`^\s*(?!\s)${NOT_A_STATEMENT}${MODIFIERS}(?:[\w:<>,*&\s]+?[*&\s>])?${QUALIFIER}${NAME}\s*\((?:[^;]*\)[^;{]*|[^;)]*)$`),
       isExported: (line) => !/^\s*static\b/.test(line),
       isAsync: () => false,
       accept: definitionAt(CPP_CODE),

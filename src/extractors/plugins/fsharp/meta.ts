@@ -16,7 +16,7 @@ const FSHARP_BUILTINS: ReadonlySet<string> = new Set<string>([
 ]);
 
 /** A GLSL shader also ends in `.fs`. */
-const GLSL_RE = /^\s*#version\s+\d+|\bgl_FragColor\b|\bgl_FragCoord\b|^\s*(?:uniform|varying|precision\s+\w+p)\s/m;
+const GLSL_RE = /^[^\S\r\n\u2028\u2029]*#version\s+\d+|\bgl_FragColor\b|\bgl_FragCoord\b|^[^\S\r\n\u2028\u2029]*(?:uniform|varying|precision\s+\w+p)\s/m;
 
 export const fsharpMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).

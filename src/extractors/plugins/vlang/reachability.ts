@@ -28,7 +28,7 @@ export const vReachability = conventionReachability({
     }
     // `v.mod` roots: their name, and whether anything under them has a `main`.
     const mains: string[] = [];
-    for (const f of kit.files) if (/^\s*fn\s+main\s*\(/m.test((await kit.readText(f)) ?? "")) mains.push(f);
+    for (const f of kit.files) if (/^[^\S\r\n\u2028\u2029]*fn\s+main\s*\(/m.test((await kit.readText(f)) ?? "")) mains.push(f);
     const mods: Array<{ root: string; name: string; library: boolean; subdirs: string[] }> = [];
     for (const rel of await kit.listFiles()) {
       if (!/(?:^|\/)v\.mod$/.test(rel)) continue;

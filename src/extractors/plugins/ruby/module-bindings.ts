@@ -10,6 +10,7 @@
  * class, not an instance. A constant assigned two different types decides nothing.
  */
 import type { ModuleBindingInfo } from "../../../types/analysis.js";
+import { stripHashComment } from "../shared/text-scan.js";
 
 /** `NAME = [::]Foo[::Bar].new` — then what follows `.new`, checked by `constructedWithoutChain`. */
 const CONSTRUCTED = /^([A-Z][A-Za-z0-9_]*)\s*=\s*((?:::)?[A-Z][A-Za-z0-9_]*(?:::[A-Z][A-Za-z0-9_]*)*)\.new\b(.*)$/;
@@ -19,7 +20,7 @@ const NOT_INSTANCES = new Set(["Struct", "Class", "Module", "Data", "Object", "B
 
 /** What follows `.new`: nothing, a call's own parenthesised arguments, or parenless arguments — never a further call on the result. */
 function constructedWithoutChain(rest: string): boolean {
-  const code = rest.replace(/\s+#.*$/, "").trim();
+  const code = stripHashComment(rest).trim();
   if (code === "" || code === "do" || /^do\s*\|/.test(code) || code.startsWith("{")) return true;
   if (code.startsWith("(")) {
     let depth = 0;

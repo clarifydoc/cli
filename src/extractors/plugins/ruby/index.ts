@@ -51,6 +51,7 @@ import { extractRubyResponses } from "./responses.js";
 import { extractRubyTestRequests } from "./request-specs.js";
 import { extractGrapeRoutes, extractRackMounts, isGrapeFile } from "./grape.js";
 import { rubyModuleBindings } from "./module-bindings.js";
+import { stripHashComment } from "../shared/text-scan.js";
 import { extractRubyModuleValueFlow, extractRubyValueFlow } from "./value-flow.js";
 import { addRubySyntaxCalls } from "./syntax-calls.js";
 
@@ -1275,7 +1276,7 @@ function extractRubyDataSources(lines: string[], classes: readonly ClassInfo[] =
     // A chain whose receiver stands on its own line (`Match` / `  .where(…)`):
     // read the first continued call as part of this line.
     const next = (lines[i + 1] ?? "").trimStart();
-    if (next.startsWith(".") && /[\w)]\s*$/.test(line.replace(/\s+#.*$/, ""))) line = line.trimEnd() + next;
+    if (next.startsWith(".") && /[\w)]\s*$/.test(stripHashComment(line))) line = line.trimEnd() + next;
     for (const m of line.matchAll(AR_CALL_RE)) {
       const receiver = m[1]!;
       const method = m[2]!;
@@ -1295,7 +1296,7 @@ function extractRubyDataSources(lines: string[], classes: readonly ClassInfo[] =
     // `RubyEntityExtractor.reconcileProject` joins or drops it. A bare
     // lowercase receiver counts only with a WRITE verb — `items.first` is an
     // Array; `contact.save!` is persistence.
-    const relation = RELATION_ASSIGN_RE.exec(line.replace(/\s+#.*$/, ""));
+    const relation = RELATION_ASSIGN_RE.exec(stripHashComment(line));
     if (relation && !/^(?:params|request|session)\b/.test(relation[1]!) && inController(i + 1)) {
       out.push({ kind: "database", name: `${relation[1]}.all`, target: null, calls: [], line: i + 1, access: "read" });
       continue;
@@ -1768,7 +1769,7 @@ export const rubySpec: RegexLangSpec = {
     let privateBlockIndent = -1;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      const trimmed = line.trimStart().replace(/\s+#.*$/, "");
+      const trimmed = stripHashComment(line.trimStart());
       const indent = line.length - line.trimStart().length;
       if (/^(?:private|protected)$/.test(trimmed)) {
         inPrivateBlock = true;

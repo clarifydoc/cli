@@ -24,7 +24,7 @@ export const dReachability = conventionReachability({
       if (!m) continue;
       const text = (await kit.readText(rel)) ?? "";
       const dir = rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "";
-      const target = m[1] === "json" ? /"targetType"\s*:\s*"(\w+)"/.exec(text)?.[1] : /^\s*targetType\s+"(\w+)"/m.exec(text)?.[1];
+      const target = m[1] === "json" ? /"targetType"\s*:\s*"(\w+)"/.exec(text)?.[1] : /^[^\S\r\n\u2028\u2029]*targetType\s+"(\w+)"/m.exec(text)?.[1];
       const app = files.some((f) => f === `${dir ? dir + "/" : ""}source/app.d` || f === `${dir ? dir + "/" : ""}src/app.d`) || /mainSourceFile/.test(text);
       packages.push({ dir, library: target ? /library/i.test(target) : !app });
     }

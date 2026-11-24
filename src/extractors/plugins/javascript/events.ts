@@ -57,7 +57,7 @@ export function extractEvents(
 export function emitConstants(source: string): string {
   if (!/\bemit\s*\(\s*[A-Za-z_$]/.test(source)) return source;
   const consts = new Map<string, string | null>();
-  for (const m of source.matchAll(/^\s*(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*(?:(['"])([\w:-]+)\2(?:\s+as\s+const)?\s*;?\s*$|[^\n]*)/gm)) {
+  for (const m of source.matchAll(/^[^\S\r\n\u2028\u2029]*(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*(?:(['"])([\w:-]+)\2(?:\s+as\s+const)?\s*;?\s*$|[^\n]*)/gm)) {
     consts.set(m[1]!, consts.has(m[1]!) ? null : m[3] ?? null);
   }
   return source.replace(/\bemit\s*\(\s*([A-Za-z_$][\w$]*)\s*(?=[,)])/g, (all, name: string) => {

@@ -18,7 +18,7 @@ function preprocessCgi(rawSource: string, relativePath: string): { skip: string 
   const nl = rawSource.indexOf("\n");
   const first = nl < 0 ? rawSource : rawSource.slice(0, nl);
   if (first.startsWith("#!")) return /\bperl\b/.test(first) ? null : { skip: "CGI script in another language" };
-  return /^\s*(?:use\s+(?:strict|warnings|CGI)\b|my\s+[$@%])/m.test(rawSource) ? null : { skip: "CGI script in another language" };
+  return /^[^\S\r\n\u2028\u2029]*(?:use\s+(?:strict|warnings|CGI)\b|my\s+[$@%])/m.test(rawSource) ? null : { skip: "CGI script in another language" };
 }
 
 export const perlMeta: LanguagePluginMeta = {

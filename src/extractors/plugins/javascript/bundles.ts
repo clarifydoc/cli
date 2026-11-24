@@ -21,7 +21,7 @@ const WEBPACK_BOOTSTRAP_RE = /^\/\*{6}\/[^\n]*\bwebpackBootstrap\b/m;
 /** webpack's runtime lines, each prefixed `/******\/`, around `__webpack_require__` / `__webpack_modules__`. */
 const WEBPACK_RUNTIME_LINE_RE = /^\/\*{6}\/[^\n]*\b__webpack_(?:require|modules)__\b/m;
 /** A webpack chunk file: `(window["webpackJsonp"] = window["webpackJsonp"] || []).push(…`, `(self.webpackChunkapp = …`. */
-const WEBPACK_CHUNK_RE = /^\s*(?:"use strict";\s*)?\(\s*(?:window|self|this|globalThis)(?:\[\s*["']webpack(?:Jsonp|Chunk)[\w$]*["']\s*\]|\.webpack(?:Jsonp|Chunk)[\w$]*)\s*=/m;
+const WEBPACK_CHUNK_RE = /^[^\S\r\n\u2028\u2029]*(?:"use strict";\s*)?\(\s*(?:window|self|this|globalThis)(?:\[\s*["']webpack(?:Jsonp|Chunk)[\w$]*["']\s*\]|\.webpack(?:Jsonp|Chunk)[\w$]*)\s*=/m;
 /** Parcel's prelude: `parcelRequire = (function (modules, cache, entry, globalName) {`, Parcel 2's `var parcelRequire = $parcel$global[…]`. */
 const PARCEL_RE = /\bparcelRequire[\w$]*\s*=|\$parcel\$global\b/;
 /** browserify's prelude: `(function(){function r(e,n,t){function o(i,f){…`, older `(function e(t,n,r){function s(o,u){…`. */
@@ -67,7 +67,7 @@ export function bundlerOf(sourceText: string): string | null {
  * analyzed as written.
  */
 /** A documentation generator's data file (DocInsight's `window.DocInsight.toc[…] = [ … ]`): generated beside the HTML it serves. */
-const GENERATED_DOCS_RE = /^\s*window\.DocInsight\s*=/m;
+const GENERATED_DOCS_RE = /^[^\S\r\n\u2028\u2029]*window\.DocInsight\s*=/m;
 
 export function bundlePreprocess(rawSource: string): { skip: string } | null {
   if (GENERATED_DOCS_RE.test(rawSource.slice(0, 400))) return { skip: "generated documentation data, not source" };

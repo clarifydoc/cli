@@ -431,7 +431,7 @@ async function loadJsReachability(ctx: ReachabilityLoadContext): Promise<Reachab
   }
   for (const root of roots) {
     const wrangler = await readText(join(ctx.projectRoot, root, "wrangler.toml"));
-    const main = wrangler && /^\s*main\s*=\s*["']([^"']+)["']/m.exec(wrangler)?.[1];
+    const main = wrangler && /^[^\S\r\n\u2028\u2029]*main\s*=\s*["']([^"']+)["']/m.exec(wrangler)?.[1];
     if (main) addEntry(root, main, "wrangler.toml main");
     // vite_ruby (Rails): every file under `<sourceCodeDir>/<entrypointsDir>` is
     // an entry a layout's `vite_javascript_tag` names.

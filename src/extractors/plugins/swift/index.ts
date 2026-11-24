@@ -179,7 +179,7 @@ export const swiftSpec: RegexLangSpec = {
 
   functionPatterns: [
     {
-      pattern: /(?:public|private|internal|fileprivate|open)?\s*(?:static\s+)?(?:class\s+)?func\s+([a-zA-Z_]\w*)\s*[<(]/,
+      pattern: /(?:public|private|internal|fileprivate|open)?(?:(?<!\s)\s+)?(?:static\s+)?(?:class\s+)?func\s+([a-zA-Z_]\w*)\s*[<(]/,
       isExported: (line) => !line.trimStart().startsWith("private") && !line.trimStart().startsWith("fileprivate"),
       isAsync: (line) => line.includes("async "),
       // Not one in a comment or a string template.

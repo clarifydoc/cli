@@ -6,7 +6,7 @@ import type { ProjectMarkerContext } from "../../../types/language-plugin.js";
  */
 export async function declaresCmakeProject(file: ProjectMarkerContext): Promise<boolean> {
   try {
-    return /^\s*project\s*\(/im.test(await file.text());
+    return /^[^\S\r\n\u2028\u2029]*project\s*\(/im.test(await file.text());
   } catch {
     return false;
   }

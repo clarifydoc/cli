@@ -60,7 +60,7 @@ export const fsharpRouteExtractor: RouteExtractor = {
   languages: ["fsharp"],
   extractRoutes(tree: Tree, sourceText: string): RouteInfo[] {
     if (!/\b(?:route|routef|subRoute|Map(?:Get|Post|Put|Patch|Delete)|router|Falco)\b/.test(sourceText)) return [];
-    const verbsAllowed = /^\s*open\s+(?:Saturn|Falco)\b/m.test(sourceText);
+    const verbsAllowed = /^[^\S\r\n\u2028\u2029]*open\s+(?:Saturn|Falco)\b/m.test(sourceText);
     const routes: RouteInfo[] = [];
     const emit = (at: Node, ctx: Ctx, path: string, handler: Node | null) =>
       routes.push({

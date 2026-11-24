@@ -45,7 +45,7 @@ function parseDubJson(text: string, declaredIn: string): DeclaredPackage[] {
 function parseDubSdl(text: string, declaredIn: string): DeclaredPackage[] {
   const out: DeclaredPackage[] = [];
   const seen = new Set<string>();
-  for (const m of text.matchAll(/^\s*dependency\s+"([^"]+)"([^\n]*)/gm)) {
+  for (const m of text.matchAll(/^[^\S\r\n\u2028\u2029]*dependency\s+"([^"]+)"([^\n]*)/gm)) {
     const ref = m[1]!;
     if (ref.startsWith(":")) continue;
     const name = ref.split(":")[0]!;

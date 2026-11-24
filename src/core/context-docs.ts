@@ -66,7 +66,7 @@ function titleOf(head: string, fallback: string): string {
 
 /** `Status: Accepted` or a `## Status` section's first line. */
 function statusOf(head: string): string | undefined {
-  const inline = /^\s*\**status\**\s*:\s*(.+)$/im.exec(head)?.[1];
+  const inline = /^[^\S\r\n\u2028\u2029]*\**status\**\s*:\s*(.+)$/im.exec(head)?.[1];
   const section = /^#{2,3}\s*status\s*\n+\s*([^\n#][^\n]*)/im.exec(head)?.[1];
   const s = (inline ?? section)?.replace(/[*_`]/g, "").trim();
   return s ? s.slice(0, 80) : undefined;

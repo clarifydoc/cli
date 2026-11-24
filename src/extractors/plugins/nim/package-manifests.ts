@@ -10,7 +10,7 @@ import { declared } from "../shared/declared-package.js";
 function parseNimble(text: string, declaredIn: string): DeclaredPackage[] {
   const out: DeclaredPackage[] = [];
   const seen = new Set<string>();
-  for (const m of text.matchAll(/^\s*requires\b\s*\(?([^\n]*)/gm)) {
+  for (const m of text.matchAll(/^[^\S\r\n\u2028\u2029]*requires\b\s*\(?([^\n]*)/gm)) {
     // A `#` inside the quotes pins a commit (`"jester#405be2e"`); outside, it opens a comment.
     const args = m[1]!.replace(/("[^"]*")|#.*$/g, (_all, quoted: string | undefined) => quoted ?? "");
     for (const spec of args.matchAll(/"([^"]+)"/g)) {

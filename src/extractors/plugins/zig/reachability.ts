@@ -15,8 +15,8 @@ export const zigReachability = conventionReachability({
   importPath: (source) => (/\.zig$/.test(source) ? source : null),
   mainFunctions: /^main$/,
   entrySource: [
-    [/^\s*pub\s+fn\s+main\s*\(/m, "program entry (`pub fn main`)"],
-    [/^\s*export\s+fn\s/m, "C ABI export (`export fn`)"],
+    [/^[^\S\r\n\u2028\u2029]*pub\s+fn\s+main\s*\(/m, "program entry (`pub fn main`)"],
+    [/^[^\S\r\n\u2028\u2029]*export\s+fn\s/m, "C ABI export (`export fn`)"],
   ],
   entryFiles: [[/^src\/(?:root|lib|main)\.zig$/, "package root"]],
   passiveFiles: [

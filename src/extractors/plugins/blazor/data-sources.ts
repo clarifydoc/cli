@@ -13,7 +13,7 @@ import type { ClassInfo, DataSourceInfo } from "../../../types/analysis.js";
  */
 const CLIENT_DECL_RES = [
   /^\s*@inject\s+(?:System\.Net\.Http\.)?HttpClient\s+(\w+)\s*$/,
-  /(?:\[Inject\]\s*)?(?:public|private|protected|internal)?\s*(?:readonly\s+)?(?:System\.Net\.Http\.)?HttpClient\??\s+(\w+)\s*(?:[{;=]|$)/,
+  /(?:\[Inject\]\s*)?(?:public|private|protected|internal)?(?:(?<!\s)\s+)?(?:readonly\s+)?(?:System\.Net\.Http\.)?HttpClient\??\s+(\w+)\s*(?:[{;=]|$)/,
 ];
 const VERBS: Record<string, string> = {
   GetAsync: "GET", GetStringAsync: "GET", GetStreamAsync: "GET", GetByteArrayAsync: "GET", GetFromJsonAsync: "GET",

@@ -75,9 +75,33 @@ interface GqlType {
 
 /** Strip `#` line comments and `"""…"""` / `"…"` descriptions. */
 function stripComments(text: string): string {
-  return text
-    .replace(/"""[\s\S]*?"""/g, (m) => m.replace(/[^\n]/g, " "))
-    .replace(/^\s*#.*$/gm, "");
+  return stripHashLines(text.replace(/"""[\s\S]*?"""/g, (m) => m.replace(/[^\n]/g, " ")));
+}
+
+/**
+ * `^\s*#.*$` (multiline) read from the `#`: a comment line takes the blank lines before it along, and the pattern
+ * itself would read every blank line of a long run to its end. The match starts at the first line start inside the
+ * whitespace run before the `#` (or at the text start), and only where the `#` opens its line.
+ */
+const HASH_LINE = /#.*/g;
+const TERMINATOR = /[\n\r\u2028\u2029]/;
+export function stripHashLines(text: string): string {
+  let out = "";
+  let from = 0;
+  let consumed = 0;
+  for (const m of text.matchAll(HASH_LINE)) {
+    const hash = m.index!;
+    if (hash < consumed) continue;
+    let run = hash;
+    while (run > consumed && /\s/.test(text[run - 1]!)) run--;
+    let start = -1;
+    if (run === 0) start = 0;
+    for (let i = Math.max(run, 1); start < 0 && i <= hash; i++) if (TERMINATOR.test(text[i - 1]!)) start = i;
+    if (start < 0) continue;
+    out += text.slice(from, start);
+    from = consumed = hash + m[0].length;
+  }
+  return out + text.slice(from);
 }
 
 const NAMED_TYPE_RE = /([A-Za-z_]\w*)/;

@@ -227,3 +227,20 @@ export function matchingBracket(text: string, open: number, options: MatchingBra
   }
   return -1;
 }
+
+/**
+ * `text.replace(/\s+#.*$/, "")`, without the quadratic scan: the pattern tries every start of a whitespace run and
+ * each try reads the run to its end. The first `#` after the last line terminator that follows whitespace starts the
+ * cut, which reaches back over that one whitespace run.
+ */
+export function stripHashComment(text: string): string {
+  const terminator = /[\n\r\u2028\u2029]/g;
+  let from = 0;
+  for (let m = terminator.exec(text); m; m = terminator.exec(text)) from = m.index + 1;
+  let hash = text.indexOf("#", Math.max(from, 1));
+  while (hash !== -1 && !/\s/.test(text[hash - 1]!)) hash = text.indexOf("#", hash + 1);
+  if (hash === -1) return text;
+  let start = hash - 1;
+  while (start > 0 && /\s/.test(text[start - 1]!)) start--;
+  return text.slice(0, start);
+}

@@ -19,7 +19,7 @@ export const nimReachability = conventionReachability({
   importPath: (source) => (/^(?:std|pkg|system)(?:\/|$)/.test(source) ? null : /^[\w./-]+$/.test(source) ? source : null),
   names: { stem: true },
   entrySource: [
-    [/^\s*when\s+isMainModule\b/m, "program entry (when isMainModule)"],
+    [/^[^\S\r\n\u2028\u2029]*when\s+isMainModule\b/m, "program entry (when isMainModule)"],
     [/^routes\s*:/m, "Jester application (routes:)"],
     [/^(?:[A-Za-z_]\w*\.run\s*\(|runForever\s*\()/m, "program entry (top-level run)"],
   ],
@@ -43,9 +43,9 @@ export const nimReachability = conventionReachability({
     for (const rel of await kit.listFiles()) {
       if (!rel.endsWith(".nimble")) continue;
       const text = (await kit.readText(rel)) ?? "";
-      if (/^\s*(?:bin|namedBin)\s*=/m.test(text)) continue;
+      if (/^[^\S\r\n\u2028\u2029]*(?:bin|namedBin)\s*=/m.test(text)) continue;
       const dir = rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "";
-      const src = /^\s*srcDir\s*=\s*"([^"]*)"/m.exec(text)?.[1] ?? "";
+      const src = /^[^\S\r\n\u2028\u2029]*srcDir\s*=\s*"([^"]*)"/m.exec(text)?.[1] ?? "";
       libraryRoots.push([dir, src].filter(Boolean).join("/"));
     }
     return {

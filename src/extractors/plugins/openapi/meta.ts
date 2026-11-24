@@ -12,7 +12,7 @@ import { DAPR_SUBSCRIPTION_RE } from "../serverless/dapr.js";
  *  version key 600 kB in) is found by a top-level key scan, run only when the
  *  key's spelling occurs at all — so a huge data JSON is rejected by one
  *  native substring search, never walked. */
-const YAML_VERSION_RE = /^\s*(openapi|swagger)\s*:\s*["']?\d/m;
+const YAML_VERSION_RE = /^[^\S\r\n\u2028\u2029]*(openapi|swagger)\s*:\s*["']?\d/m;
 const YAML_TOP_LEVEL_RE = /^(?:openapi|swagger)\s*:\s*["']?\d/m;
 const JSON_VERSION_RE = /"(openapi|swagger)"\s*:\s*"\d/;
 const JSON_VALUE_RE = /^\s*:\s*"\d/;

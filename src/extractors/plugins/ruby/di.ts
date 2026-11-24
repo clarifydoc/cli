@@ -3,7 +3,7 @@ import type { CallPattern } from "../shared/regex-base.js";
 import { blankStringLiterals, splitBracketedArgs } from "../shared/regex-base.js";
 import { rubyBodyEnd } from "./blocks.js";
 import { escapeRegex } from "../shared/path-utils.js";
-import { matchingParen } from "../shared/text-scan.js";
+import { matchingParen, stripHashComment } from "../shared/text-scan.js";
 
 /**
  * Dependency injection as Ruby code spells it. Ruby declares no types, so the
@@ -247,7 +247,7 @@ export function containerLookupKey(text: string): string | null {
 
 /** What an assigned expression is: a construction, a container lookup, `T.let(x, Type)`, a typed name. */
 function valueFact(rhs: string, scope: (name: string) => Fact): Fact {
-  const t = rhs.trim().replace(/\s+#.*$/, "");
+  const t = stripHashComment(rhs.trim());
   if (t === "nil") return NONE;
   const cls = constructedClass(t);
   // Only the construction itself — `UserRepo.new.tap { … }` / `.new(…).build` are other values.

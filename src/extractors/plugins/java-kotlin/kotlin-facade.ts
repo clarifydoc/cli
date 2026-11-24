@@ -7,7 +7,7 @@ import type { FunctionInfo, ParamInfo } from "../../../types/analysis.js";
  * `@file:JvmMultifileClass` parts share that name; each part still declares its own functions.
  */
 export function kotlinFacadeClass(sourceText: string, filePath: string): string | null {
-  const named = !sourceText.includes("@file") ? null : /^\s*@file\s*:\s*(?:\[[^\]]*?)?\bJvmName\s*\(\s*(?:name\s*=\s*)?"([A-Za-z_$][\w$]*)"/m.exec(sourceText);
+  const named = !sourceText.includes("@file") ? null : /^[^\S\r\n\u2028\u2029]*@file\s*:\s*(?:\[[^\]]*?)?\bJvmName\s*\(\s*(?:name\s*=\s*)?"([A-Za-z_$][\w$]*)"/m.exec(sourceText);
   if (named) return named[1]!;
   if (filePath.endsWith(".kts")) return null;
   const stem = filePath.slice(filePath.lastIndexOf("/") + 1).replace(/\.kts?$/, "");

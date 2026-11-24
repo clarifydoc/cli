@@ -970,9 +970,9 @@ const PY_REPOSITORY_KNOBS: RepositoryAccessKnobs = {
  * prefixes the name so it joins an Alembic `op.create_table(…, schema=…)`.
  */
 function pythonTableName(body: string): string | null {
-  const direct = /^\s*(?:__tablename__|_table_)\s*(?::\s*\w+\s*)?=\s*["']([^"']+)["']/m.exec(body);
+  const direct = /^[^\S\r\n\u2028\u2029]*(?:__tablename__|_table_)\s*(?::\s*\w+\s*)?=\s*["']([^"']+)["']/m.exec(body);
   const meta = /^([ \t]*)class[ \t]+Meta\b[^\n]*:[ \t]*\n((?:\1[ \t]+[^\n]*(?:\n|$))*)/m.exec(body);
-  const inMeta = meta ? /^\s*(?:db_table|table_name|table)\s*=\s*["']([^"']+)["']/m.exec(meta[2]!) : null;
+  const inMeta = meta ? /^[^\S\r\n\u2028\u2029]*(?:db_table|table_name|table)\s*=\s*["']([^"']+)["']/m.exec(meta[2]!) : null;
   const table = direct?.[1] ?? inMeta?.[1] ?? null;
   if (!table) return null;
   const schema = tableArgsSchema(body);
