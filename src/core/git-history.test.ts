@@ -28,7 +28,7 @@ const git = (cwd: string, args: string[], env: Record<string, string> = {}) =>
   });
 
 const commit = (msg: string, author: string, dateIso?: string) =>
-  git(repo(), ["commit", "-m", msg, "--author", `${author} <t@t>`], {
+  git(repo(), ["commit", "-m", msg, "--author", `${author} <${author.replace(/[^a-z0-9]+/gi, "-")}@t>`], {
     ...(dateIso ? { GIT_AUTHOR_DATE: dateIso, GIT_COMMITTER_DATE: dateIso } : {}),
   });
 
@@ -352,5 +352,52 @@ describe("collectGitHistory on a shallow clone", () => {
     // club + match changed together three times; player + coach twice — the cut commit would have made it three.
     expect(coChange.map((p) => [p.a, p.b, p.count])).toContainEqual(["club.ts", "match.ts", 3]);
     expect(coChange.some((p) => p.a === "coach.ts" && p.b === "player.ts")).toBe(false);
+  });
+});
+
+describe("collectGitHistory — bots and merged identities", () => {
+  let dir: string;
+  const run = (args: string[], env: Record<string, string> = {}) =>
+    execFileSync("git", args, { cwd: dir, env: { ...process.env, ...env }, stdio: "pipe" });
+  const commitAs = (file: string, body: string, name: string, email: string, msg: string) => {
+    writeFileSync(join(dir, file), body);
+    run(["add", "-A"]);
+    run(["commit", "-q", "-m", msg, "--author", `${name} <${email}>`], { GIT_COMMITTER_NAME: name, GIT_COMMITTER_EMAIL: email });
+  };
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "rvd-git-bots-"));
+    run(["init", "-q"]);
+    commitAs("club.ts", "1\n", "dependabot[bot]", "49699333+dependabot[bot]@users.noreply.github.com", "bump a");
+    commitAs("club.ts", "2\n", "dependabot[bot]", "49699333+dependabot[bot]@users.noreply.github.com", "bump b");
+    commitAs("club.ts", "3\n", "dependabot[bot]", "49699333+dependabot[bot]@users.noreply.github.com", "bump c");
+    commitAs("club.ts", "4\n", "Sam Keeper", "sam@example.com", "tune lineup");
+    commitAs("league.ts", "1\n", "github-actions", "actions@example.com", "regenerate");
+    commitAs("player.ts", "1\n", "Sam", "sam@example.com", "add player");
+    commitAs("player.ts", "2\n", "Sam Keeper", "sam@example.com", "edit player");
+    commitAs("player.ts", "3\n", "Alex Winger", "alex@example.com", "edit player again");
+  });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("leaves bots out of owners and bus factor but keeps their commits", async () => {
+    const res = await collectGitHistory(dir, ["club.ts", "league.ts", "player.ts"]);
+    const { churn } = res as { churn: FileChurnInfo[] };
+    const club = churn.find((c) => c.file === "club.ts")!;
+    expect(club.commits).toBe(4);
+    expect(club.authors).toEqual(["Sam Keeper"]);
+    expect(club.authorCount).toBe(1);
+    expect(club.busFactor).toBe(1);
+    const league = churn.find((c) => c.file === "league.ts")!;
+    expect(league.commits).toBe(1);
+    expect(league.authors).toEqual([]);
+    expect(league.authorCount).toBe(0);
+    expect(league.busFactor).toBeUndefined();
+  });
+
+  it("counts two names with one email as one author", async () => {
+    const res = await collectGitHistory(dir, ["club.ts", "league.ts", "player.ts"]);
+    const player = (res as { churn: FileChurnInfo[] }).churn.find((c) => c.file === "player.ts")!;
+    expect(player.authorCount).toBe(2);
+    expect(player.authorShares).toEqual([{ name: "Sam Keeper", commits: 2 }, { name: "Alex Winger", commits: 1 }]);
   });
 });

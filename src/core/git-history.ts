@@ -24,7 +24,10 @@ import { isProsePath } from "./run-fingerprint.js";
  *    `old` to `new` makes every older mention of `old` count for `new`.
  *  - The window ends at HEAD's commit date, not today: an old checkout
  *    still has its history.
- *  - Authors are mailmap-aware (`%aN`): one identity per resolved name.
+ *  - Authors are mailmap-aware (`%aN`): one identity per resolved name, and
+ *    identities sharing an email are one author (union-find). Bots
+ *    (`isBotIdentity`) count as commits and churn but are no author, owner,
+ *    bus-factor holder or reviewer.
  *  - numstat paths are REPO-root-relative; when the analyzed root sits below
  *    the repo root (`--show-prefix` non-empty) the prefix is stripped so
  *    paths line up with the analysis' project-relative files[].
@@ -59,6 +62,17 @@ const CO_CHANGE_MIN_SCORE = 0.3;
 const CO_CHANGE_CAP = 500;
 
 const TOP_AUTHORS = 3;
+
+/** Names of automation that commits: never an owner, reviewer or contributor. */
+const BOT_NAMES = new Set(["dependabot", "renovate", "renovate-bot", "github-actions", "web-flow", "gitlab-bot"]);
+const BOT_EMAIL = /\[bot\]@users\.noreply\.github\.com$/i;
+
+/** An identity that is automation: a `[bot]` name or noreply address, or a well-known name. */
+export function isBotIdentity(name: string, email: string): boolean {
+  const n = name.trim().toLowerCase();
+  const e = email.trim().toLowerCase();
+  return n.endsWith("[bot]") || BOT_EMAIL.test(e) || BOT_NAMES.has(n) || BOT_NAMES.has(e.split("@")[0] ?? "");
+}
 
 /**
  * Run one git command with a timeout and a large output buffer, never
@@ -155,8 +169,29 @@ export async function collectGitHistory(
     fixWeight: number;
   }
   const byFile = new Map<string, Acc>();
-  /** Identity (email) → the name it is shown by. */
+  /** Identity key (`n:<name>` / `e:<email>`) → the name it is shown by, and union-find parents joining a name to its email. */
   const names = new Map<string, string>();
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    let r = x;
+    while (parent.get(r) !== undefined && parent.get(r) !== r) r = parent.get(r)!;
+    for (let c = x; c !== r; ) {
+      const next = parent.get(c)!;
+      parent.set(c, r);
+      c = next;
+    }
+    return r;
+  };
+  const union = (a: string, b: string) => {
+    if (!parent.has(a)) parent.set(a, a);
+    if (!parent.has(b)) parent.set(b, b);
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(byOrdinal(ra, rb) <= 0 ? rb : ra, byOrdinal(ra, rb) <= 0 ? ra : rb);
+  };
+  /** Commits per name key, to pick the name a merged author is shown by. */
+  const nameCommits = new Map<string, number>();
+  let bot = false;
   /** Older path → the path it was renamed to (followed to the newest). */
   const renamedTo = new Map<string, string>();
   const follow = (p: string): string => {
@@ -211,8 +246,14 @@ export async function collectGitHistory(
       // for a commit with no name.
       const name = parts[2] ?? "";
       const email = (parts[4] ?? "").trim().toLowerCase();
-      author = name.trim().toLowerCase() || email;
-      if (!names.has(author)) names.set(author, name || email);
+      bot = isBotIdentity(name, email);
+      author = name.trim() ? `n:${name.trim().toLowerCase()}` : `e:${email}`;
+      if (!bot) {
+        if (!parent.has(author)) parent.set(author, author);
+        if (email && author.startsWith("n:")) union(author, `e:${email}`);
+        if (!names.has(author)) names.set(author, name || email);
+        nameCommits.set(author, (nameCommits.get(author) ?? 0) + 1);
+      }
       date = parts[3]?.trim() ?? "";
       // git log is newest-first: the first commit read is the one ages count from.
       if (newest === undefined && Number.isFinite(Date.parse(date))) newest = Date.parse(date);
@@ -253,7 +294,7 @@ export async function collectGitHistory(
     if (m[1] !== "-") acc.additions += Number(m[1]);
     if (m[2] !== "-") acc.deletions += Number(m[2]);
     // git log is newest-first, so the first sighting is the most recent touch.
-    acc.authors.set(author, (acc.authors.get(author) ?? 0) + 1);
+    if (!bot) acc.authors.set(author, (acc.authors.get(author) ?? 0) + 1);
   }
 
   flushCommit();
@@ -261,15 +302,28 @@ export async function collectGitHistory(
   if (cut.size > 0 && commitCount === 0) return { skipped: "shallow clone (no history past its cut commit; clone deeper or without --depth to enable)" };
   const churn: FileChurnInfo[] = [...byFile.entries()]
     .map(([file, acc]) => {
-      const ranked = [...acc.authors.entries()]
-        .map(([id, n]) => [names.get(id) ?? id, n] as const)
+      // Identities sharing an email are one author, shown by the name with most commits (then the longer one).
+      const merged = new Map<string, number>();
+      for (const [id, n] of acc.authors) merged.set(find(id), (merged.get(find(id)) ?? 0) + n);
+      const display = new Map<string, string>();
+      const best = new Map<string, string>();
+      for (const id of names.keys()) {
+        const root = find(id);
+        const cur = best.get(root);
+        const better = !cur || (nameCommits.get(id) ?? 0) > (nameCommits.get(cur) ?? 0) || ((nameCommits.get(id) ?? 0) === (nameCommits.get(cur) ?? 0) && (names.get(id)!.length > names.get(cur)!.length || (names.get(id)!.length === names.get(cur)!.length && byOrdinal(names.get(id)!, names.get(cur)!) < 0)));
+        if (better) best.set(root, id);
+      }
+      for (const [root, id] of best) display.set(root, names.get(id)!);
+      const ranked = [...merged.entries()]
+        .map(([id, n]) => [display.get(id) ?? id, n] as const)
         .sort((a, b) => b[1] - a[1] || byOrdinal(a[0], b[0]));
+      const humanCommits = ranked.reduce((sum, [, n]) => sum + n, 0);
       let covered = 0;
       let busFactor = 0;
       for (const [, n] of ranked) {
         busFactor++;
         covered += n;
-        if (covered * 2 > acc.commits) break;
+        if (covered * 2 > humanCommits) break;
       }
       return {
         file,
@@ -278,9 +332,9 @@ export async function collectGitHistory(
         deletions: acc.deletions,
         lastTouched: acc.lastTouched,
         authors: ranked.slice(0, TOP_AUTHORS).map(([name]) => name),
-        authorCount: acc.authors.size,
+        authorCount: ranked.length,
         authorShares: ranked.slice(0, 5).map(([name, commits]) => ({ name, commits })),
-        busFactor,
+        ...(busFactor ? { busFactor } : {}),
         ...(acc.fixes ? { fixes: acc.fixes, fixScore: Math.round(acc.fixWeight * 100) / 100, ...(acc.lastFix ? { lastFix: acc.lastFix } : {}) } : {}),
       };
     })
