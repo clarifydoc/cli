@@ -6,6 +6,7 @@ import { railsUnderscore } from "./schema.js";
 import { guardForFilter, HALTS_CALLER } from "./route-meta.js";
 import { withInheritedGuards } from "../../shared/route-metadata.js";
 import { singularize } from "../shared/inflection.js";
+import { ownValue } from "../../shared/own-value.js";
 
 const HANDLER_RE = /^((?:[A-Z]\w*::)*[A-Z]\w*Controller)#(\w+)$/;
 
@@ -356,7 +357,7 @@ function readerType(
   depth: number,
 ): string | null {
   if (depth > 4) return null;
-  const owner = chain.find((c) => c.cls.fieldValues?.[ivar] !== undefined);
+  const owner = chain.find((c) => ownValue(c.cls.fieldValues, ivar) !== undefined);
   if (!owner) return null;
   const found = new Set<string>();
   for (const rhs of owner.cls.fieldValues![ivar]!.split("\n")) {

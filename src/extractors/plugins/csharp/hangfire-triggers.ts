@@ -1,6 +1,7 @@
 import type { Node } from "web-tree-sitter";
 import type { ClassInfo, FileAnalysis, FunctionInfo, Language, SymbolLink } from "../../../types/analysis.js";
 import type { DispatchResolver } from "../../dispatch/base.js";
+import { ownValue } from "../../shared/own-value.js";
 
 /**
  * Hangfire recurring jobs run by their id.
@@ -75,10 +76,10 @@ export class CSharpHangfireTriggerResolver implements DispatchResolver {
       if (!m) return null;
       const [, holder, leaf] = m;
       const holders = holder ? (classes.get(holder.split(".").pop()!) ?? []).map((c) => c.cls) : own ? [own] : [];
-      const values = new Set(holders.map((c) => c.fieldValues?.[leaf!]).filter((v): v is string => typeof v === "string"));
+      const values = new Set(holders.map((c) => ownValue(c.fieldValues, leaf!)).filter((v): v is string => typeof v === "string"));
       if (values.size === 1) return [...values][0]!;
       if (holders.length > 0) return null;
-      const all = new Set([...classes.values()].flat().map((c) => c.cls.fieldValues?.[leaf!]).filter((v): v is string => typeof v === "string"));
+      const all = new Set([...classes.values()].flat().map((c) => ownValue(c.cls.fieldValues, leaf!)).filter((v): v is string => typeof v === "string"));
       return all.size === 1 ? [...all][0]! : null;
     };
 

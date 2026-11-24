@@ -44,6 +44,7 @@ import { bestOverload, type TypeHierarchy } from "./overload-args.js";
 import { markOverloadLink } from "./symbol-dedup.js";
 import { buildTypeAliasIndex, followTypeAlias, type TypeAliasIndex } from "./type-aliases.js";
 import { placeNamespacedParts } from "./class-namespaces.js";
+import { ownValue } from "../extractors/shared/own-value.js";
 
 interface SymbolDef {
   name: string;
@@ -3307,7 +3308,7 @@ function staticProxyLink(
     }
     for (const holder of holders) {
       for (const file of ctx.classNameIndex.get(holder) ?? []) {
-        const value = ctx.classAt.get(memberKey(file, holder))?.fieldValues?.[proxy.constant];
+        const value = ownValue(ctx.classAt.get(memberKey(file, holder))?.fieldValues, proxy.constant);
         if (value) values.add(value);
       }
     }
@@ -4170,7 +4171,7 @@ function buildMemberTypes(
  */
 function handedType(child: ClassInfo, base: ClassInfo, field: string): string | null {
   const hole = (v: string | undefined): string | null => (v ? /^\$\{(\w+)\}$/.exec(v)?.[1] ?? null : null);
-  const param = hole(base.fieldValues?.[field]);
+  const param = hole(ownValue(base.fieldValues, field));
   if (!param || !child.superArgs) return null;
   const index = base.methods.find((m) => isConstructor(m, base) && m.params.some((p) => p.name === param))?.params.findIndex((p) => p.name === param) ?? -1;
   const passed = index >= 0 ? hole(child.superArgs[index]) : null;

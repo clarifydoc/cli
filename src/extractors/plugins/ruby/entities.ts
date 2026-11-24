@@ -2,6 +2,7 @@ import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } 
 import type { ClassInfo, DataSourceInfo, EntityRelation, FileAnalysis, Language, PropertyInfo } from "../../../types/analysis.js";
 import { rubyLexicalConstants } from "./autoload.js";
 import { isRailsSchemaFile, joinSchemaColumns, parseRailsSchema, railsPluralize, railsUnderscore } from "./schema.js";
+import { ownValue } from "../../shared/own-value.js";
 
 /** The ActiveRecord association macros; each declares a reader of the same name. */
 export const ACTIVE_RECORD_ASSOCIATION_MACROS: readonly string[] = ["has_many", "belongs_to", "has_one", "has_and_belongs_to_many"];
@@ -793,7 +794,7 @@ function resolveChainAccesses(analyses: FileAnalysis[], concernAssociations: Rea
     if (!o) continue;
     const found = new Set<string>();
     for (const c of chainOf(o)) {
-      for (const rhs of (c.fieldValues?.[ivar] ?? "").split("\n").filter(Boolean)) {
+      for (const rhs of (ownValue(c.fieldValues, ivar) ?? "").split("\n").filter(Boolean)) {
         const before = beforeOf(rhs);
         const stated = before && /^[A-Z]/.test(before) && modelNames.has(before.replace(/^::/, "").split("::").pop()!) ? before.replace(/^::/, "").split("::").pop()! : null;
         const entity = before ? stated ?? direct(before) : null;

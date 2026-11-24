@@ -1,5 +1,6 @@
 import type { DataSourceInfo, FileAnalysis } from "../types/analysis.js";
 import type { ModuleValueLookup } from "../types/project.js";
+import { ownValue } from "../extractors/shared/own-value.js";
 
 const MQTT_HOLE = /\$\{([^{}]*)\}/g;
 
@@ -123,7 +124,7 @@ export function resolveMqttTopicHoles(analyses: readonly FileAnalysis[], lookup:
       const filled = row.target.replace(MQTT_HOLE, (hole, inner: string) => {
         const name = inner.trim();
         if (!/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(name)) return hole;
-        const fromConsts = a.stringConstants?.[name];
+        const fromConsts = ownValue(a.stringConstants, name);
         const v = fromConsts ?? lookup(a.filePath, name);
         if (v === null || v === undefined || v.includes("${") || v.includes("/")) return hole;
         filledHere = true;

@@ -12,6 +12,7 @@ Utilities used by multiple language plugins. If something's only used by one lan
 | [node-helpers.ts](node-helpers.ts) | `getVisibility`, `getNameFromNode`, `getCallName`, `stripQuotes`, `literalString` (through `as const`/`satisfies`/parens/`!`), `FUNCTION_NODE`, `enclosingFunctionNode`, `paramNames`, decorator extractors | all tree-sitter plugins |
 | [builtin-types.ts](builtin-types.ts) | `isBuiltinType` (per-language sets pushed in by the registry from plugin metas), `COMMON_PRIMITIVES` | `type-parser`, `core/type-reference-extractor.ts` |
 | [destructuring.ts](destructuring.ts) | `destructuredProps`, `patternBindings` — a destructuring parameter named by its pattern (`{ table, onRemove: remove }`): the props it takes, the names it binds | `core/file-analyzer` (a call shadowed by a parameter), `plugins/javascript/dispatch` (prop callbacks) |
+| [own-value.ts](own-value.ts) | `ownValue` — a fact map (`fieldValues`, `moduleValues`, `stringConstants`) read at a key the analyzed source chose, own properties only: `constructor`, `toString`, `__proto__` answer nothing, never what a plain object inherits. Every such lookup goes through it, never `map?.[key]` | `core/api-targets`, `core/module-values`, the URL and constant readers of the plugins |
 | [type-ref-helpers.ts](type-ref-helpers.ts) | `emitParsed`, `findChildByType`, `lineOf` | `plugins/<lang>/type-references.ts` walkers |
 
 Formerly-shared but language-specific extractors now live in their plugins and

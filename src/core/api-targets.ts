@@ -7,6 +7,7 @@ import { buildModuleValueLookup } from "./module-values.js";
 import { buildImportDirectoryResolver } from "./import-directories.js";
 import { importsNameDirectories, manifestFor, pluginFor } from "../extractors/registry.js";
 import { buildWrapperIndex } from "./wrapper-index.js";
+import { ownValue } from "../extractors/shared/own-value.js";
 
 type ApiCall = DataSourceInfo & { filePath: string };
 
@@ -573,7 +574,7 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
   /** Does `target`, seen from `self`, still read a field only a subclass's `super(…)` would state? */
   const awaitsSubclass = (target: string, self: ClassRef): boolean => {
     for (const m of target.matchAll(/\$\{this\.([\w$]+)\}/g)) {
-      const owner = chainOf(self).find(({ c }) => c.cls.fieldValues?.[m[1]!] !== undefined)?.c;
+      const owner = chainOf(self).find(({ c }) => ownValue(c.cls.fieldValues, m[1]!) !== undefined)?.c;
       if (owner && ctorParamIndex(owner, owner.cls.fieldValues![m[1]!]!) >= 0) return true;
     }
     return false;
@@ -583,7 +584,7 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
     const chain = chainOf(self);
     for (let k = 0; k < chain.length; k++) {
       const { c } = chain[k]!;
-      const v = c.cls.fieldValues?.[member];
+      const v = ownValue(c.cls.fieldValues, member);
       if (v === undefined) continue;
       let index = ctorParamIndex(c, v);
       if (index < 0) return resolveValue(v, c.filePath, self, depth + 1);
@@ -602,12 +603,23 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
     return null;
   };
 
+  /** A static member's value seen from `self`: the nearest class up the chain that declares it static. An instance field of that name is no static. */
+  const resolveStatic = (member: string, self: ClassRef, depth: number): string | null => {
+    for (const { c } of chainOf(self)) {
+      const prop = c.cls.properties.find((p) => p.name === member);
+      if (!prop) continue;
+      const v = prop.isStatic ? ownValue(c.cls.fieldValues, member) : undefined;
+      return v === undefined ? null : resolveValue(v, c.filePath, self, depth + 1);
+    }
+    return null;
+  };
+
   /** What `this.<member>` holds seen from `self`, as stated and where: a field value, or the `super(…)` argument it was handed. */
   const memberText = (member: string, self: ClassRef): { text: string; file: string } | null => {
     const chain = chainOf(self);
     for (let k = 0; k < chain.length; k++) {
       const { c } = chain[k]!;
-      const v = c.cls.fieldValues?.[member];
+      const v = ownValue(c.cls.fieldValues, member);
       if (v === undefined) continue;
       let index = ctorParamIndex(c, v);
       if (index < 0) return { text: v, file: c.filePath };
@@ -632,6 +644,9 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
     // `'v1'` — the default a fallback names.
     const literal = /^(['"`])([\w.\-/]*)\1$/.exec(expr);
     if (literal) return literal[2]!;
+    // `this.constructor.BASE` in an instance method: the static the class seen from states (a subclass's own first).
+    const statik = /^this\.constructor\.([\w$]+)$/.exec(expr);
+    if (statik) return cls ? resolveStatic(statik[1]!, cls, depth) : null;
     const field = /^this\.([\w$]+)$/.exec(expr);
     // A read of a getter (`this.url`) no field states: the URL its method builds, seen from this class.
     if (field) return cls ? resolveMember(field[1]!, cls, depth) ?? resolveThisCall(field[1]!, "", cls, depth) : null;
@@ -683,7 +698,7 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
     // `Settings.apiBasePath`: a field value of the project class the name resolves to.
     const member = /^[A-Za-z_$][\w$]*\.([\w$]+)$/.exec(expr)?.[1];
     const owner = member ? ctx.classes.resolve(file, name[1]!) : null;
-    const fv = owner?.cls.fieldValues?.[member!];
+    const fv = ownValue(owner?.cls.fieldValues, member!);
     return fv === undefined ? null : resolveValue(fv, owner!.filePath, owner, depth + 1);
   };
 
@@ -694,7 +709,7 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
    */
   const resolveThisCall = (name: string, argsText: string, cls: ClassRef, depth: number): string | null => {
     for (const { c } of chainOf(cls)) {
-      const field = c.cls.fieldValues?.[name];
+      const field = ownValue(c.cls.fieldValues, name);
       let helper: FunctionInfo | undefined;
       let helperFile = c.filePath;
       if (field !== undefined) {
@@ -804,13 +819,15 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
    * resolved as seen from that subclass — and per instance a string argument
    * configures (`instancesOf`).
    */
-  const perSubclass = (call: ApiCall, cls: ClassRef): Array<{ target: string; alternatives?: string[]; subclass: string }> => {
+  const perSubclass = (call: ApiCall, cls: ClassRef): Array<{ target: string; alternatives?: string[]; subclass?: string }> => {
     const method = cls.cls.methods.find((m) => m.line <= call.line && call.line <= m.endLine);
     if (!method || (call.getterReads === undefined && ![call.target!, ...(call.targetAlternatives ?? [])].some((t) => t.includes("${this.") || THIS_METHOD.test(t)))) return [];
-    const out: Array<{ target: string; alternatives?: string[]; subclass: string }> = [];
+    const out: Array<{ target: string; alternatives?: string[]; subclass?: string }> = [];
     let differs = false;
     const below = ctx.classes.descendants(cls);
-    for (const d of [...below, ...[cls, ...below].flatMap(instancesOf)]) {
+    // The class itself requests too when its own `this.constructor.BASE` is a static it states: a concrete base.
+    const self = [call.target!, ...(call.targetAlternatives ?? [])].some((t) => t.includes("${this.constructor.")) && !cls.cls.abstract ? [cls] : [];
+    for (const d of [...self, ...below, ...[cls, ...below].flatMap(instancesOf)]) {
       // The method `this.m()` dispatches to from `d`: the first definition up its chain.
       // Overrides on the way that call `super.<name>(…)` keep the inherited request (under `d`'s URL);
       // one that does not replaces it.
@@ -826,7 +843,7 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
       // A subclass that states the getter the base reads (`get url()`): the URL its own getter builds.
       const reads = call.getterReads;
       const names = reads ? [...reads.text.matchAll(/\$\{\s*this\s*\.\s*([\w$]+)\s*\}|\bthis\s*\.\s*([\w$]+)(?=\s*\.\s*replace(?:All)?\s*\()/g)].map((g) => (g[1] ?? g[2])!) : [];
-      const owner = up.slice(0, reached).find(({ c }) => names.some((n) => c.cls.methods.some((m) => m.name === n) || c.cls.fieldValues?.[n] !== undefined));
+      const owner = up.slice(0, reached).find(({ c }) => names.some((n) => c.cls.methods.some((m) => m.name === n) || ownValue(c.cls.fieldValues, n) !== undefined));
       const stated = owner ? reads!.by[owner.c.cls.name] : undefined;
       const source = stated?.target ?? call.target!;
       const t = collapseEmptySegments(resolveValue(source, call.filePath, d, 0));
@@ -834,7 +851,7 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
       // subclasses state through `super(…)`, or a method they override: it requests nothing itself.
       // A leaf class's own runtime field (`${this.clubId}`, set before each call) stays a hole the URL's
       // wildcard fills; a class with subclasses may leave it to them.
-      if (awaitsSubclass(t, d) || (t.includes("${this.") && ctx.classes.descendants(d).length > 0) || THIS_METHOD.test(t)) continue;
+      if (awaitsSubclass(t, d) || t.includes("${this.") && (d === cls || ctx.classes.descendants(d).length > 0) || THIS_METHOD.test(t)) continue;
       const alternatives = (stated ? stated.alternatives : call.targetAlternatives)?.map((a) => collapseEmptySegments(resolveValue(a, call.filePath, d, 0)));
       // A subclass whose URL is the written one still requests it: kept beside the ones that differ, so the row the
       // others replace does not take its request with it. When none differs, the written row stands alone.
@@ -842,7 +859,7 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
       // One row per subclass even when two request the same URL: each is its
       // own subclass's request (`DocumentService` and `DocumentNotesService`
       // both under `documents/`), and the trace starts at that subclass.
-      out.push({ target: t, ...(alternatives ? { alternatives } : {}), subclass: d.cls.name });
+      out.push({ target: t, ...(alternatives ? { alternatives } : {}), ...(d === cls ? {} : { subclass: d.cls.name }) });
     }
     return differs ? out : [];
   };
@@ -863,8 +880,8 @@ export function resolveSymbolicTargets(calls: ApiCall[], analyses: readonly File
       const [first, ...rest] = variants;
       call.target = first!.target;
       if (first!.alternatives) call.targetAlternatives = first!.alternatives;
-      call.viaSubclass = first!.subclass;
-      for (const v of rest) fanned.push({ ...call, target: v.target, viaSubclass: v.subclass, ...(v.alternatives ? { targetAlternatives: v.alternatives } : {}) });
+      if (first!.subclass) call.viaSubclass = first!.subclass;
+      for (const v of rest) fanned.push({ ...call, target: v.target, ...(v.subclass ? { viaSubclass: v.subclass } : {}), ...(v.alternatives ? { targetAlternatives: v.alternatives } : {}) });
       changed++;
       continue;
     }

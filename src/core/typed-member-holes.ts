@@ -3,6 +3,7 @@ import type { ClassRef, ProjectContext } from "../types/project.js";
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
 import { pluginFor } from "../extractors/registry.js";
 import { awaitedType } from "../extractors/shared/awaited-type.js";
+import { ownValue } from "../extractors/shared/own-value.js";
 
 type ApiCall = DataSourceInfo & { filePath: string };
 
@@ -322,9 +323,9 @@ function typeValues(written: string, at: Pick<ClassRef, "filePath" | "language">
 
 /** An enum's members' string values, when every member states one. */
 function enumValues(cls: ClassInfo): string[] | null {
-  const members = cls.properties.filter((p) => p.isStatic || cls.fieldValues?.[p.name] !== undefined);
+  const members = cls.properties.filter((p) => p.isStatic || ownValue(cls.fieldValues, p.name) !== undefined);
   if (members.length === 0) return null;
-  const values = members.map((p) => cls.fieldValues?.[p.name]);
+  const values = members.map((p) => ownValue(cls.fieldValues, p.name));
   if (!values.every((v): v is string => typeof v === "string" && v !== "" && !v.includes("${"))) return null;
   return [...new Set(values)];
 }

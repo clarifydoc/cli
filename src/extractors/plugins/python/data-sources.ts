@@ -10,6 +10,7 @@ import { escapeRegex } from "../shared/path-utils.js";
 import { extractPythonHttpClientRegistrations, pythonClientKey } from "./http-clients.js";
 import { DAPR_TOPIC_RE, daprRow } from "../shared/dapr-pubsub.js";
 import { HTTP_VERBS_LOWER } from "../../shared/http-verbs.js";
+import { ownValue } from "../../shared/own-value.js";
 
 export class PythonDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["python"];
@@ -41,7 +42,7 @@ export class PythonDataSourceExtractor extends DataSourceExtractor {
         const lit = i < args.length ? /^[rbuf]*(["'])(.*)\1$/.exec(args[i]!) : null;
         out = out.split(token).join(lit && !/^[a-z]*f/i.test(args[i]!) ? lit[2]! : "{}");
       });
-      out = out.replace(/\$\{([A-Za-z_]\w*)\}/g, (hole, v: string) => helperFile!.moduleValues?.[v] ?? hole);
+      out = out.replace(/\$\{([A-Za-z_]\w*)\}/g, (hole, v: string) => ownValue(helperFile!.moduleValues, v) ?? hole);
       call.target = out + rest!;
       n++;
     }

@@ -35,6 +35,7 @@ import { escapeRegex } from "../shared/path-utils.js";
 import { buildWrapperIndex } from "../../../core/wrapper-index.js";
 import { resolveImportSource } from "../../../core/import-index.js";
 import { bindsModule } from "../../../core/api-targets.js";
+import { ownValue } from "../../shared/own-value.js";
 
 interface UrlBuilder {
   /** Every distinct template the helper may return, primary first. */
@@ -710,7 +711,7 @@ function overridingClasses(ctx: ProjectContext, file: string, line: number, text
   if (!cls) return [];
   const names = [...text.matchAll(GETTER_READ_RE), ...text.matchAll(GETTER_EDIT_RE)].map((m) => (m[2] ?? m[1])!);
   const below = ctx.classes.descendants(cls);
-  return names.length > 0 && below.some((d) => names.some((n) => d.cls.methods.some((x) => x.name === n) || d.cls.fieldValues?.[n] !== undefined)) ? below : [];
+  return names.length > 0 && below.some((d) => names.some((n) => d.cls.methods.some((x) => x.name === n) || ownValue(d.cls.fieldValues, n) !== undefined)) ? below : [];
 }
 
 /** The innermost class holding a line. */
@@ -737,7 +738,7 @@ function fieldResolver(ctx: ProjectContext): (file: string, line: number, name: 
     const cls = classAt(ctx, file, line);
     if (!cls) return null;
     const up = [cls, ...ctx.classes.ancestors(cls).flatMap((s) => (s.ref ? [s.ref] : []))];
-    const k = up.findIndex((c) => c.cls.fieldValues?.[name] !== undefined);
+    const k = up.findIndex((c) => ownValue(c.cls.fieldValues, name) !== undefined);
     if (k < 0) return null;
     let value = up[k]!.cls.fieldValues![name]!;
     let index = paramIndex(up[k]!, value);
@@ -906,7 +907,7 @@ function descriptorResolver(analyses: FileAnalysis[], ctx: ProjectContext, looku
     if (!entry) return null;
     const path = `${helper.entryOf.table}.${entry}.${key}`;
     if (keyArgs === null) {
-      const value = helper.a.moduleValues?.[path];
+      const value = ownValue(helper.a.moduleValues, path);
       return value !== undefined && !value.includes("${") ? [value] : null;
     }
     const inner = lookup.local.get(helper.a.filePath)?.get(path);

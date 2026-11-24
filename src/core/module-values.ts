@@ -4,6 +4,7 @@ import { extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { importsNameDirectories, pluginFor } from "../extractors/registry.js";
 import { buildImportDirectoryResolver } from "./import-directories.js";
 import { isTestFile } from "./test-file-detector.js";
+import { ownValue } from "../extractors/shared/own-value.js";
 
 /**
  * The string value a name stands for, followed into the module that defines
@@ -71,7 +72,7 @@ export function buildModuleValueLookup(
       if (f.filePath === from.filePath) continue;
       if (extensionFamily(f.filePath) !== family) continue;
       if (!fromTest && isTestFile(f.filePath, f.language)) continue;
-      const v = f.moduleValues?.[key];
+      const v = ownValue(f.moduleValues, key);
       if (v === undefined) continue;
       if (found && found.value !== v) return null;
       found ??= { value: v, file: f.filePath };
@@ -101,7 +102,7 @@ export function buildModuleValueLookup(
       // A bare name in a class's own file: one of its classes states it.
       let found: string | undefined;
       for (const ref of classes.classesIn(a.filePath)) {
-        const v = ref.cls.fieldValues?.[expr];
+        const v = ownValue(ref.cls.fieldValues, expr);
         if (v === undefined) continue;
         if (found !== undefined && found !== v) return null;
         found = v;
@@ -121,14 +122,14 @@ export function buildModuleValueLookup(
     const target = byFile.get(ref.filePath);
     if (!target || extensionFamily(target.filePath) !== extensionFamily(a.filePath)) return null;
     if (!isTestFile(a.filePath, a.language) && isTestFile(target.filePath, target.language)) return null;
-    const v = target.moduleValues?.[`${ref.cls.name}.${member}`] ?? ref.cls.fieldValues?.[member];
+    const v = ownValue(target.moduleValues, `${ref.cls.name}.${member}`) ?? ownValue(ref.cls.fieldValues, member);
     if (v !== undefined) return { value: v, file: target.filePath };
     // A type whose declaration and methods sit in several files of its package (Go): the
     // value is in whichever of them states it (`frontendServer.ordersAddr`, set in main.go).
     if (!pluginFor(target.language)?.typesSpanFiles) return null;
     for (const f of filesIn(dirOf(target.filePath))) {
       if (f.filePath === target.filePath || !f.classes.some((c) => c.name === ref.cls.name)) continue;
-      const w = f.moduleValues?.[`${ref.cls.name}.${member}`];
+      const w = ownValue(f.moduleValues, `${ref.cls.name}.${member}`);
       if (w !== undefined) return { value: w, file: f.filePath };
     }
     return null;
@@ -193,7 +194,7 @@ export function buildModuleValueLookup(
     const head = expr.slice(0, dot);
     const imp = (a.imports ?? []).find((i) => !i.executes && i.specifiers.includes(head));
     if (imp && !importNamesFile(imp.source, owners[0]!.filePath)) return null;
-    const v = owners[0]!.moduleValues?.[expr];
+    const v = ownValue(owners[0]!.moduleValues, expr);
     return v === undefined ? null : { value: v, file: owners[0]!.filePath };
   };
 
@@ -204,7 +205,7 @@ export function buildModuleValueLookup(
   };
 
   const findIn = (a: FileAnalysis, fromFile: string, expr: string): { value: string; file: string } | null => {
-    const own = a.moduleValues?.[expr];
+    const own = ownValue(a.moduleValues, expr);
     if (own !== undefined) return { value: own, file: fromFile };
     const dot = expr.indexOf(".");
     const head = dot < 0 ? expr : expr.slice(0, dot);

@@ -1,6 +1,7 @@
 import type { FileAnalysis, RouteFact, RouteInfo } from "../../../types/analysis.js";
 import type { ProjectContext } from "../../../types/project.js";
 import type { RouteResolver } from "../../route-resolvers/base.js";
+import { ownValue } from "../../shared/own-value.js";
 
 /**
  * GoRouter routes. `GoRoute(path: '/home', …)` is a screen at a literal path;
@@ -156,7 +157,7 @@ export const goRouterResolver: RouteResolver = {
       for (const fact of a.routeFacts ?? []) {
         if (fact.kind !== GO_ROUTE_FACT) continue;
         const { cls, field, widget, shell } = fact.data as GoRouteFact;
-        const path = ctx.classes.resolve(a.filePath, cls)?.cls.fieldValues?.[field];
+        const path = ownValue(ctx.classes.resolve(a.filePath, cls)?.cls.fieldValues, field);
         if (!path) continue;
         a.routes.push({ path, httpMethod: null, kind: "frontend", handler: widget ?? cls, componentPath: widget ?? cls, ...(shell ? { shell } : {}), calls: [], middleware: [], line: fact.line });
       }

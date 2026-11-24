@@ -1,6 +1,7 @@
 import type { FileAnalysis, RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import type { ProjectContext } from "../../../../types/project.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";
+import { ownValue } from "../../../shared/own-value.js";
 
 /**
  * Halo (halo.run) generates endpoints at runtime from what its classes state:
@@ -111,7 +112,7 @@ export const haloGvkResolver: RouteResolver = {
     for (const a of analyses) {
       const constant = (ref: string): string | null => {
         const dot = ref.lastIndexOf(".");
-        return classOf(a.filePath, ref.slice(0, dot))?.fieldValues?.[ref.slice(dot + 1)] ?? null;
+        return ownValue(classOf(a.filePath, ref.slice(0, dot))?.fieldValues, ref.slice(dot + 1)) ?? null;
       };
       for (const fact of a.routeFacts ?? []) {
         if (fact.kind !== HALO_GVK_FACT) continue;
@@ -129,8 +130,8 @@ export const haloGvkResolver: RouteResolver = {
       if (!a.routes.some((r) => r.prefixUnresolved?.startsWith(HALO_GV))) continue;
       const constant = (ref: string): string | null => {
         const dot = ref.lastIndexOf(".");
-        if (dot < 0) return a.classes.map((c) => c.fieldValues?.[ref]).find((v) => v !== undefined) ?? null;
-        return classOf(a.filePath, ref.slice(0, dot))?.fieldValues?.[ref.slice(dot + 1)] ?? null;
+        if (dot < 0) return a.classes.map((c) => ownValue(c.fieldValues, ref)).find((v) => v !== undefined) ?? null;
+        return ownValue(classOf(a.filePath, ref.slice(0, dot))?.fieldValues, ref.slice(dot + 1)) ?? null;
       };
       a.routes = a.routes.map((r) => {
         const expr = r.prefixUnresolved?.startsWith(HALO_GV) ? r.prefixUnresolved.slice(HALO_GV.length) : null;

@@ -2,6 +2,7 @@ import type { FileAnalysis, FunctionInfo, RouteInfo } from "../../../types/analy
 import type { ClassRef, ProjectContext } from "../../../types/project.js";
 import type { RouteResolver } from "../../route-resolvers/base.js";
 import { joinRoutePath } from "../../shared/route-paths.js";
+import { ownValue } from "../../shared/own-value.js";
 
 /** `include_router(api, prefix=settings.api_prefix)`: the holder and the attribute the prefix reads. */
 const SETTINGS_PREFIX = /^mount:([A-Za-z_]\w*)\.([A-Za-z_]\w*)$/;
@@ -37,14 +38,14 @@ function settingsClass(file: FileAnalysis, local: { type: string; from?: string 
 }
 
 /** A class's own literal for an attribute, else the nearest base's. */
-function ownValue(ref: ClassRef, attr: string, ctx: ProjectContext): string | undefined {
-  const v = ctx.fileOf(ref.filePath)?.moduleValues?.[`${ref.cls.name}.${attr}`];
+function classOwnValue(ref: ClassRef, attr: string, ctx: ProjectContext): string | undefined {
+  const v = ownValue(ctx.fileOf(ref.filePath)?.moduleValues, `${ref.cls.name}.${attr}`);
   return v !== undefined && !v.includes("${") ? v : undefined;
 }
 
 function classValue(ref: ClassRef, attr: string, ctx: ProjectContext): string | undefined {
   for (const r of [ref, ...ctx.classes.ancestors(ref).flatMap((a) => (a.ref ? [a.ref] : []))]) {
-    const v = ownValue(r, attr, ctx);
+    const v = classOwnValue(r, attr, ctx);
     if (v !== undefined) return v;
   }
   return undefined;
@@ -83,7 +84,7 @@ export const fastapiSettingsPrefix: RouteResolver = {
         const value = ref ? classValue(ref, m[2]!, ctx) : undefined;
         if (value === undefined || !/^(?:\/[\w\-./{}]*)?$/.test(value)) return r;
         // A subclass the instance may really be, stating the attribute differently, makes the value unknowable here.
-        if (ctx.classes.descendants(ref!).some((d) => { const v = ownValue(d, m[2]!, ctx); return v !== undefined && v !== value; })) return r;
+        if (ctx.classes.descendants(ref!).some((d) => { const v = classOwnValue(d, m[2]!, ctx); return v !== undefined && v !== value; })) return r;
         const { prefixUnresolved: _, ...rest } = r;
         return { ...rest, path: value === "" ? r.path : joinRoutePath(r.path, value) };
       });

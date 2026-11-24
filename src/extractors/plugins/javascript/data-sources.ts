@@ -98,6 +98,12 @@ function rebuiltTemplate(template: Node, depth = 0): string | null {
   return flush() ? `${out}\`` : null;
 }
 
+/** `(this.constructor as any)`, `(this.constructor as unknown as typeof Club)`, `(<any>this.constructor)`: `this.constructor`. */
+const CAST_CONSTRUCTOR = /\(\s*(?:<[^<>()]*>\s*)?this\s*\.\s*constructor(?:\s+(?:as|satisfies)\s+[^()]+?)*\s*\)/g;
+function uncastConstructor(target: string): string {
+  return target.replace(CAST_CONSTRUCTOR, "this.constructor");
+}
+
 const MEMBER_HOLE = /^\$\{[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+\}$/;
 
 /** Named HTTP clients — trusted as API calls without a URL-shape check. */
@@ -676,6 +682,17 @@ export function phoenixTopicPattern(written: string): string | null {
 
 export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["typescript", "javascript"];
+
+  /**
+   * A row with its URL's `(this.constructor as any).BASE` read as `this.constructor.BASE`: the cast
+   * is TypeScript's own syntax, and core reads the uncast spelling as the class's static.
+   */
+  protected override ds(info: Parameters<DataSourceExtractor["ds"]>[0]): DataSourceInfo {
+    const row = super.ds(info);
+    if (row.target?.includes("this.constructor")) row.target = uncastConstructor(row.target);
+    if (row.targetAlternatives?.some((t) => t.includes("this.constructor"))) row.targetAlternatives = row.targetAlternatives.map(uncastConstructor);
+    return row;
+  }
 
   /** The literal topics a client subscribes to in this file (`client.subscribe('a/+')`, `client.subscribe(['a', 'b'])`). */
   private subscribedTopics(client: string): MqttTopic[] {

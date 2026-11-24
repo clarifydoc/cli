@@ -4,6 +4,7 @@ import type { DispatchResolver } from "../../dispatch/base.js";
 import { buildFilePathMap, resolveTarget } from "../../shared/link-scoring.js";
 import { factoryActions, importedName, type FactoryAction, type FactoryContext } from "./vuex-factories.js";
 import { autoImportedComponents, globalComponentFiles, tagKey } from "./dispatch.js";
+import { ownValue } from "../../shared/own-value.js";
 
 export { extractStoreShapes } from "./vuex-factories.js";
 
@@ -758,7 +759,7 @@ const computedRe: Record<Section, RegExp> = {
  * project module; two same-named constants of other modules are never mixed up, the import chooses.
  */
 export function constantValue(file: FileAnalysis, ref: string, ctx: FactoryContext, depth = 0): string | null {
-  const own = file.stringConstants?.[ref];
+  const own = ownValue(file.stringConstants, ref);
   if (own !== undefined) return own;
   if (depth > 3) return null;
   const dot = ref.indexOf(".");
@@ -782,7 +783,7 @@ export function constantValue(file: FileAnalysis, ref: string, ctx: FactoryConte
 
 /** `key` in `file`'s own constants, else behind one of its re-exports. */
 function declaredConstant(file: FileAnalysis, key: string, ctx: FactoryContext, depth: number): string | null {
-  const own = file.stringConstants?.[key];
+  const own = ownValue(file.stringConstants, key);
   if (own !== undefined) return own;
   if (depth > 3) return null;
   const head = key.includes(".") ? key.slice(0, key.indexOf(".")) : key;
