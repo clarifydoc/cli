@@ -22,7 +22,7 @@ export const KNOWN_FEATURES: Readonly<Record<string, { description: string; defa
     default: true,
   },
   "flat-tree": {
-    description: "Read the syntax trees of the languages validated for it (C#) once into plain arrays instead of through web-tree-sitter's nodes; the output is the same",
+    description: "Read the syntax trees of the languages validated for it (every tree-sitter plugin) once into plain arrays instead of through web-tree-sitter's nodes; the output is the same",
     default: false,
   },
   taint: {

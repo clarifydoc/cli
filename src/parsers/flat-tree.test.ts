@@ -120,17 +120,32 @@ describe("flat tree equals the real tree", () => {
     { name: "broken.kt", text: "class A { fun m( { val x = ; } }\n" },
     { name: "broken.php", text: "<?php\nfunction ( { class = ;\n$a = 1;\n" },
     { name: "broken.ts", text: "function ( { class 😀 = ;\nconst a = 1;\n" },
+    { name: "unicode.fs", text: 'module Équipe\nlet nom = "日本 🚗"\nlet jouer x = "⚽ é"\n' },
+    { name: "unicode.sh", text: '#!/bin/bash\nnom="日本 🚗"\njouer() { echo "⚽ é"; }\n' },
+    { name: "unicode.r", text: 'nom <- "日本 🚗"\njouer <- function(x) { paste("⚽ é", x) }\n' },
+    { name: "unicode.jl", text: 'nom = "日本 🚗"\nfunction jouer(x)\n  return "⚽ é"\nend\n' },
+    { name: "unicode.zig", text: 'const nom = "日本 🚗";\npub fn jouer() void { _ = "⚽ é"; }\n' },
+    { name: "unicode.ml", text: 'let nom = "日本 🚗"\nlet jouer x = "⚽ é" ^ x\n' },
+    { name: "unicode.pas", text: "unit Equipe;\ninterface\nconst Nom = '日本 🚗';\nimplementation\nend.\n" },
+    { name: "broken.fs", text: "let ( = \nmodule 😀 = \nlet x = 1\n" },
+    { name: "broken.sh", text: "if [ ; then\nfoo() { echo \"😀\n" },
+    { name: "broken.r", text: "f <- function( { x = \n😀 <- 1\n" },
+    { name: "broken.jl", text: "function ( \n  x = \nend end 😀\n" },
+    { name: "broken.zig", text: "pub fn ( void { const = ;\n" },
+    { name: "broken.ml", text: "let ( = \nmodule 😀 = struct\n" },
+    { name: "broken.pas", text: "unit ; interface procedure ( ; implementation 😀 end.\n" },
     { name: "broken.cs", text: "class A { void M( { int x = ; } }\n" },
   );
 
   it("answers every used member alike for each fixture tree", async () => {
-    await ensureLanguagesLoaded(["typescript", "javascript", "python", "java", "kotlin", "php"]);
+    await ensureLanguagesLoaded(["typescript", "javascript", "python", "java", "kotlin", "php", "fsharp", "bash", "r", "julia", "zig", "ocaml", "pascal"]);
     const scripts: Array<{ name: string; text: string }> = [];
     for (const c of components) {
       const pre = pluginFor("typescript")?.preprocess?.(c.text, c.name);
       if (pre && !("skip" in pre)) scripts.push({ name: `${c.name}.script.${pre.language === "javascript" ? "js" : "ts"}`, text: pre.sourceText });
     }
     let compared = 0;
+    const perLanguage = new Map<string, number>();
     const skipped: string[] = [];
     const errors: string[] = [];
     for (const { name, text } of [...sources, ...scripts]) {
@@ -149,8 +164,11 @@ describe("flat tree equals the real tree", () => {
       compare(tree.rootNode, flat.rootNode, new Map(), diffs, 25, { n: 0 });
       if (diffs.length) errors.push(`${name}:\n  ${diffs.slice(0, 4).join("\n  ")}`);
       compared++;
+      perLanguage.set(String(lang), (perLanguage.get(String(lang)) ?? 0) + 1);
     }
     expect(compared).toBeGreaterThan(100);
+    // Every language the feature covers has real fixture files compared, not only the inline sources above.
+    for (const l of ["fsharp", "bash", "r", "julia", "zig", "ocaml", "pascal"]) expect(perLanguage.get(l) ?? 0, l).toBeGreaterThan(2);
     expect(errors.length ? [`${errors.length} files differ: ${errors.map((e) => e.split(":")[0]).join(", ")}`, ...errors.slice(0, 5)] : []).toEqual([]);
   }, 600_000);
 
@@ -174,6 +192,13 @@ describe("flat tree equals the real tree", () => {
       expect(await parseSource("class Car { }\n", "java", "Car.java")).toBeInstanceOf(FlatTree);
       expect(await parseSource("class Car\n", "kotlin", "Car.kt")).toBeInstanceOf(FlatTree);
       expect(await parseSource("<?php class Car {}\n", "php", "Car.php")).toBeInstanceOf(FlatTree);
+      expect(await parseSource("let car = 1\n", "fsharp", "car.fs")).toBeInstanceOf(FlatTree);
+      expect(await parseSource("car=1\n", "bash", "car.sh")).toBeInstanceOf(FlatTree);
+      expect(await parseSource("car <- 1\n", "r", "car.r")).toBeInstanceOf(FlatTree);
+      expect(await parseSource("car = 1\n", "julia", "car.jl")).toBeInstanceOf(FlatTree);
+      expect(await parseSource("const car = 1;\n", "zig", "car.zig")).toBeInstanceOf(FlatTree);
+      expect(await parseSource("let car = 1\n", "ocaml", "car.ml")).toBeInstanceOf(FlatTree);
+      expect(await parseSource("unit Car;\ninterface\nimplementation\nend.\n", "pascal", "Car.pas")).toBeInstanceOf(FlatTree);
     } finally {
       if (prior === undefined) delete process.env.CLARIFYDOC_FEATURES;
       else process.env.CLARIFYDOC_FEATURES = prior;
