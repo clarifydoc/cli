@@ -39,13 +39,15 @@ const NO_FACTS: CTokenFacts = {
 
 export abstract class CParserBase extends Parser {
   private facts: CTokenFacts = NO_FACTS;
+  private settleFull = true;
 
   constructor(input: TokenStream) {
     super(input);
   }
 
   /** The first pass over the tokens the parse is about to read, and (unless `settle` is false, for tests) the decisions it settles. */
-  prepare(stream: CommonTokenStream, settle = true): void {
+  prepare(stream: CommonTokenStream, settle = true, settleFull = true): void {
+    this.settleFull = settleFull;
     this.facts = readTypes(stream);
     // The names the first pass read as bare macros, calling conventions and string macros, retyped for the grammar.
     this.facts.retype.forEach((type, index) => {
@@ -61,8 +63,10 @@ export abstract class CParserBase extends Parser {
    * prediction read the whole argument list and what follows it to tell them apart — most of the reader's
    * prediction time on a cold start. The predicates the alternatives carry decide these cases anyway, and read
    * tokens only: an alternative whose predicate is false is out, and the one left is what prediction picks (or
-   * the parse fails there, as it would at the decision). 0 leaves a decision to prediction, as does every
-   * full-context pass (the one that reports the errors).
+   * the parse fails there, as it would at the decision). 0 leaves a decision to prediction. The pass that
+   * reads a file SLL refused settles them too (`settleFull`): prediction there rebuilt the states of every decision
+   * the first pass had settled, over a third of that pass; its lookahead budget is counted in
+   * full-context steps, so a file over it before is over it still or reads now.
    */
   private settleDecisions(): void {
     const simulator = this.interpreter;
@@ -71,7 +75,7 @@ export abstract class CParserBase extends Parser {
     const decisions = decisionsOf(this.atn, this.ruleNames);
     const predict = simulator.adaptivePredict.bind(simulator);
     simulator.adaptivePredict = (input: TokenStream, decision: number, outer: ParserRuleContext | null): number => {
-      if (simulator.predictionMode === PredictionMode.SLL) {
+      if (simulator.predictionMode === PredictionMode.SLL || this.settleFull) {
         const alt = decision === decisions.blockItem.decision ? this.settleBlockItem(decisions)
           : decision === decisions.statement.decision ? this.settleStatement(decisions)
           : decision === decisions.externalDeclaration.decision ? this.settleExternal(decisions)

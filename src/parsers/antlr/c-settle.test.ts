@@ -4,14 +4,14 @@ import { CParser } from "./c/CParser.js";
 import { parseWithAntlr } from "./run.js";
 
 /** Reads `source` as the C reader does (a file with an error is not read), with the settled decisions on or off. */
-function read(source: string, settle: boolean): { text: string | null; errors: number } {
+function read(source: string, settle: boolean, full = true): { text: string | null; errors: number } {
   let parser!: CParser;
   const { tree, errors } = parseWithAntlr(
     source,
     (input) => new CLexer(input),
     (tokens) => {
       parser = new CParser(tokens);
-      parser.prepare(tokens, settle);
+      parser.prepare(tokens, settle, full);
       return parser;
     },
     (p) => p.compilationUnit(),
@@ -25,6 +25,8 @@ function same(source: string): void {
   expect(settled.errors).toBe(0);
   expect(settled.text).not.toBeNull();
   expect(settled).toEqual(read(source, false));
+  // Settled in the SLL pass only, as before the full-context pass was settled too.
+  expect(settled).toEqual(read(source, true, false));
 }
 
 const STATEMENTS = `
@@ -95,5 +97,6 @@ describe("C decisions settled from tokens", () => {
     const broken = "void f(void) { x = ; }\n";
     expect(read(broken, true)).toEqual(read(broken, false));
     expect(read(broken, true).text).toBeNull();
+    expect(read(broken, true, false)).toEqual(read(broken, true));
   });
 });
