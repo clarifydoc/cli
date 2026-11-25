@@ -234,6 +234,13 @@ describe("cache, filesystem and email are boundaries too", () => {
     expect(classifyImportSource("System.IO")?.category).not.toBe("filesystem");
   });
 
+  it("classifies the Python standard library's archive, file-tree and mail modules, not pathlib", () => {
+    expect(classifyImportSource("shutil", undefined, "python")?.category).toBe("filesystem");
+    expect(classifyImportSource("zipfile", undefined, "python")?.category).toBe("filesystem");
+    expect(classifyImportSource("smtplib", undefined, "python")?.category).toBe("email");
+    expect(classifyImportSource("pathlib", undefined, "python")?.category).not.toBe("filesystem");
+  });
+
   it("classifies .NET and JVM cache and mail packages", () => {
     expect(classifyImportSource("Microsoft.Extensions.Caching.Memory")?.category).toBe("cache");
     expect(classifyImportSource("MailKit.Net.Smtp")?.category).toBe("email");

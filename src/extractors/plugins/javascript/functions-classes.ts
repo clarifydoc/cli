@@ -183,6 +183,33 @@ function composableLocals(fn: Node, members: FunctionInfo["returnedMembers"]): F
   return derivedLocalsOf(fn, locals);
 }
 
+/** Vue reactivity primitives that only build a cell; a function making no other call outside its getters derives values. */
+const REACTIVITY_PRIMITIVES: ReadonlySet<string> = new Set(["computed", "ref", "shallowRef", "reactive", "shallowReactive", "readonly", "shallowReadonly", "toRef", "toRefs", "toValue", "unref", "markRaw"]);
+
+/**
+ * `"computed"` for a named function (a composable) whose work is deriving values: it holds a Composition `computed(…)`
+ * and, outside the getters handed to `computed`, makes no call but reactivity primitives — so a prop it runs is run by
+ * the framework when the value is read, never by a person (`FunctionInfo.reactiveGetter`). A function that also runs
+ * anything else of its own keeps no mark: the same prop call there may be a handler's.
+ */
+function composableGetterOf(body: Node | null | undefined): "computed" | undefined {
+  if (!body || !body.text.includes("computed")) return undefined;
+  const getters: Array<[number, number]> = [];
+  const calls = body.descendantsOfType("call_expression").filter((c): c is Node => !!c);
+  for (const call of calls) {
+    if (call.childForFieldName("function")?.text !== "computed") continue;
+    const arg = call.childForFieldName("arguments")?.namedChildren.find((a) => a && a.type !== "comment");
+    if (arg) getters.push([arg.startIndex, arg.endIndex]);
+  }
+  if (getters.length === 0) return undefined;
+  for (const call of calls) {
+    if (getters.some(([from, to]) => call.startIndex >= from && call.endIndex <= to)) continue;
+    const callee = call.childForFieldName("function")?.text ?? "";
+    if (!REACTIVITY_PRIMITIVES.has(callee)) return undefined;
+  }
+  return "computed";
+}
+
 /** A call chain off a name: `useClubApi()`, `api.clubs.list()`, `usePublicClubApi(slug).clubs`. */
 const RESULT_CHAIN = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\([^()]*\))*$/;
 
@@ -1998,6 +2025,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       // An AngularJS service's or controller's member belongs to the class `angularClasses` builds.
       if (angularMember(held.node)) continue;
       const fn = this.parseJsArrowOrExpr(held.name, held.node, false);
+      // A Composition `watch(…)` callback is run by the framework on a change, as an Options watcher is.
+      if (held.name.startsWith("<watch@")) fn.reactiveGetter = "watch";
       // It closes over the functions it is written in: their typed parameters and locals type its receivers.
       this.closeOver(fn, held.node);
       functions.push(fn);
@@ -2682,6 +2711,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const responses = responsesOf(params, body);
     const { calls, localTypes, returnedSpreads, returnedMembers, returnedFrom, valueFlow } = finishBody(extractCalls(body, "typescript"), body, paramNames, this.ctx, params);
     const derivedLocals = composableLocals(node, returnedMembers);
+    const getter = composableGetterOf(body);
     const effects = withJsDocThrows(memberEffectsOf(body, params, typedLocalNames(localTypes)), doc, node.startPosition.row + 1);
     return {
       name,
@@ -2699,6 +2729,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       ...(returnedSpreads ? { returnedSpreads } : {}),
       ...(returnedMembers ? { returnedMembers } : {}),
       ...(derivedLocals ? { derivedLocals } : {}),
+      ...(getter ? { reactiveGetter: getter } : {}),
       ...(returnedFrom && !returnType ? { returnedFrom } : {}),
       ...urlTemplateRecord(templates, stripped),
       ...(requestAccess ? { requestAccess } : {}),
@@ -2753,6 +2784,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const responses = responsesOf(params, body);
     const { calls, localTypes, returnedSpreads, returnedMembers, returnedFrom, valueFlow } = finishBody(extractCalls(body, "typescript", skip), body, paramNames, this.ctx, params, skip);
     const derivedLocals = composableLocals(funcNode, returnedMembers);
+    const getter = skip ? undefined : composableGetterOf(body);
     const effects = withJsDocThrows(memberEffectsOf(body, params, typedLocalNames(localTypes), { skip }), doc, funcNode.startPosition.row + 1);
     return {
       name,
@@ -2770,6 +2802,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       ...(returnedSpreads ? { returnedSpreads } : {}),
       ...(returnedMembers ? { returnedMembers } : {}),
       ...(derivedLocals ? { derivedLocals } : {}),
+      ...(getter ? { reactiveGetter: getter } : {}),
       ...(returnedFrom && !returnType ? { returnedFrom } : {}),
       ...urlTemplateRecord(templates, stripped),
       ...(requestAccess ? { requestAccess } : {}),

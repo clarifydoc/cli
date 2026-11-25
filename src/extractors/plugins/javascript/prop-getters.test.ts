@@ -41,7 +41,28 @@ const label = computed(() => props.formatLabel('x'));
 function save() { props.onSave({}); }
 </script>
 `,
+  "src/ClubComposable.vue": `<template><button @click="save">Save</button><span>{{ label }}</span></template>
+<script setup>
+import { computed } from 'vue';
+const props = defineProps({ onSave: Function, formatLabel: Function, onWatch: Function });
+function useLabel() {
+  return computed(() => props.formatLabel('x'));
+}
+function useWatch() {
+  watch(() => props.onWatch, () => props.onWatch());
+  return 1;
+}
+function useMixed() {
+  const shown = computed(() => 1);
+  props.onSave({});
+  return shown;
+}
+function save() { props.onSave({}); props.formatLabel('y'); }
+const label = useLabel();
+</script>
+`,
   "src/Page.vue": `<template>
+  <ClubComposable :on-save="(c) => store(c)" :format-label="(n) => String(n)" :on-watch="() => store(1)" />
   <ClubOptions :on-save="(c) => store(c)" :format-label="(n) => String(n)" :on-watch="() => store(1)" />
   <CarOptions :on-save="(c) => store(c)" :format-label="(n) => String(n)" />
   <ClubSetup :on-save="(c) => store(c)" :format-label="(n) => String(n)" />
@@ -50,6 +71,7 @@ function save() { props.onSave({}); }
 import ClubOptions from './ClubOptions.vue';
 import CarOptions from './CarOptions.vue';
 import ClubSetup from './ClubSetup.vue';
+import ClubComposable from './ClubComposable.vue';
 function store(x) { return x; }
 </script>
 `,
@@ -107,5 +129,15 @@ describe("a prop run inside a computed getter or watch callback", () => {
 
   it("leaves a Composition computed to the file's <setup>, which the funnel never counts", () => {
     expect(into("src/ClubSetup.vue")).toEqual(["<setup>:<ClubSetup:format-label>", "save:<ClubSetup:on-save>"]);
+  });
+
+  it("marks a Composition computed or watch written inside a named function (a composable), not the handler beside it", () => {
+    expect(into("src/ClubComposable.vue")).toEqual([
+      "<watch@9>:<ClubComposable:on-watch> [watch]",
+      "save:<ClubComposable:format-label>",
+      "save:<ClubComposable:on-save>",
+      "useLabel:<ClubComposable:format-label> [computed]",
+      "useMixed:<ClubComposable:on-save>",
+    ]);
   });
 });

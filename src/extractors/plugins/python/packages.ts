@@ -46,5 +46,8 @@ export const pypiPackages: readonly KnownPackageRule[] = [
   // ── Cache / mail ──
   { names: ["cachetools", "aiocache", "django-redis", "dogpile.cache"], category: "cache" },
   { names: ["flask-mail", "django-anymail", "sendgrid", "yagmail", "emails"], category: "email" },
+  // The standard library's file-archive, file-tree and mail modules (not `os`/`pathlib`, which nearly every file imports).
+  { names: ["shutil", "zipfile", "tarfile"], category: "filesystem" },
+  { names: ["smtplib"], category: "email" },
 
 ];
