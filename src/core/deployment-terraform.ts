@@ -5,7 +5,7 @@ import { byOrdinal } from "./ordinal.js";
 import { hclPath, hclRefs, hclString, parseHcl, registryModuleKey, type HclBlock } from "../extractors/shared/hcl.js";
 import type { DeployedServiceKind } from "../types/analysis.js";
 import type { RawService } from "./deployment.js";
-import { readTextFile } from "./read-text-file.js";
+import { readCandidates, type DeployRejects } from "./deploy-rejects.js";
 
 /**
  * Deployment evidence from Terraform: what an AWS module runs and attaches.
@@ -60,7 +60,7 @@ const REGISTRY_MODULES: Record<string, { kind: DeployedServiceKind; family: (b: 
 
 const MODULE_EXTENSIONS = [".ts", ".js", ".mjs", ".cjs", ".py", ".rb"];
 
-export async function collectTerraform(projectRoot: string, ignore: readonly string[]): Promise<TerraformDeployment | undefined> {
+export async function collectTerraform(projectRoot: string, ignore: readonly string[], rejects?: DeployRejects): Promise<TerraformDeployment | undefined> {
   const absRoot = resolve(projectRoot);
   const found = (await glob(["**/*.tf"], { cwd: absRoot, ignore: [...ignore, "**/.terraform/**"], absolute: false, deep: 6 }))
     .map((f) => f.split("\\").join("/"))
@@ -72,14 +72,14 @@ export async function collectTerraform(projectRoot: string, ignore: readonly str
   // One module per directory: its blocks, by address.
   const modules = new Map<string, Array<{ block: HclBlock; file: string }>>();
   const scopes = new Map<string, ModuleScope>();
-  for (const rel of found) {
-    let text: string;
-    try {
-      text = await readTextFile(join(absRoot, rel));
-    } catch {
+  const texts = await readCandidates(rejects, absRoot, "terraform", found);
+  for (const [at, rel] of found.entries()) {
+    const text = texts[at];
+    if (text === undefined) continue;
+    if (text.length > 1_000_000 || !/\baws_(?:lambda_function|sqs_queue|sns_topic|dynamodb_table|db_instance|rds_cluster|elasticache)|\bmodule\s+"/.test(text)) {
+      rejects?.reject("terraform", rel);
       continue;
     }
-    if (text.length > 1_000_000 || !/\baws_(?:lambda_function|sqs_queue|sns_topic|dynamodb_table|db_instance|rds_cluster|elasticache)|\bmodule\s+"/.test(text)) continue;
     const dir = posix.dirname(rel) === "." ? "" : posix.dirname(rel);
     const list = modules.get(dir) ?? modules.set(dir, []).get(dir)!;
     const scope = scopes.get(dir) ?? scopes.set(dir, newScope()).get(dir)!;

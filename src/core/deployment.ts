@@ -17,6 +17,7 @@ import { entryFileOf, readDockerfile, repoFiles, type DockerfileFacts } from "./
 import { collectTerraform } from "./deployment-terraform.js";
 import { collectCloudFormation } from "./deployment-cloudformation.js";
 import { readTextFile } from "./read-text-file.js";
+import type { DeployRejects } from "./deploy-rejects.js";
 
 /**
  * Deployment-topology extraction from docker-compose / compose manifests.
@@ -770,6 +771,8 @@ export interface DetectDeploymentOptions {
   maxFiles?: number;
   /** Infrastructure code declares (`FileAnalysis.deployedResources`, e.g. a CDK stack), one group per file. */
   resources?: Array<{ file: string; resources: readonly DeployedResourceFact[] }>;
+  /** Candidate files turned down by an earlier run, skipped while unchanged (`deploy-rejects.ts`). */
+  rejects?: DeployRejects;
 }
 
 /**
@@ -875,17 +878,17 @@ export async function detectDeployment(
 
   // k8s / Helm manifests feed the same inventory — each manifest file is a
   // stack scope, workloads arrive pre-shaped as RawService.
-  const k8s = await collectK8sManifests(absRoot);
+  const k8s = await collectK8sManifests(absRoot, {}, options.rejects);
   if (k8s) {
     for (let i = 0; i < k8s.groups.length; i++) mergeGroup(k8s.groups[i]!, k8s.files[i]!);
   }
   // Terraform modules too: Lambdas, queues, tables, databases (deployment-terraform.ts).
-  const terraform = await collectTerraform(absRoot, IGNORE);
+  const terraform = await collectTerraform(absRoot, IGNORE, options.rejects);
   if (terraform) {
     for (let i = 0; i < terraform.groups.length; i++) mergeGroup(terraform.groups[i]!, terraform.files[i]!);
   }
   // CloudFormation / SAM templates, the same facts (deployment-cloudformation.ts).
-  const cloudformation = await collectCloudFormation(absRoot, IGNORE);
+  const cloudformation = await collectCloudFormation(absRoot, IGNORE, options.rejects);
   if (cloudformation) {
     for (let i = 0; i < cloudformation.groups.length; i++) mergeGroup(cloudformation.groups[i]!, cloudformation.files[i]!);
   }

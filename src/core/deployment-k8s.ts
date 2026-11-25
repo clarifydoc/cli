@@ -1,6 +1,7 @@
 import { globUnignored as glob } from "./clarifydoc-ignore.js";
 import { join, resolve } from "path";
 import { readTextFile } from "./read-text-file.js";
+import { readCandidates, type DeployRejects } from "./deploy-rejects.js";
 import {
   IGNORE,
   NON_RUNTIME_RE,
@@ -640,6 +641,7 @@ function containerPortsOf(container: YamlMap): number[] {
 export async function collectK8sManifests(
   projectRoot: string,
   opts: { maxFiles?: number } = {},
+  rejects?: DeployRejects,
 ): Promise<K8sManifests | undefined> {
   const absRoot = resolve(projectRoot);
   const found = await glob(["**/*.{yml,yaml}"], {
@@ -709,16 +711,14 @@ export async function collectK8sManifests(
   const pending: Array<{ file: string; docs: K8sDoc[] }> = [];
 
   // Read in parallel batches (a sequential read of each candidate idles on the disk), judged in path order.
-  const texts: Array<string | undefined> = [];
-  for (let i = 0; i < candidates.length; i += 32) {
-    texts.push(...(await Promise.all(candidates.slice(i, i + 32).map((f) => readTextFile(join(absRoot, f)).catch(() => undefined)))));
-  }
+  const texts = await readCandidates(rejects, absRoot, "k8s", candidates);
 
   for (const [at, rel] of candidates.entries()) {
     let text = texts[at];
     if (text === undefined || text.length > 1_000_000) continue;
 
-    if (text.includes("{{")) {
+    const templated = text.includes("{{");
+    if (templated) {
       // Helm template — render against the nearest enclosing chart.
       let chart: ChartContext | undefined;
       let dir = rel.split("/").slice(0, -1).join("/");
@@ -730,10 +730,17 @@ export async function collectK8sManifests(
       text = renderHelmTemplate(text, chart);
     }
 
-    if (!K8S_SNIFF_RE.test(text) || !K8S_KIND_RE.test(text)) continue;
+    if (!K8S_SNIFF_RE.test(text) || !K8S_KIND_RE.test(text)) {
+      // A template's verdict depends on its chart's files, not on its own bytes alone.
+      if (!templated) rejects?.reject("k8s", rel);
+      continue;
+    }
 
     const docs = docsOf(text);
-    if (docs.length === 0) continue;
+    if (docs.length === 0) {
+      if (!templated) rejects?.reject("k8s", rel);
+      continue;
+    }
     pending.push({ file: rel, docs });
     for (const d of docs) {
       if (d.kind === "ConfigMap") {

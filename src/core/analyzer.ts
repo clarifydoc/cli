@@ -34,6 +34,7 @@ import {
   mergeFrameworkDetections,
 } from "./dependency-inventory.js";
 import { detectSubProjects, assignProjectId } from "./project-detector.js";
+import { DeployRejects } from "./deploy-rejects.js";
 import { detectDeployment } from "./deployment.js";
 import { procfileEntries, repoFiles } from "./dockerfiles.js";
 import { detectGitopsReleases } from "./gitops-releases.js";
@@ -1436,11 +1437,14 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
 
   // Step 2d (after the files): deployment topology from compose, Kubernetes, Terraform and Dockerfiles,
   // plus the infrastructure code declares (FileAnalysis.deployedResources — CDK stacks).
+  const rejects = dryRun ? undefined : await DeployRejects.open(pathResolve(projectRoot), outputDir, options.incremental === true);
   const deployment = await detectDeployment(projectRoot, {
+    rejects,
     subProjects,
     fileProjects,
     resources: allAnalyses.filter((a) => a.deployedResources?.length).map((a) => ({ file: a.filePath, resources: a.deployedResources! })),
   });
+  await rejects?.save();
   if (deployment) {
     progress.detail(
       `Deployment: ${deployment.services.length} service${deployment.services.length === 1 ? "" : "s"}, ` +

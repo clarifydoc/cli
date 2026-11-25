@@ -6,7 +6,7 @@ import { parseSpecDocument, type SpecNode } from "../extractors/shared/spec-docu
 import type { DeployedServiceKind } from "../types/analysis.js";
 import type { RawService } from "./deployment.js";
 import type { TerraformDeployment } from "./deployment-terraform.js";
-import { readTextFile } from "./read-text-file.js";
+import { readCandidates, type DeployRejects } from "./deploy-rejects.js";
 
 /**
  * Deployment evidence from CloudFormation and SAM templates (YAML or JSON), the
@@ -84,7 +84,7 @@ function envText(n: SpecNode): string {
   return at ? `!GetAtt ${at}` : "";
 }
 
-export async function collectCloudFormation(projectRoot: string, ignore: readonly string[]): Promise<TerraformDeployment | undefined> {
+export async function collectCloudFormation(projectRoot: string, ignore: readonly string[], rejects?: DeployRejects): Promise<TerraformDeployment | undefined> {
   const absRoot = resolve(projectRoot);
   const found = (await glob(["**/*.{yml,yaml,json,template}"], { cwd: absRoot, ignore: [...ignore, "**/cdk.out/**", "**/.aws-sam/**"], absolute: false, deep: 6 }))
     .map((f) => f.split("\\").join("/"))
@@ -95,17 +95,20 @@ export async function collectCloudFormation(projectRoot: string, ignore: readonl
   // Names drawn from a logical id, by the template that took them: a logical id is local to its stack.
   const logicalNames = new Map<string, string>();
   // Read in parallel batches (templates are found by content, so every YAML and JSON file is opened), judged in path order.
-  const texts: Array<string | undefined> = [];
-  for (let i = 0; i < found.length; i += 32) {
-    texts.push(...(await Promise.all(found.slice(i, i + 32).map((f) => readTextFile(join(absRoot, f)).catch(() => undefined)))));
-  }
+  const texts = await readCandidates(rejects, absRoot, "cloudformation", found);
   for (const [i, rel] of found.entries()) {
     const text = texts[i];
     if (text === undefined) continue;
-    if (text.length > 2_000_000 || !GATE.test(text) || !/\bResources\b/.test(text)) continue;
+    if (text.length > 2_000_000 || !GATE.test(text) || !/\bResources\b/.test(text)) {
+      rejects?.reject("cloudformation", rel);
+      continue;
+    }
     const root = parseSpecDocument(text.split(/\r?\n/));
     const resources = root.children.get("Resources");
-    if (!resources || resources.children.size === 0) continue;
+    if (!resources || resources.children.size === 0) {
+      rejects?.reject("cloudformation", rel);
+      continue;
+    }
     const services = readTemplate(absRoot, rel, root, resources, out.edges, logicalNames);
     if (services.length === 0) continue;
     out.groups.push(services);
