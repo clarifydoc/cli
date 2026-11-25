@@ -75,6 +75,8 @@ export const cppManifest: LanguagePluginManifest = {
   declarationExtensions: [".h", ".hpp", ".hxx", ".hh", ".cuh"],
   // One type spans files here: member functions are defined out of line in a `.cpp` beside the header.
   typesSpanFiles: true,
+  // A type declared in another directory's header (reached by `#include`) answers a typed write (member effects look it up beyond the writer's directory).
+  typesBeyondDirectory: true,
   // `class Sedan : public Chassis, public Engine`: bases are classes, searched in order.
   multipleInheritance: true,
   // A body that reads as a free function may be a member: `TEST_F(GarageTest, Parks) { OpenBay(3); }` is a

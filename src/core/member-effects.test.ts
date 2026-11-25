@@ -959,3 +959,109 @@ describe("member effects, Scala", () => {
     expect(thrown).toEqual(["ClubClosed <- Club.win:16 declared", "ClubClosed <- Club.win:26", "Missing <- Club.win:27"]);
   });
 });
+
+describe("member effects, C++", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-member-effects-cpp-"));
+    await mkdir(join(dir, "src", "models"), { recursive: true });
+    await mkdir(join(dir, "src", "services"), { recursive: true });
+    await writeFile(join(dir, "CMakeLists.txt"), "cmake_minimum_required(VERSION 3.10)\nproject(league)\n");
+    await writeFile(join(dir, "src", "models", "club.h"), [
+      "#pragma once",
+      "#include <string>",
+      "#include <stdexcept>",
+      "",
+      "struct Stats {",
+      "    int goals = 0;",
+      "};",
+      "",
+      "class ClubClosed : public std::runtime_error {",
+      "public:",
+      "    explicit ClubClosed(const std::string& m) : std::runtime_error(m) {}",
+      "};",
+      "",
+      "class Club {",
+      "public:",
+      "    explicit Club(std::string name);",
+      "    void win(int n);",
+      "    void close();",
+      "    void reset() { points_ = 0; }",
+      "    std::string name;",
+      "    int points_ = 0;",
+      "    Stats stats;",
+      "private:",
+      "    int visits = 0;",
+      "};",
+    ].join("\n"));
+    await writeFile(join(dir, "src", "models", "club.cpp"), [
+      "#include \"club.h\"",
+      "",
+      "Club::Club(std::string n) : name(n) {",
+      "    points_ = 1;",
+      "}",
+      "",
+      "void Club::win(int n) {",
+      "    int old = points_;",
+      "    this->points_ += 3;",
+      "    this->stats.goals = n;",
+      "    visits++;",
+      "    name = \"this->ghost = 1\";",
+      "    // points_ = 9;",
+      "    int points2 = 0;",
+      "    points2 = 4;",
+      "    if (old == points_) throw ClubClosed(\"closed\");",
+      "}",
+      "",
+      "void Club::close() {",
+      "    try { win(1); } catch (...) { throw; }",
+      "}",
+      "",
+      "void Club::shadow() {",
+      "    int visits = 0;",
+      "    visits = 2;",
+      "    auto bump = [this]() { points_++; };",
+      "    if (visits > 1) name = \"x\";",
+      "}",
+    ].join("\n"));
+    await writeFile(join(dir, "src", "services", "garage.cpp"), [
+      "#include \"../models/club.h\"",
+      "",
+      "void rename(Club& club, Stats* stats) {",
+      "    club.name = \"Rovers\";",
+      "    stats->goals += 1;",
+      "    Club other(\"x\");",
+      "    other.points_ = 2;",
+      "    int plain = 3;",
+      "}",
+    ].join("\n"));
+    await analyze({ projectRoot: dir, outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 60_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const rows = (): string[] => (summary.fieldWrites ?? []).map((w) => `${w.class}.${w.member} <- ${w.function}:${w.line} ${w.via}`).sort();
+
+  it("lists writes through this->, a member's object, a bare member in an inline or out-of-line method and a typed parameter or local, never from a constructor or to a local", () => {
+    expect(rows()).toEqual([
+      "Club.name <- Club.shadow:27 this",
+      "Club.name <- Club.win:12 this",
+      "Club.name <- rename:4 typed",
+      "Club.points_ <- Club.reset:19 this",
+      "Club.points_ <- Club.shadow:26 this",
+      "Club.points_ <- Club.win:9 this",
+      "Club.points_ <- rename:7 typed",
+      "Club.visits <- Club.win:11 this",
+      "Stats.goals <- Club.win:10 typed",
+      "Stats.goals <- rename:5 typed",
+    ].sort());
+  });
+
+  it("lists the type after throw, never a rethrow", () => {
+    const thrown = (summary.thrownTypes ?? []).map((t) => `${t.type} <- ${t.function}:${t.line}`).sort();
+    expect(thrown).toEqual(["ClubClosed <- Club.win:16"]);
+  });
+});

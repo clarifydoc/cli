@@ -1,4 +1,6 @@
 import { conditionalBlocks } from "../shared/preprocessor-branches.js";
+import { applyEffects } from "../shared/member-effects-kit.js";
+import { cppMemberEffects } from "./member-effects.js";
 import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { CallPattern, RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
@@ -342,7 +344,19 @@ export const cppSpec: RegexLangSpec = {
     unqualifyOwnNamespaces(lines, [...fns, ...classes.flatMap((c) => c.methods)]);
     return classes;
   },
-  postProcessClasses: tagQmlElementClasses,
+  postProcessClasses: (lines, classes) => {
+    tagQmlElementClasses(lines, classes);
+    // Writes and throws of a method, inline or out of line (a bare name core keeps where the class declares it).
+    for (const cls of classes) {
+      for (const m of cls.methods) applyEffects(m, cppMemberEffects(lines, m, true, m.name === cls.name.split("::").pop()));
+    }
+    return classes;
+  },
+  // Writes through typed parameters and locals, and the types a free function throws.
+  postProcessFunctions: (lines, fns) => {
+    for (const fn of fns) applyEffects(fn, cppMemberEffects(lines, fn, false, false));
+    return fns;
+  },
   markLocalCalls: (code, fns) => {
     markLocalCallables(code, fns);
     markQtSlotPasses(code, fns);
