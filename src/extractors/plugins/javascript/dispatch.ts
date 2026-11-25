@@ -642,6 +642,47 @@ export class JsPropCallbackResolver implements DispatchResolver {
       return lib && span ? { file: lib.filePath, span } : null;
     };
 
+    /**
+     * A handler the parent destructured from a project factory's result (`const { handleRelease } = useSquadActions()`,
+     * `onRelease={handleRelease}`): the function that factory returns under that member. Read off the parent's own call
+     * of the name in the function holding the binding, which names the factory (`via`), its module (`target`) and the
+     * member a renamed local stands for (`member`); only a factory member the factory states as a function joins.
+     */
+    const factoryMember = (parent: FileAnalysis, name: string, line: number): { file: string; span: SymbolSpan } | null => {
+      const sources = new Map<string, { target: string; via: string; member: string }>();
+      for (const fn of [...parent.functions, ...parent.classes.flatMap((c) => c.methods)]) {
+        if (line < fn.line || line > fn.endLine) continue;
+        for (const c of fn.calls) {
+          if (c.name !== name || !c.via || !c.target) continue;
+          const member = c.member ?? name;
+          sources.set(`${c.target}\u0000${c.via}\u0000${member}`, { target: c.target, via: c.via, member });
+        }
+      }
+      if (sources.size !== 1) return null;
+      const { target, via, member } = [...sources.values()][0]!;
+      // The module declaring the factory, through re-exports (a barrel), a few hops at most.
+      const owner = (source: string, importer: string, factory: string, hop: number): { file: FileAnalysis; factory: FunctionInfo } | null => {
+        const file = resolveTarget(source, importer, filePathMap);
+        const lib = file && hop < 4 ? byPath.get(file.split("\u0000")[0]!) : undefined;
+        if (!lib) return null;
+        const fn = lib.functions.find((f) => f.name === factory);
+        if (fn) return { file: lib, factory: fn };
+        const named = lib.exports.filter((e) => e.kind === "re-export" && e.source && e.name === factory);
+        for (const e of named.length > 0 ? named : lib.exports.filter((e) => e.kind === "re-export" && e.source && e.name === "*")) {
+          const found = owner(e.source!, lib.filePath, e.sourceName && e.name === factory ? e.sourceName : factory, hop + 1);
+          if (found) return found;
+        }
+        return null;
+      };
+      const found = owner(target, parent.filePath, via, 0);
+      const returned = found?.factory.returnedMembers?.find((m) => m.key === member);
+      if (!found || returned?.kind !== "function") return null;
+      const local = returned.local ?? returned.key;
+      // The function the factory returns: the one of that name inside the factory's own lines.
+      const inside = spans(found.file).filter((sp) => sp.symbol === local && sp.line >= found.factory.line && sp.line <= found.factory.endLine);
+      return inside.length === 1 ? { file: found.file.filePath, span: inside[0]! } : null;
+    };
+
     /** The functions a prop of `file` reaches: each parent's bound handler, through drilled props — with the binding site on the child's own tag. */
     const targetsOf = (file: string, prop: string, depth: number, seen: Set<string>, via?: Usage): Array<{ file: string; span: SymbolSpan; usage: Usage[] }> => {
       const key = `${file}#${prop}`;
@@ -672,9 +713,11 @@ export class JsPropCallbackResolver implements DispatchResolver {
         const fromMixin = own ? null : scopeMember(b.parent, name);
         // A function the file imports, held in a dispatch map it hands down (`{ save: saveClub }`).
         const imported = own || fromMixin || !b.handlerImport ? null : importedExport(b.parent, b.handlerImport);
+        const returned = own || fromMixin || imported ? null : factoryMember(b.parent, name, b.line);
         if (own) out.push({ file: b.parent.filePath, span: own, usage });
         else if (imported) out.push({ file: imported.file, span: imported.span, usage });
         else if (fromMixin) out.push({ file: fromMixin.file, span: fromMixin.span, usage });
+        else if (returned) out.push({ file: returned.file, span: returned.span, usage });
         // A prop of the parent handed on (`onConfirm={handleRelease}`, `handleRelease` the parent's own destructured prop),
         // under the name the parent takes it by (`{ onRelease: handleRelease }` hands on `onRelease`).
         else {

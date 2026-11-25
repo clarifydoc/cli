@@ -258,6 +258,62 @@ describe("JsPropCallbackResolver — React callback props", () => {
   });
 });
 
+describe("JsPropCallbackResolver — a handler the parent destructured from a hook's result", () => {
+  const call = (name: string, line: number, over: object = {}) => ({ name, kind: "cross-file" as const, target: null, line, ...over });
+  const hooks = fa("src/hooks/use-squad-actions.ts", {
+    functions: [
+      {
+        ...fn("useSquadActions", 3, 12),
+        returnedMembers: [
+          { key: "handleRelease", local: "handleRelease", kind: "function" as const },
+          { key: "releaseLabel", local: "releaseLabel", kind: "value" as const },
+        ],
+      },
+      fn("handleRelease", 4, 6),
+    ],
+  });
+  // A namesake hook in another module returning the same member: never the target.
+  const decoy = fa("src/hooks/use-bench-actions.ts", {
+    functions: [{ ...fn("useBenchActions", 2, 8), returnedMembers: [{ key: "handleRelease", local: "handleRelease", kind: "function" as const }] }, fn("handleRelease", 3, 5)],
+  });
+  const card = fa("src/components/PlayerCard.tsx", {
+    functions: [{ ...fn("PlayerCard", 2, 6), calls: [call("onRelease", 4)] }],
+  });
+
+  it("links the child's prop call to the function the hook returns under that member, renamed locals too (real-repo FP)", async () => {
+    const { JsPropCallbackResolver } = await import("./dispatch.js");
+    const page = fa("src/SquadPage.tsx", {
+      functions: [{
+        ...fn("SquadPage", 4, 14),
+        calls: [
+          call("useSquadActions", 5, { target: "./hooks/use-squad-actions" }),
+          // `const { handleRelease: release } = useSquadActions()` → `onRelease={release}`.
+          call("release", 10, { target: "./hooks/use-squad-actions", via: "useSquadActions", member: "handleRelease", passed: "attribute" }),
+        ],
+      }],
+      interactiveElements: [{ element: "custom", event: "onRelease", handler: "release", line: 9, component: "PlayerCard" }],
+      subComponents: [{ name: "PlayerCard", importSource: "./components/PlayerCard", props: [], line: 9 }],
+    });
+    const links = new JsPropCallbackResolver().resolve([page, hooks, decoy, card]);
+    expect(links.map((l) => `${l.sourceFile}::${l.sourceSymbol} -${l.callName}-> ${l.targetFile}::${l.targetSymbol}`)).toEqual([
+      "src/components/PlayerCard.tsx::PlayerCard -onRelease-> src/hooks/use-squad-actions.ts::handleRelease",
+    ]);
+  });
+
+  it("joins nothing for a member the hook returns as a value", async () => {
+    const { JsPropCallbackResolver } = await import("./dispatch.js");
+    const page = fa("src/SquadPage.tsx", {
+      functions: [{
+        ...fn("SquadPage", 4, 14),
+        calls: [call("releaseLabel", 9, { target: "./hooks/use-squad-actions", via: "useSquadActions", passed: "attribute" })],
+      }],
+      interactiveElements: [{ element: "custom", event: "onRelease", handler: "releaseLabel", line: 9, component: "PlayerCard" }],
+      subComponents: [{ name: "PlayerCard", importSource: "./components/PlayerCard", props: [], line: 9 }],
+    });
+    expect(new JsPropCallbackResolver().resolve([page, hooks, decoy, card])).toEqual([]);
+  });
+});
+
 describe("JsPropCallbackResolver — a callback prop handed down under another name", () => {
   it("links the child's props.follow() to the creator connect() bound to the parent's onFollow, and not to a namesake (real-repo FP)", async () => {
     const { JsPropCallbackResolver } = await import("./dispatch.js");
