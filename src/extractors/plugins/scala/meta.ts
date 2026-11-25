@@ -6,6 +6,7 @@ import { scalaManifest } from "./manifest.js";
 import { applyScalaExtensions } from "./extensions.js";
 import { scalaRequestSchema } from "./request-schema.js";
 import { scalaReachability } from "./reachability.js";
+import { SCALA_SECURITY_RULES } from "./security-rules.js";
 
 const SCALA_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -37,6 +38,7 @@ export const scalaMeta: LanguagePluginMeta = {
       : null;
   },
   regexSpec: scalaSpec,
+  securityRules: SCALA_SECURITY_RULES,
   // Functions and calls read by tree-sitter-scala while the `tree-sitter:scala` feature is on (tree-sitter.ts).
   treeSitter: { grammar: "scala", extensions: [".scala", ".sc"], load: () => import("./tree-sitter.js").then((m) => m.loadScalaReader()) },
   knownPackages: scalaPackages,

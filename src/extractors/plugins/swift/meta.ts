@@ -10,6 +10,7 @@ import { swiftReachability } from "./reachability.js";
 import { SwiftEntityExtractor } from "./entities.js";
 import { screenClassResolver } from "../shared/screen-classes.js";
 import { storyboardNavigationResolver } from "./storyboard-navigation.js";
+import { SWIFT_SECURITY_RULES } from "./security-rules.js";
 
 /** UIKit's screen classes: a view controller, by the platform classes a project's own derive from. */
 const uikitScreenClasses = screenClassResolver("uikit-screen-classes", ["swift"], new Set([
@@ -40,6 +41,7 @@ export const swiftMeta: LanguagePluginMeta = {
   ], { quotes: ['"'] }),
   ...swiftManifest,
   regexSpec: swiftSpec,
+  securityRules: SWIFT_SECURITY_RULES,
   // `struct League { class Table … }` is `League::Table`, written `League.Table` (see nestedTypeNames in index.ts).
   nestedTypePaths: true,
   nestedTypeSeparator: ".",

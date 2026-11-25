@@ -9,6 +9,7 @@ import { dartReachability } from "./reachability.js";
 import { DartEntityExtractor } from "./entities.js";
 import { goRouterResolver } from "./go-router.js";
 import { DriftQueryResolver } from "./drift-queries.js";
+import { DART_SECURITY_RULES } from "./security-rules.js";
 
 const DART_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -29,6 +30,7 @@ export const dartMeta: LanguagePluginMeta = {
   regexControlFlow: extendRegexControlFlow([], { quotes: ['"', "'"] }),
   ...dartManifest,
   regexSpec: dartSpec,
+  securityRules: DART_SECURITY_RULES,
   // Functions and calls read by tree-sitter-dart while the `tree-sitter:dart` feature is on (tree-sitter.ts).
   treeSitter: { grammar: "dart", load: () => import("./tree-sitter.js").then((m) => m.loadDartReader()) },
   entities: new DartEntityExtractor(),

@@ -16,6 +16,7 @@ import { extractRustDataSources } from "./data-sources.js";
 import { promoteModuleCalls } from "./module-calls.js";
 import { addRustUrlTemplates } from "./url-helpers.js";
 import { rustTaint } from "./taint.js";
+import { RUST_SECURITY_RULES } from "./security-rules.js";
 
 const RUST_BUILTINS: ReadonlySet<string> = new Set<string>([
   ...COMMON_PRIMITIVES,
@@ -36,6 +37,7 @@ export const rustMeta: LanguagePluginMeta = {
   regexControlFlow: extendRegexControlFlow([], { quotes: ['"'] }),
   ...rustManifest,
   regexSpec: rustSpec,
+  securityRules: RUST_SECURITY_RULES,
   // Functions and calls read by the grammars-v4 Rust grammar while the `antlr:rust` feature is on (antlr.ts).
   antlr: { grammar: "rust", load: () => import("./antlr.js").then((m) => m.readRust) },
   // Request input followed to a sink in an axum, actix-web or rocket handler, on a tree-sitter-rust parse of files that name the framework (taint.ts).

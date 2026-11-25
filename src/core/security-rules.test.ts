@@ -63,6 +63,28 @@ const CASES: Array<[Language, string, string, string | null]> = [
   ["typescript", "src/a.ts", "const secret = import.meta.env.VITE_GARAGE_CLIENT_SECRET;", "insecure-config"],
   ["typescript", "src/a.ts", "const key = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;", null],
   ["typescript", "src/a.ts", "const secret = process.env.GARAGE_CLIENT_SECRET;", null],
+  ["rust", "src/a.rs", "let client = reqwest::Client::builder().danger_accept_invalid_certs(true).build()?;", "insecure-config"],
+  ["rust", "src/a.rs", "let client = reqwest::Client::builder().danger_accept_invalid_certs(cfg.insecure).build()?;", null],
+  ["rust", "src/a.rs", "let digest = md5::compute(password.as_bytes());", "weak-crypto"],
+  ["rust", "src/a.rs", "let etag = md5::compute(&body);", null],
+  ["rust", "src/a.rs", 'let out = Command::new("sh").arg("-c").arg(&script).output()?;', "command-injection"],
+  ["rust", "src/a.rs", 'let out = Command::new("git").arg("status").output()?;', null],
+  ["rust", "src/a.rs", 'let out = Command::new("sh").arg("-c").arg("command -v rustfmt").output();', null],
+  ["dart", "lib/a.dart", "client.badCertificateCallback = (cert, host, port) => true;", "insecure-config"],
+  ["dart", "lib/a.dart", "client.badCertificateCallback = (cert, host, port) => host == pinnedHost;", null],
+  ["dart", "lib/a.dart", "final hash = md5.convert(utf8.encode(password));", "weak-crypto"],
+  ["dart", "lib/a.dart", "final etag = md5.convert(bytes);", null],
+  ["dart", "lib/a.dart", "await Process.run('sh', ['-c', script]);", "command-injection"],
+  ["dart", "lib/a.dart", "await Process.run('git', ['status']);", null],
+  ["dart", "lib/a.dart", "await Process.run('sh', ['-c', 'which flutter']);", null],
+  ["scala", "app/A.scala", "val in = new ObjectInputStream(request.body.asBytes().get.iterator.asInputStream)", "deserialization"],
+  ["scala", "app/A.scala", 'val md = MessageDigest.getInstance("MD5"); md.update(password.getBytes)', "weak-crypto"],
+  ["scala", "app/A.scala", 'val md = MessageDigest.getInstance("MD5"); md.update(fileBytes)', null],
+  ["scala", "app/A.scala", 'val out = Process(Seq("sh", "-c", command)).!!', "command-injection"],
+  ["scala", "app/A.scala", 'val out = Process(Seq("git", "status")).!!', null],
+  ["scala", "app/A.scala", 'val out = Process(Seq("sh", "-c", "uname -a")).!!', null],
+  ["swift", "Sources/A.swift", "let digest = Insecure.MD5.hash(data: Data(password.utf8))", "weak-crypto"],
+  ["swift", "Sources/A.swift", "let etag = Insecure.MD5.hash(data: body)", null],
 ];
 
 describe("per-language sink and configuration rules", () => {
@@ -80,6 +102,11 @@ describe("per-language sink and configuration rules", () => {
     expect(scanSecurity(open, "src/X.java", "java").map((i) => [i.category, i.line])).toEqual([["xxe", 1]]);
     const hardened = [open, 'f.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);'].join("\n");
     expect(scanSecurity(hardened, "src/X.java", "java")).toEqual([]);
+  });
+
+  it("Rust: a shell command written across lines", () => {
+    const text = ['let out = Command::new("bash")', '    .args(["-c", &script])', "    .output()?;"].join("\n");
+    expect(scanSecurity(text, "src/run.rs", "rust").filter((i) => i.category === "command-injection").map((i) => i.line)).toEqual([1]);
   });
 
   it("C#: CORS any origin only matters with credentials", () => {
