@@ -83,6 +83,21 @@ pub fn work() { cut(); line(); }
   "src/crew_glob.rs": `use crate::stadium::pitch::*;
 pub fn work() { mow(); }
 `,
+  // A test module nested in an inline module (real-repo FP): `use super::*` brings the enclosing module's items, and
+  // `use self::kit::*` a nested one's; the file's namesake is no item of either.
+  "src/pitch_tests.rs": `pub fn rank(points: i32) -> i32 { points * 3 }
+pub fn sample() -> i32 { 9 }
+pub mod pitch {
+    pub fn rank(points: i32) -> i32 { points }
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use self::kit::*;
+        mod kit { pub fn sample() -> i32 { 7 } }
+        fn ranks() { rank(4); sample(); }
+    }
+}
+`,
   "src/pair.rs": `mod sys { pub fn ignite() {} }
 mod decoy { pub fn ignite() {} pub fn spark() { ignite(); } }
 pub fn go() { sys::ignite(); }
@@ -152,6 +167,13 @@ describe.each([["ANTLR", undefined], ["regex", "no-antlr"]])("Rust inline module
   it("links a bare call through a glob import of an inline module to that module's function", () => {
     expect(links).toContain("src/crew_glob.rs:2 mow -> src/stadium.rs::pitch::mow");
     expect(links.filter((l) => l.startsWith("src/crew_glob.rs"))).toHaveLength(1);
+  });
+
+  it("links a bare call in a nested test module through its `use super::*` and `use self::x::*`, never the file's namesake", () => {
+    const f = "src/pitch_tests.rs";
+    expect(links).toContain(`${f}:10 pitch::rank -> ${f}::pitch::rank`);
+    expect(links).toContain(`${f}:10 pitch::tests::kit::sample -> ${f}::pitch::tests::kit::sample`);
+    expect(links.filter((l) => l.startsWith(`${f}:10`) && (l.endsWith(`${f}::rank`) || l.endsWith(`${f}::sample`)))).toEqual([]);
   });
 
   it("keeps no row for a noise-named call through a head `use` binds from std", () => {

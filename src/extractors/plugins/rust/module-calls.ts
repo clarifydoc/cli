@@ -29,7 +29,7 @@ export function promoteModuleCalls(analysis: FileAnalysis, lines: string[]): voi
     }
   }
   const modules = inlineModules(lines);
-  nameDuplicatesByModule(analysis, modules);
+  nameDuplicatesByModule(analysis, modules, lines);
   // A noise-named leaf (`fs::write`) is kept at extraction only for a path into a project module: a head the file's
   // `use` binds from the standard library or another crate, or a written `std::`/`core::`/`alloc::` root, is no
   // project call and its row goes (`keepNoise`).
@@ -127,7 +127,7 @@ function inlineModules(lines: string[]): InlineModule[] {
  * another file calls it by that name through its `use`, which a prefixed name would no longer answer. A bare call is
  * the only call rewritten here; the path calls are resolved by `inlineModuleMember`.
  */
-function nameDuplicatesByModule(analysis: FileAnalysis, modules: InlineModule[]): void {
+function nameDuplicatesByModule(analysis: FileAnalysis, modules: InlineModule[], lines: string[]): void {
   if (modules.length === 0) return;
   const count = new Map<string, number>();
   for (const f of analysis.functions) count.set(f.name, (count.get(f.name) ?? 0) + 1);
@@ -146,16 +146,49 @@ function nameDuplicatesByModule(analysis: FileAnalysis, modules: InlineModule[])
     for (const r of analysis.routes) if (r.handler === old && r.line >= mod.from && r.line <= mod.to) r.handler = named;
   }
   if (renamed.size === 0) return;
+  const globs = globSources(modules, lines);
   const rewrite = (calls: CallInfo[]): void => {
     for (const c of calls) {
       if (c.kind !== "internal" || c.name.includes("::") || c.name.includes(".")) continue;
       const mod = innermost(c.line);
-      const named = mod ? renamed.get(`${mod.path}\0${c.name}`) : undefined;
+      if (!mod) continue;
+      // The module's own item first; else the one module its globs bring a namesake from (`use super::*` in a
+      // `mod tests` nested in `mod pitch` is `pitch`'s `rank`, never the file's).
+      const own = renamed.get(`${mod.path}\0${c.name}`);
+      const brought = own ? [] : [...new Set((globs.get(mod.path) ?? []).map((from) => renamed.get(`${from}\0${c.name}`)).filter((n): n is string => !!n))];
+      const named = own ?? (brought.length === 1 ? brought[0] : undefined);
       if (named) c.name = named;
     }
   };
   for (const fn of analysis.functions) rewrite(fn.calls);
   for (const cls of analysis.classes) for (const m of cls.methods) rewrite(m.calls);
+}
+
+/**
+ * The inline modules each inline module glob-imports from, by path: `use super::*` is the enclosing module, `use
+ * self::helpers::*` a module nested in it, `use super::stands::*` a sibling. Only `use` lines of the module itself
+ * (not of a module nested in it); a glob reaching the file level names no inline module and is left out, since the
+ * file's own functions keep their bare names.
+ */
+function globSources(modules: InlineModule[], lines: string[]): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const mod of modules) {
+    const deeper = modules.filter((m) => m.from > mod.from && m.to <= mod.to);
+    const own = mod.path.split("::");
+    for (let line = mod.from + 1; line < mod.to; line++) {
+      if (deeper.some((m) => line >= m.from && line <= m.to)) continue;
+      const m = /^\s*(?:pub(?:\([^)]*\))?\s+)?use\s+((?:super|self)(?:::\w+)*)::\*\s*;/.exec(lines[line - 1] ?? "");
+      if (!m) continue;
+      const segs = m[1]!.split("::");
+      let base = own;
+      let i = 0;
+      if (segs[0] === "self") i = 1;
+      else while (segs[i] === "super") (base = base.slice(0, -1), i++);
+      const path = [...base, ...segs.slice(i)].join("::");
+      if (path && modules.some((x) => x.path === path)) (out.get(mod.path) ?? out.set(mod.path, []).get(mod.path)!).push(path);
+    }
+  }
+  return out;
 }
 
 /** The name of the function the call `path::member` reaches when it is declared directly in an inline module of the same file, else null. */
