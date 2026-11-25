@@ -231,7 +231,7 @@ function stampOf(map: AliasMap | Map<string, WorkspacePackage>, projectRoot: str
       ? [k, rel(v)]
       : Array.isArray(v)
         ? [k, v.map(rel)]
-        : [k, rel(v.dir), rel(v.entry), ...(v.requireEntry ? [rel(v.requireEntry)] : []), ...(v.exports ? [v.exports] : [])])));
+        : [k, rel(v.dir), ...(v.entry ? [rel(v.entry)] : []), ...(v.requireEntry ? [rel(v.requireEntry)] : []), ...(v.exports ? [v.exports] : [])])));
     stampParts.set(map, hit);
   }
   return hit;

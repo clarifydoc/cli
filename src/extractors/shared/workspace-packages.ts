@@ -13,7 +13,8 @@ import { clearDirectoryListings, listEntries, rememberListing } from "./dir-list
  * `source` field, else the `exports["."]` / `module` / `main` / `types` path
  * as written when it exists, else that path with its build directory
  * (`build/`, `dist/`, `lib/`, `out/`) read as `src/` and `.js`/`.d.ts` as
- * `.ts`, else `src/index.ts` / `index.ts`. A name declared twice is the one
+ * `.ts`, else `src/index.ts` / `index.ts`; a package with none of these is
+ * still mapped, for the subpaths it is imported by. A name declared twice is the one
  * package a workspace lists as a member (root `workspaces`, array or
  * `{ packages }`, or `pnpm-workspace.yaml`) — an `examples/` copy is not one;
  * with no single member it maps to nothing: which one an import means
@@ -32,8 +33,8 @@ const nameCache = new Map<string, Set<string>>();
 export interface WorkspacePackage {
   /** Package directory, absolute. */
   dir: string;
-  /** Source entry file, absolute — what `import … from 'name'` loads. */
-  entry: string;
+  /** Source entry file, absolute — what `import … from 'name'` loads. Absent for a package imported only by subpath. */
+  entry?: string;
   /** What `require('name')` loads, when the `require` condition names another file than `entry`. */
   requireEntry?: string;
   /** The manifest's `exports` map, when it has subpaths (`"./standings"`, `"./rules/*"`). */
@@ -86,11 +87,12 @@ export function loadWorkspacePackages(projectRoot: string): Map<string, Workspac
     if (members.length !== 1) continue;
     const { dir, pkg } = members[0]!;
     named.set(name, dir);
-    const entry = sourceEntry(dir, pkg, false);
-    if (!entry) continue;
-    const requireEntry = sourceEntry(dir, pkg, true);
+    // A package with no entry (no index, nothing a manifest field names) is imported by subpath only
+    // (`league-club/services/roster`): it stays in the table for those, and its bare name maps to nothing.
+    const entry = sourceEntry(dir, pkg, false) ?? undefined;
+    const requireEntry = entry ? sourceEntry(dir, pkg, true) : null;
     const subpaths = exportsSubpaths(pkg.exports);
-    out.set(name, { dir, entry, ...(requireEntry && requireEntry !== entry ? { requireEntry } : {}), ...(subpaths ? { exports: subpaths } : {}) });
+    out.set(name, { dir, ...(entry ? { entry } : {}), ...(requireEntry && requireEntry !== entry ? { requireEntry } : {}), ...(subpaths ? { exports: subpaths } : {}) });
   }
   cache.set(root, out);
   dirCache.set(root, named);
@@ -374,8 +376,10 @@ export function applyWorkspacePackages(
   if (packages.size === 0 || /^[./]/.test(importSource)) return importSource;
   for (const [name, pkg] of packages) {
     if (importSource !== name && !importSource.startsWith(name + "/")) continue;
-    // A package importing itself by name means its own entry; leave that to its own resolver.
-    if (resolve(importingFile).startsWith(pkg.dir + sep)) return importSource;
+    // A package importing its own bare name means its own entry; leave that to its own resolver. A subpath
+    // of its own name (`league-club/services/roster` inside league-club) loads its own file, through the
+    // installer's link, as from any other package.
+    if (importSource === name && resolve(importingFile).startsWith(pkg.dir + sep)) return importSource;
     const root = resolve(projectRoot);
     if (keepsInstalled(importingFile, name, root)) return importSource;
     let target: string | undefined;

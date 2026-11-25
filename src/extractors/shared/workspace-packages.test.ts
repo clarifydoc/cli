@@ -39,6 +39,25 @@ describe("workspace packages", () => {
     // Inside the package itself, its own name is left to its own resolution.
     expect(applyWorkspacePackages("@league/sdk", join(root, "packages/sdk/src/x.ts"), pkgs, root)).toBe("@league/sdk");
   });
+
+  it("maps the subpaths of a package that has no entry, imported only by subpath (real-repo FP)", () => {
+    const root = repo({
+      "web/package.json": JSON.stringify({ name: "league-web", workspaces: ["apps/*", "packages/*"] }),
+      "web/packages/club/package.json": JSON.stringify({ name: "league-club" }),
+      "web/packages/club/services/roster.ts": "export function pullRoster() {}",
+      "web/packages/club/services/transfers/index.ts": "",
+      "web/apps/league/package.json": JSON.stringify({ name: "league-app" }),
+    });
+    const pkgs = loadWorkspacePackages(root);
+    const from = join(root, "web/apps/league/src/Squad.tsx");
+    expect(applyWorkspacePackages("league-club/services/roster", from, pkgs, root)).toBe("web/packages/club/services/roster");
+    expect(applyWorkspacePackages("league-club/services/transfers", from, pkgs, root)).toBe("web/packages/club/services/transfers");
+    // The bare name loads nothing the package holds, and a subpath naming no file stays as written.
+    expect(applyWorkspacePackages("league-club", from, pkgs, root)).toBe("league-club");
+    expect(applyWorkspacePackages("league-club/services/missing", from, pkgs, root)).toBe("league-club/services/missing");
+    // A file of the package importing its own subpath loads its own file.
+    expect(applyWorkspacePackages("league-club/services/roster", join(root, "web/packages/club/services/transfers/index.ts"), pkgs, root)).toBe("web/packages/club/services/roster");
+  });
 });
 
 describe("workspace members", () => {
