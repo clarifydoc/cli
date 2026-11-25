@@ -33,6 +33,7 @@ import { applyDartExtensionReceivers } from "./extensions.js";
 import { dartModuleBindings } from "./module-bindings.js";
 import { dartFieldValues, dartUrlArg, dartVerbArg, extractDartPathArgCalls, isDartHttpReceiver } from "./request-wrappers.js";
 import { balancedArgs } from "../shared/text-scan.js";
+import { dartMemberEffects } from "./member-effects.js";
 
 /**
  * Dart (and therefore Flutter) regex extraction.
@@ -567,6 +568,14 @@ function declarationText(lines: string[], startIdx: number): string {
     if (lines[i]?.includes("{")) break;
   }
   return text;
+}
+
+/** Sets (or clears) a function's writes and throws from what `dartMemberEffects` read. */
+function applyEffects(fn: FunctionInfo, effects: Pick<FunctionInfo, "fieldWrites" | "throws"> | null): void {
+  if (effects?.fieldWrites) fn.fieldWrites = effects.fieldWrites;
+  else delete fn.fieldWrites;
+  if (effects?.throws) fn.throws = effects.throws;
+  else delete fn.throws;
 }
 
 /**
@@ -1313,6 +1322,8 @@ export const dartSpec: RegexLangSpec = {
   postProcessFunctions: (lines, fns) => {
     // An unnamed extension's members are its type's (extensions.ts).
     applyDartExtensionReceivers(lines, fns);
+    // Writes and throws of a free function (a method's are read with its class's fields below).
+    for (const fn of fns) applyEffects(fn, dartMemberEffects(lines, fn, null, false));
     // Element types of collections the body builds or is handed, and `is` narrowing.
     for (const fn of fns) addDartElementTypes(fn, lines, null);
     const closures = flutterClosureFunctions(lines);
@@ -1327,6 +1338,11 @@ export const dartSpec: RegexLangSpec = {
       applyDartExtensionReceivers(lines, cls.methods);
       const fields = fieldCollections(cls.properties);
       for (const m of cls.methods) addDartElementTypes(m, lines, fields);
+      const declared = new Set(cls.properties.filter((p) => !p.accessor).map((p) => p.name));
+      // A constructor — unnamed, named (`Club.guest(…)`, which the reader names `guest`) or a factory — initializes.
+      const ctorHead = new RegExp(String.raw`^\s*(?:const\s+|factory\s+)*${cls.name.replace(/\$/g, "\\$")}(?:\.[A-Za-z_$][\w$]*)?\s*\(`);
+      const isCtor = (m: FunctionInfo) => m.name === cls.name || m.name.startsWith(`${cls.name}.`) || ctorHead.test(lines[m.line - 1] ?? "");
+      for (const m of cls.methods) applyEffects(m, dartMemberEffects(lines, m, declared, isCtor(m)));
     }
     return classes;
   },

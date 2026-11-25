@@ -693,3 +693,80 @@ describe("member effects, Rust", () => {
     expect((summary.thrownTypes ?? []).length).toBe(0);
   });
 });
+
+describe("member effects, Dart", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-member-effects-dart-"));
+    await mkdir(join(dir, "lib", "models"), { recursive: true });
+    await mkdir(join(dir, "lib", "services"), { recursive: true });
+    await writeFile(join(dir, "pubspec.yaml"), "name: league\n");
+    await writeFile(join(dir, "lib", "models", "club.dart"), [
+      "class Stats {",
+      "  int goals = 0;",
+      "}",
+      "class ClubClosed implements Exception {}",
+      "class Club {",
+      "  String name;",
+      "  int points = 0;",
+      "  int _visits = 0;",
+      "  Stats stats = Stats();",
+      "  Club(this.name) { points = 1; }",
+      "  Club.guest()",
+      "      : name = 'Guest',",
+      "        points = 0;",
+      "  void win(int n) {",
+      "    final old = points;",
+      "    this.points += 3;",
+      "    this.stats.goals = n;",
+      "    _visits++;",
+      "    name = 'this.ghost = 1';",
+      "    // points = 9;",
+      "    var points2 = 0;",
+      "    points2 = 4;",
+      "    if (old == points) throw ClubClosed();",
+      "  }",
+      "  void close() {",
+      "    try { win(1); } catch (e) { rethrow; }",
+      "    throw StateError('closed');",
+      "  }",
+      "}",
+    ].join("\n"));
+    await writeFile(join(dir, "lib", "services", "garage.dart"), [
+      "import '../models/club.dart';",
+      "void rename(Club club, Stats stats) {",
+      "  club.name = 'Rovers';",
+      "  stats.goals += 1;",
+      "  final Club other = Club('x');",
+      "  other.points = 2;",
+      "  final plain = 3;",
+      "}",
+    ].join("\n"));
+    await analyze({ projectRoot: dir, outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 60_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const rows = (): string[] => (summary.fieldWrites ?? []).map((w) => `${w.class}.${w.member} <- ${w.function}:${w.line} ${w.via}`).sort();
+
+  it("lists writes through this, a field's object, a bare field and a typed parameter or local, never from a constructor", () => {
+    expect(rows()).toEqual([
+      "Club._visits <- Club.win:18 this",
+      "Club.name <- Club.win:19 this",
+      "Club.name <- rename:3 typed",
+      "Club.points <- Club.win:16 this",
+      "Club.points <- rename:6 typed",
+      "Stats.goals <- Club.win:17 typed",
+      "Stats.goals <- rename:4 typed",
+    ].sort());
+  });
+
+  it("lists the project exception a method throws, never a rethrow", () => {
+    const thrown = (summary.thrownTypes ?? []).map((t) => `${t.type} <- ${t.function}:${t.line}`).sort();
+    expect(thrown).toContain("ClubClosed <- Club.win:23");
+    expect(thrown.some((t) => t.includes(":26"))).toBe(false);
+  });
+});

@@ -34,6 +34,8 @@ export const dartManifest: LanguagePluginManifest = {
   asyncResultTypes: ["Future", "FutureOr"],
   // One type spans files here: `part` files and `extension`s add to a type from other files.
   typesSpanFiles: true,
+  // A class another directory declares is reached by import (member effects look it up beyond the writer's directory).
+  typesBeyondDirectory: true,
   // Flutter: `integration_test/` and `test_driver/` beside `test/`.
   testFilePatterns: [/_test\.dart$/, /(^|[\\/])(?:integration_test|test_driver)[\\/]/],
   testSubjectAffixes: { suffixes: ["_test"] },
