@@ -11,8 +11,8 @@ export const sfmarkupManifest: LanguagePluginManifest = {
   // The markup states what it binds by name; its behaviour is in Apex classes and, for Aura, script files.
   family: "apex",
   parsing: "regex",
-  // Aura components, Visualforce pages and components. A file with neither tag family is refused by `preprocess`.
-  extensions: [".cmp", ".page", ".component"],
+  // Aura components and applications, Visualforce pages and components. A file with neither tag family is refused by `preprocess`.
+  extensions: [".cmp", ".app", ".page", ".component"],
   importTarget: false,
   caseInsensitiveNames: true,
 };

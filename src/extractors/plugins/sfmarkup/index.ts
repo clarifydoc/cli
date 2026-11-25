@@ -130,7 +130,12 @@ function elementOf(tag: SfTag): InteractiveElementInfo["element"] {
 
 /** `onclick` → `click`, `onchange` → `change`; `action`, `press` and the rest as written. */
 function eventOf(attr: string, tag: SfTag): string {
-  if (tag.name === "aura:handler") return tag.attrs["name"] ?? "event";
+  // `<aura:handler name="clubSelected" …>` takes a child's component event by name; `<aura:handler event="c:leagueRefreshed">`
+  // with no name an application event, by the event's own name (`app:leagueRefreshed`).
+  if (tag.name === "aura:handler") {
+    const event = /(?:^|:)([A-Za-z_]\w*)$/.exec(tag.attrs["event"] ?? "")?.[1];
+    return tag.attrs["name"] ?? (event ? `app:${event}` : "event");
+  }
   return attr.replace(/^on/, "");
 }
 
@@ -290,7 +295,7 @@ export function addSfFacts(analysis: FileAnalysis, source: string): void {
 
 export const sfmarkupSpec: RegexLangSpec = {
   language: "sfmarkup",
-  extensions: [".cmp", ".page", ".component"],
+  extensions: [".cmp", ".app", ".page", ".component"],
   blockStyle: "brace",
   lineCommentPrefixes: ["<!--"],
 

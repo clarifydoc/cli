@@ -46,6 +46,7 @@ export class SfMarkupResolver implements DispatchResolver {
     }
     if (pages.length === 0) return [];
     const links: SymbolLink[] = [];
+    const bundles: Array<{ page: FileAnalysis; stem: string; ctrl: FileAnalysis | undefined; scripts: FileAnalysis[] }> = [];
     const seen = new Set<string>();
     const add = (l: SymbolLink): void => {
       const key = `${l.sourceFile}\0${l.sourceSymbol}\0${l.sourceLine}\0${l.targetFile}\0${l.targetSymbol}`;
@@ -74,13 +75,14 @@ export class SfMarkupResolver implements DispatchResolver {
       const isAura = page.screens?.[0]?.formType.startsWith("aura:") === true;
 
       if (isAura) {
-        const m = /^(.*\/)?([^/]+)\.cmp$/.exec(page.filePath);
+        const m = /^(.*\/)?([^/]+)\.(?:cmp|app)$/.exec(page.filePath);
         if (!m) continue;
         const dir = m[1] ?? "";
         const stem = m[2]!;
         const script = (suffix: "Controller" | "Helper" | "Renderer"): FileAnalysis | undefined => byPath.get(`${dir}${stem}${suffix}.js`);
         const fnOf = (file: FileAnalysis | undefined, suffix: string, name: string): FunctionInfo | undefined => file?.functions.find((f) => f.name === `${stem}${suffix}.${name}`);
         const ctrl = script("Controller");
+        bundles.push({ page, stem, ctrl, scripts: [ctrl, script("Helper"), script("Renderer")].filter((f): f is FileAnalysis => !!f) });
         for (const el of page.interactiveElements) {
           const fn = el.handler ? fnOf(ctrl, "Controller", el.handler) : undefined;
           if (!fn || !ctrl) continue;
@@ -131,7 +133,47 @@ export class SfMarkupResolver implements DispatchResolver {
         if (hit) apexLink({ file: page.filePath, symbol: "<setup>", line: call.line, call: call.name }, hit.found, hit.method, "INFERRED");
       }
     }
+    this.eventLinks(bundles, add);
     return links;
+  }
+
+  /**
+   * A fired event → the handlers that run: a component event (`component.getEvent("clubSelected")` in `clubTile`'s
+   * scripts) reaches the handler each component rendering `<c:clubTile>` binds to it — `onclubSelected="{!c.picked}"`
+   * on the tag, or `<aura:handler name="clubSelected" action="{!c.picked}">` — and an application event
+   * (`$A.get("e.c:leagueRefreshed")`) every component's `<aura:handler event="c:leagueRefreshed" action="{!c.reload}">`.
+   * A handler is the rendering bundle's controller function of that name; a name no bundle binds reaches nothing.
+   */
+  private eventLinks(bundles: ReadonlyArray<{ page: FileAnalysis; stem: string; ctrl: FileAnalysis | undefined; scripts: FileAnalysis[] }>, add: (l: SymbolLink) => void): void {
+    const handlerOf = (b: { stem: string; ctrl: FileAnalysis | undefined }, name: string): FunctionInfo | undefined =>
+      b.ctrl?.functions.find((f) => f.name === `${b.stem}Controller.${name}`);
+    const renders = (b: { page: FileAnalysis }, child: string): boolean =>
+      b.page.interactiveElements.some((el) => lower(el.component ?? "").split(":").pop() === child) ||
+      (b.page.subComponents ?? []).some((c) => lower(c.name).split(":").pop() === child);
+    for (const source of bundles) {
+      for (const file of source.scripts) {
+        for (const fn of file.functions) {
+          for (const call of fn.calls) {
+            const target = call.target ?? "";
+            const component = target.startsWith("aura-event:") ? lower(target.slice("aura-event:".length)) : null;
+            const app = target.startsWith("aura-app-event:") ? lower(target.slice("aura-app-event:".length)) : null;
+            if (!component && !app) continue;
+            for (const parent of bundles) {
+              for (const el of parent.page.interactiveElements) {
+                if (!el.handler) continue;
+                const event = lower(el.event);
+                const hit = app
+                  ? event === `app:${app}`
+                  : event === component && (lower(el.component ?? "").split(":").pop() === lower(source.stem) || (el.component === "aura:handler" && parent !== source && renders(parent, lower(source.stem))));
+                if (!hit) continue;
+                const handler = handlerOf(parent, el.handler);
+                if (handler && parent.ctrl) add({ sourceFile: file.filePath, sourceSymbol: fn.name, sourceLine: call.line, callName: call.name, targetFile: parent.ctrl.filePath, targetSymbol: handler.name, targetLine: handler.line, confidence: "INFERRED" });
+              }
+            }
+          }
+        }
+      }
+    }
   }
 }
 

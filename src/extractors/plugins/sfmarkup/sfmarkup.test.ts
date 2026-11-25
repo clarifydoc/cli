@@ -95,19 +95,29 @@ describe("sample-salesforce — Aura and Visualforce to Apex", () => {
 
   it("makes the component and the page screens that bind their Apex controller", () => {
     const named = summary.screens!.filter((s) => /\/(?:aura|pages)\//.test(s.filePath));
-    expect(named.map((s) => `${s.name} ${s.formType} ${s.viewModel}`).sort()).toEqual(["ClubEdit apex:page ClubController", "clubList aura:component ClubController"]);
+    expect(named.map((s) => `${s.name} ${s.formType} ${s.viewModel}`).sort()).toEqual([
+      "ClubEdit apex:page ClubController",
+      "clubList aura:component ClubController",
+      "clubTile aura:component undefined",
+      "leagueApp aura:application ClubController",
+      "rivalTile aura:component undefined",
+    ]);
   });
 
   it("joins the markup's handlers to the controller, the controller to the helper, the scripts to the AuraEnabled method", () => {
     expect(linksFrom("clubList.cmp")).toEqual([
+      "<component>:11 handleRival -> clubListController.js clubListController.handleRival",
       "<component>:4 doInit -> clubListController.js clubListController.doInit",
       "<component>:5 handleSave -> clubListController.js clubListController.handleSave",
       "<component>:6 handlePromote -> clubListController.js clubListController.handlePromote",
+      "<component>:9 handleSelected -> clubListController.js clubListController.handleSelected",
     ]);
     expect(linksFrom("clubListController.js")).toEqual([
       "clubListController.doInit:3 helper.load -> clubListHelper.js clubListHelper.load",
       "clubListController.handlePromote:10 c.promoteClub -> ClubController.cls ClubController.promoteClub",
+      "clubListController.handleRival:18 helper.load -> clubListHelper.js clubListHelper.load",
       "clubListController.handleSave:6 helper.save -> clubListHelper.js clubListHelper.save",
+      "clubListController.handleSelected:15 helper.save -> clubListHelper.js clubListHelper.save",
     ]);
     expect(linksFrom("clubListHelper.js")).toEqual([
       "clubListHelper.load:4 c.getClubs -> ClubController.cls ClubController.getClubs",
@@ -136,6 +146,22 @@ describe("sample-salesforce — Aura and Visualforce to Apex", () => {
     const getter = summary.symbolDataAccess!.filter((r) => r.symbol.endsWith(".standings")).map((r) => `${r.symbol} ${r.entity}`).sort();
     expect(getter).toEqual(["ClubExtension.standings Player__c", "ClubReports.standings Club__c"]);
     expect(summary.symbolLinks!.filter((l) => l.targetSymbol === "ClubReports.standings")).toEqual([]);
+  });
+
+  it("joins a fired component event to the handler the rendering component binds, and an application event to every handler of it", () => {
+    const fired = summary.symbolLinks!
+      .filter((l) => l.callName.startsWith("fire:"))
+      .map((l) => `${l.sourceSymbol} ${l.callName} -> ${l.targetSymbol}`)
+      .sort();
+    expect(fired).toEqual([
+      "clubTileController.pick fire:clubSelected -> clubListController.handleSelected",
+      "clubTileController.refresh fire:e.leagueRefreshed -> leagueAppController.reload",
+      "rivalTileController.pick fire:clubSelected -> clubListController.handleRival",
+    ]);
+  });
+
+  it("reads an Aura application as a screen", () => {
+    expect(summary.screens!.some((sc) => sc.filePath.endsWith("leagueApp/leagueApp.app"))).toBe(true);
   });
 
   it("carries each screen to the tables behind its Apex methods", () => {
