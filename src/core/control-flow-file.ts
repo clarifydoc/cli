@@ -15,7 +15,7 @@ import { parseSource, type TreeSitterLanguage } from "../parsers/parser-manager.
 import { computeComplexity } from "./complexity-analyzer.js";
 import { buildControlFlow, type FunctionRef } from "./control-flow.js";
 import { buildRegexControlFlow } from "./control-flow-regex.js";
-import { extractWithRegex } from "./regex-extractor.js";
+import { regexStructure } from "./regex-extractor.js";
 
 /**
  * Build control-flow graphs for the functions of one file, on demand.
@@ -281,7 +281,8 @@ async function regexFallback(
   }
 
   const source = given ?? (await readFile(filePath, pluginFor(language)?.sourceEncoding ?? "utf-8"));
-  const analysis = extractWithRegex(source, displayPath, language);
+  // Only the functions and classes name the graphs: the rest of the regex reading is not needed.
+  const analysis = regexStructure(source, displayPath, language);
 
   const rows = [
     ...analysis.functions.map((f) => ({ name: f.name, line: f.line, endLine: f.endLine })),

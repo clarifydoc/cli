@@ -37,33 +37,11 @@ export function extractWithRegex(
 
   const lines = presplit ?? splitLines(sourceText);
 
-  analysis.functions = parsed ? extractFunctionsFromParse(lines, spec, parsed.functions) : extractFunctionsWithSpec(lines, spec);
+  const structure = readStructure(lines, spec, parsed);
+  analysis.functions = structure.functions;
+  analysis.classes = structure.classes;
   if (parsed?.moduleValueFlow?.length) analysis.moduleValueFlow = parsed.moduleValueFlow;
   if (parsed?.functionTypeAliases?.length) analysis.functionTypeAliases = parsed.functionTypeAliases;
-  if (parsed && spec.declarationCallPatterns) addDeclarationCalls(spec.callSourceLines?.(lines) ?? lines, spec, analysis.functions);
-  analysis.classes = spec.extractClasses
-    ? spec.extractClasses(lines, analysis.functions)
-    : extractClassesWithSpec(lines, spec);
-  // When classes have methods (e.g. Perl file-scoped packages), remove those methods
-  // from the top-level functions list to avoid double-counting.
-  if (spec.extractClasses) {
-    if (parsed) adoptParsedMembers(analysis.classes, analysis.functions, parsed.functions);
-    const methodLines = new Map<number, Set<string>>();
-    for (const cls of analysis.classes) {
-      for (const m of cls.methods) (methodLines.get(m.line) ?? methodLines.set(m.line, new Set()).get(m.line)!).add(m.name);
-    }
-    // A line holding several functions (a one-line class beside a free function) drops only the members' names.
-    const perLine = new Map<number, number>();
-    for (const fn of analysis.functions) perLine.set(fn.line, (perLine.get(fn.line) ?? 0) + 1);
-    analysis.functions = analysis.functions.filter((fn) => {
-      const names = methodLines.get(fn.line);
-      if (!names) return true;
-      // Kept only beside a member of the same line it is plainly not (`struct A { void f() {} }; void g() {}`).
-      // A function the patterns read after a one-line class's closing brace is no member.
-      if (AFTER_CLASS_FUNCTIONS.has(fn) && !names.has(fn.name)) return true;
-      return perLine.get(fn.line)! > 1 && !names.has(fn.name) && analysis.functions.some((g) => g !== fn && g.line === fn.line && names.has(g.name));
-    });
-  }
   analysis.imports = spec.extractImports ? spec.extractImports(lines) : extractImportsWithSpec(lines, spec);
   analysis.exports = deriveExportsFromFnClasses(analysis.functions, analysis.classes);
   const reExports = spec.extractReExports?.(lines);
@@ -162,6 +140,53 @@ export function extractWithRegex(
   if (entityResult.schemaOps && entityResult.schemaOps.length > 0) analysis.schemaOps = entityResult.schemaOps;
 
   return analysis;
+}
+
+/**
+ * The functions and classes of a file as the full reading has them before its later stages: the patterns (or the parse),
+ * the classes, and a member removed from the top-level list. What `regexStructure` and `extractWithRegex` share.
+ */
+function readStructure(lines: string[], spec: RegexLangSpec, parsed?: ParsedStructure): { functions: FunctionInfo[]; classes: ClassInfo[] } {
+  let functions = parsed ? extractFunctionsFromParse(lines, spec, parsed.functions) : extractFunctionsWithSpec(lines, spec);
+  if (parsed && spec.declarationCallPatterns) addDeclarationCalls(spec.callSourceLines?.(lines) ?? lines, spec, functions);
+  const classes = spec.extractClasses ? spec.extractClasses(lines, functions) : extractClassesWithSpec(lines, spec);
+  // When classes have methods (e.g. Perl file-scoped packages), remove those methods
+  // from the top-level functions list to avoid double-counting.
+  if (spec.extractClasses) {
+    if (parsed) adoptParsedMembers(classes, functions, parsed.functions);
+    const methodLines = new Map<number, Set<string>>();
+    for (const cls of classes) {
+      for (const m of cls.methods) (methodLines.get(m.line) ?? methodLines.set(m.line, new Set()).get(m.line)!).add(m.name);
+    }
+    // A line holding several functions (a one-line class beside a free function) drops only the members' names.
+    const perLine = new Map<number, number>();
+    for (const fn of functions) perLine.set(fn.line, (perLine.get(fn.line) ?? 0) + 1);
+    const all = functions;
+    functions = all.filter((fn) => {
+      const names = methodLines.get(fn.line);
+      if (!names) return true;
+      // Kept only beside a member of the same line it is plainly not (`struct A { void f() {} }; void g() {}`).
+      // A function the patterns read after a one-line class's closing brace is no member.
+      if (AFTER_CLASS_FUNCTIONS.has(fn) && !names.has(fn.name)) return true;
+      return perLine.get(fn.line)! > 1 && !names.has(fn.name) && all.some((g) => g !== fn && g.line === fn.line && names.has(g.name));
+    });
+  }
+  return { functions, classes };
+}
+
+/**
+ * Only the functions and classes of a file — what a control-flow graph needs to name its functions — read the way
+ * `extractWithRegex` reads them (patterns, classes, the plugin's post-processing of both), without its routes, data,
+ * value flow and the rest. A pure function of the text.
+ */
+export function regexStructure(sourceText: string, filePath: string, language: Language): { functions: FunctionInfo[]; classes: ClassInfo[] } {
+  const spec = regexSpecFor(language);
+  if (!spec) return { functions: [], classes: [] };
+  const lines = splitLines(sourceText);
+  let { functions, classes } = readStructure(lines, spec);
+  if (spec.postProcessFunctions) functions = spec.postProcessFunctions(lines, functions);
+  if (spec.postProcessClasses) classes = spec.postProcessClasses(lines, classes, filePath);
+  return { functions, classes };
 }
 
 /** The calls `spec.declarationCallPatterns` read in each parsed function's lines that the parse did not name there. */
