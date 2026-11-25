@@ -126,8 +126,9 @@ describe("library results and destructured parameters", () => {
     expect(rows).toContain("GarageSide -mutate.mutate-> src/api.ts#saveGarage");
     expect(rows.filter((r) => r.startsWith("ClubSide") && r.includes("saveGarage"))).toEqual([]);
     expect(rows.filter((r) => r.startsWith("GarageSide") && r.includes("saveClub"))).toEqual([]);
-    // `refetch` is no method a stated option runs: its call keeps its own name.
-    expect(linksFrom(summary, "src/Two.tsx").some((r) => r.includes("refetch.refetch"))).toBe(false);
+    // `refetch` runs the query's own `queryFn` (TanStack Query), held for ClubSide's query alone.
+    const refetches = linksFrom(summary, "src/Two.tsx").filter((r) => r.includes("refetch.refetch"));
+    expect(refetches).toEqual(["ClubSide -refetch.refetch-> src/Two.tsx#<useQuery:queryFn@5>"]);
   });
 
   it("never reads a project hook's mutate as the library's", () => {

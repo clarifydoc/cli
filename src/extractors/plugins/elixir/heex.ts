@@ -110,7 +110,7 @@ export function readHeex(text: string, firstLine = 1): HeexRead {
       const handler = pushedEvent(attrs, e.index + e[0].length);
       if (!handler || !/^[\w-]+$/.test(handler)) continue;
       hadEvent = true;
-      elements.push({ element: kind, event: `phx-${e[1]}`, handler, line, ...(kind === "custom" ? { component: tag.replace(/^\./, "") } : {}) });
+      elements.push({ element: kind, event: `phx-${e[1]}`, handler, line, ...(kind === "custom" ? { component: tag.replace(/^\./, "") } : {}), ...(/\bphx-target\s*=/.test(attrs) ? { targeted: true as const } : {}) });
       component(handler, tag, kind === "form" ? "container" : "action", line, [`phx-${e[1]}: ${handler}`]);
     }
     const lower = tag.toLowerCase();

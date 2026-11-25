@@ -84,6 +84,23 @@ export const LIBRARY_OBJECTS: readonly LibraryObject[] = [
     factories: new Set(["useMutation", "createMutation", "injectMutation"]),
     runs: { mutationFn: ["mutate", "mutateAsync"] },
   },
+  {
+    // TanStack Query: `query.refetch()` runs the `queryFn` the hook was given; an infinite query's page fetches do too.
+    packages: /^@tanstack\/(?:react|vue|solid|svelte|angular|preact)-query$|^react-query$/,
+    factories: new Set(["useQuery", "createQuery", "injectQuery", "useSuspenseQuery"]),
+    runs: { queryFn: ["refetch"] },
+  },
+  {
+    packages: /^@tanstack\/(?:react|vue|solid|svelte|angular|preact)-query$|^react-query$/,
+    factories: new Set(["useInfiniteQuery", "createInfiniteQuery", "injectInfiniteQuery", "useSuspenseInfiniteQuery"]),
+    runs: { queryFn: ["refetch", "fetchNextPage", "fetchPreviousPage"] },
+  },
+  {
+    // Formik: `formik.handleSubmit` / `submitForm()` run the `onSubmit` option, `handleReset` / `resetForm()` `onReset`.
+    packages: /^formik$/,
+    factories: new Set(["useFormik"]),
+    runs: { onSubmit: ["handleSubmit", "submitForm"], onReset: ["handleReset", "resetForm"] },
+  },
 ];
 
 /** Wrappers an options object or a callback value may sit in. */
@@ -296,12 +313,17 @@ let usesTree: Tree | null = null;
 let boundNames = new Set<string>();
 
 /** The local names the file's library-result destructurings bind (read once per tree), the cheap gate for a bare call. */
+/** Whether the file imports any factory of a library object the table knows (`useFormik` from `formik`): a cheap gate per file. */
+export function importsLibraryFactory(tree: Tree): boolean {
+  for (const i of importsOf(tree).values()) if (LIBRARY_OBJECTS.some((l) => l.factories.has(i.imported) && l.packages.test(i.source))) return true;
+  return false;
+}
+
 function libraryBoundNames(tree: Tree): ReadonlySet<string> {
   if (usesTree === tree) return boundNames;
   usesTree = tree;
   boundNames = new Set();
-  const imports = [...importsOf(tree).values()];
-  if (!imports.some((i) => LIBRARY_OBJECTS.some((l) => l.factories.has(i.imported) && l.packages.test(i.source)))) return boundNames;
+  if (!importsLibraryFactory(tree)) return boundNames;
   for (const d of tree.rootNode.descendantsOfType("variable_declarator")) {
     const pattern = d?.childForFieldName("name");
     if (pattern?.type !== "object_pattern" || !libraryObjectCall(unwrap(d?.childForFieldName("value")))) continue;
@@ -358,9 +380,18 @@ function libraryHolderNames(tree: Tree): ReadonlySet<string> {
  */
 export function libraryBindingCallee(call: Node): string | null {
   const callee = call.childForFieldName("function");
-  if (callee?.type !== "identifier" || !libraryBoundNames(call.tree).has(callee.text)) return null;
-  const name = callee.text;
-  for (let p = call.parent; p; p = p.parent) {
+  return callee?.type === "identifier" ? libraryBoundName(callee) : null;
+}
+
+/**
+ * The name a bare identifier a library result destructured runs as (`handleSubmit` after
+ * `const { handleSubmit } = useFormik({ onSubmit })` → `handleSubmit.handleSubmit`), called or handed to an event
+ * attribute (`onSubmit={handleSubmit}`): the same nearest-declaration rule as `libraryBindingCallee`.
+ */
+export function libraryBoundName(site: Node): string | null {
+  if (site.type !== "identifier" || !libraryBoundNames(site.tree).has(site.text)) return null;
+  const name = site.text;
+  for (let p = site.parent; p; p = p.parent) {
     if (SCOPE_FUNCTIONS.has(p.type)) {
       const params = p.childForFieldName("parameters") ?? p.childForFieldName("parameter");
       if (params && bindsName(params, name)) return null;
@@ -374,7 +405,7 @@ export function libraryBindingCallee(call: Node): string | null {
     if (p.type !== "statement_block" && p.type !== "program") continue;
     for (const stmt of p.namedChildren) {
       if (stmt?.type === "import_statement") {
-        if (importsOf(call.tree).has(name)) return null;
+        if (importsOf(site.tree).has(name)) return null;
         continue;
       }
       const decl = stmt?.type === "export_statement" ? stmt.childForFieldName("declaration") : stmt;

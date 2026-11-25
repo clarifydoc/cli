@@ -177,6 +177,24 @@ function finishBody(
  * The returned locals of a composable whose value derives from a parameter (`FunctionInfo.derivedLocals`):
  * only refs and computeds (`kind: "value"` members) of a function with parameters.
  */
+/**
+ * A Vue Options API component's `data()` members as its other members read them: `data() { return { club: new
+ * Club() } }` makes `this.club` in a method, computed, watcher or hook the value of that initializer. Stated on each
+ * member function as a `localTypes` entry named `this.club` with the initializer as `from`, which core types like
+ * any local's initializer; a member `data()` writes as a literal, `null` or a reference states nothing.
+ */
+function typeDataMembers(members: FunctionInfo[]): void {
+  const data = members.find((f) => f.name === "data");
+  const typed = (data?.returnedMembers ?? []).filter((m) => m.kind === "value" && m.from);
+  if (typed.length === 0) return;
+  for (const fn of members) {
+    if (fn === data) continue;
+    const own = new Set((fn.localTypes ?? []).map((l) => l.name));
+    const added = typed.filter((m) => !own.has(`this.${m.key}`)).map((m) => ({ name: `this.${m.key}`, type: "", from: m.from! }));
+    if (added.length > 0) fn.localTypes = [...(fn.localTypes ?? []), ...added];
+  }
+}
+
 function composableLocals(fn: Node, members: FunctionInfo["returnedMembers"]): FunctionInfo["derivedLocals"] {
   const locals = members?.filter((m) => m.kind === "value" && m.local).map((m) => m.local!) ?? [];
   if (locals.length === 0 || !/\b(?:computed|ref|shallowRef)\s*\(/.test(fn.childForFieldName("body")?.text ?? "")) return undefined;
@@ -2100,6 +2118,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
    *
    *   export const fetchTrophies = createThunk(FETCH_TROPHIES);
    *   handleThunks({ [FETCH_TROPHIES]: createFetchHandler(section, '/trophy') });
+   *   // or a table another file hands on: export default { actionHandlers: { [FETCH_TROPHIES]: … } }
    *
    * `dispatch(fetchTrophies())` runs the handler registered under the constant
    * `fetchTrophies` was made with; the two share nothing but that constant. Each
@@ -2111,13 +2130,30 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
    */
   private extractKeyedRegistry(root: Node, functions: FunctionInfo[]): void {
     const keys = new Set<string>();
+    // The constants a creator is made with (`const saveClub = createThunk(SAVE_CLUB)`): a table a property holds counts
+    // only under those keys, never an object written for a value (`headers: { [SessionHeader]: token }`).
+    let creatorKeys: Set<string> | null = null;
+    const madeByCreator = (key: string): boolean => {
+      if (!creatorKeys) {
+        creatorKeys = new Set();
+        for (const decl of root.descendantsOfType("variable_declarator")) {
+          const value = decl?.childForFieldName("value");
+          const first = value?.type === "call_expression" ? value.childForFieldName("arguments")?.namedChildren.find((a) => a?.type !== "comment") : null;
+          if (first?.type === "identifier") creatorKeys.add(first.text);
+        }
+      }
+      return creatorKeys.has(key);
+    };
     for (const pair of root.descendantsOfType("pair")) {
       const key = pair.childForFieldName("key");
       const ident = key?.type === "computed_property_name" ? key.namedChildren[0] : null;
       const value = pair.childForFieldName("value");
       if (ident?.type !== "identifier" || !value) continue;
-      // The object is a registration's argument: `handleThunks({ … })`.
-      if (pair.parent?.type !== "object" || pair.parent.parent?.type !== "arguments") continue;
+      // The object is a registration's argument (`handleThunks({ … })`), or a module's table of them that another file
+      // registers (`export default { actionHandlers: { [SAVE_GARAGE_SETTINGS]: createSaveHandler(…) } }`).
+      const holder = pair.parent?.parent?.type;
+      if (pair.parent?.type !== "object" || (holder !== "arguments" && holder !== "pair")) continue;
+      if (holder === "pair" && !madeByCreator(ident.text)) continue;
       const name = `[${ident.text}]`;
       if (value.type === "arrow_function" || value.type === "function_expression") {
         const fn = this.parseJsArrowOrExpr(name, value, false);
@@ -2830,6 +2866,12 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
    * and no click trace left the component (a real Vue app: 0 of 754 handlers).
    */
   private extractVueOptionsMembers(options: Node, functions: FunctionInfo[]): void {
+    const start = functions.length;
+    this.collectVueOptionsMembers(options, functions);
+    typeDataMembers(functions.slice(start));
+  }
+
+  private collectVueOptionsMembers(options: Node, functions: FunctionInfo[]): void {
     for (const member of options.namedChildren) {
       if (member.type === "pair") {
         const key = objectKeyName(member.childForFieldName("key"));

@@ -1,6 +1,6 @@
 import { rubyBaseRefOf } from "./service-config.js";
 import { rspecFunctions, withDescribedClass } from "./rspec.js";
-import { rubyBlockEndsOf, rubyCodeLinesOf } from "./blocks.js";
+import { rubyBlockEndsOf, rubyCallLinesOf, rubyCodeLinesOf } from "./blocks.js";
 import { extractRubyScheduledJobs } from "./scheduled-jobs.js";
 import { addJobDispatchCalls, extractJobQueueSources } from "./active-job.js";
 import { addConcernClassMethods } from "./concerns.js";
@@ -1344,7 +1344,7 @@ export const rubySpec: RegexLangSpec = {
   // Blocks end at their `end`, read by keyword — not where the indentation drops (see blocks.ts).
   blockEnds: rubyBlockEndsOf,
   // Calls are read from code only: heredoc SQL / JS / prompts and `%w[]` words name no method.
-  callSourceLines: rubyCodeLinesOf,
+  callSourceLines: rubyCallLinesOf,
   // A Rake file's tasks, a Jbuilder view's statements and a script's body
   // (`script/`, `db/seeds.rb`, `db/seeds/`) are the file's own: their calls
   // are its `<setup>`.

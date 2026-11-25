@@ -586,6 +586,8 @@ export const elixirSpec: RegexLangSpec = {
 
   /** `phx-*` events, links and forms in LiveView `~H"""` sigils (see heex.ts). */
   extractInteractiveElements: (lines) => heexSigils(lines).flatMap((s) => readHeex(s.text, s.firstLine).elements),
+  // `<.live_component module={Mod}>` and function components in a `~H` sigil: what the module renders.
+  extractSubComponents: (lines) => heexSigils(lines).flatMap((s) => readHeex(s.text, s.firstLine).subComponents),
   /** A LiveView or LiveComponent module is a screen; its `~H` markup is the component tree. */
   extractScreens: (lines, filePath, classes) => liveViewScreens(lines, filePath, classes),
 

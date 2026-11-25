@@ -22,7 +22,7 @@ import { escapeRegex } from "../plugins/shared/path-utils.js";
  * Output: alias prefix → absolute path, the shape `applyAliases` takes.
  */
 
-const CONFIG_STEMS = ["vite.config", "webpack.config", "vue.config", "nuxt.config"];
+const CONFIG_STEMS = ["vite.config", "webpack.config", "vue.config", "nuxt.config", "svelte.config"];
 const CONFIG_EXTS = [".ts", ".mts", ".cts", ".js", ".mjs", ".cjs"];
 const IMPORT_EXTS = ["", ".ts", ".mts", ".js", ".mjs", ".cjs", "/index.ts", "/index.js"];
 
@@ -46,6 +46,10 @@ export function bundlerConfigsIn(dir: string): string[] {
 export function readBundlerAliases(dir: string): Map<string, string> {
   const out = new Map<string, string>();
   for (const config of bundlerConfigsIn(dir)) {
+    if (/[\\/]svelte\.config\.\w+$/.test(config)) {
+      addSvelteKitAliases(config, dir, out);
+      continue;
+    }
     for (const [k, v] of aliasesOfFile(config)) if (!out.has(k)) out.set(k, v);
     if (/[\\/]nuxt\.config\.\w+$/.test(config)) addNuxtAliases(config, dir, out);
   }
@@ -67,6 +71,34 @@ function addNuxtAliases(config: string, dir: string, out: Map<string, string>): 
   else if (existsSync(join(dir, "app")) && (/\bcompatibilityVersion\s*:\s*4\b/.test(code) || nuxtMajor(dir) >= 4)) srcDir = join(dir, "app");
   if (!existsSync(srcDir)) return;
   for (const [key, target] of [["~", srcDir], ["@", srcDir], ["~~", dir], ["@@", dir]] as const) if (!out.has(key)) out.set(key, target);
+}
+
+/**
+ * The aliases SvelteKit defines, which a checkout never holds — they are written into the generated
+ * `.svelte-kit/tsconfig.json` its tsconfig extends: `$lib` → `kit.files.lib` as written, else `src/lib`, and each
+ * `kit.alias` entry, whose paths are relative to the project root (`$tests: 'src/../tests'`) as SvelteKit reads them.
+ * An entry inside `node_modules` swaps a package, not project code, and is left out.
+ */
+function addSvelteKitAliases(config: string, dir: string, out: Map<string, string>): void {
+  const code = readCode(config) ?? "";
+  const declaredLib = /\bfiles\s*:\s*\{[^}]*\blib\s*:\s*(['"`])([^'"`$]+)\1/.exec(code);
+  const lib = resolve(dir, declaredLib ? declaredLib[2]! : "src/lib");
+  if (!out.has("$lib") && existsSync(lib)) out.set("$lib", lib);
+  const re = /\balias\s*:\s*/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(code)) !== null) {
+    const value = valueAt(code, m.index + m[0].length);
+    if (!value?.startsWith("{")) continue;
+    for (const part of splitTopLevel(value.slice(1, -1))) {
+      const kv = /^\s*(?:(['"`])([^'"`]+)\1|([A-Za-z_$@~#][\w$@~#/.-]*))\s*:\s*([^]+)$/.exec(part);
+      const path = kv ? stringLiteral(kv[4]!) : null;
+      if (!kv || path === null || path.startsWith("/")) continue;
+      const key = (kv[2] ?? kv[3]!).replace(/\/\*?$/, "");
+      const target = resolve(dir, path);
+      if (!key || out.has(key) || /[\\/]node_modules[\\/]/.test(target) || !existsSync(target)) continue;
+      out.set(key, target);
+    }
+  }
 }
 
 /** The major version of `nuxt` the directory's package.json depends on (0 when unknown). */

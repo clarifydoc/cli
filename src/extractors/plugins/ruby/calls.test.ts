@@ -155,3 +155,31 @@ describe("ruby calls whose receiver the name spells only in part", () => {
     expect(cut("    league.relegate(1)\n    { club: 1 }.league.relegate(2)")).toEqual(["league.relegate"]);
   });
 });
+
+describe("ruby chains continued on a line opening with a dot", () => {
+  const callsOnCallLines = async (src: string) => {
+    const { rubyCallLinesOf } = await import("./blocks.js");
+    const lines = rubyCallLinesOf(src.split("\n")) as string[];
+    return extractCallsFromBody(lines, 0, lines.length, rubySpec.lineCommentPrefixes, rubySpec.callPatterns).map((c) => `${c.name}@${c.line}`);
+  };
+
+  it("reads each hop on its own line with the receiver the chain carries (real-repo FP)", async () => {
+    const got = await callsOnCallLines(["  garage", "    .park(1)", "  result = Club", "    .where(league: id)", "    .order(:name)", "  squad", "    &.promote(2)"].join("\n"));
+    expect(got).toEqual(expect.arrayContaining(["garage.park@2", "Club.where@4", "Club.where().order@5", "squad.promote@7"]));
+  });
+
+  it("never carries a definition into a heredoc's or a literal's blanked method (real-repo FP)", async () => {
+    const { rubyCallLinesOf } = await import("./blocks.js");
+    const src = ["  def format_line(match)", "    <<~LINE.strip", "      [#{match}]", "    LINE", "  end", "  def scored?(goal)", "    %i[home away].include?(goal.side)", "  end"];
+    const lines = rubyCallLinesOf(src) as string[];
+    // Each body as the reader scans it, after its def line: the definition's own name is never a call in it.
+    const bodyCalls = (start: number, end: number) => extractCallsFromBody(lines, start, end, rubySpec.lineCommentPrefixes, rubySpec.callPatterns).map((c) => c.name);
+    expect(bodyCalls(1, 4)).not.toContain("format_line");
+    expect(bodyCalls(6, 7)).not.toContain("scored?");
+  });
+
+  it("carries nothing from a line the chain cannot continue from", async () => {
+    const got = await callsOnCallLines(["  helper(1,", "    2)", "    .size", "  items = [", "    1", "  ].map(&:to_s)"].join("\n"));
+    expect(got.filter((c) => c.startsWith("2)") || c.includes("1.") || c.startsWith("["))).toEqual([]);
+  });
+});

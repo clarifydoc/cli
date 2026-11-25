@@ -76,6 +76,57 @@ end`.split("\n");
     ]);
   });
 
+  it("sends a LiveComponent's untargeted event to the clause of the view rendering it, never a targeted one (real-repo FP)", () => {
+    const analyse = (filePath: string, src: string) => {
+      const lines = src.split("\n");
+      const classes = elixirSpec.postProcessClasses!(lines, elixirSpec.extractClasses!(lines, []));
+      return { filePath, language: "elixir", classes, interactiveElements: elixirSpec.extractInteractiveElements!(lines), subComponents: elixirSpec.extractSubComponents!(lines), imports: elixirSpec.extractImports ? elixirSpec.extractImports(lines) : [], routes: [] } as unknown as FileAnalysis;
+    };
+    const list = analyse("lib/league_web/live/squad_settings/list.ex", `defmodule LeagueWeb.Live.SquadSettings.List do
+  use LeagueWeb, :live_component
+
+  def render(assigns) do
+    ~H"""
+    <button phx-click="add-player">Add</button>
+    <button phx-click="sort-players" phx-target={@myself}>Sort</button>
+    <button phx-click="scout-player">Scout</button>
+    """
+  end
+end`);
+    const settings = analyse("lib/league_web/live/squad_settings.ex", `defmodule LeagueWeb.Live.SquadSettings do
+  use LeagueWeb, :live_view
+  alias LeagueWeb.Live.SquadSettings.List
+
+  def render(assigns) do
+    ~H"""
+    <.live_component module={List} id="squad-list" />
+    """
+  end
+
+  def handle_event("add-player", _value, socket) do
+    {:noreply, socket}
+  end
+
+  def handle_event("sort-players", _value, socket) do
+    {:noreply, socket}
+  end
+end`);
+    // A second view renders the component but handles none of its events.
+    const preview = analyse("lib/league_web/live/squad_preview.ex", `defmodule LeagueWeb.Live.SquadPreview do
+  use LeagueWeb, :live_view
+
+  def render(assigns) do
+    ~H"""
+    <.live_component module={LeagueWeb.Live.SquadSettings.List} id="preview-list" />
+    """
+  end
+end`);
+    const links = new PhoenixEventResolver().resolve([list, settings, preview]);
+    expect(links.map((l) => `${l.sourceSymbol} -> ${l.targetFile}#${l.targetSymbol}`)).toEqual([
+      'add-player -> lib/league_web/live/squad_settings.ex#LeagueWeb.Live.SquadSettings.handle_event("add-player")',
+    ]);
+  });
+
   it("makes a controller template a screen and joins its form to the controller action through the router", () => {
     const tpl = `<.form for={@changeset} action={~p"/sites/#{@site.domain}/settings"} method="put"></.form>`.split("\n");
     expect(heexSpec.extractScreens!(tpl, "lib/plausible_web/templates/site/settings_general.html.heex", [])[0]!.name).toBe("site#settings_general");

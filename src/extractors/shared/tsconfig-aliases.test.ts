@@ -92,6 +92,15 @@ export default defineConfig({ resolve: { alias: aliases } });`);
     await mkdir(join(root, "nuxt3/app"), { recursive: true }); // app/router.options.ts lives here on Nuxt 3
     await writeFile(join(root, "nuxt3/package.json"), JSON.stringify({ devDependencies: { nuxt: "^3.12.0" } }));
     await writeFile(join(root, "nuxt3/nuxt.config.ts"), `export default defineNuxtConfig({})`);
+    // SvelteKit: the tsconfig extends a generated `.svelte-kit/tsconfig.json`; `$lib` is `src/lib` unless `kit.files.lib`
+    // says otherwise, and `kit.alias` paths are relative to the project root, bare (real-repo FP).
+    await mkdir(join(root, "kit/src/lib/managers"), { recursive: true });
+    await mkdir(join(root, "kit/tests"), { recursive: true });
+    await writeFile(join(root, "kit/tsconfig.json"), JSON.stringify({ extends: "./.svelte-kit/tsconfig.json" }));
+    await writeFile(join(root, "kit/svelte.config.js"), `const config = { kit: { alias: { $tests: 'src/../tests', '$tests/*': 'src/../tests/*', 'cast-types': './node_modules/@types/cast/index.d.ts', $gone: 'src/missing' } } };
+export default config;`);
+    await mkdir(join(root, "kitlib/app/lib"), { recursive: true });
+    await writeFile(join(root, "kitlib/svelte.config.js"), `export default { kit: { files: { lib: 'app/lib' } } };`);
     clearTsconfigAliasCache();
   });
   afterAll(async () => {
@@ -105,6 +114,17 @@ export default defineConfig({ resolve: { alias: aliases } });`);
     expect(applyAliases("~~/server/x", four, root)).toBe("nuxt4/server/x");
     const three = loadTsconfigAliasesForDir(join(root, "nuxt3/composables"));
     expect(applyAliases("~/composables/api", three, root)).toBe("nuxt3/composables/api");
+  });
+
+  it("knows SvelteKit's own aliases: $lib is src/lib or kit.files.lib, kit.alias paths are relative to the root", () => {
+    const kit = loadTsconfigAliasesForDir(join(root, "kit/src/lib/managers"));
+    expect(applyAliases("$lib/managers/squad-manager.svelte", kit, root)).toBe("kit/src/lib/managers/squad-manager.svelte");
+    expect(applyAliases("$tests/fixtures", kit, root)).toBe("kit/tests/fixtures");
+    // A package swapped inside node_modules, and a path that is not there, are no project aliases.
+    expect(applyAliases("cast-types", kit, root)).toBe("cast-types");
+    expect(applyAliases("$gone/x", kit, root)).toBe("$gone/x");
+    const lib = loadTsconfigAliasesForDir(join(root, "kitlib/app/lib"));
+    expect(applyAliases("$lib/clubs", lib, root)).toBe("kitlib/app/lib/clubs");
   });
 
   it("reads the paths of the configs a solution-style tsconfig references", () => {

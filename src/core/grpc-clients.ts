@@ -80,14 +80,25 @@ export function grpcClientCalls(analyses: readonly FileAnalysis[], routes: reado
       return s.certain || declared.has(s.service) ? s.service : null;
     };
 
-    // The stubs this file builds anywhere (`<setup>` included), with the lines it builds them on.
+    // The stubs this file builds anywhere (`<setup>` included), with the lines it builds them on, and the
+    // functions of the file that build exactly one (`GetBasketClient()` returning `new Basket.BasketClient(channel)`).
     const built = new Map<string, number[]>();
+    const buildsBy = new Map<string, Set<string>>();
     for (const fn of [...a.functions, ...a.classes.flatMap((c) => c.methods)]) {
       for (const c of fn.calls) {
         const s = serviceOf(`${c.name}()`) ?? serviceOf(spellingWithArgs(fn, c));
-        if (s) (built.get(s) ?? built.set(s, []).get(s)!).push(c.line);
+        if (!s) continue;
+        (built.get(s) ?? built.set(s, []).get(s)!).push(c.line);
+        (buildsBy.get(fn.name) ?? buildsBy.set(fn.name, new Set()).get(fn.name)!).add(s);
       }
     }
+    /** The one stub service a function of this file builds, for an rpc called on its result (`GetBasketClient().GetBasketAsync(…)`). */
+    const builtByFunction = (head: string): string | null => {
+      const name = head.replace(/^(?:this|self)\./, "");
+      if (!/^[A-Za-z_]\w*$/.test(name)) return null;
+      const services = buildsBy.get(name);
+      return services?.size === 1 ? [...services][0]! : null;
+    };
     /** The one built service that declares `method` as an rpc. */
     const builtDeclaring = (method: string, near?: number): string | null => {
       const hits = [...built].filter(([svc, lines]) => {
@@ -109,7 +120,7 @@ export function grpcClientCalls(analyses: readonly FileAnalysis[], routes: reado
         const parts = chained ? [chained[2]!] : call.name.split(".");
         let service: string | null | undefined;
         if (chained) {
-          service = serviceOf(`${chained[1]}()`);
+          service = serviceOf(`${chained[1]}()`) ?? builtByFunction(chained[1]!);
         } else if (parts.length === 1) {
           // `pb.NewOrderServiceClient(conn).GetOrder(ctx, req)`, read as two calls: the stub, then a bare rpc on it.
           service = builtDeclaring(parts[0]!, call.line);

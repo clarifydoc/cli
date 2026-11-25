@@ -460,6 +460,44 @@ const codeMemo = new WeakMap<readonly string[], readonly string[]>();
  * kept as written (the scan reads `render "x"` itself), their `#{…}` opened up
  * as code. Computed once per file.
  */
+const callLinesMemo = new WeakMap<readonly string[], readonly string[]>();
+/** A line continuing a chain: it opens with `.name` or `&.name` (`  .where(id: 1)`). */
+const LEADING_DOT = /^(\s*)(&?\.)([A-Za-z_]\w*[!?]?.*)$/;
+/** A line ending where no receiver can (`,`, an open bracket or block, an operator or keyword expecting more). */
+/** A line no chain continues from: a definition, or a statement a keyword opens. */
+const CHAIN_NEVER_STARTS = /^(?:def|class|module|if|unless|elsif|else|when|case|while|until|begin|rescue|ensure|for|in)\b/;
+const OPEN_END = /(?:[,([{|\\+\-*\/=<>&!]|\b(?:do|then|and|or|not|if|unless|while|until|return|end))\s*$/;
+
+/**
+ * The lines calls are read from: the code lines (`rubyCodeLinesOf`), where a chain written across lines with the dot
+ * opening the next line (`Club\n    .where(league: id)\n    .order(:name)`) carries the chain so far onto that line
+ * (`Club.where(league: id)`, then `Club.where(league: id).order(:name)`), so each call is read on its own line with
+ * its receiver. A line the chain cannot continue from (one ending in `,`, `(`, `do`, an operator, `end`) carries nothing.
+ */
+export function rubyCallLinesOf(lines: readonly string[]): readonly string[] {
+  const hit = callLinesMemo.get(lines);
+  if (hit) return hit;
+  const code = rubyCodeLinesOf(lines);
+  let out: string[] | null = null;
+  let chain: string | null = null;
+  for (let i = 0; i < code.length; i++) {
+    const line = code[i]!;
+    // Opening with a dot as written: a heredoc opener or `%i[…]` literal blanked in the code lines leaves its `.strip` behind.
+    const cont = chain !== null && LEADING_DOT.test(lines[i]!) ? LEADING_DOT.exec(line) : null;
+    if (cont) {
+      const joined: string = `${chain}${cont[2]}${cont[3]!.trimEnd()}`;
+      (out ??= [...code])[i] = cont[1] + joined;
+      chain = OPEN_END.test(joined) ? null : joined;
+      continue;
+    }
+    const t = line.trim();
+    chain = t && !OPEN_END.test(t) && !LEADING_DOT.test(line) && !CHAIN_NEVER_STARTS.test(t) ? t : null;
+  }
+  const result = out ?? code;
+  callLinesMemo.set(lines, result);
+  return result;
+}
+
 export function rubyCodeLinesOf(lines: readonly string[]): readonly string[] {
   let code = codeMemo.get(lines);
   if (!code) {

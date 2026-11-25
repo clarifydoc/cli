@@ -308,6 +308,27 @@ const lookup = { [FETCH_TROPHIES]: 1 };`;
   });
 });
 
+describe("JavaScriptExtractor — a registry keyed by a constant, as a table another file registers", () => {
+  it("reads a computed-key table held by a property like one handed to a registration (real-repo FP)", async () => {
+    const src = `import { createThunk } from 'Store/thunks';
+export const SAVE_GARAGE_SETTINGS = 'SAVE_GARAGE_SETTINGS';
+export const saveGarageSettings = createThunk(SAVE_GARAGE_SETTINGS);
+export default {
+  actionHandlers: {
+    [SAVE_GARAGE_SETTINGS]: createSaveHandler(section, '/config/garage')
+  },
+  labels: { [SAVE_GARAGE_SETTINGS]: 'Save' }
+};
+export function signOut(token) { api.delete('session', { headers: { [SessionHeader]: token } }); }`;
+    const tree = await parseSource(src, "typescript" as never, "garage.js");
+    const fns = new JavaScriptExtractor().extractFunctions(tree, src);
+    expect(fns.filter((f) => /\[|saveGarageSettings/.test(f.name)).map((f) => `${f.name}@${f.line} -> ${f.calls.map((c) => c.name).join(",")}`)).toEqual([
+      "[SAVE_GARAGE_SETTINGS]@6 -> createSaveHandler,section",
+      "saveGarageSettings@3 -> [SAVE_GARAGE_SETTINGS]",
+    ]);
+  });
+});
+
 describe("JavaScriptExtractor — arrow class fields", () => {
   it("makes `onSave = () => {…}` a method of its class (React class components)", async () => {
     const src = `class AddNewTrophy extends Component {

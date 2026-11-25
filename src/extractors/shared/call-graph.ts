@@ -915,8 +915,17 @@ export function callChainText(node: Node | null | undefined, language: Language)
  */
 function resolveCallName(node: Node, language: Language): string | null {
   const hook = callHooksByLanguage.get(language)?.resolveCallName;
-  if (hook) return hook(node);
-  return genericResolveCallName(node);
+  return compactCallName(hook ? hook(node) : genericResolveCallName(node));
+}
+
+/**
+ * A member chain written across lines (`club\n    .save()`, Go's `club.\n    Save()`, a Python `\` continuation) is
+ * named as on one line (`club.save`): whitespace holding a line break beside a member operator (`.`, `?.`, `::`,
+ * `->`) goes. Whitespace on one line, and a break anywhere else, stay as written.
+ */
+const BROKEN_CHAIN = /[ \t]*(?:\\[ \t]*)?\r?\n\s*(?=\?\.|\.|::|->)|(?<=\.|::|->)[ \t]*(?:\\[ \t]*)?\r?\n\s*/g;
+export function compactCallName(name: string | null): string | null {
+  return name !== null && name.includes("\n") ? name.replace(BROKEN_CHAIN, "") : name;
 }
 
 /** Check if a call name is noise (chaining, logging, etc.) */

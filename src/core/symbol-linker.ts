@@ -762,10 +762,20 @@ function parameterDispatchLinks(
  * joins the call sites' arguments: the parameter is whichever of them a caller picks.
  * The link leaves the function that makes the call, so a trace reaches the screen's own function.
  */
+/** The value an options spelling (`{onSubmit:=>save,onSuccess:close}`, `CallInfo.args`) holds under `key`. */
+function optionsMember(text: string, key: string): string | null {
+  for (const part of text.slice(1, -1).split(",")) {
+    const colon = part.indexOf(":");
+    if (colon > 0 && part.slice(0, colon) === key) return part.slice(colon + 1) || null;
+  }
+  return null;
+}
+
 function handedParameterLinks(links: readonly SymbolLink[], ctx: LinkContext): SymbolLink[] {
   const analysisAt = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a])));
   const NAME = /^[\w$]+$/;
-  type Candidate = { analysis: FileAnalysis; fn: FunctionInfo; owner: FunctionInfo; index: number; call: CallInfo };
+  // `typed`: the parameter states a type, so only call sites handing an options object literal state what it holds.
+  type Candidate = { analysis: FileAnalysis; fn: FunctionInfo; owner: FunctionInfo; index: number; call: CallInfo; typed: boolean };
   // What each call made in a function resolved to — a call that resolved is not this pass's.
   const resolved = new Set<string>();
   for (const l of links) if (l.relation !== "reference") resolved.add(`${l.sourceFile}\0${l.sourceSymbol}\0${l.sourceLine}\0${l.callName}`);
@@ -788,9 +798,11 @@ function handedParameterLinks(links: readonly SymbolLink[], ctx: LinkContext): S
         const owner = owners[0]!;
         const index = owner.params.findIndex((p) => p.name === head);
         const param = owner.params[index]!;
-        if (!untyped(param.type) || param.variadic) continue;
+        // A typed parameter counts only for a member called on it (`config.onSubmit(…)`), read off each site's options literal.
+        const typed = !untyped(param.type);
+        if (param.variadic || (typed && call.name.length <= head.length + 1)) continue;
         // `(x) => …` style callbacks only matter where something is called on / as the parameter.
-        wanted.push({ analysis, fn, owner, index, call });
+        wanted.push({ analysis, fn, owner, index, call, typed });
       }
     }
   }
@@ -812,6 +824,13 @@ function handedParameterLinks(links: readonly SymbolLink[], ctx: LinkContext): S
 
   /** What `text` (an argument, or a default) stands for with `rest` called on it, in the scope of `symbol` of `file`. */
   const resolveStated = (file: string, symbol: string, text: string, rest: string, line: number): SymbolLink | null => {
+    // An options object the site wrote (`{onSubmit:=>save,onSuccess:close}`): the member the call reads, then the rest on it.
+    if (text.startsWith("{")) {
+      const dot = rest.indexOf(".");
+      const key = (dot < 0 ? rest : rest.slice(0, dot)).replace(/\?+$/, "");
+      const value = optionsMember(text, key);
+      return value ? resolveStated(file, symbol, value, dot < 0 ? "" : rest.slice(dot + 1).replace(/^\?\.?/, ""), line) : null;
+    }
     const analysis = analysisAt.get(file);
     if (!analysis) return null;
     const callback = text.startsWith("=>");
@@ -862,6 +881,7 @@ function handedParameterLinks(links: readonly SymbolLink[], ctx: LinkContext): S
       const made = (sitesOf.get(ownerKey) ?? []).filter((x) => x.file === into.sourceFile);
       if (made.length !== 1) continue;
       const arg = made[0]!.call.args?.[w.index];
+      if (w.typed && !arg?.startsWith("{")) continue;
       const hit = arg ? resolveStated(made[0]!.file, made[0]!.symbol, arg, rest, w.call.line) : null;
       if (!hit) continue;
       const key = `${into.sourceFile}\0${into.sourceSymbol}\0${into.sourceLine}\0${into.callName}\0${hit.targetFile}\0${hit.targetSymbol}`;
@@ -886,7 +906,7 @@ function handedParameterLinks(links: readonly SymbolLink[], ctx: LinkContext): S
     let complete = sites.length > 0;
     for (const site of sites) {
       const arg = site.call.args?.[w.index];
-      if (arg) stated.push({ file: site.file, symbol: site.symbol, text: arg });
+      if (arg && (!w.typed || arg.startsWith("{"))) stated.push({ file: site.file, symbol: site.symbol, text: arg });
       else complete = false;
     }
     const param = w.owner.params[w.index]!;
@@ -7876,11 +7896,14 @@ function chainPoint(
     const own = receiver[1]!;
     // Inside an extension function, `this` is its receiver (`this.bay.count()` in `fun Garage.total()`).
     const self = consumer ? null : receiverPoint(ctx, analysis, sourceFile, findEnclosingCallable(analysis, sourceSymbol));
-    point = self
+    // An instance member the callable itself states the type of (`localTypes` named `this.club`: a plugin read it off
+    // the object `this` is, a Vue component's `data()`), where no class is the receiver.
+    const stated = !self && !consumer && !own.call ? scopedName(ctx, analysis, sourceFile, sourceSymbol, consumer, `${head.name}.${own.name}`, depth) : null;
+    point = stated ?? (self
       ? own.call ? methodResult(ctx, self, own.name) : ctx.memberTypes.get(memberKey(self.typeFile!, self.typeName))?.get(nameKey(analysis.language, own.name)) ?? readerResult(ctx, self, own.name)
       : own.call ? ownMethodResult(ctx, sourceFile, consumer, own.name) : ownMember(ctx, sourceFile, consumer, own.name)
         ?? (consumer && ctx.classAt.has(memberKey(sourceFile, consumer)) ? readerResult(ctx, { typeName: consumer, typeFile: sourceFile, member: "", consumer }, own.name) : null)
-        ?? globalMember(ctx, sourceFile, own.name);
+        ?? globalMember(ctx, sourceFile, own.name));
     rest = receiver.slice(2);
     // `this.provider.get().save()`: the field declares a wrapper and the next hop takes the value out of it.
     const wrapped = point?.typeFile ? null : wrappedHead(ctx, analysis, sourceFile, sourceSymbol, consumer, own.name, receiver[2], true);

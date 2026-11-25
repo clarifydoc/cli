@@ -106,3 +106,95 @@ describe("a function handed to a composable, with a spec calling it with a mock"
     expect(hop("src/views/Matches.vue", "<setup>", "run")).toContain("matchApi.ts::MatchApi.list");
   });
 });
+
+/**
+ * A composable taking an options object runs its callbacks by member (`config.onSubmit(data)` in a nested `handleSubmit`),
+ * the parameter typed by an interface; each screen's own literal states them (real-repo FP: one form composable, 31 forms).
+ * Decoys: a member a screen does not state, and a namesake composable of another module.
+ */
+const OPTION_FILES: Record<string, string> = {
+  "package.json": `{ "name": "league-ui", "dependencies": { "vue": "^3.4.0" } }\n`,
+  "tsconfig.json": `{ "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }\n`,
+  "src/api.ts": `export const renameClub = (name: string) => fetch("/api/clubs", { method: "PUT", body: name });
+export const signPlayer = (name: string) => fetch("/api/players", { method: "POST", body: name });
+export const parkCar = (name: string) => fetch("/api/garages", { method: "POST", body: name });
+`,
+  "src/composables/useForm.ts": `interface UseFormConfig<T> {
+  initialValues: T;
+  onSubmit: (data: T) => Promise<unknown>;
+  onSuccess?: (result: unknown) => void;
+  onFinally?: () => void;
+}
+export const useForm = <T extends object>(config: UseFormConfig<T>) => {
+  const handleSubmit = async () => {
+    const result = await config.onSubmit(config.initialValues);
+    config.onSuccess?.(result);
+    config.onFinally?.();
+  };
+  return { handleSubmit };
+};
+`,
+  "src/components/RenameClubForm.vue": `<template><form @submit.prevent="handleSubmit"><button>Save</button></form></template>
+<script setup lang="ts">
+import { useForm } from "@/composables/useForm";
+import { renameClub } from "@/api";
+const close = () => {};
+const { handleSubmit } = useForm({
+  initialValues: { name: "" },
+  onSubmit: async ({ name }) => renameClub(name),
+  onSuccess: () => close(),
+});
+</script>
+`,
+  "src/components/SignPlayerForm.vue": `<template><form @submit.prevent="handleSubmit"><button>Sign</button></form></template>
+<script setup lang="ts">
+import { useForm } from "@/composables/useForm";
+import { signPlayer } from "@/api";
+const { handleSubmit } = useForm({
+  initialValues: { name: "" },
+  onSubmit: async ({ name }) => signPlayer(name),
+});
+</script>
+`,
+  "src/legacy/useForm.ts": `export const useForm = (config: { onSubmit: () => void }) => ({ handleSubmit: () => config.onSubmit() });
+`,
+  "src/legacy/ParkForm.vue": `<template><form @submit.prevent="handleSubmit"><button>Park</button></form></template>
+<script setup lang="ts">
+import { useForm } from "./useForm";
+import { parkCar } from "@/api";
+const { handleSubmit } = useForm({ onSubmit: () => parkCar("x") });
+</script>
+`,
+};
+
+describe("a composable running the callbacks of its options object", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-options-callbacks-"));
+    for (const [path, text] of Object.entries(OPTION_FILES)) {
+      await mkdir(dirname(join(dir, "app", path)), { recursive: true });
+      await writeFile(join(dir, "app", path), text);
+    }
+    await analyze({ projectRoot: join(dir, "app"), outputDir: join(dir, "out"), lsp: false, gitHistory: false });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 120_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+  const rows = () => (summary.symbolLinks ?? []).filter((l) => l.strategy === "dispatch:param-arg").map((l) => `${l.sourceFile} -${l.callName}-> ${l.targetSymbol}`);
+
+  it("runs each screen's own onSubmit and onSuccess from the handler it binds", () => {
+    expect(rows()).toEqual(expect.arrayContaining([
+      "src/components/RenameClubForm.vue -handleSubmit-> renameClub",
+      "src/components/RenameClubForm.vue -handleSubmit-> close",
+      "src/components/SignPlayerForm.vue -handleSubmit-> signPlayer",
+    ]));
+  });
+
+  it("states nothing for a member a screen leaves out, and never crosses to a namesake composable", () => {
+    expect(rows().filter((r) => r.startsWith("src/components/SignPlayerForm.vue") && r.endsWith("close"))).toEqual([]);
+    expect(rows().filter((r) => r.includes("legacy") || r.endsWith("parkCar"))).toEqual([]);
+    expect(rows().filter((r) => r.startsWith("src/components/RenameClubForm.vue") && r.endsWith("signPlayer"))).toEqual([]);
+  });
+});

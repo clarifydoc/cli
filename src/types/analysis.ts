@@ -3985,6 +3985,11 @@ export interface InteractiveElementInfo {
    * in the component registered under that name.
    */
   componentScope?: string;
+  /**
+   * The markup names where the element's event goes (Phoenix `phx-target={@myself}` or a selector): the event is not
+   * the view's that renders the element's component, so no resolver falls back to that view's handler.
+   */
+  targeted?: true;
   /** The text a person reads on it: a link's or button's label, a submit input's `value` ("Place Order"). */
   caption?: string;
   /**

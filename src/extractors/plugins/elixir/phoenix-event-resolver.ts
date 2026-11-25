@@ -9,7 +9,9 @@ const sameVerb = (a: string | null, b: string): boolean =>
  *   - a `phx-*="event"` element → the `handle_event("event")` clause of the
  *     LiveView (or LiveComponent) that renders it: the module whose lines hold
  *     an inline `~H` element, or for a co-located template
- *     (`settings_live.html.heex`) the module in `settings_live.ex`;
+ *     (`settings_live.html.heex`) the module in `settings_live.ex`; where that
+ *     module has no such clause and the markup names no `phx-target`, the
+ *     clause of each module rendering it (`<.live_component module={Mod}>`);
  *   - a link or form `request` (literal path, interpolations as `:param`) → the
  *     Phoenix route serving that path and verb, and from there the controller
  *     action (`SiteController.settings` — the route names its controller
@@ -60,6 +62,19 @@ export class PhoenixEventResolver implements DispatchResolver {
       return hits.length === 1 ? hits[0]! : null;
     };
 
+    // The modules each module is rendered by (`<.live_component module={Mod}>`): by full name, or by the name an
+    // `alias` of the rendering file shortens it to.
+    const renderSites = (moduleName: string): Array<{ file: FileAnalysis; line: number }> => {
+      const out: Array<{ file: FileAnalysis; line: number }> = [];
+      for (const r of elixir) {
+        for (const sub of r.subComponents ?? []) {
+          const aliased = moduleName.endsWith(`.${sub.name}`) && r.imports.some((i) => i.source === moduleName);
+          if (sub.name === moduleName || aliased) out.push({ file: r, line: sub.line });
+        }
+      }
+      return out;
+    };
+
     const links: SymbolLink[] = [];
     const emitted = new Set<string>();
     const push = (a: FileAnalysis, handler: string, line: number, target: { file: string; symbol: string; line: number }): void => {
@@ -77,6 +92,15 @@ export class PhoenixEventResolver implements DispatchResolver {
           const owner = a.language === "elixir" ? a : colocated;
           const hit = owner ? eventClause(owner, a.language === "elixir" ? el.line : null, el.handler) : null;
           if (hit && owner) push(a, el.handler, el.line, { file: owner.filePath, symbol: `${hit.cls.name}.handle_event("${el.handler}")`, line: hit.line });
+          else if (!hit && !el.targeted && a.language === "elixir") {
+            // An event with no target, in a component declaring no clause for it, goes to the view that renders the
+            // component (Phoenix sends it to the LiveView process): each renderer's clause of that name.
+            const cls = [...a.classes].filter((c) => c.line <= el.line && el.line <= c.endLine).sort((x, y) => y.line - x.line)[0];
+            for (const site of cls ? renderSites(cls.name) : []) {
+              const parent = eventClause(site.file, site.line, el.handler);
+              if (parent) push(a, el.handler, el.line, { file: site.file.filePath, symbol: `${parent.cls.name}.handle_event("${el.handler}")`, line: parent.line });
+            }
+          }
         } else if (el.request) {
           const target = el.request.target.replace(/\/$/, "") || "/";
           for (const r of routes) {

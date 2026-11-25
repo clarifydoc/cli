@@ -69,6 +69,23 @@ describe("gRPC client calls", () => {
     ]);
   });
 
+  it("reads an rpc on the stub a function of the file returns, and nothing when that function builds two (real-repo FP)", () => {
+    const cs = file("csharp", { classes: [{ name: "GarageService", properties: [], methods: [
+      // `private Garage.GarageClient GetGarageClient() => _client ??= new Garage.GarageClient(_channel);`
+      { ...fn("GetGarageClient", []), calls: [call("new Garage.GarageClient", 30)] },
+      { ...fn("LoadAsync", []), calls: [call("GetGarageClient().GetCarAsync", 12)] },
+      { ...fn("ParkAsync", []), calls: [call("this.GetGarageClient().ParkCarAsync", 18)] },
+      // A helper building two different stubs says nothing about which one its result is.
+      { ...fn("GetAnyClient", []), calls: [call("new Garage.GarageClient", 40), call("new Pitlane.PitlaneClient", 41)] },
+      { ...fn("StopAsync", []), calls: [call("GetAnyClient().GetCarAsync", 22)] },
+    ] } as never] });
+    const routes = [rpc("league.Garage", "GetCar"), rpc("league.Garage", "ParkCar"), rpc("league.Pitlane", "GetCar")];
+    expect(grpcClientCalls([cs], routes).map((c) => `${c.line} ${c.name}`)).toEqual([
+      "12 POST /league.Garage/GetCar",
+      "18 POST /league.Garage/ParkCar",
+    ]);
+  });
+
   it("names a service no .proto here declares by its contract, and an uncertain spelling only when declared", () => {
     const py = file("python", { functions: [fn("run", ["stub.SayHello"], [{ name: "stub", type: "helloworld_pb2_grpc.GreeterStub" }])] });
     const js = file("typescript", { imports: [{ source: "@grpc/grpc-js" } as never], functions: [fn("go", ["client.getCar", "cache.get"], [{ name: "client", type: "CarService" }, { name: "cache", type: "Cache" }])] });

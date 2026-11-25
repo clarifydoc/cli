@@ -16,7 +16,7 @@ import { requiredSource } from "./imports-exports.js";
 import { arrayMapEntries, memberAssignment, namesFunction } from "./member-values.js";
 import { heldFunction } from "./held-functions.js";
 import { contractFunction } from "./contract-handlers.js";
-import { derivedLocalsIn, derivedMemberKeys, libraryBindingCallee, libraryDestructuredMembers, libraryObjectMembers, librarySubscriptionCallee } from "./library-callbacks.js";
+import { derivedLocalsIn, derivedMemberKeys, libraryBindingCallee, libraryBoundName, libraryDestructuredMembers, libraryObjectAt, importsLibraryFactory, libraryObjectMembers, librarySubscriptionCallee } from "./library-callbacks.js";
 
 /** Vue 3 <script setup> compiler macros — auto-imported, not in imports array */
 const VUE_COMPILER_MACROS = new Set([
@@ -52,6 +52,21 @@ function returnedNames(expr: Node | undefined): Array<{ value: Node; key: string
     return expr.namedChildren.flatMap((el, i) => (named(el) ? [{ value: el, key: `[${i}]` }] : []));
   }
   return [];
+}
+
+/**
+ * The call a JSX attribute value makes when it is a library object's method (`formik.handleSubmit`, the object a
+ * `const` in scope builds from a library factory with options that method runs) or a name destructured from one
+ * (`handleSubmit`): the holder's entry name. Null for anything else, which stays a handed-on reference.
+ */
+function libraryMethodAt(value: Node): string | null {
+  if (value.type === "identifier") return libraryBoundName(value);
+  if (value.type !== "member_expression" || !importsLibraryFactory(value.tree)) return null;
+  const object = value.childForFieldName("object");
+  const method = value.childForFieldName("property")?.text;
+  if (object?.type !== "identifier" || !method) return null;
+  const members = libraryObjectAt(value, object.text, heldFunction, namesFunction);
+  return members?.some((m) => m.method === method) ? value.text : null;
 }
 
 export const javascriptCallHooks: CallExtractionHooks = {
@@ -112,7 +127,12 @@ export const javascriptCallHooks: CallExtractionHooks = {
       }
     } else if (node.type === "jsx_attribute") {
       const value = node.namedChildren.find((c) => c.type === "jsx_expression")?.namedChildren[0];
-      if (value && (value.type === "identifier" || value.type === "member_expression") && JSX_PASSED_NAME.test(value.text)) {
+      // A library object's method handed to an event (`onSubmit={formik.handleSubmit}`, `onSubmit={handleSubmit}`
+      // destructured from it) runs on that event: a call, named as the holder's entry is (`formik.handleSubmit`,
+      // `handleSubmit.handleSubmit`), so the library-option join reaches the callback the method runs.
+      const libraryMethod = value ? libraryMethodAt(value) : null;
+      if (libraryMethod) addResult(libraryMethod, value!);
+      else if (value && (value.type === "identifier" || value.type === "member_expression") && JSX_PASSED_NAME.test(value.text)) {
         addResult(value.text, value, "attribute");
       }
     } else if (node.type === "return_statement") {
@@ -304,11 +324,52 @@ function handedArgs(node: Node): string[] | null {
   // A hook / composable (`useTableSort(sortBy, resetPage)`): what it is handed is what its body calls by the
   // parameter's name — a function or object named by an identifier, or a callback arrow that only calls one.
   if (HOOK_NAME.test(fn.text)) {
-    const handed = args.map((a) => (chain(a) || isParam(a) || a.type === "identifier" && a.text !== "undefined" && !memberParam(a) ? a.text : callbackTarget(a)));
+    const spell = (a: Node): string => (chain(a) || isParam(a) || a.type === "identifier" && a.text !== "undefined" && !memberParam(a) ? a.text : callbackTarget(a));
+    // An options object (`useForm({ onSubmit: async (d) => save(d), onSuccess: close })`): each member the hook may
+    // call as `config.onSubmit(…)`, spelled as an argument would be, `{onSubmit:=>save,onSuccess:close}`.
+    const handed = args.map((a) => (a.type === "object" ? optionsArg(a, spell) : spell(a)));
     return handed;
   }
   if (!args.some((a) => chain(a) || isParam(a))) return null;
   return args.map((a) => (chain(a) || isParam(a) ? a.text : ""));
+}
+
+/**
+ * An object literal handed to a hook, by its members: `{onSubmit:=>save,onSuccess:close}` — a member written as an
+ * arrow or method with one call is `=>callee`, one naming a function or chain is that name, a shorthand member its own
+ * name. A member with none of these spellings (a literal, a spread, an arrow doing more) is left out; "" when none has one.
+ */
+function optionsArg(obj: Node, spell: (a: Node) => string): string {
+  const parts: string[] = [];
+  for (const member of obj.namedChildren) {
+    if (!member) continue;
+    let key: string | undefined;
+    let value = "";
+    if (member.type === "shorthand_property_identifier") {
+      key = member.text;
+      value = member.text;
+    } else if (member.type === "pair") {
+      key = member.childForFieldName("key")?.text;
+      const v = member.childForFieldName("value");
+      value = v ? (v.type === "function_expression" ? methodTarget(v) : spell(v)) : "";
+    } else if (member.type === "method_definition") {
+      key = member.childForFieldName("name")?.text;
+      value = methodTarget(member);
+    }
+    if (key && /^[\w$]+$/.test(key) && value && !value.includes(",") && !value.includes("{")) parts.push(`${key}:${value}`);
+  }
+  return parts.length > 0 ? `{${parts.join(",")}}` : "";
+}
+
+/** A method or function expression whose body is one call: `=>callee`, as `callbackTarget` spells an arrow's. */
+function methodTarget(fn: Node): string {
+  const body = fn.childForFieldName("body");
+  if (body?.type !== "statement_block" || body.namedChildCount !== 1) return "";
+  const only = body.namedChild(0);
+  let expr = only?.type === "expression_statement" ? only.namedChild(0) : only?.type === "return_statement" ? only.namedChild(0) : null;
+  if (expr?.type === "await_expression") expr = expr.namedChild(0);
+  const callee = expr?.type === "call_expression" ? expr.childForFieldName("function") : null;
+  return callee && /^[\w$]+(?:\.[\w$]+)*$/.test(callee.text) ? `=>${callee.text}` : "";
 }
 
 /** The name a hook is called by: `useX` (Vue composables, React hooks). */

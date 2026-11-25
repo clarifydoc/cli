@@ -310,3 +310,26 @@ describe("classifyCalls — a tRPC client call is a request, not a query", () =>
     expect(kinds(["db.club.byId.query", "this.trpc.club.byId.query"])).toEqual(["db.club.byId.query:database", "this.trpc.club.byId.query:internal"]);
   });
 });
+
+// A member chain broken across lines (the way Prettier and most formatters write a long chain) is named as on one
+// line, so it links like its one-line twin (real-repo FP).
+describe("extractCalls — member chains written across lines", () => {
+  it("names a chain broken before or after the dot as on one line, in TypeScript, Python, Java and C#", async () => {
+    expect(await callsIn(`function f() {\n  club\n    .save()\n    .then(() => {});\n  this.garage\n    ?.park();\n}`, "typescript", "function_declaration"))
+      .toEqual(expect.arrayContaining(["club.save", "this.garage?.park"]));
+    expect(await callsIn(`def f():\n    return (club\n        .save())\n`, "python", "function_definition")).toContain("club.save");
+    expect(await callsIn(`class A { void f() { repo\n      .save(club); } }`, "java", "method_declaration")).toContain("repo.save");
+    expect(await callsIn(`class A { void F() { _repo\n      .Save(club); } }`, "csharp", "method_declaration")).toContain("_repo.Save");
+  });
+
+  it("keeps a name with no broken chain, and whitespace on one line, as written", async () => {
+    const { compactCallName } = await import("./call-graph.js");
+    expect(compactCallName("club.save")).toBe("club.save");
+    expect(compactCallName("league.clubs[ 1 ].save")).toBe("league.clubs[ 1 ].save");
+    expect(compactCallName("club.\n    save")).toBe("club.save");
+    expect(compactCallName("club \\\n    .save")).toBe("club.save");
+    expect(compactCallName("Garage::\n  open")).toBe("Garage::open");
+    expect(compactCallName("garage\n  ->open")).toBe("garage->open");
+    expect(compactCallName(null)).toBe(null);
+  });
+});
