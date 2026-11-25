@@ -23,6 +23,8 @@ class Club extends Squad {
   val name: String = "club"
   def total: Int = Http.get("/api/clubs/total")
   def rank(season: Int): Int = season
+  def rival: Rival = new Rival
+  def mystery = new Rival
 }
 `,
   "app/Rival.scala": `package league
@@ -30,6 +32,11 @@ class Club extends Squad {
 class Rival {
   def total: Int = 3
   def size: Int = 4
+  def rank(season: Int): Int = season
+}
+
+class Foe {
+  def rival: Club = new Club
 }
 `,
   "app/Repo.scala": `package league
@@ -55,6 +62,11 @@ class Board(club: Club, rival: Rival, repo: Repo) extends Club {
   def onInfix = repo.find(1) map identity
   def onUnderscore = repo.find(1).map _
   def onUnknown(other: Any): Int = other.find(1).total
+  def twoHop: Int = repo.find(1).rival.total
+  def twoHopCall: Int = repo.find(1).rival.rank(2)
+  def viaParamHop(c: Club): Int = c.rival.total
+  def untypedHop: Int = repo.find(1).mystery.total
+  def namesakeHop: Int = repo.findRival(1).rival.total
   def viaField: Int = club.total
   def viaParam(c: Club): Int = c.total
   def viaRival(r: Rival): Int = r.total
@@ -132,6 +144,18 @@ describe.each([["tree-sitter", undefined], ["regex", "no-tree-sitter:scala"]])("
     expect(r.get("Board.onNamesake")).toContain("app/Rival.scala:Rival.total");
     expect(r.get("Board.onNamesake")).not.toContain("app/Club.scala:Club.total");
     for (const name of ["onValue", "onPlain", "onUnknown", "onBlock", "onForeach", "onInfix", "onUnderscore"]) expect((r.get(`Board.${name}`) ?? []).filter((t) => t.endsWith(".total"))).toEqual([]);
+  });
+
+  it("follow a chain through a second parameterless def, by its declared return type", async () => {
+    const r = await links(feature);
+    expect(r.get("Board.twoHop")).toContain("app/Rival.scala:Rival.total");
+    expect(r.get("Board.twoHop")).not.toContain("app/Club.scala:Club.total");
+    // The regex front end names no call after a getter step written without parentheses (`rival.rank(2)`); the default one does.
+    if (!feature) expect(r.get("Board.twoHopCall")).toContain("app/Rival.scala:Rival.rank");
+    expect(r.get("Board.viaParamHop")).toContain("app/Rival.scala:Rival.total");
+    // An untyped def hop, and a hop whose type has no such def (a namesake getter of another class), stay unlinked.
+    expect((r.get("Board.untypedHop") ?? []).filter((t) => t.endsWith(".total"))).toEqual([]);
+    expect((r.get("Board.namesakeHop") ?? []).filter((t) => t.endsWith(".total"))).toEqual([]);
   });
 
   it("leave a namesake class, a val, a def with parameters, a binder and a comment alone", async () => {

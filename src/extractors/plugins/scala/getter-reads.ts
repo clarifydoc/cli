@@ -85,7 +85,7 @@ const PATH_READ = /(?<![\w$.@])([A-Za-z_]\w*(?:\s*\.\s*[a-z_]\w*)+)(?![\w$])(?!\
  * last a member read (not called, indexed or given type arguments). One nested level of arguments is read.
  */
 const CALL_ARGS = String.raw`\((?:[^()]|\([^()]*\))*\)`;
-const CHAIN_READ = new RegExp(String.raw`(?<![\w$.@])([A-Za-z_]\w*)((?:\s*\.\s*[a-z_]\w*(?:\s*${CALL_ARGS})?)*?\s*\.\s*[a-z_]\w*)(?![\w$])(?!\s*[(\[])`, "g");
+const CHAIN_READ = new RegExp(String.raw`(?<![\w$.@])([A-Za-z_]\w*)((?:\s*\.\s*[a-z_]\w*(?:\s*${CALL_ARGS})?)*\s*\.\s*[a-z_]\w*)(?![\w$])(?!\s*[(\[])`, "g");
 const CHAIN_STEP = new RegExp(String.raw`\.\s*([a-z_]\w*)(\s*${CALL_ARGS})?`, "g");
 /**
  * Whether what follows the member on its line is an argument written without parentheses — a block (`.map { x => … }`),

@@ -1343,6 +1343,12 @@ export interface CallInfo {
    */
   syntax?: true;
   /**
+   * The lines of the later sites of the same attribute assignment in the function (`club.status = 1 … club.status = 2`):
+   * a syntax call is one row per name, so each further site is kept as a line, read only where the assignment turns out
+   * to write a field (`joinAttributeWrites`); a setter method the receiver declares is one call whatever the sites.
+   */
+  siteLines?: number[];
+  /**
    * For a `passed: "return"` name: the key the function returns it under — `latest` in
    * `return { latest: loadLatest }`, `[1]` in `return [rows, refresh]`. A caller that destructures
    * that key (`const { latest } = useClubActions()`) is handed this function.

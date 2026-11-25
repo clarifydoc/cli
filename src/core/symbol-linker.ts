@@ -7733,7 +7733,7 @@ function recordAttributeWrite(sourceFile: string, sourceSymbol: string, call: Ca
   if (!point?.typeName || !point.typeFile || point.qualifier) return;
   const typeName = declaredTypeName(ctx, point.typeFile, point.typeName);
   if (!ctx.classAt.has(memberKey(point.typeFile, typeName))) return;
-  ctx.attributeWrites.push({ function: sourceSymbol, file: sourceFile, line: call.line, member, typeName, typeFile: point.typeFile });
+  for (const line of [call.line, ...(call.siteLines ?? [])]) ctx.attributeWrites.push({ function: sourceSymbol, file: sourceFile, line, member, typeName, typeFile: point.typeFile });
 }
 
 /**
@@ -7975,7 +7975,7 @@ function walkChain(ctx: LinkContext, start: InjectionPoint | null, rest: readonl
     point = seg.call
       ? methodResult(ctx, point, seg.name, awaited && i === rest.length - 1)
       : ctx.memberTypes.get(memberKey(point.typeFile, point.typeName))?.get(nameKey(ctx.languageOf.get(point.typeFile), seg.name)) ??
-        promotedMemberPoint(ctx, point.typeName, point.typeFile, seg.name, new Set()) ?? readerResult(ctx, point, seg.name);
+        promotedMemberPoint(ctx, point.typeName, point.typeFile, seg.name, new Set()) ?? readerResult(ctx, point, seg.name) ?? getterResult(ctx, point, seg.name);
   }
   return point;
 }
@@ -8131,6 +8131,17 @@ function promotedMemberPoint(ctx: LinkContext, className: string, classFile: str
   } finally {
     searching.delete(mark);
   }
+}
+
+/** A paren-less member read naming a def marked `getter` (`FunctionInfo.getter`) on the hop's type: what that def returns, as a call hop does. */
+function getterResult(ctx: LinkContext, point: InjectionPoint, name: string): InjectionPoint | null {
+  if (!point.typeFile) return null;
+  const hit = findMethodInClass(ctx, point.typeName, point.typeFile, name);
+  if (!hit) return null;
+  // Only a def the plugin marked a parameterless getter is read without a call; a method or a field of the name is a value.
+  const owner = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(hit.file);
+  if (!owner || !routineAt(owner, hit.symbol)?.getter) return null;
+  return methodResult(ctx, point, name);
 }
 
 /** A paren-less member read that is no field: in a language where it may be a method call, what the method returns. */

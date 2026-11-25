@@ -50,6 +50,18 @@ end
     academy.status = 4
   end
 
+  def twice(id)
+    club = Club.find(id)
+    club.status = 1
+    club.rating = 5
+    club.status = 2
+    club.name = "a"
+    club.name = "b"
+    rival = Rival.find(id)
+    rival.title = "x"
+    rival.title = "y"
+  end
+
   def decoys(id)
     rival = Rival.find(id)
     rival.status = 1
@@ -81,6 +93,10 @@ describe("Ruby column setters", () => {
     expect(writesBy("Board.promote")).toEqual(expect.arrayContaining(["Club.status@4"]));
     expect(writesBy("Board.viaRepo")).toEqual(["Club.status@12"]);
     expect(writesBy("Board.viaSubclass")).toEqual(["Academy.status@17"]);
+  });
+
+  it("records every site of a column assigned more than once in one method", () => {
+    expect(writesBy("Board.twice")).toEqual(["Club.rating@23", "Club.status@22", "Club.status@24", "Rival.title@28", "Rival.title@29"]);
   });
 
   it("states nothing for a column the model lacks, a class that is no model, or an untyped receiver", () => {

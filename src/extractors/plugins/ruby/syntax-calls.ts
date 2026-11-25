@@ -25,6 +25,7 @@ export function addRubySyntaxCalls(lines: readonly string[], analysis: FileAnaly
     const literals = literalLocals(body);
     const typed = new Set([...fn.params.map((p) => p.name), ...(fn.localTypes ?? []).map((t) => t.name)]);
     const have = new Set(fn.calls.map((c) => c.name));
+    const written = new Map<string, CallInfo>();
     body.forEach((raw, k) => {
       let text = raw.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""');
       if (k === 0) text = text.replace(/^(\s*)def\s+(?:self\.)?[^\s(;]+/, "$1");
@@ -40,9 +41,16 @@ export function addRubySyntaxCalls(lines: readonly string[], analysis: FileAnaly
         if (REQUEST_OBJECTS.has(head) || KEYWORDS.has(head) || literals.has(head)) continue;
         if (head !== "self" && !found.receiver.startsWith("@") && !typed.has(head)) continue;
         const name = `${receiver}.${found.member}`;
-        if (have.has(name)) continue;
+        const line = fn.line + k;
+        if (have.has(name)) {
+          // A later assignment of the same attribute: one more field write where the attribute is a column, never another call row.
+          const first = written.get(name);
+          if (first && /^[a-z_]\w*=$/.test(found.member) && first.line !== line && !first.siteLines?.includes(line)) (first.siteLines ??= []).push(line);
+          continue;
+        }
         have.add(name);
-        const call: CallInfo = { name, kind: "internal", target: null, line: fn.line + k, column: found.column, syntax: true };
+        const call: CallInfo = { name, kind: "internal", target: null, line, column: found.column, syntax: true };
+        written.set(name, call);
         fn.calls.push(call);
       }
     });
