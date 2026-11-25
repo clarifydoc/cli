@@ -6,10 +6,19 @@
  * runs it, fixed for the whole parse), and what a predicate asks of a token — a known type, a macro name, the `)`
  * closing a `(` — is answered once per token by that pass.
  */
-import { Parser, Token, type CommonTokenStream, type TokenStream } from "antlr4ng";
+import { Parser, PredictionMode, Token, type CommonTokenStream, type ParserRuleContext, type TokenStream } from "antlr4ng";
 import { CLexer } from "./CLexer.js";
 import { QUALIFIER_KEYWORDS, SPECIFIER_KEYWORDS, STATEMENT_KEYWORDS, STATIC_ASSERT, TAG_KEYWORDS, TYPE_KEYWORDS } from "./CKeywords.js";
 import { readTypes, type CTokenFacts } from "./CTypes.js";
+import { decisionsOf, type CDecisions } from "./CDecisions.js";
+
+/** Tokens only a statement starts, and no declaration or expression: what follows a label as its statement. */
+const STATEMENT_ONLY: ReadonlySet<number> = new Set([
+  CLexer.If, CLexer.Switch, CLexer.For, CLexer.While, CLexer.Do, CLexer.LeftBrace, CLexer.Return, CLexer.Goto, CLexer.Break, CLexer.Continue,
+]);
+
+/** The simulators whose decisions are settled already. */
+const settled = new WeakSet<object>();
 
 /** What may follow a declarator's name: an identifier here is the name, not a type. */
 const AFTER_DECLARATOR: ReadonlySet<number> = new Set([CLexer.Semi, CLexer.Comma, CLexer.Assign, CLexer.RightParen, CLexer.LeftBracket, CLexer.Colon]);
@@ -35,14 +44,93 @@ export abstract class CParserBase extends Parser {
     super(input);
   }
 
-  /** The first pass over the tokens the parse is about to read. */
-  prepare(stream: CommonTokenStream): void {
+  /** The first pass over the tokens the parse is about to read, and (unless `settle` is false, for tests) the decisions it settles. */
+  prepare(stream: CommonTokenStream, settle = true): void {
     this.facts = readTypes(stream);
     // The names the first pass read as bare macros, calling conventions and string macros, retyped for the grammar.
     this.facts.retype.forEach((type, index) => {
       if (type > 0) (stream.get(index) as { type: number }).type = type;
     });
     stream.seek(0);
+    if (settle) this.settleDecisions();
+  }
+
+  /**
+   * Settles the block item and statement decisions from tokens in an SLL pass. A statement that starts with a name
+   * and `(` is a call, a statement macro, a macro with a body or a declaration led by an attribute macro, and
+   * prediction read the whole argument list and what follows it to tell them apart — most of the reader's
+   * prediction time on a cold start. The predicates the alternatives carry decide these cases anyway, and read
+   * tokens only: an alternative whose predicate is false is out, and the one left is what prediction picks (or
+   * the parse fails there, as it would at the decision). 0 leaves a decision to prediction, as does every
+   * full-context pass (the one that reports the errors).
+   */
+  private settleDecisions(): void {
+    const simulator = this.interpreter;
+    if (settled.has(simulator)) return;
+    settled.add(simulator);
+    const decisions = decisionsOf(this.atn, this.ruleNames);
+    const predict = simulator.adaptivePredict.bind(simulator);
+    simulator.adaptivePredict = (input: TokenStream, decision: number, outer: ParserRuleContext | null): number => {
+      if (simulator.predictionMode === PredictionMode.SLL) {
+        const alt = decision === decisions.blockItem.decision ? this.settleBlockItem(decisions)
+          : decision === decisions.statement.decision ? this.settleStatement(decisions)
+          : decision === decisions.externalDeclaration.decision ? this.settleExternal(decisions)
+          : decision === decisions.specifiers.decision ? this.settleSpecifiers(decisions)
+          : decision === decisions.afterLabel.decision ? this.settleAfterLabel(decisions)
+          : 0;
+        if (alt > 0) return alt;
+      }
+      return predict(input, decision, outer);
+    };
+  }
+
+  private settleBlockItem(decisions: CDecisions): number {
+    const { alts, only } = decisions.blockItem;
+    const t = this.lt(1).type;
+    if (t !== CLexer.Identifier) return only.get(t) ?? 0;
+    // Only a name followed by `(` can be a statement macro; it and a declaration both read the predicates below.
+    if (this.lt(2).type === CLexer.LeftParen && this.IsMacroStatement()) return 0;
+    return this.IsDeclaration() ? alts.declaration! : alts.statement!;
+  }
+
+  /**
+   * A macro name followed by `(` starts a macro that defines a function (a bare macro cannot be followed by `(`: no
+   * declaration starts with one). A name's `(…)` that the file-scope macro predicate takes is that macro when what
+   * follows is no more than another macro call, a specifier or the end: a definition has no body there, and a
+   * declaration led by the macro as an attribute reads the same tokens, which prediction settles for the first
+   * alternative.
+   */
+  private settleExternal(decisions: CDecisions): number {
+    const { alts } = decisions.externalDeclaration;
+    const first = this.lt(1);
+    if (first.type === CLexer.MacroName) return this.lt(2).type === CLexer.LeftParen ? alts.macroFunction! : 0;
+    if (first.type !== CLexer.Identifier || this.lt(2).type !== CLexer.LeftParen) return 0;
+    const after = this.afterClosing(this.lt(2));
+    if (after && after.type !== CLexer.Semi && !SPECIFIER_KEYWORDS.has(after.type) && !(this.macroName(after) && this.following(after)?.type === CLexer.LeftParen)) return 0;
+    return this.IsTopLevelMacro() ? alts.topLevelMacro! : 0;
+  }
+
+  /** A specifier is another only where the loop's predicate says so; where it does not, the list ends. */
+  private settleSpecifiers(decisions: CDecisions): number {
+    return this.IsDeclarationSpecifier() ? 0 : decisions.specifiers.leave;
+  }
+
+  /** After a label, a keyword only a statement starts takes it as the label's statement, and a `}` ends the block. */
+  private settleAfterLabel(decisions: CDecisions): number {
+    const t = this.lt(1).type;
+    if (t === CLexer.RightBrace) return decisions.afterLabel.leave;
+    return STATEMENT_ONLY.has(t) ? decisions.afterLabel.enter : 0;
+  }
+
+  private settleStatement(decisions: CDecisions): number {
+    const { alts, only } = decisions.statement;
+    const t = this.lt(1).type;
+    if (t !== CLexer.Identifier) return only.get(t) ?? 0;
+    const second = this.lt(2).type;
+    if (second === CLexer.Colon || second === CLexer.LabelColon) return alts.label!;
+    if (second !== CLexer.LeftParen) return alts.expression!;
+    if (this.IsMacroStatement()) return 0;
+    return this.IsMacroBlock() ? alts.macroBlock! : alts.expression!;
   }
 
   /** The names the first pass read as types. */
