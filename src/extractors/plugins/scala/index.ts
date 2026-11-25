@@ -1,6 +1,8 @@
 import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { CallPattern, RegexLangSpec } from "../shared/regex-base.js";
 import { extractClassesWithSpec, splitBracketedArgs } from "../shared/regex-base.js";
+import { applyEffects } from "../shared/member-effects-kit.js";
+import { scalaDeclaredMembers, scalaMemberEffects } from "./member-effects.js";
 import { extractPlayRoutes, isPlayRoutesFile } from "./routes.js";
 import { JAXRS_SCALA_GATE_RE, extractScalaJaxrsRoutes } from "./jaxrs.js";
 import { extractScalaRequestAccess } from "./request-schema.js";
@@ -333,6 +335,19 @@ export const scalaSpec: RegexLangSpec = {
       }
     }
     return classes;
+  },
+
+  // Writes and throws: a method's with the members its type declares, a free function's without.
+  postProcessClasses: (lines, classes) => {
+    for (const cls of classes) {
+      const members = scalaDeclaredMembers(lines, cls, classes);
+      for (const m of cls.methods) applyEffects(m, scalaMemberEffects(lines, m, members, cls.name));
+    }
+    return classes;
+  },
+  postProcessFunctions: (lines, fns) => {
+    for (const fn of fns) applyEffects(fn, scalaMemberEffects(lines, fn, null, null));
+    return fns;
   },
 
   callPatterns: [...scalaDiCallPatterns, BLOCK_ARGUMENT_CALL],

@@ -865,3 +865,97 @@ describe("member effects, Swift", () => {
     expect(thrown).toEqual(["ClubClosed <- Club.win:27", "ClubError <- Club.close:29 declared", "ClubError <- Club.fail:6", "ClubError <- Club.win:26"]);
   });
 });
+
+describe("member effects, Scala", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-member-effects-scala-"));
+    await mkdir(join(dir, "src", "main", "scala", "league", "models"), { recursive: true });
+    await mkdir(join(dir, "src", "main", "scala", "league", "services"), { recursive: true });
+    await writeFile(join(dir, "build.sbt"), 'name := "league"\n');
+    await writeFile(join(dir, "src", "main", "scala", "league", "models", "Club.scala"), [
+      "package league.models",
+      "",
+      "class Stats {",
+      "  var goals: Int = 0",
+      "}",
+      "class ClubClosed(msg: String) extends RuntimeException(msg)",
+      "case class Missing(id: Long) extends Exception",
+      "class Club(var name: String) {",
+      "  var points: Int = 0",
+      "  private var visits = 0",
+      "  val stats = new Stats()",
+      "  def this() = {",
+      "    this(\"Guest\")",
+      "    points = 1",
+      "  }",
+      "  @throws[ClubClosed]",
+      "  def win(n: Int): Unit = {",
+      "    val old = points",
+      "    this.points += 3",
+      "    this.stats.goals = n",
+      "    visits += 1",
+      "    name = \"this.ghost = 1\"",
+      "    // points = 9",
+      "    var points2 = 0",
+      "    points2 = 4",
+      "    if (old == points) throw new ClubClosed(\"closed\")",
+      "    if (n < 0) throw Missing(n)",
+      "  }",
+      "  def rename(n: String): Club = copy(",
+      "    name = n,",
+      "  )",
+      "  def copy(name: String): Club = new Club(name)",
+      "  def close(): Unit = {",
+      "    try win(1) catch { case e: Exception => throw e }",
+      "    List(1, 2).foreach { points => println(points) }",
+      "  }",
+      "}",
+      "object Registry {",
+      "  var count = 0",
+      "  def bump(): Unit = { count += 1 }",
+      "}",
+    ].join("\n"));
+    await writeFile(join(dir, "src", "main", "scala", "league", "services", "Garage.scala"), [
+      "package league.services",
+      "",
+      "import league.models.{Club, Stats}",
+      "",
+      "object Garage {",
+      "  def rename(club: Club, stats: Stats): Unit = {",
+      "    club.name = \"Rovers\"",
+      "    stats.goals += 1",
+      "    val other: Club = new Club(\"x\")",
+      "    other.points = 2",
+      "    val plain = 3",
+      "  }",
+      "}",
+    ].join("\n"));
+    await analyze({ projectRoot: dir, outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 60_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const rows = (): string[] => (summary.fieldWrites ?? []).map((w) => `${w.class}.${w.member} <- ${w.function}:${w.line} ${w.via}`).sort();
+
+  it("lists writes through this, a member's object, a bare var and a typed parameter or local, never a named argument or an auxiliary constructor", () => {
+    expect(rows()).toEqual([
+      "Club.name <- Club.win:22 this",
+      "Club.name <- Garage.rename:7 typed",
+      "Club.points <- Club.win:19 this",
+      "Club.points <- Garage.rename:10 typed",
+      "Club.visits <- Club.win:21 this",
+      "Registry.count <- Registry.bump:40 this",
+      "Stats.goals <- Club.win:20 typed",
+      "Stats.goals <- Garage.rename:8 typed",
+    ].sort());
+  });
+
+  it("lists the type after throw and a @throws annotation, never a rethrown exception", () => {
+    const thrown = (summary.thrownTypes ?? []).map((t) => `${t.type} <- ${t.function}:${t.line}${t.declared ? " declared" : ""}`).sort();
+    expect(thrown).toEqual(["ClubClosed <- Club.win:16 declared", "ClubClosed <- Club.win:26", "Missing <- Club.win:27"]);
+  });
+});
