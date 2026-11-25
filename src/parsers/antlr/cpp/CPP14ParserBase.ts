@@ -107,24 +107,33 @@ const QUALIFIERS: ReadonlySet<number> = new Set([
 /** The simulators whose decisions are settled already. */
 const settled = new WeakSet<object>();
 
-/** The alternative of `decision` whose start reaches `rule` before a token: which alternative a sub-rule is. */
-function altReaching(atn: ATN, decision: number, rule: number): number {
+/** The alternatives of `decision` whose start reaches `rule` before a token, as 1-based numbers. */
+function altsReaching(atn: ATN, decision: number, rule: number): number[] {
   const state = atn.decisionToState[decision]!;
+  const found: number[] = [];
   for (let i = 0; i < state.transitions.length; i++) {
     const seen = new Set<number>();
     const queue: ATNState[] = [state.transitions[i]!.target];
-    while (queue.length > 0) {
+    search: while (queue.length > 0) {
       const s = queue.pop()!;
       if (seen.has(s.stateNumber)) continue;
       seen.add(s.stateNumber);
       for (const t of s.transitions) {
         if (t instanceof RuleTransition) {
-          if (t.ruleIndex === rule) return i + 1;
+          if (t.ruleIndex === rule) {
+            found.push(i + 1);
+            break search;
+          }
         } else if (t.isEpsilon) queue.push(t.target);
       }
     }
   }
-  return 0;
+  return found;
+}
+
+/** The first alternative of `decision` whose start reaches `rule`: which alternative a sub-rule is. */
+function altReaching(atn: ATN, decision: number, rule: number): number {
+  return altsReaching(atn, decision, rule)[0] ?? 0;
 }
 
 /** The decision of `rule` where `first` and `second` are reached by different alternatives. */
@@ -251,6 +260,25 @@ function dispatch(atn: ATN, ruleNames: readonly string[]): Map<number, (parser: 
   // A declaration's `declSpecifierSeq?`: whether the first token starts a specifier, which the predicate of the specifier's
   // alternatives answers from the first pass's facts; prediction read to the end of the declarator to find out.
   const specifierSeq = rule("declSpecifierSeq");
+  // `simpleTypeSpecifier`'s own choice between a name (with its scopes) and `A::template B<…>`, and `templateArgument`'s
+  // between a type, an expression and a name.
+  const simpleNameAlts: Array<{ decision: number; plain: number }> = [];
+  for (let n = 0; n < atn.decisionToState.length; n++) {
+    const state = atn.decisionToState[n]!;
+    if (state.ruleIndex !== simpleTypeSpecifier || state.transitions.length < 3) continue;
+    // Both alternatives reach the scope; only the plain one can go on to a type name without it.
+    const plain = altReaching(atn, n, theTypeName);
+    if (plain > 0 && altsReaching(atn, n, nestedNameSpecifier).length === 2) simpleNameAlts.push({ decision: n, plain });
+  }
+  if (simpleNameAlts.length !== 1) throw new Error("C++ grammar: no simpleTypeSpecifier name decision");
+  const [templateArgument, theTypeId] = [rule("templateArgument"), rule("theTypeId")];
+  const argumentDecisions: Array<{ decision: number; typeId: number }> = [];
+  for (let n = 0; n < atn.decisionToState.length; n++) {
+    if (atn.decisionToState[n]!.ruleIndex !== templateArgument) continue;
+    const typeId = altReaching(atn, n, theTypeId);
+    if (typeId > 0 && atn.decisionToState[n]!.transitions.length === 3) argumentDecisions.push({ decision: n, typeId });
+  }
+  if (argumentDecisions.length !== 1) throw new Error("C++ grammar: no templateArgument decision");
   const specifierStarts: number[] = [];
   for (const name of ["declaration", "simpleDeclaration", "memberDeclaration"]) {
     for (let n = 0; n < atn.decisionToState.length; n++) {
@@ -302,6 +330,8 @@ function dispatch(atn: ATN, ruleNames: readonly string[]): Map<number, (parser: 
   for (const n of scopeLoops) table.set(n, (p) => p.settleScopeStep());
   for (const n of specifierStarts) table.set(n, (p) => p.settleSpecifiers());
   table.set(typeStarts[0]!, (p) => p.settleTypeSpecifier(typeAlts));
+  table.set(simpleNameAlts[0]!.decision, (p) => p.settleSimpleTypeName(simpleNameAlts[0]!.plain));
+  table.set(argumentDecisions[0]!.decision, (p) => p.settleTemplateArgument(argumentDecisions[0]!.typeId));
   for (const { decision, loop } of loops) table.set(decision, (p) => p.settleSpecifierLoop(loop));
   const inits = decisionsBetween(atn, selectionStatement, initStatement, condition);
   if (inits.length === 0) throw new Error("C++ grammar: no init-statement decision");
@@ -537,6 +567,38 @@ export abstract class CPP14ParserBase extends Parser {
     const after = this.typeAt(path.after);
     if (after === CPP14Lexer.LeftBrace) return alts.classBody;
     return AFTER_ELABORATED.has(after) ? alts.trailing : 0;
+  }
+
+  /**
+   * `simpleTypeSpecifier` on a name or a qualified name with no `template` keyword: the written type, the only reading
+   * that does not need another specifier or a `(` after it. A `A::template B<T>` is both one specifier and `A`
+   * followed by `::template B<T>`, which prediction chooses by what may follow, so it stays with prediction, as does a
+   * path ending on a bare `::` and every other first token (keywords, `decltype`).
+   */
+  settleSimpleTypeName(plain: number): number {
+    const t = this.lt(1).type;
+    if (t !== CPP14Lexer.Identifier && t !== CPP14Lexer.Doublecolon) return 0;
+    const path = this.pathAt(this.lt(1).tokenIndex);
+    if (!path || this.typeAt(path.after) === CPP14Lexer.Doublecolon) return 0;
+    for (let i = this.lt(1).tokenIndex; i >= 0 && i < path.after; i = this.following(i)) {
+      if (this.typeAt(i) === CPP14Lexer.Template) return 0;
+      // A template argument list is read as a whole: a `template` inside it is not the path's.
+      if ((this.facts.angle[i] ?? -1) >= 0) i = this.facts.angle[i]!;
+    }
+    return plain;
+  }
+
+  /**
+   * `templateArgument` on a name or a qualified name that the argument ends on (`,`, `>`, `...`): a type, which wins
+   * over the expression and the name where all three read the same tokens. Anything longer is left to prediction.
+   */
+  settleTemplateArgument(typeId: number): number {
+    const t = this.lt(1).type;
+    if (t !== CPP14Lexer.Identifier && t !== CPP14Lexer.Doublecolon) return 0;
+    const path = this.pathAt(this.lt(1).tokenIndex);
+    if (!path) return 0;
+    const after = this.typeAt(path.after);
+    return after === CPP14Lexer.Comma || after === CPP14Lexer.TemplateGreater || after === CPP14Lexer.Ellipsis ? typeId : 0;
   }
 
   settleInit(init: number, condition: number): number {

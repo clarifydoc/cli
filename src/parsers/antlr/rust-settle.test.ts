@@ -22,6 +22,21 @@ fn play(club: &Club, table: Vec<Club>) -> u32 {
     r#loop.r#match(1);
     total + kept
 }
+fn call(club: Club, hooks: Vec<Hook>) -> u32 {
+    let a = play(club, 1)(2);
+    let b = hooks[0](club) + play(club, 2) * play(club, 3);
+    let c = Some(play(club, 4))?;
+    let d = -play(club, 5) as u32;
+    let e = &mut play(club, 6);
+    #[allow(unused)] play(club, 7);
+    (hooks[1])(club);
+    club.hook.as_ref().unwrap()(club);
+    let f = if play(club, 8) > 0 { play(club, 9) } else { play(club, 10) };
+    let g = match club.kind() { Kind::A => play(club, 11), Kind::B => (hooks[2])(club) };
+    let h = |x: u32| play(club, x)(x);
+    let i = [play(club, 1), play(club, 2)];
+    foo::<Club>(1)(2);
+}
 `;
 
 describe("Rust expression decisions settled from tokens", () => {

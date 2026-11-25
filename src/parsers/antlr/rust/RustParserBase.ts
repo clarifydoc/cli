@@ -14,6 +14,10 @@ interface SettledDecisions {
   methodCall: Map<number, { alt: number; precedence: number }>;
   /** The precedence the method-call alternative needs, by the loop-entry decision of its rule. */
   loopPrecedence: Map<number, number>;
+  /** The call alternative `expr ( args )` of an operator choice, as `methodCall` for `. name (`. */
+  parenCall: Map<number, { alt: number; precedence: number }>;
+  /** The precedence the call alternative needs, by the loop-entry decision of its rule. */
+  loopParenPrecedence: Map<number, number>;
 }
 
 const EXPRESSION_RULES = ["expression", "statementExpression"];
@@ -66,7 +70,7 @@ function scanDecisions(atn: ATN, ruleNames: readonly string[]): SettledDecisions
   const ifRule = ruleNames.indexOf("ifExpression");
   const segment = ruleNames.indexOf("pathExprSegment");
   const exprRules = new Set(EXPRESSION_RULES.map((n) => ruleNames.indexOf(n)));
-  const result: SettledDecisions = { elseDecisions: new Set(), methodCall: new Map(), loopPrecedence: new Map() };
+  const result: SettledDecisions = { elseDecisions: new Set(), methodCall: new Map(), loopPrecedence: new Map(), parenCall: new Map(), loopParenPrecedence: new Map() };
   const loops = new Map<number, number>();
   atn.decisionToState.forEach((state, decision) => {
     if (state.ruleIndex === ifRule && state.transitions.length === 2) {
@@ -83,10 +87,20 @@ function scanDecisions(atn: ATN, ruleNames: readonly string[]): SettledDecisions
       const precedence = precedenceOf({ transitions: [state.transitions[calls[0]!.i]!] });
       if (precedence >= 0) result.methodCall.set(decision, { alt: calls[0]!.i + 1, precedence });
     }
+    // The one alternative that starts `(` after the operand (`x(y)`): a call.
+    const parens = state.transitions
+      .map((t, i) => ({ i, atoms: leadingAtoms({ transitions: [t] }) }))
+      .filter(({ atoms }) => atoms.some((a) => a.token === RustLexer.LPAREN));
+    if (state.transitions.length > 2 && parens.length === 1) {
+      const precedence = precedenceOf({ transitions: [state.transitions[parens[0]!.i]!] });
+      if (precedence >= 0) result.parenCall.set(decision, { alt: parens[0]!.i + 1, precedence });
+    }
   });
   for (const [decision, rule] of loops) {
     const same = [...result.methodCall].filter(([d]) => atn.decisionToState[d]!.ruleIndex === rule);
     if (same.length === 1) result.loopPrecedence.set(decision, same[0]![1].precedence);
+    const parens = [...result.parenCall].filter(([d]) => atn.decisionToState[d]!.ruleIndex === rule);
+    if (parens.length === 1) result.loopParenPrecedence.set(decision, parens[0]![1].precedence);
   }
   return result;
 }
@@ -101,10 +115,11 @@ export abstract class RustParserBase extends Parser {
   }
 
   /**
-   * Answers two families of decisions from tokens in an SLL pass, as prediction would: the optional `else` of an
-   * `if` (an `else` goes on with the `if`, anything else ends it) and the method call `x.f(` in an expression's
+   * Answers three families of decisions from tokens in an SLL pass, as prediction would: the optional `else` of an
+   * `if` (an `else` goes on with the `if`, anything else ends it), the method call `x.f(` in an expression's
    * operator loop (`. name (` is a method call; a call of a field `(x.f)(y)` reads the same tokens, and the
-   * lower alternative wins). Prediction told those apart by reading the whole else-branch or argument list, which
+   * lower alternative wins) and the call `x(` there, which the loop's exit competes with wherever something that
+   * starts with `(` may follow an expression. Prediction told those apart by reading the whole else-branch or argument list, which
    * built a state per distinct token sequence: a third of one large codebase's prediction states each. Full-context
    * passes, which report the errors, are untouched. Call once after the parser's construction.
    */
@@ -119,6 +134,11 @@ export abstract class RustParserBase extends Parser {
         const precedence = method?.precedence ?? settled.loopPrecedence.get(decision);
         if (precedence !== undefined && input.LA(1) === RustLexer.DOT && input.LA(3) === RustLexer.LPAREN && (input.LA(2) === RustLexer.NON_KEYWORD_IDENTIFIER || input.LA(2) === RustLexer.RAW_IDENTIFIER) && this.precpred(outer ?? this.context, precedence)) {
           return method?.alt ?? 1;
+        }
+        if (input.LA(1) === RustLexer.LPAREN) {
+          const call = settled.parenCall.get(decision);
+          const callPrecedence = call?.precedence ?? settled.loopParenPrecedence.get(decision);
+          if (callPrecedence !== undefined && this.precpred(outer ?? this.context, callPrecedence)) return call?.alt ?? 1;
         }
       }
       return predict(input, decision, outer);

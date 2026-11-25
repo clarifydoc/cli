@@ -16,6 +16,11 @@ const SNIPPETS = [
   "void callback(Club, std::string, int (*kick)(int), Club (&refs)[3]);",
   "template <typename T> typename T::value_type first(const T& list) { return list[0]; }",
   "[[nodiscard]] static inline const Club& pick(const Club& a);",
+  "template <class T, size_t N> struct Squad { std::array<Club, N> bench; std::map<std::string, Club>::iterator it; };",
+  "template <class T> struct Table { using Slot = typename T::template Seat<Club>; typename T::template Seat<Club>::type first; typename Garage<T>::template Bay<Car> bay; };",
+  "template <class T> auto make(T t) { auto a = Garage<T>::template open<Car>(t); auto b = std::vector<std::pair<Club, int>>{}; auto c = std::get<0>(t); return a; }",
+  "void run() { std::unordered_map<std::string, std::vector<Club>> by_name; std::tuple<int, ::league::Club, Club*, Club&> row; std::function<void(Club&)> on_goal; Garage<Car, 3, ::league::kMax> g; league::Table<Club>::Seat s; }",
+  "template <class... Ts> struct Pack : Base<Ts...> { std::variant<Ts...> value; using Bay = typename league::Garage<Ts...>::template Slot<Car>; };",
 ];
 
 describe("C++ declaration specifier decisions settled from tokens", () => {
