@@ -1573,6 +1573,11 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   /** Per file: the names bound to a fetch root through `??` / `||` (see `injectedFetch`). */
   private fetchHeld: Set<string> | null = null;
 
+  /** A receiver the file builds from the DynamoDB SDK (`const client = new AWS.DynamoDB.DocumentClient()`): its `get`/`put` are table calls, never requests. */
+  private isDynamoClient(name: string): boolean {
+    return new RegExp(String.raw`(?:^|[\s,;({])${escapeRegex(name)}\s*(?:[?!]?:\s*[\w$.<>]+\s*)?=\s*(?:new\s+[\w$.]*DynamoDB\w*|DynamoDB(?:Document)?(?:Client)?\.from)\b`).test(this.sourceText);
+  }
+
   private httpInstances(): Set<string> {
     if (!this.instances) {
       this.instances = new Set();
@@ -1896,7 +1901,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
         const chainText = fn?.text.replace(/\s+/g, "") ?? "";
         const clientChain = !!recvRoot && CLIENT_ROOT_RE.test(recvRoot) && !this.localNamedLikeLibrary(recvRoot) && /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/.test(chainText) &&
           !chainText.split(".").slice(1, -1).some((seg) => REQUEST_DATA_SEGMENT.test(seg));
-        const trustedReceiver = !!jqueryVerb || clientChain || (!!recv && (HTTP_RECEIVER_RE.test(recv) || /client$/i.test(recv)) && !this.localNamedLikeLibrary(recv));
+        const trustedReceiver = !!jqueryVerb || clientChain || (!!recv && (HTTP_RECEIVER_RE.test(recv) || /client$/i.test(recv)) && !this.localNamedLikeLibrary(recv) && !this.isDynamoClient(recv));
         // A verb called on a plain binding (`clubAPI.post(…)`) that is an HTTP client instance: one this
         // file builds (`axios.create(…)`), or possibly one it imports from the project — which the
         // module it comes from says, so that row waits for the project pass (`clientUnconfirmed`).

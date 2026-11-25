@@ -10,7 +10,7 @@ import { parseSpecDocument, type SpecNode } from "../../shared/spec-document.js"
  *   CLUBS_TABLE: !Ref ClubsTable                                            # the table resource's `TableName`, else its logical id
  *
  * A value is kept only when everything in it is stated by the file: `${self:…}` read from the same
- * document, a `Ref` to a DynamoDB table resource. `${opt:stage}`, `${ssm:…}`, `!Sub` pseudo parameters
+ * document, a `Ref` to a DynamoDB table resource, an `${opt:stage, self:provider.stage}` by its default. A bare `${opt:stage}`, `${ssm:…}`, `!Sub` pseudo parameters
  * and a `Ref` to a parameter leave the variable out — a table is never guessed. One `lambda-env` fact
  * per scope; `handler` is null for the descriptor-wide one. The project pass (`route-anchor.ts`) puts
  * each on the code it runs.
@@ -29,7 +29,11 @@ const TABLE_TYPES = new Set(["AWS::DynamoDB::Table", "AWS::DynamoDB::GlobalTable
 function fill(text: string, root: SpecNode, depth: number): string | null {
   if (depth > 4) return null;
   let failed = false;
-  const out = text.replace(/\$\{self:([\w.-]+)\}/g, (_h, path: string) => {
+  // `${opt:stage, self:provider.stage}` is the stage a deploy passes, else the descriptor's own default. Every
+  // name of the descriptor takes the same default, so a table and the variable naming it still agree.
+  const withDefaults = text.replace(/\$\{opt:[\w.-]+\s*,\s*(self:[\w.-]+|'[^'$}]*'|"[^"$}]*")\s*\}/g, (_h, dflt: string) =>
+    dflt.startsWith("self:") ? `\${${dflt}}` : unquote(dflt));
+  const out = withDefaults.replace(/\$\{self:([\w.-]+)\}/g, (_h, path: string) => {
     let node: SpecNode | undefined = root;
     for (const key of path.split(".")) node = childOf(node, key);
     // `service: { name: clubs }` is the framework's long form of `service: clubs`.

@@ -549,6 +549,21 @@ describe("JS api-call trust: only a real client is believed without a URL", () =
     ]);
   });
 
+  it("reads no request in a DynamoDB client's wrapper: `client.put(params)` is a table call", async () => {
+    const calls = await apiCallsOf(`
+      import AWS from "aws-sdk";
+      const client = new AWS.DynamoDB.DocumentClient();
+      export default { get: (params) => client.get(params).promise(), put: (params) => client.put(params).promise() };`);
+    expect(calls).toEqual([]);
+  });
+
+  it("keeps a verb on a plain client named like a DynamoDB one when the file builds it from a request library", async () => {
+    const calls = await apiCallsOf(`
+      const client = new HttpClient();
+      export const list = () => client.get(buildUrl('x'));`);
+    expect(calls.map((c) => c.name)).toEqual(["get"]);
+  });
+
   it("trusts a client name as a method only on a client or global receiver", async () => {
     const calls = await apiCallsOf(`
       navigator.wakeLock.request('screen');

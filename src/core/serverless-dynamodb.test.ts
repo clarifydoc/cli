@@ -69,6 +69,44 @@ exports.list = async () => {
 const client = new DynamoDB.DocumentClient();
 exports.list = async () => client.scan({ TableName: process.env.STAGED_TABLE }).promise();
 `,
+  // A stage option with the descriptor's own default, through a project wrapper; a namesake `put` on a cache is no table.
+  "fleet/serverless.yml": `service: fleet
+custom:
+  stage: \${opt:stage, self:provider.stage}
+  tableName: \${self:custom.stage}-cars
+provider:
+  name: aws
+  stage: dev
+  environment:
+    tableName: \${self:custom.tableName}
+functions:
+  addCar:
+    handler: add.main
+    events:
+      - http: { path: fleet, method: post }
+  warmCache:
+    handler: warm.main
+    events:
+      - http: { path: warm, method: post }
+`,
+  "fleet/libs/dynamodb-garage.js": `import AWS from "aws-sdk";
+const client = new AWS.DynamoDB.DocumentClient();
+export default { put: (params) => client.put(params).promise() };
+`,
+  "fleet/add.js": `import db from "./libs/dynamodb-garage";
+export const main = async (event) => {
+  const params = { TableName: process.env.tableName, Item: JSON.parse(event.body) };
+  await db.put(params);
+  return { statusCode: 201 };
+};
+`,
+  "fleet/warm.js": `import { Map } from "immutable";
+const cache = new Map();
+export const main = async () => {
+  cache.put({ TableName: process.env.tableName, Item: 1 });
+  return { statusCode: 200 };
+};
+`,
   // Decoy: CLUBS_TABLE is set by the league service's descriptor, not by this one.
   "stadiums/serverless.yml": `service: stadiums
 provider:
@@ -147,11 +185,12 @@ describe("DynamoDB tables named by an environment variable", () => {
       "GET /clubs db-read league-clubs",
       "GET /garage db-read GarageTable",
       "GET /matches db-read match-reports",
+      "POST /fleet db-write dev-cars",
       "POST /players db-write players-prod",
     ]);
   });
 
   it("never guesses a table: a deploy-time value, or a variable another service's descriptor sets", () => {
-    expect(flows.some((f) => f.includes("/staged") || f.includes("/stadiums"))).toBe(false);
+    expect(flows.some((f) => f.includes("/staged") || f.includes("/stadiums") || f.includes("/warm"))).toBe(false);
   });
 });
