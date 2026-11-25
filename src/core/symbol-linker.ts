@@ -2149,6 +2149,8 @@ interface LinkMemos {
   importPath: Map<string, string | null>;
   /** `forwardedDefinition` of a lookup that starts at depth 0 with nothing seen, per (file, name); `definitionIn` is not cached. */
   forwarded?: Map<string, ForwardedDefinition | null>;
+  /** The classes that prepend a module (`ClassInfo.mixins` kind `prepend`), by the module name as written. */
+  prependedBy?: Map<string, Array<{ file: string; cls: ClassInfo }>>;
   /** `moduleMembers` per (caller file, scope's file, module, name); the arrays are shared, so callers only read them. */
   moduleMembers?: Map<string, Array<{ file: string; def: SymbolDef }>>;
   codeHandlers?: Map<string, Array<{ file: string; handler: string; line: number }>>;
@@ -7479,6 +7481,7 @@ function superTarget(
   const methodName = sourceSymbol.slice(dot + 1);
   const cls = ctx.classAt.get(memberKey(sourceFile, consumer));
   const base = bareClassName(cls?.extends);
+  if (cls && !base) return prependeeTarget(ctx, cls, methodName, mkLink);
   if (!cls || !base) return null;
   const baseFile = locateClass(ctx, base, sourceFile, analysis.projectId);
   if (!baseFile) return null;
@@ -7487,6 +7490,34 @@ function superTarget(
   for (const name of names) {
     const hit = findMethodInClass(ctx, base, baseFile, name);
     if (hit) return mkLink(hit.file, hit.symbol, hit.line, "INFERRED", "inheritance");
+  }
+  return null;
+}
+
+/**
+ * `super` inside a method of a module a class prepends (Ruby `prepend Premium::Club`, the edition-extension
+ * `prepend_mod_with`): the method of that name in the class that prepends it — the one the module was put in front
+ * of. The module is matched by its name as the class writes it; the first prepending class defining the method is
+ * the target, none when no class does.
+ */
+function prependeeTarget(ctx: LinkContext, module: ClassInfo, methodName: string, mkLink: MkLink): SymbolLink | null {
+  const memos = ctx.memos;
+  if (!memos.prependedBy) {
+    const map = new Map<string, Array<{ file: string; cls: ClassInfo }>>();
+    for (const a of ctx.analyses) {
+      for (const c of a.classes) {
+        for (const m of c.mixins ?? []) {
+          if (m.kind !== "prepend") continue;
+          const list = map.get(m.name) ?? map.set(m.name, []).get(m.name)!;
+          list.push({ file: a.filePath, cls: c });
+        }
+      }
+    }
+    memos.prependedBy = map;
+  }
+  for (const { file, cls } of memos.prependedBy.get(module.name) ?? []) {
+    const fn = cls.methods.find((m) => m.name === methodName);
+    if (fn) return mkLink(file, `${cls.name}.${methodName}`, fn.line, "INFERRED", "inheritance");
   }
   return null;
 }

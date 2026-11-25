@@ -32,11 +32,11 @@ export const railsRouteAnchor: RouteResolver = {
   resolve(analyses: FileAnalysis[], ctx: ProjectContext): void {
     const byName = new Map<string, ClassRef | null>();
     const qualified = new Map<ClassRef, string>();
-    // Modules a controller includes (`include LabelConcern`) may define its actions.
+    // Modules a controller includes (`include LabelConcern`) or prepends may define its actions — one named like a
+    // controller too (`Enterprise::Api::ClubsController`, an edition's extension of `Api::ClubsController`).
     const modules = new Map<string, ClassRef | null>();
     for (const a of analyses) {
       for (const ref of ctx.classes.classesIn(a.filePath)) {
-        if (ref.cls.name.endsWith("Controller")) continue;
         const name = [...enclosingModules(ref.cls, a.classes), ref.cls.name.split("::").pop()!].join("::");
         modules.set(name, modules.has(name) ? null : ref);
       }
@@ -421,10 +421,17 @@ function definerOf(
   const seen = new Set<ClassRef>();
   for (let c: ClassRef | null | undefined = ref; c && !seen.has(c); c = superOf(c, byName, qualified)) {
     seen.add(c);
+    const scope = (qualified.get(c) ?? c.cls.name).split("::").slice(0, -1);
+    // A prepended module answers before the class itself, the last prepended first.
+    const prepended = (c.cls.mixins ?? []).filter((x) => x.kind === "prepend").map((x) => x.name);
+    for (const written of [...prepended].reverse()) {
+      const mod = lookup(written, scope, modules);
+      const mfn = mod?.cls.methods.find((f) => f.name === action);
+      if (mfn) return { file: mod!.filePath, fn: mfn, owner: mod! };
+    }
     const fn = c.cls.methods.find((f) => f.name === action);
     if (fn) return { file: c.filePath, fn, owner: c };
     // Ruby looks in the included modules next, the last included first.
-    const scope = (qualified.get(c) ?? c.cls.name).split("::").slice(0, -1);
     for (const written of [...(c.cls.implements ?? [])].reverse()) {
       const mod = lookup(written, scope, modules);
       const mfn = mod?.cls.methods.find((f) => f.name === action);

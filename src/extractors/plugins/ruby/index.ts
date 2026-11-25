@@ -910,6 +910,34 @@ export function enclosingModules(cls: ClassInfo, classes: readonly ClassInfo[]):
 /** `UserRole` / `Admin::BaseController` → `user_role` / `base_controller` — the
  *  Rails autoload file basename for a constant. Only the last `::` segment
  *  matters because autoloading maps each constant to its own file. */
+/** The namespaces an edition's extension modules live under: `Enterprise::` (and GitLab's own `EE::`, `JH::`). */
+const EXTENSION_NAMESPACES = ["Enterprise", "EE", "JH"];
+
+/**
+ * `Api::ClubsController.prepend_mod_with('Api::ClubsController')` after a class (GitLab's edition-extension
+ * convention, copied by other Rails apps): at boot the class takes `Enterprise::Api::ClubsController` (or
+ * `EE::…`) by `prepend` (`include_mod_with` by `include`, `extend_mod_with` by `extend`), when such a module
+ * exists. Each candidate is a mixin of that kind; one no module declares joins nothing.
+ */
+function addExtensionMixins(lines: readonly string[], classes: ClassInfo[]): void {
+  for (const line of lines) {
+    const m = /^\s*(?:::)?([A-Z][\w:]*)\.(prepend|include|extend)_mod_with\(\s*['"]((?:::)?[A-Z][\w:]*)['"]/.exec(line);
+    if (!m) continue;
+    const owner = m[1]!;
+    const cls = classes.find((c) => c.name === owner || owner.endsWith(`::${c.name}`) || c.name.endsWith(`::${owner}`));
+    if (!cls) continue;
+    const kind = m[2] as "prepend" | "include" | "extend";
+    const name = m[3]!.replace(/^::/, "");
+    const mixins = cls.mixins ?? [];
+    for (const ns of EXTENSION_NAMESPACES) {
+      const module = `${ns}::${name}`;
+      if (!mixins.some((x) => x.name === module)) mixins.push({ name: module, kind });
+      if (!cls.implements.includes(module)) cls.implements.push(module);
+    }
+    cls.mixins = mixins;
+  }
+}
+
 function railsUnderscore(name: string): string {
   const last = name.split("::").pop() ?? name;
   return last
@@ -1599,6 +1627,7 @@ export const rubySpec: RegexLangSpec = {
       }
       if (mixins.length > 0) cls.mixins = mixins;
     }
+    addExtensionMixins(lines, classes);
     // Strong params live in a private `user_params` helper the action calls;
     // copy that access onto the action so the route join sees it there.
     propagateHelperAccess(lines, classes);
