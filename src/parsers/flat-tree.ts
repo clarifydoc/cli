@@ -1,7 +1,7 @@
 import type { Tree } from "web-tree-sitter";
 
 /**
- * A syntax tree read once into plain typed arrays (feature `flat-tree`).
+ * A syntax tree read once into plain typed arrays (the only path of its languages).
  *
  * Every property read of a web-tree-sitter `Node` crosses into WebAssembly and mints a wrapper object. Here one
  * `TreeCursor` walk copies the tree into arrays indexed by the node's preorder position; `FlatNode` is a class of our

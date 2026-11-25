@@ -21,10 +21,6 @@ export const KNOWN_FEATURES: Readonly<Record<string, { description: string; defa
     description: "Read the functions and calls of Swift, Dart, Elixir, Scala, Objective-C and Haskell with their tree-sitter grammars; a file with a syntax error keeps the regex reading",
     default: true,
   },
-  "flat-tree": {
-    description: "Read every tree-sitter syntax tree once into plain arrays instead of through web-tree-sitter's nodes (`no-flat-tree` reads the nodes); the output is the same",
-    default: true,
-  },
   taint: {
     description: "Follow request input to a sink in Go and Ruby handlers with their tree-sitter grammars; a file with a syntax error is not followed",
     default: true,

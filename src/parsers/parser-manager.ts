@@ -15,7 +15,6 @@ import { createRequire } from "module";
 import type { Language } from "../types/analysis.js";
 import type { CaptureResult } from "../types/plugin.js";
 import type { GrammarSpec, GrammarVariant } from "../types/language-plugin.js";
-import { featureEnabled } from "../core/feature-flags.js";
 import { flattenTree, isFlatTree } from "./flat-tree.js";
 
 // Re-export tree-sitter types under our own names for use in extractors
@@ -264,8 +263,8 @@ export async function getLanguage(language: TreeSitterLanguage): Promise<TSLangu
 }
 
 /**
- * The languages whose extractors read a flat copy of the tree (`flat-tree` feature): each joined once its corpus
- * output was byte-identical with and without the copy.
+ * The languages whose extractors read a flat copy of the tree : each joined once its corpus output was
+ * byte-identical with and without the copy.
  */
 const FLAT_TREE_LANGUAGES: ReadonlySet<string> = new Set([
   "csharp", "java", "javascript", "kotlin", "php", "python", "typescript",
@@ -277,11 +276,11 @@ const FLAT_GRAMMAR_KEYS: ReadonlySet<string> = new Set(["swift", "dart", "elixir
 
 /**
  * A tree a grammar parser (`getGrammarParser`: a regex language's tree-sitter front end or taint reader) returned,
- * as a flat copy when the `flat-tree` feature covers that grammar; the WebAssembly tree is freed at once. Otherwise
+ * as a flat copy when the grammar is one of `FLAT_GRAMMAR_KEYS`; the WebAssembly tree is freed at once. Otherwise
  * the tree itself, which the caller frees.
  */
 export function readableTree(tree: TSTree, sourceText: string, grammar: string): TSTree {
-  if (!FLAT_GRAMMAR_KEYS.has(grammar) || !featureEnabled("flat-tree")) return tree;
+  if (!FLAT_GRAMMAR_KEYS.has(grammar)) return tree;
   try {
     return flattenTree(tree, sourceText) as unknown as TSTree;
   } finally {
@@ -306,14 +305,14 @@ export async function parseWebAssemblyTree(sourceText: string, language: TreeSit
   return tree;
 }
 
-/** Parse source code into a tree-sitter tree (a flat copy of it for the languages the `flat-tree` feature covers). */
+/** Parse source code into a tree-sitter tree (a flat copy of it for the languages of `FLAT_TREE_LANGUAGES`). */
 export async function parseSource(
   sourceText: string,
   language: TreeSitterLanguage,
   filePath?: string,
 ): Promise<TSTree> {
   const tree = await parseWebAssemblyTree(sourceText, language, filePath);
-  if (FLAT_TREE_LANGUAGES.has(language) && featureEnabled("flat-tree")) {
+  if (FLAT_TREE_LANGUAGES.has(language)) {
     // One cursor walk into arrays; every later read is a lookup, and the WebAssembly tree is freed at once.
     try {
       return flattenTree(tree, sourceText) as unknown as TSTree;
