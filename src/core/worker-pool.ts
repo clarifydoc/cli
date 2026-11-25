@@ -89,6 +89,22 @@ export function boundInProcessHeapGrowth(): () => void {
   };
 }
 
+/**
+ * The young generation a worker may grow to, in MB (`CLARIFYDOC_WORKER_YOUNG_MB`, `0` leaves V8's own).
+ * Left to V8 a worker's young generation scales with the machine's memory and the extraction's short-lived
+ * garbage (ANTLR tokens, trees) fills it, so eight workers held about 600 MB more than their live data on
+ * a 4,000-file repository; at 16 MB the cold peak RSS of a pool run is 20-35 % lower for about 3 % more CPU.
+ */
+const WORKER_YOUNG_MB = youngFromEnv();
+
+function youngFromEnv(): number {
+  const raw = process.env.CLARIFYDOC_WORKER_YOUNG_MB;
+  const n = raw === undefined || raw === "" ? NaN : Number(raw);
+  return Number.isInteger(n) && n >= 0 ? n : 16;
+}
+
+const WORKER_OPTIONS = WORKER_YOUNG_MB > 0 ? { resourceLimits: { maxYoungGenerationSizeMb: WORKER_YOUNG_MB } } : {};
+
 /** How long one file may take in a worker before it is killed and reported failed. */
 const DEFAULT_DEADLINE_MS = 180_000;
 
@@ -152,7 +168,7 @@ export class AnalysisWorkerPool<T extends PoolTask = FileTask, R = FileResult | 
     pool.bounded = true;
     try {
       for (let i = 0; i < size; i++) {
-        const worker = new Worker(workerUrl);
+        const worker = new Worker(workerUrl, WORKER_OPTIONS);
         pool.attach(worker);
       }
     } catch {
@@ -296,7 +312,7 @@ export class AnalysisWorkerPool<T extends PoolTask = FileTask, R = FileResult | 
   private respawn(): void {
     let worker: Worker;
     try {
-      worker = new Worker(this.workerUrl);
+      worker = new Worker(this.workerUrl, WORKER_OPTIONS);
     } catch {
       return;
     }
