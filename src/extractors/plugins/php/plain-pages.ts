@@ -18,12 +18,13 @@ import { extractCalls } from "../../shared/call-graph.js";
  *     posts to the page's own route (`ScreenInfo.renderedBy`).
  *
  * Never a route or page: a file declaring a class, interface, trait or namespace (a library), a file
- * in a library, framework or test directory (`vendor/`, `lib/`, `includes/`, `app/`, `src/`, `tests/` …),
+ * in a library, framework, test or copied-in asset directory (`vendor/`, `lib/`, `includes/`, `app/`, `src/`, `tests/`,
+ * `plugins/`, `assets/` — a widget's bundled demo script …),
  * a framework's front controller, a script that reads no request input and shows no page.
  */
 
 /** Directories whose scripts are libraries, framework code or tests: never served pages. */
-const NOT_SERVED = /(?:^|\/)(?:vendor|node_modules|lib|libs|library|libraries|include|includes|inc|classes|class|src|config|configs|bootstrap|storage|tests?|spec|database|migrations?|resources|cache|logs?|views?)\//i;
+const NOT_SERVED = /(?:^|\/)(?:vendor|node_modules|lib|libs|library|libraries|include|includes|inc|classes|class|src|config|configs|bootstrap|storage|tests?|spec|database|migrations?|resources|cache|logs?|views?|plugins?|assets?|assests|third_party|vendored|bower_components)\//i;
 
 /** A script that is a piece of a page (`header.php`, `_nav.php`): included by pages, never served on its own. */
 const PARTIAL = /(?:^|\/)(?:_[^/]*|(?:header|footer|menu|nav|navbar|sidebar|layout)[^/]*)\.php$/i;

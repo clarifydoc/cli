@@ -261,6 +261,12 @@ function inlineHandler(attrs: string): { event: string; handler: string | null }
   DIRECTIVE_HANDLER_RE.lastIndex = 0;
   return directive ? { event: "on" + directive[1]!.toLowerCase(), handler: cleanHandler((directive[2] ?? directive[3])!) } : null;
 }
+/** The raw text of the first inline `on…` handler attribute. */
+function inlineHandlerText(attrs: string): string {
+  const on = HANDLER_RE.exec(attrs);
+  HANDLER_RE.lastIndex = 0;
+  return on ? (on[2] ?? on[4] ?? on[6] ?? "") : "";
+}
 /** Input types that are state/filter noise rather than meaningful actions. */
 const SKIP_INPUT_TYPES = new Set(["checkbox", "radio", "hidden"]);
 
@@ -493,6 +499,13 @@ export function extractHtmlInteractiveElements(lines: string[], opts: { requests
           line: ln,
           ...caption,
         });
+        // A link whose `onclick` only asks first (`return confirm('Sure?')`) still navigates: it is also the GET of its href.
+        // A handler that returns false or prevents the default leaves no navigation.
+        const href = tag === "a" && opts.requests ? exactAttr(attrs, "href")?.trim() : undefined;
+        const target = href && !href.startsWith("#") && !/^javascript:/i.test(href) ? literalPath(href) : undefined;
+        if (target && !STATIC_FILE.test(target) && !/return\s+false|preventDefault/.test(inlineHandlerText(attrs))) {
+          add(withRequest({ element: "link", event: "click", handler: id, line: ln, ...caption }, { method: "GET", target }));
+        }
       } else if (tag === "a") {
         // A link is clicked like a button; one to a route of the app is a GET of it.
         const href = exactAttr(attrs, "href")?.trim();

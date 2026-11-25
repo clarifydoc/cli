@@ -30,6 +30,10 @@ describe("plain PHP pages", () => {
     expect(servedScriptPath("app/Http/Controllers/ClubController.php", "<?php\nnamespace App;\nclass ClubController {}")).toBeNull();
     expect(servedScriptPath("about.php", "<?php echo 1; ?><p>Linux Kernel</p>")).toBe("/about.php");
     expect(plainPagePath("resources/views/clubs.blade.php")).toBeNull();
+    // A widget's bundled demo script under a copied-in asset directory is no page of the site.
+    expect(plainPagePath("assets/plugins/grid/examples/data/feed.php")).toBeNull();
+    expect(plainPagePath("assests/scoreboard/feed.php")).toBeNull();
+    expect(plainPagePath("scoreboard/feed.php")).toBe("/scoreboard/feed.php");
   });
 
   it("resolves relative targets against the page's own directory", () => {
@@ -87,6 +91,20 @@ describe("plain PHP pages", () => {
     expect(front.routes).toEqual([]);
     const lib = await page("db.php", `<?php\n$db = connect();`);
     expect(lib.a.screens).toEqual([]);
+  });
+
+  it("reads a link that asks first (onclick confirm) as a request of its href", async () => {
+    const { a } = await page(
+      "clubs.php",
+      `<?php $q = $_GET['q']; ?>
+<a href="drop_club.php?id=<?=$row['id']?>" onclick="return confirm('Sure?')">Drop</a>
+<a href="keep_club.php" onclick="return false">Stay</a>
+<a href="static_club.html" onclick="go()">Static</a>`,
+    );
+    const targets = a.dataSources.map((d) => d.name);
+    expect(targets).toContain("GET /drop_club.php");
+    expect(targets).not.toContain("GET /keep_club.php");
+    expect(targets.some((t) => t.includes("static_club"))).toBe(false);
   });
 
   it("is claimed by preprocess only when markup holds something to interact with", () => {
