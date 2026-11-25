@@ -34,6 +34,7 @@ import { dartModuleBindings } from "./module-bindings.js";
 import { dartFieldValues, dartUrlArg, dartVerbArg, extractDartPathArgCalls, isDartHttpReceiver } from "./request-wrappers.js";
 import { balancedArgs } from "../shared/text-scan.js";
 import { dartMemberEffects } from "./member-effects.js";
+import { applyEffects } from "../shared/member-effects-kit.js";
 
 /**
  * Dart (and therefore Flutter) regex extraction.
@@ -568,14 +569,6 @@ function declarationText(lines: string[], startIdx: number): string {
     if (lines[i]?.includes("{")) break;
   }
   return text;
-}
-
-/** Sets (or clears) a function's writes and throws from what `dartMemberEffects` read. */
-function applyEffects(fn: FunctionInfo, effects: Pick<FunctionInfo, "fieldWrites" | "throws"> | null): void {
-  if (effects?.fieldWrites) fn.fieldWrites = effects.fieldWrites;
-  else delete fn.fieldWrites;
-  if (effects?.throws) fn.throws = effects.throws;
-  else delete fn.throws;
 }
 
 /**

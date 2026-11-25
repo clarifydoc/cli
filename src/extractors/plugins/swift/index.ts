@@ -1,3 +1,5 @@
+import { isSwiftExtension, swiftDeclaredMembers, swiftMemberEffects } from "./member-effects.js";
+import { applyEffects } from "../shared/member-effects-kit.js";
 import { extractUIKitNavigation } from "./uikit-navigation.js";
 import { extractSwiftUINavigation } from "./swiftui-navigation.js";
 import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
@@ -314,13 +316,26 @@ export const swiftSpec: RegexLangSpec = {
       dropWrappedInitializers(lines, cls);
     }
     nestedTypeNames(lines, classes);
+    // `extension Club { … }` adds to a type declared elsewhere: a part, not the type's declaration.
+    for (const cls of classes) if (isSwiftExtension(lines, cls)) cls.extension = true;
     return classes;
   },
 
   // A method's loops and narrowings over the typed members of its own class (`for p in self.players`).
   postProcessClasses: (lines, classes) => {
     for (const cls of classes) for (const m of cls.methods) addMemberFlowLocals(lines, cls.properties, m);
+    // Writes and throws of a method, with the members its type's body declares (an extension's are the type's, elsewhere).
+    for (const cls of classes) {
+      const members = isSwiftExtension(lines, cls) ? null : swiftDeclaredMembers(lines, cls, classes);
+      for (const m of cls.methods) applyEffects(m, swiftMemberEffects(lines, m, { members }));
+    }
     return classes;
+  },
+
+  // Writes through typed parameters and locals, and the types a free function throws.
+  postProcessFunctions: (lines, fns) => {
+    for (const fn of fns) applyEffects(fn, swiftMemberEffects(lines, fn, null));
+    return fns;
   },
 
   // A module is a SwiftPM target: `Sources/<Target>/…` (and its tests' `Tests/<Target>/…`).

@@ -16,6 +16,14 @@ export function typedNames(params: readonly ParamInfo[], localNames: Iterable<st
   return typed;
 }
 
+/** Sets (or clears) a function's writes and throws from what a plugin's reader found. */
+export function applyEffects(fn: FunctionInfo, effects: Effects | null): void {
+  if (effects?.fieldWrites) fn.fieldWrites = effects.fieldWrites;
+  else delete fn.fieldWrites;
+  if (effects?.throws) fn.throws = effects.throws;
+  else delete fn.throws;
+}
+
 /** The facts one function states, capped and de-duplicated by receiver, member and line. */
 export class EffectsCollector {
   private readonly writes: NonNullable<Effects["fieldWrites"]> = [];

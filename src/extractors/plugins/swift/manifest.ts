@@ -33,6 +33,8 @@ export const swiftManifest: LanguagePluginManifest = {
   extensions: [".swift"],
   // One type spans files here: `extension`s add to a type from other files.
   typesSpanFiles: true,
+  // A type another directory of the module declares is in scope without an import (member effects look it up beyond the writer's directory).
+  typesBeyondDirectory: true,
   // `Player(name:)` runs the class's `init`.
   constructorNames: ["init"],
   // `for p in squad.list()` over a declared `-> [Player]`.

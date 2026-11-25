@@ -770,3 +770,98 @@ describe("member effects, Dart", () => {
     expect(thrown.some((t) => t.includes(":26"))).toBe(false);
   });
 });
+
+describe("member effects, Swift", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-member-effects-swift-"));
+    await mkdir(join(dir, "Sources", "League", "Models"), { recursive: true });
+    await mkdir(join(dir, "Sources", "League", "Services"), { recursive: true });
+    await writeFile(join(dir, "Package.swift"), "// swift-tools-version:5.9\nimport PackageDescription\nlet package = Package(name: \"League\")\n");
+    await writeFile(join(dir, "Sources", "League", "Models", "Club.swift"), [
+      "struct Stats {",
+      "    var goals: Int = 0",
+      "}",
+      "enum ClubError: Error {",
+      "    case closed",
+      "}",
+      "struct ClubClosed: Error {}",
+      "final class Club {",
+      "    var name: String",
+      "    var points: Int = 0",
+      "    private var visits = 0",
+      "    var stats = Stats()",
+      "    init(name: String) {",
+      "        self.name = name",
+      "        points = 1",
+      "    }",
+      "    func win(_ n: Int) throws {",
+      "        let old = points",
+      "        self.points += 3",
+      "        self.stats.goals = n",
+      "        visits += 1",
+      "        name = \"self.ghost = 1\"",
+      "        // points = 9",
+      "        var points2 = 0",
+      "        points2 = 4",
+      "        if old == points { throw ClubError.closed }",
+      "        if n < 0 { throw ClubClosed() }",
+      "    }",
+      "    func close() throws(ClubError) {",
+      "        do { try win(1) } catch { throw error }",
+      "        let reset = { [weak self] in self?.points = 0 }",
+      "        reset()",
+      "    }",
+      "    func shadow() {",
+      "        var name = \"local\"",
+      "        name = \"other\"",
+      "    }",
+      "}",
+    ].join("\n"));
+    await writeFile(join(dir, "Sources", "League", "Models", "Club+Season.swift"), [
+      "extension Club {",
+      "    func relegate() {",
+      "        points = 0",
+      "        ghost = 1",
+      "    }",
+      "    func fail() throws { throw ClubError.Closed }",
+      "}",
+    ].join("\n"));
+    await writeFile(join(dir, "Sources", "League", "Services", "Garage.swift"), [
+      "func rename(club: Club, stats: inout Stats) {",
+      "    club.name = \"Rovers\"",
+      "    stats.goals += 1",
+      "    let other: Club = Club(name: \"x\")",
+      "    other.points = 2",
+      "    let plain = 3",
+      "}",
+    ].join("\n"));
+    await analyze({ projectRoot: dir, outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 60_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const rows = (): string[] => (summary.fieldWrites ?? []).map((w) => `${w.class}.${w.member} <- ${w.function}:${w.line} ${w.via}`).sort();
+
+  it("lists writes through self, a member's object, a bare member, an extension and a typed parameter or local, never from init", () => {
+    expect(rows()).toEqual([
+      "Club.name <- Club.win:22 this",
+      "Club.name <- rename:2 typed",
+      "Club.points <- Club.close:31 this",
+      "Club.points <- Club.relegate:3 this",
+      "Club.points <- Club.win:19 this",
+      "Club.points <- rename:5 typed",
+      "Club.visits <- Club.win:21 this",
+      "Stats.goals <- Club.win:20 typed",
+      "Stats.goals <- rename:3 typed",
+    ].sort());
+  });
+
+  it("lists the type after throw and a signature's typed throws, never a rethrown error", () => {
+    const thrown = (summary.thrownTypes ?? []).map((t) => `${t.type} <- ${t.function}:${t.line}${t.declared ? " declared" : ""}`).sort();
+    expect(thrown).toEqual(["ClubClosed <- Club.win:27", "ClubError <- Club.close:29 declared", "ClubError <- Club.fail:6", "ClubError <- Club.win:26"]);
+  });
+});
