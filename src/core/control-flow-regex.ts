@@ -157,9 +157,21 @@ class SynthNode implements FlowNode {
  * blanked: comments go, and the text a label shows stays as written.
  */
 export function blankNonCode(source: string, spec: LanguageRegexControlFlowSpec, keepStrings = false): string {
+  const views = blankViews(source, spec);
+  return keepStrings ? views.shown : views.code;
+}
+
+/**
+ * Both views of `blankNonCode` from one scan: `code` (comments and strings blanked) and `shown` (comments
+ * blanked, strings kept). The scan decides what is a comment or a string without looking at what it blanks,
+ * so one pass marks both.
+ */
+function blankViews(source: string, spec: LanguageRegexControlFlowSpec): { code: string; shown: string } {
   // One byte a character says which ones become spaces; an array of the
   // characters cost eight, and a long function's went to the large-object space.
   const blanked = new Uint8Array(source.length);
+  // The same for the view that keeps strings: only comments are marked there.
+  const comments = new Uint8Array(source.length);
   const lineComments = spec.lineComments ?? ["//"];
   const blockComment = spec.blockComment ?? ["/*", "*/"];
   const quotes = spec.quotes ?? ['"', "'", "`"];
@@ -167,21 +179,26 @@ export function blankNonCode(source: string, spec: LanguageRegexControlFlowSpec,
   // start neither, and pass without a lookup (and the closure each lookup made).
   const tokens = [...lineComments, ...quotes];
   const starts = tokens.every((t) => t.length > 0) ? new Set(tokens.map((t) => t[0]!)) : undefined;
+  const blockOpen = blockComment[0];
+  const blockFirst = blockOpen ? blockOpen.charCodeAt(0) : -1;
 
   let i = 0;
   while (i < source.length) {
     // A block comment first: Lua's `--[[` begins with its line-comment token.
-    if (blockComment[0] && source.startsWith(blockComment[0], i)) {
-      const end = source.indexOf(blockComment[1], i + blockComment[0].length);
+    if (blockOpen && source.charCodeAt(i) === blockFirst && source.startsWith(blockOpen, i)) {
+      const end = source.indexOf(blockComment[1], i + blockOpen.length);
       const stop = end === -1 ? source.length : end + blockComment[1].length;
-      for (; i < stop; i++) if (source[i] !== "\n") blanked[i] = 1;
+      for (; i < stop; i++) if (source[i] !== "\n") blanked[i] = comments[i] = 1;
       continue;
     }
 
     const opens = starts === undefined || starts.has(source[i]!);
     const line = opens ? lineComments.find((token) => source.startsWith(token, i)) : undefined;
     if (line) {
-      while (i < source.length && source[i] !== "\n") blanked[i++] = 1;
+      while (i < source.length && source[i] !== "\n") {
+        blanked[i] = comments[i] = 1;
+        i++;
+      }
       continue;
     }
 
@@ -192,25 +209,24 @@ export function blankNonCode(source: string, spec: LanguageRegexControlFlowSpec,
     if (spec.regexLiterals && source[i] === "/" && expectsValue(source, i)) {
       const end = regexLiteralEnd(source, i);
       if (end > i) {
-        for (; i < end; i++) if (source[i] !== "\n" && !keepStrings) blanked[i] = 1;
+        for (; i < end; i++) if (source[i] !== "\n") blanked[i] = 1;
         continue;
       }
     }
 
     const quote = opens ? quotes.find((q) => source.startsWith(q, i)) : undefined;
     if (quote) {
-      const blank = keepStrings ? () => {} : (at: number) => void (blanked[at] = 1);
-      blank(i);
+      blanked[i] = 1;
       i += quote.length;
       while (i < source.length) {
         if (source[i] === "\\") {
-          blank(i);
-          if (i + 1 < source.length && source[i + 1] !== "\n") blank(i + 1);
+          blanked[i] = 1;
+          if (i + 1 < source.length && source[i + 1] !== "\n") blanked[i + 1] = 1;
           i += 2;
           continue;
         }
         if (source.startsWith(quote, i)) {
-          for (let k = 0; k < quote.length; k++) blank(i + k);
+          for (let k = 0; k < quote.length; k++) blanked[i + k] = 1;
           i += quote.length;
           break;
         }
@@ -218,7 +234,7 @@ export function blankNonCode(source: string, spec: LanguageRegexControlFlowSpec,
         // (an apostrophe in a comment, a lifetime tick in Rust). Stop there
         // rather than blanking the rest of the function.
         if (source[i] === "\n" && !spec.multilineStrings) break;
-        blank(i);
+        blanked[i] = 1;
         i++;
       }
       continue;
@@ -226,7 +242,11 @@ export function blankNonCode(source: string, spec: LanguageRegexControlFlowSpec,
 
     i++;
   }
-  // Kept runs as slices, blanked runs as spaces.
+  return { code: renderBlanked(source, blanked), shown: renderBlanked(source, comments) };
+}
+
+/** Kept runs as slices, blanked runs as spaces. */
+function renderBlanked(source: string, blanked: Uint8Array): string {
   let out = "";
   let at = 0;
   while (at < source.length) {
@@ -303,10 +323,10 @@ function scanLines(
   firstRow: number,
   spec: LanguageRegexControlFlowSpec,
 ): ScanLine[] {
-  const blanked = blankNonCode(source, spec);
+  const views = blankViews(source, spec);
   const raws = source.split("\n");
-  const codes = blanked.split("\n");
-  const shown = blankNonCode(source, spec, true).split("\n");
+  const codes = views.code.split("\n");
+  const shown = views.shown.split("\n");
 
   if (spec.blockDelta) return scanKeywordLines(raws, codes, shown, firstRow, spec);
 
