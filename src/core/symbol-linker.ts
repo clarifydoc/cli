@@ -841,8 +841,23 @@ function handedParameterLinks(links: readonly SymbolLink[], ctx: LinkContext): S
   const instanceLinks = (w: Candidate, rest: string, dflt: string | undefined): void => {
     if (dflt) return;
     const ownerKey = `${w.analysis.filePath}\0${w.owner.name}`;
+    // The function that makes the call, and the functions of the composable that reach it (`open` → `fetchPage`
+    // → `fetcher(…)`): a screen calling any of them runs its own instance's argument.
+    const inside = (g: FunctionInfo): boolean => g !== w.owner && g.name !== "<setup>" && g.line >= w.owner.line && g.endLine <= w.owner.endLine;
+    const runs = new Set([w.fn.name]);
+    for (let grown = true, round = 0; grown && round < 6; round++) {
+      grown = false;
+      for (const l of links) {
+        if (l.relation === "reference" || l.navigational || l.sourceFile !== w.analysis.filePath || l.targetFile !== w.analysis.filePath) continue;
+        if (!runs.has(l.targetSymbol) || runs.has(l.sourceSymbol)) continue;
+        const caller = w.analysis.functions.find((g) => g.name === l.sourceSymbol);
+        if (caller && inside(caller)) (runs.add(l.sourceSymbol), (grown = true));
+      }
+    }
     for (const into of links) {
-      if (into.relation === "reference" || into.navigational || `${into.targetFile}\0${into.targetSymbol}` !== `${w.analysis.filePath}\0${w.fn.name}`) continue;
+      if (into.relation === "reference" || into.navigational || into.targetFile !== w.analysis.filePath || !runs.has(into.targetSymbol)) continue;
+      // A call made inside the composable itself is no screen's.
+      if (into.sourceFile === w.analysis.filePath && runs.has(into.sourceSymbol)) continue;
       // The calls of the composable made in the file the nested function was reached from.
       const made = (sitesOf.get(ownerKey) ?? []).filter((x) => x.file === into.sourceFile);
       if (made.length !== 1) continue;
@@ -863,7 +878,11 @@ function handedParameterLinks(links: readonly SymbolLink[], ctx: LinkContext): S
     const head = w.call.name.split(".")[0]!;
     const rest = w.call.name.slice(head.length + 1);
     const stated: Array<{ file: string; symbol: string; text: string }> = [];
-    const sites = sitesOf.get(`${w.analysis.filePath}\0${w.owner.name}`) ?? [];
+    const allSites = sitesOf.get(`${w.analysis.filePath}\0${w.owner.name}`) ?? [];
+    // A spec calling the composable with a mock states nothing about the screens that run it: with a production
+    // call site beside it, the production sites are the call sites (a function written only for tests keeps its own).
+    const productionSites = allSites.filter((s) => !isTestFile(s.file, (analysisAt.get(s.file)?.language ?? w.analysis.language) as Language));
+    const sites = productionSites.length > 0 && !isTestFile(w.analysis.filePath, w.analysis.language as Language) ? productionSites : allSites;
     let complete = sites.length > 0;
     for (const site of sites) {
       const arg = site.call.args?.[w.index];
