@@ -124,7 +124,9 @@ export class SalesforceEntityExtractor extends EntityExtractor {
       if (!file.dataSources.some((d) => d.viaRelationship)) continue;
       file.dataSources = file.dataSources.filter((d) => {
         if (!d.viaRelationship || d.entity) return true;
-        const child = children.get(`${d.viaRelationship.parent.toLowerCase()}\0${d.viaRelationship.name.toLowerCase()}`);
+        const key = `${d.viaRelationship.parent.toLowerCase()}\0${d.viaRelationship.name.toLowerCase()}`;
+        // The project's own lookups first; a standard object's own children are the platform's (`Account.Contacts`).
+        const child = children.has(key) ? children.get(key) : STANDARD_CHILDREN.get(key);
         if (!child) return false;
         const declared = hosts.get(child.toLowerCase())?.name ?? child;
         d.entity = declared;
@@ -142,3 +144,29 @@ export class SalesforceEntityExtractor extends EntityExtractor {
     }
   }
 }
+
+/**
+ * The child relationships the platform declares on its standard objects — `(SELECT Id FROM Contacts)` on `Account`
+ * reads `Contact` — which no project metadata states, keyed `parent\0relationship` in lower case. Only the
+ * relationships Salesforce's object reference documents; a custom `__r` name is always the project's.
+ */
+const STANDARD_CHILDREN: ReadonlyMap<string, string> = (() => {
+  const activity = { Tasks: "Task", Events: "Event", Notes: "Note", Attachments: "Attachment", ContentDocumentLinks: "ContentDocumentLink" };
+  const byParent: Record<string, Record<string, string>> = {
+    Account: { ...activity, Contacts: "Contact", Opportunities: "Opportunity", Cases: "Case", Contracts: "Contract", Orders: "Order", Assets: "Asset", ChildAccounts: "Account", AccountContactRelations: "AccountContactRelation", Entitlements: "Entitlement", WorkOrders: "WorkOrder" },
+    Contact: { ...activity, Cases: "Case", AccountContactRelations: "AccountContactRelation", CampaignMembers: "CampaignMember", OpportunityContactRoles: "OpportunityContactRole" },
+    Lead: { ...activity, CampaignMembers: "CampaignMember" },
+    Opportunity: { ...activity, OpportunityLineItems: "OpportunityLineItem", OpportunityContactRoles: "OpportunityContactRole", Quotes: "Quote" },
+    Case: { ...activity, CaseComments: "CaseComment", EmailMessages: "EmailMessage", TeamMembers: "CaseTeamMember" },
+    Campaign: { ...activity, CampaignMembers: "CampaignMember" },
+    Contract: { ...activity, Orders: "Order" },
+    Order: { ...activity, OrderItems: "OrderItem" },
+    Quote: { ...activity, QuoteLineItems: "QuoteLineItem" },
+    Product2: { PricebookEntries: "PricebookEntry" },
+    Pricebook2: { PricebookEntries: "PricebookEntry" },
+    WorkOrder: { ...activity, WorkOrderLineItems: "WorkOrderLineItem" },
+  };
+  const out = new Map<string, string>();
+  for (const [parent, rels] of Object.entries(byParent)) for (const [rel, child] of Object.entries(rels)) out.set(`${parent.toLowerCase()}\0${rel.toLowerCase()}`, child);
+  return out;
+})();

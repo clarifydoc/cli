@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync } from "fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
-import { join, resolve } from "path";
+import { dirname, join, resolve } from "path";
 import { analyze } from "../../../core/analyzer.js";
 import { loadReportSummary } from "../../../core/report-payload.js";
 import { extractWithRegex } from "../../../core/regex-extractor.js";
@@ -273,5 +273,48 @@ describe("sample-salesforce — Apex to SObject", () => {
     expect(viaMethod.via!.map((v) => v.symbol)).toEqual(["<component>", "ClubList.handlePromote", "ClubController.promoteClub", "ClubService.promote"]);
     // The screen with the local namesake reaches no Apex class.
     expect(summary.dataFlows!.some((f) => f.entryFile.endsWith("clubBoard/clubBoard.html"))).toBe(false);
+  });
+});
+
+describe("a standard object's child relationship in a subquery", () => {
+  let out: string;
+  let rows: string[];
+  beforeAll(async () => {
+    const root = mkdtempSync(join(tmpdir(), "clarifydoc-apex-standard-children-"));
+    out = join(root, "out");
+    const app = join(root, "app");
+    const write = (rel: string, text: string) => {
+      mkdirSync(dirname(join(app, rel)), { recursive: true });
+      writeFileSync(join(app, rel), text);
+    };
+    write("sfdx-project.json", JSON.stringify({ packageDirectories: [{ path: "force-app", default: true }] }));
+    write("force-app/main/default/objects/Club__c/Club__c.object-meta.xml", `<?xml version="1.0"?><CustomObject xmlns="http://soap.sforce.com/2006/04/metadata"><label>Club</label></CustomObject>`);
+    write("force-app/main/default/objects/Sponsor__c/fields/Account__c.field-meta.xml", `<?xml version="1.0"?><CustomField xmlns="http://soap.sforce.com/2006/04/metadata"><fullName>Account__c</fullName><type>Lookup</type><referenceTo>Account</referenceTo><relationshipName>Contacts</relationshipName></CustomField>`);
+    write("force-app/main/default/classes/LeagueAccounts.cls", `public with sharing class LeagueAccounts {
+    public static List<Account> withPeople() {
+        return [SELECT Id, (SELECT Id FROM Opportunities), (SELECT Id FROM Rivals__r) FROM Account];
+    }
+    public static List<Club__c> clubs() {
+        return [SELECT Id, (SELECT Id FROM Contacts) FROM Club__c];
+    }
+    public static List<Account> sponsors() {
+        return [SELECT Id, (SELECT Id FROM Contacts__r) FROM Account];
+    }
+}
+`);
+    await analyze({ projectRoot: app, outputDir: out, lsp: false, gitHistory: false, stableOutput: true });
+    const summary = await loadReportSummary(out);
+    rows = summary.symbolDataAccess!.filter((r) => r.file.endsWith("LeagueAccounts.cls")).map((r) => `${r.symbol} ${r.entity}`).sort();
+  }, 120_000);
+  afterAll(() => rmSync(dirname(out), { recursive: true, force: true }));
+
+  it("reads the platform's child object, never a custom name nothing declares or a standard name on a custom parent", () => {
+    expect(rows).toContain("LeagueAccounts.withPeople Opportunity");
+    expect(rows).toContain("LeagueAccounts.withPeople Account");
+    expect(rows.filter((r) => r.startsWith("LeagueAccounts.clubs"))).toEqual(["LeagueAccounts.clubs Club__c"]);
+  });
+
+  it("still reads a project lookup's own relationship on a standard parent", () => {
+    expect(rows.filter((r) => r.startsWith("LeagueAccounts.sponsors"))).toEqual(["LeagueAccounts.sponsors Account", "LeagueAccounts.sponsors Sponsor__c"]);
   });
 });
