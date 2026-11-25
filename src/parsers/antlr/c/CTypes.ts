@@ -456,6 +456,21 @@ function facts(all: Token[], tokens: Token[], names: Array<string | undefined>, 
       retype[t.tokenIndex] = CLexer.MacroName;
     }
   });
+  // `c->w = 3;`, `col[1].w = 10;`: a name followed by a member access, through any index groups. No declarator reads
+  // so, so a name before it is a macro statement of its own.
+  const writesMember = (j: number): boolean => {
+    let k = j + 1;
+    while (typeOf(k) === CLexer.LeftBracket) {
+      let depthBracket = 0;
+      for (; k < tokens.length; k++) {
+        if (typeOf(k) === CLexer.LeftBracket) depthBracket++;
+        else if (typeOf(k) === CLexer.RightBracket && --depthBracket === 0) break;
+        else if (typeOf(k) === CLexer.Semi) return false;
+      }
+      k++;
+    }
+    return typeOf(k) === CLexer.Dot || typeOf(k) === CLexer.Arrow;
+  };
   tokens.forEach((t, i) => {
     if (!isName(i) || retype[t.tokenIndex] !== 0) return;
     const k = t.tokenIndex;
@@ -470,7 +485,7 @@ function facts(all: Token[], tokens: Token[], names: Array<string | undefined>, 
     const capsHere = caps(i) || (isName(i) && isMacro(names[i]!) && (next === CLexer.RightBrace || STATEMENT_KEYWORDS.has(next)));
     // `TEST_BEGIN⏎ check(x);`, `TEST_BEGIN⏎ Garage *g;` in a body: before a call or a declaration it opens nothing,
     // whatever the first pass took it for there.
-    if (isName(i) && isMacro(names[i]!) && !(tagBody[i] === 1 && types.has(names[i]!)) && braces[i]! > 0 && BARE_AFTER.has(prev) && !startsTagBody(i) && isName(i + 1) && (typeOf(i + 2) === CLexer.LeftParen || (types.has(names[i + 1]!) && typeOf(i + 2) === CLexer.Star))) {
+    if (isName(i) && isMacro(names[i]!) && !(tagBody[i] === 1 && types.has(names[i]!)) && braces[i]! > 0 && BARE_AFTER.has(prev) && !startsTagBody(i) && isName(i + 1) && (typeOf(i + 2) === CLexer.LeftParen || (types.has(names[i + 1]!) && typeOf(i + 2) === CLexer.Star) || writesMember(i + 1))) {
       retype[k] = CLexer.MacroName;
       return;
     }

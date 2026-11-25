@@ -86,4 +86,31 @@ acquire_club (club_ctx_t *ctx, int id)
 `;
     expect(shape(source)).toEqual({ errors: 0, functions: [["acquire_club", ["find"]]] });
   });
+
+  it("reads a bare macro line before a member assignment as a statement of its own", () => {
+    const source = `struct club { int w; };
+static void tick(struct club *c, struct club *col) {
+  CLUB_COUNTERS
+  col[1].w = 10;
+  CLUB_PUSH
+  c->w = 3;
+  CLUB_MARK
+  c.w = 4;
+  flush(c);
+}
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["tick", ["flush"]]] });
+  });
+
+  it("keeps a declaration after a macro line a declaration", () => {
+    const source = `static void tick(void) {
+  CLUB_SCOPE
+  struct club *c[2];
+  CLUB_SCOPE
+  club_t row[3];
+  flush(c);
+}
+`;
+    expect(shape(source).errors).toBe(0);
+  });
 });

@@ -94,7 +94,7 @@ export function readCpp(source: string, macros?: BuildMacros, variant?: string):
     return asC.syntaxErrors === 0 ? asC : readWithBranches(blankRawStrings(normalizeSource(source)), true, read, macros);
   }
   const parsed = readWithBranches(blankRawStrings(normalizeSource(source)), true, read, macros);
-  if (parsed.syntaxErrors === 0 || CPP_ONLY.test(codeOnly(blankAsm(source)).replace(/^[ \t]*#.*$/gm, ""))) return parsed;
+  if (parsed.syntaxErrors === 0 || CPP_ONLY.test(withoutCppGuards(codeOnly(blankAsm(source))).replace(/^[ \t]*#.*$/gm, ""))) return parsed;
   // A header is this plugin's whatever language includes it: one of a C project may be C that no C++ compiler takes
   // (`char *restrict p`, `tre_ctype_t class;`, `typedef void *(fn)(void *)`), and C's grammar reads it.
   const asC = readC(source, macros);
@@ -104,6 +104,38 @@ export function readCpp(source: string, macros?: BuildMacros, variant?: string):
 /** The text without comments and string literals, where `::` may stand in prose. */
 function codeOnly(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g, " ");
+}
+
+/**
+ * The text with what a `__cplusplus` conditional guards left out: a C header opens `extern "C" {` and may declare a
+ * namespace or a class there for C++ includers, which no C reader sees and which says nothing of the header itself.
+ * The guarded branch ends at its own `#else`, `#elif` or `#endif`.
+ */
+export function withoutCppGuards(text: string): string {
+  if (!text.includes("__cplusplus")) return text;
+  const out: string[] = [];
+  let depth = 0;
+  let guardDepth = 0; // depth of the open `__cplusplus` branch; 0 when none
+  for (const line of text.split("\n")) {
+    const d = /^[ \t]*#[ \t]*(\w+)(.*)$/.exec(line);
+    if (d) {
+      const kind = d[1];
+      if (kind === "if" || kind === "ifdef" || kind === "ifndef") {
+        depth++;
+        const positive = kind === "ifdef" || (kind === "if" && !/^\s*!/.test(d[2]));
+        if (!guardDepth && positive && /\b__cplusplus\b/.test(d[2])) guardDepth = depth;
+      } else if (kind === "else" || kind === "elif") {
+        if (guardDepth === depth) guardDepth = 0;
+      } else if (kind === "endif") {
+        if (guardDepth === depth) guardDepth = 0;
+        depth--;
+      }
+      out.push("");
+      continue;
+    }
+    out.push(guardDepth ? "" : line);
+  }
+  return out.join("\n");
 }
 
 /** What only C++ writes: a scope, a template, a namespace or a class with a base or body. */
