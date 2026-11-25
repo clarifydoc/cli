@@ -93,6 +93,24 @@ function finishModulePath(dir: string, path: string[], specifier: string | undef
   return module;
 }
 
+/**
+ * The name `name` carries in `targetFile` when the path `source` goes through inline modules of it: the path's
+ * segments after the shortest prefix that names the target file (`crate::util::pitch` → `pitch` below `util.rs`),
+ * joined to `name` as the plugin names a namesake function of an inline block (`pitch::helper`). Null for a path
+ * that ends at the file itself.
+ */
+export function rustImportedItemName(importingFile: string, source: string, name: string, targetFile: string, ctx: ImportResolveContext): string | null {
+  const segs = source.replace(/\./g, "::").split("::").filter((s) => s && s !== "*");
+  for (let k = 1; k <= segs.length; k++) {
+    if (resolveRustImport(importingFile, segs.slice(0, k).join("::"), undefined, ctx) !== targetFile) continue;
+    const inline = segs.slice(k);
+    if (inline.length === 0) return null;
+    const named = `${inline.join("::")}::${name}`;
+    return ctx.declares(targetFile, named) ? named : null;
+  }
+  return null;
+}
+
 /** The directory a `crate::`-rooted path stays in: the importing crate's own; null for any other path. */
 export function rustImportConfinement(importingFile: string, source: string, ctx: ImportResolveContext): string | null {
   if (!source.startsWith("crate::")) return null;

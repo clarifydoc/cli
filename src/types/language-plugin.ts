@@ -1443,6 +1443,14 @@ export interface LanguagePluginManifest {
    */
   importConfinement?(importingFile: string, source: string, ctx: ImportResolveContext): string | null;
   /**
+   * The name a function carries in `targetFile` when an import path reaches it through a module the file declares
+   * inline (Rust `use crate::util::pitch::helper` into `mod pitch { fn helper }` of `util.rs`, which the plugin names
+   * `pitch::helper` when the file has a namesake): `name` is the imported name, as the module declares it. Null when
+   * the path names no inline module of the target. The linker takes it only where the target file has a function of
+   * that name. Leaf code: it reads only `ctx`.
+   */
+  importedItemName?(importingFile: string, source: string, name: string, targetFile: string, ctx: ImportResolveContext): string | null;
+  /**
    * The directory a package import names, for a language whose import path is
    * the package's own name plus its directory (`importsNameDirectories` — a Go
    * import is the go.mod module path, then the directory under that module):

@@ -5832,6 +5832,13 @@ function resolveCallToDefinitionBody(
   const exported = !isQualified && call.kind === "cross-file" ? analysis.imports.find((i) => i.aliases?.[call.name])?.aliases?.[call.name] ?? call.member : undefined;
   // A receiver the call site rebinds (`function run(cache) { cache.get(k) }`) is no namesake object's member.
   let def = isQualified ? (call.receiverRebound && targetFile === sourceFile ? undefined : fileSymbols.get(call.name)) : symbolIn(ctx, targetFile, exported ?? call.name);
+  // `use crate::util::pitch::helper` into `mod pitch { fn helper }` of a file that also has a `helper`: the function
+  // the path names, which the plugin gave the module's path.
+  if (!isQualified && !reference && call.kind === "cross-file" && call.target && !call.moduleMember) {
+    const itemName = importedItemNameIn(ctx, analysis, sourceFile, call.target, exported ?? call.name, targetFile);
+    const viaPath = itemName ? symbolIn(ctx, targetFile, itemName) : undefined;
+    if (viaPath) def = viaPath;
+  }
   if (bareIsFunction && def?.name.includes(".")) def = undefined;
   // `Color.Darken()` in a class with a member `Shade Color`: the member is the receiver, not a class `Color`.
   if (def && isQualified && targetFile === sourceFile && parts.length === 2 && pluginFor(analysis.language)?.bareMemberReceivers
@@ -6456,13 +6463,18 @@ function resolveCallToDefinitionBody(
       if (imp.executes) continue;
       const wildcard = isWildcardImport(imp);
       if (!sharesScope && !wildcard) continue;
-      const impFile = importPath(ctx, imp.source, sourceFile);
+      // A language with module rules of its own (`use crate::util::pitch::*`) resolves a glob by them — not a
+      // `self`/`super` path, which names the module holding the `use`, an inline block this pass cannot see.
+      const ownResolver = wildcard && !sharesScope && !/^(?:self|super)(?:::|$)/.test(imp.source) ? pluginFor(analysis.language)?.resolveImport : undefined;
+      const impFile = importPath(ctx, imp.source, sourceFile) ?? (ownResolver ? ownResolver(sourceFile, imp.source, undefined, importResolveContext(ctx)) : null);
       if (!impFile || impFile === sourceFile || hits.has(impFile)) continue;
       // A header declares what its same-stem files define (`helpers.h` → `helpers.cc`).
       if (declarations?.some((ext) => impFile.endsWith(ext))) {
         for (const body of definitionsBeside(ctx, impFile, declarations, call.name)) if (body.file !== sourceFile) hits.set(body.file, body.def);
       }
-      const d = symbolIn(ctx, impFile, call.name);
+      // `use crate::util::pitch::*` into an inline module: the function a namesake in the file forced to carry its path.
+      const inlineName = wildcard && !sharesScope ? importedItemNameIn(ctx, analysis, sourceFile, imp.source, call.name, impFile) : null;
+      const d = (inlineName ? symbolIn(ctx, impFile, inlineName) : undefined) ?? symbolIn(ctx, impFile, call.name);
       if (!d && wildcard && !sharesScope) {
         // `from app.hub import *` where hub itself only star-imports `app.club`: the definition is where the chain ends.
         const through = starChainDefinition(ctx, impFile, call.name, 0, new Set([sourceFile]));
@@ -6472,7 +6484,7 @@ function resolveCallToDefinitionBody(
       if (!d || d.name.includes(".")) continue;
       if (wildcard && !sharesScope) {
         ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
-        if (!starForwards(ctx.analysisByFile.get(impFile), d.name)) continue;
+        if (!starForwards(ctx.analysisByFile.get(impFile), inlineName && d.name === inlineName ? call.name : d.name)) continue;
       }
       hits.set(impFile, d);
     }
@@ -11775,6 +11787,12 @@ function buildReverseReferenceLinks(
   }
 
   return links;
+}
+
+/** The name an import path's inline modules give a function of `targetFile` (`LanguagePluginManifest.importedItemName`); null when the language has none. */
+function importedItemNameIn(ctx: LinkContext, analysis: FileAnalysis, sourceFile: string, source: string, name: string, targetFile: string): string | null {
+  const hook = manifestFor(analysis.language as Language)?.importedItemName;
+  return hook ? hook(sourceFile, source, name, targetFile, importResolveContext(ctx)) : null;
 }
 
 /** What a plugin's import resolver may ask, built once per linking run. */

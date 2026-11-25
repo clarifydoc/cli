@@ -62,6 +62,27 @@ pub fn save() {
     std::fs::write("a", "b");
 }
 `,
+  // `use` of an item of an inline module of another file, beside a file-level namesake and another module's.
+  "src/stadium.rs": `pub mod pitch {
+    pub fn mow() {}
+    pub fn line() {}
+}
+pub fn mow() {}
+pub mod stand {
+    pub fn mow() {}
+}
+`,
+  "src/crew.rs": `use crate::stadium::pitch::mow;
+use crate::stadium::stand::mow as sweep;
+use crate::stadium::mow as plain;
+pub fn work() { mow(); sweep(); plain(); }
+`,
+  "src/crew_grouped.rs": `use crate::stadium::pitch::{mow as cut, line};
+pub fn work() { cut(); line(); }
+`,
+  "src/crew_glob.rs": `use crate::stadium::pitch::*;
+pub fn work() { mow(); }
+`,
   "src/pair.rs": `mod sys { pub fn ignite() {} }
 mod decoy { pub fn ignite() {} pub fn spark() { ignite(); } }
 pub fn go() { sys::ignite(); }
@@ -118,6 +139,19 @@ describe.each([["ANTLR", undefined], ["regex", "no-antlr"]])("Rust inline module
     expect(links).toContain(`${n}:5 crate::fmt_util::format -> src/fmt_util.rs::format`);
     expect(links).toContain(`${n}:6 write -> ${n}::write`);
     expect(links.filter((l) => l.startsWith(`${n}:7`) || l.startsWith(`${n}:8`))).toEqual([]);
+  });
+
+  it("links a function imported by name from an inline module of another file to that module's, not the file's namesake", () => {
+    expect(links).toContain("src/crew.rs:4 mow -> src/stadium.rs::pitch::mow");
+    expect(links).toContain("src/crew.rs:4 sweep -> src/stadium.rs::stand::mow");
+    expect(links).toContain("src/crew.rs:4 plain -> src/stadium.rs::mow");
+    expect(links).toContain("src/crew_grouped.rs:2 cut -> src/stadium.rs::pitch::mow");
+    expect(links.filter((l) => l.startsWith("src/crew.rs:4") && l.endsWith("::mow"))).toHaveLength(3);
+  });
+
+  it("links a bare call through a glob import of an inline module to that module's function", () => {
+    expect(links).toContain("src/crew_glob.rs:2 mow -> src/stadium.rs::pitch::mow");
+    expect(links.filter((l) => l.startsWith("src/crew_glob.rs"))).toHaveLength(1);
   });
 
   it("keeps no row for a noise-named call through a head `use` binds from std", () => {
