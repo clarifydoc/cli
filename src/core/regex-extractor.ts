@@ -184,6 +184,7 @@ export function regexStructure(sourceText: string, filePath: string, language: L
   if (!spec) return { functions: [], classes: [] };
   const lines = splitLines(sourceText);
   let { functions, classes } = readStructure(lines, spec);
+  if (spec.postProcessKeepsStructure) return { functions, classes };
   if (spec.postProcessFunctions) functions = spec.postProcessFunctions(lines, functions);
   if (spec.postProcessClasses) classes = spec.postProcessClasses(lines, classes, filePath);
   return { functions, classes };

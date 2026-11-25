@@ -282,6 +282,12 @@ export interface RegexLangSpec {
   extractEntityRelations?: (lines: string[], classes: ClassInfo[], imports: readonly ImportInfo[]) => EntityRelation[];
   /** Post-process extracted functions (e.g. SQL BEGIN/END-aware end-line patching). */
   postProcessFunctions?: (lines: string[], fns: FunctionInfo[]) => FunctionInfo[];
+  /**
+   * `postProcessFunctions` / `postProcessClasses` only add facts to the functions and classes they are given — calls,
+   * types, origins — and never add, remove, rename or move one, so a reading that needs only the functions' names and
+   * spans (`regexStructure`, the control-flow graphs' names) leaves them out.
+   */
+  postProcessKeepsStructure?: true;
   /** Post-process extracted classes (e.g. C++ tagging QML_NAMED_ELEMENT registrations
    *  as decorators so the QML→C++ bridge resolver can join on them). */
   postProcessClasses?: (lines: string[], classes: ClassInfo[], filePath?: string) => ClassInfo[];

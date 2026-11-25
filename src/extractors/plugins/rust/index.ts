@@ -102,6 +102,8 @@ export const rustSpec: RegexLangSpec = {
   ],
   blockEnds: RUST_CODE.blockEnds,
   callSourceLines: RUST_CODE.callSourceLines,
+  // Both post-passes mark tests and add struct-literal calls, never a function of their own.
+  postProcessKeepsStructure: true,
   // `#[test]` functions and the helpers of a `#[cfg(test)]` module are test code (inline-tests.ts).
   postProcessFunctions: (lines, fns) => markRustTests(lines, withStructLiteralCalls(lines, structLiteralReceivers(lines, fns), RUST_LITERALS, "//"), RUST_CODE.blockEnds),
   // The methods of an `impl` block build struct literals too.

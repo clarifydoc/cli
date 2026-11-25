@@ -188,6 +188,8 @@ export const goSpec: RegexLangSpec = {
   extractClasses: (lines, fns) => extractGoClasses(lines, fns, parseGoParam),
   // A composite literal handed to a call names the type the callee receives (`DoReadAll(ctx, &models.Club{}, a)`).
   // Where each call's arguments come from (a parameter, a request read), for `paramColumns`.
+  // Both post-passes add calls, returns and origins to what they are given, never a function of their own.
+  postProcessKeepsStructure: true,
   postProcessFunctions: (lines, fns) => {
     const out = withGoArgOrigins(lines, withCompositeArgs(lines, withGoDeclaredReturns(lines, withStructLiteralCalls(lines, fns, GO_LITERALS, "//"))));
     for (const fn of out) hideShadowedTypes(lines, fn);
