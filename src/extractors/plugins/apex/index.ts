@@ -1,5 +1,5 @@
 import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
-import { findEndLine, type RegexLangSpec } from "../shared/regex-base.js";
+import { extractCallsFromBody, findEndLine, type RegexLangSpec } from "../shared/regex-base.js";
 import { splitTopLevelCommas } from "../shared/text-scan.js";
 import { ANNOTATION, ANNOTATIONS, CLASS_MODIFIERS, innermost, KEYWORD_TYPE, NEW_CALL, STATIC_CALL, TRIGGER_FN, TRIGGER_HEAD } from "./patterns.js";
 import { extractApexRoutes } from "./routes.js";
@@ -133,7 +133,79 @@ function apexClasses(lines: string[], fns: FunctionInfo[]): ClassInfo[] {
   const methodLines = new Set<number>();
   for (const f of fns) for (let l = f.line; l <= f.endLine; l++) methodLines.add(l);
   for (const cls of classes) if (cls.kind !== "enum" && cls.kind !== "interface") cls.properties = fieldsOf(lines, cls, methodLines);
+  // A property whose `get` has a body runs code when it is read (a Visualforce `{!clubs}`): that body is a getter of
+  // its own, so what it calls and queries hangs off a function a read can reach.
+  for (const cls of classes) {
+    if (cls.kind === "enum" || cls.kind === "interface") continue;
+    for (const getter of propertyGetters(lines, cls, methodLines)) {
+      if (innermost(classes, getter.line) !== cls) continue;
+      fns.push(getter);
+      cls.methods.push(getter);
+    }
+  }
   return classes;
+}
+
+/** `public List<Club__c> clubs { get { … } set; }`: the `get` body of each property at the class's own depth. */
+function propertyGetters(lines: readonly string[], cls: ClassInfo, methodLines: ReadonlySet<number>): FunctionInfo[] {
+  const out: FunctionInfo[] = [];
+  let depth = 0;
+  for (let i = cls.line - 1; i < Math.min(cls.endLine, lines.length); i++) {
+    const line = lines[i]!;
+    const m = depth === 1 && i > cls.line - 1 && !methodLines.has(i + 1) ? FIELD.exec(line) : null;
+    if (m && !/\(/.test(line.slice(0, line.indexOf(m[3]!) + m[3]!.length + 1)) && /\{/.test(line.slice(line.indexOf(m[3]!) + m[3]!.length))) {
+      const end = findEndLine(lines as string[], i, "brace");
+      const getter = getterBody(lines, i, end);
+      if (getter) {
+        const [from, column, to] = getter;
+        const mods = m[1]!.toLowerCase();
+        out.push({
+          name: m[3]!,
+          params: [],
+          returnType: m[2]!.replace(/\s+/g, " "),
+          isAsync: false,
+          isExported: !/\bprivate\b/.test(mods),
+          decorators: [],
+          calls: extractCallsFromBody(lines as string[], from + 1, to, apexSpec.lineCommentPrefixes, apexSpec.callPatterns, { line: from, column }),
+          line: from + 1,
+          endLine: to,
+          getter: true,
+        });
+      }
+    }
+    for (const ch of line) {
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+    }
+  }
+  return out;
+}
+
+/** The `get { … }` block inside a property's braces (0-based start line, the column after its `{`, 1-based end line), or null for `get;`. */
+function getterBody(lines: readonly string[], from: number, to: number): [number, number, number] | null {
+  let depth = 0;
+  for (let i = from; i < Math.min(to, lines.length); i++) {
+    const line = lines[i]!;
+    for (let c = 0; c < line.length; c++) {
+      const ch = line[c]!;
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+      else if (depth === 1 && /^get\s*\{/i.test(line.slice(c)) && (c === 0 || !/\w/.test(line[c - 1]!))) {
+        const open = line.indexOf("{", c);
+        // The block's end: count braces from its `{`.
+        let d = 0;
+        for (let k = i; k < lines.length; k++) {
+          const text = lines[k]!;
+          for (let x = k === i ? open : 0; x < text.length; x++) {
+            if (text[x] === "{") d++;
+            else if (text[x] === "}" && --d === 0) return [i, open + 1, k + 1];
+          }
+        }
+        return null;
+      }
+    }
+  }
+  return null;
 }
 
 /** `Type name` declarations in a method body: locals, for-each variables, caught exceptions. */

@@ -56,8 +56,9 @@ describe("sample-salesforce — reachability and relationship subqueries", () =>
       .filter((e) => e.source === `file::${dir}ClubReports.cls`)
       .map((e) => `${e.target} ${(e.calls ?? []).map((c) => c.line).join(",")}`)
       .sort();
-    // Players__r (a Lookup's relationshipName Players) reads Player__c; Fans__r is declared by no field.
-    expect(calls).toEqual(["entity::Club__c::Club__c 5,20", "entity::Player__c::Player__c 5,20"]);
+    // Players__r (a Lookup's relationshipName Players) reads Player__c; Fans__r is declared by no field. Line 4 is the
+    // `standings` property's getter.
+    expect(calls).toEqual(["entity::Club__c::Club__c 4,10,25", "entity::Player__c::Player__c 10,25"]);
     expect(summary.dataAccessGraph!.nodes.some((n) => /Fans/i.test(n.id))).toBe(false);
   });
 });

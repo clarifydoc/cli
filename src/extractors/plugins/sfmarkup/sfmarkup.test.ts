@@ -128,7 +128,14 @@ describe("sample-salesforce — Aura and Visualforce to Apex", () => {
       "<component>:7 save -> ClubExtension.cls ClubExtension.save",
       "<component>:8 recalc -> ClubExtension.cls ClubExtension.recalc",
       "<setup>:4 clubs -> ClubController.cls ClubController.getClubs",
+      "<setup>:9 standings -> ClubExtension.cls ClubExtension.standings",
     ]);
+  });
+
+  it("reads a property whose getter has a body as a function of its own, never a namesake class's", () => {
+    const getter = summary.symbolDataAccess!.filter((r) => r.symbol.endsWith(".standings")).map((r) => `${r.symbol} ${r.entity}`).sort();
+    expect(getter).toEqual(["ClubExtension.standings Player__c", "ClubReports.standings Club__c"]);
+    expect(summary.symbolLinks!.filter((l) => l.targetSymbol === "ClubReports.standings")).toEqual([]);
   });
 
   it("carries each screen to the tables behind its Apex methods", () => {
