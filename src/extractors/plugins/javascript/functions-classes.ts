@@ -34,6 +34,7 @@ import { recordEntries, recordIndexOrigin, recordMemberChain, switchRecordEntrie
 import { ELEMENT_CALLBACKS, KEEPS_ELEMENTS, collectionElement } from "./element-types.js";
 import { destructuredParamTypes, objectTypesOf, paramNameSet, type ObjectTypes } from "./destructured-params.js";
 import { awaitedCall } from "./node-utils.js";
+import { callbackTarget } from "./call-hooks.js";
 
 /** A local variable whose type the body states (see `FunctionInfo.localTypes`). */
 type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
@@ -3151,6 +3152,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
           name,
           type,
           defaultValue: defaultNode?.text ?? null,
+          ...(defaultNode?.type === "arrow_function" && callbackTarget(defaultNode) ? { defaultCallback: callbackTarget(defaultNode) } : {}),
           ...(di.qualifier ? { qualifier: di.qualifier } : {}),
           ...(child.type === "rest_pattern" || name.startsWith("...") ? { variadic: true } : {}),
           ...(child.type === "optional_parameter" && !defaultNode ? { optional: true } : {}),

@@ -1487,6 +1487,35 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
    * site by a project pass), both arms of a ternary
    * (`url: id == null ? url : `${url}/${id}``). Empty when it is none of these.
    */
+  /**
+   * A descriptor whose `method` is a conditional of two verbs (`method: id ? 'PUT' : 'POST'`) and whose `url` one
+   * condition on the same test picks between two values (`url: id ? `${url}/${id}` : url`, or a template opening
+   * with a local so set — `` `${requestUrl}?${q}` `` with `const requestUrl = id ? … : …`): each arm's verb with
+   * that arm's URL. Null for anything else; a spread in the descriptor could bring another method.
+   */
+  private conditionalRequests(obj: Node): { verb: string; url: string }[] | null {
+    const methodValue = unwrapExpression(objectPropValue(obj, "method"));
+    const urlValue = objectPropValue(obj, "url");
+    if (methodValue?.type !== "ternary_expression" || !urlValue) return null;
+    if (obj.namedChildren.some((c) => c.type === "spread_element")) return null;
+    const verbs = [methodValue.childForFieldName("consequence"), methodValue.childForFieldName("alternative")].map((v) => literalString(v)?.toLowerCase() ?? null);
+    if (!verbs.every((v): v is string => v !== null && HTTP_VERBS.has(v)) || verbs[0] === verbs[1]) return null;
+    const test = methodValue.childForFieldName("condition")?.text.replace(/\s+/g, "");
+    if (!test || urlCondition(urlValue)?.replace(/\s+/g, "") !== test) return null;
+    const value = unwrapExpression(urlValue)!;
+    const head = value.type === "ternary_expression" ? null : value.type === "identifier" ? value : value.namedChildren[0]!.namedChild(0)!;
+    const conditional = head ? unwrapExpression(localInitializer(head))! : value;
+    const arms = [conditional.childForFieldName("consequence"), conditional.childForFieldName("alternative")];
+    // Each arm as the URL would read with that arm written in place of the local.
+    const urls = arms.map((arm) => {
+      const armUrl = arm ? this.urlsOf(arm)[0] : undefined;
+      if (armUrl === undefined || !head || value.type === "identifier") return armUrl;
+      return resolveTemplateUrl(value, (name) => (name === head.text ? { url: armUrl, confidence: "INFERRED" } : this.lookupUrl(name, value)));
+    });
+    if (urls.some((u) => u === undefined || !(looksLikeUrl(u) || isParamHole(u, obj))) || urls[0] === urls[1]) return null;
+    return [{ verb: verbs[0]!, url: urls[0]! }, { verb: verbs[1]!, url: urls[1]! }];
+  }
+
   private descriptorUrls(obj: Node, key: string): string[] {
     const value = objectPropValue(obj, key);
     if (value) return [...new Set(this.urlsOf(value))];
@@ -2469,15 +2498,26 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       const verb = heldLiteral(node, "method") ?? literalString(objectPropValue(node, "type"));
       // …or the verb is the call the descriptor is handed to: hey-api's
       // generated `(options.client ?? client).post({ url: '/x', ...options })`.
-      const callee = node.parent?.type === "arguments" ? calleeLeaf(node.parent.parent?.childForFieldName("function") ?? null) : null;
+      // The call the descriptor is handed to: written in its arguments, or a `const` holding it handed on
+      // (`const ajaxOptions = { url, method }; createAjaxRequest(ajaxOptions)`).
+      const handedTo = node.parent?.type === "arguments" ? node.parent.parent : objectHandedTo(node);
+      const callee = handedTo ? calleeLeaf(handedTo.childForFieldName("function") ?? null) : null;
       const method = verb && HTTP_VERBS.has(verb.toLowerCase())
         ? verb.toLowerCase()
         : callee && HTTP_VERBS.has(callee.toLowerCase()) && objectPropValue(node, "url")
           ? callee.toLowerCase()
           : null;
+      // `method: id ? 'PUT' : 'POST'` beside a URL one condition on the same test picks
+      // (`const requestUrl = id ? `${url}/${id}` : url`): one request per arm, the verb paired with its URL.
+      const paired = method ? null : this.conditionalRequests(node);
+      if (paired && !hasProp(node, "handler") && !this.inRtkQuery(node)) {
+        for (const arm of paired) {
+          sources.push(this.ds({ kind: "api-call", name: arm.verb, target: arm.url, line: node.startPosition.row + 1, column: node.startPosition.column }));
+        }
+      }
       // `path` is Node's `http.request({ method, path })` — trusted only beside a
       // verb, because a router location (`router.push({ path, params })`) has one too.
-      const urls = this.descriptorUrls(node, "url");
+      const urls = paired ? [] : this.descriptorUrls(node, "url");
       // A `path` descriptor (`{ method, path }`, `{ path, type: "delete" }`) is
       // also a route table entry, a mock or a menu item; it is a request only
       // when it is handed to an HTTP client (`http.request({ method, path })`).
@@ -2495,15 +2535,16 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
       if (url && !hasProp(node, "handler") && !this.inRtkQuery(node)) {
         const requestShaped =
           !method &&
-          node.parent?.type === "arguments" &&
+          handedTo !== null &&
           (looksLikeUrl(url) || isParamHole(url, node)) &&
-          (REQUEST_KEYS.some((k) => hasProp(node, k)) || isJQueryAjax(node.parent.parent?.childForFieldName("function") ?? null) ||
+          // A local handed on (`createMatch(form)`) takes the callee's word for it: its keys alone may be a record's.
+          ((node.parent?.type === "arguments" && REQUEST_KEYS.some((k) => hasProp(node, k))) || isJQueryAjax(handedTo.childForFieldName("function") ?? null) ||
             // Handed to a function named for a request (`request<T>({ url })`, `apiRequest({ url })`).
             REQUEST_CALLEE_RE.test(callee ?? ""));
         if (method || requestShaped) {
           // The instance the descriptor is handed to (`apiClient.get({ url })`,
           // hey-api's `(options?.client ?? client).get(…)`): its base is prepended later.
-          const callFn = node.parent?.type === "arguments" ? node.parent.parent?.childForFieldName("function") : null;
+          const callFn = handedTo?.childForFieldName("function") ?? null;
           const client = callFn?.type === "member_expression" ? memberRoot(callFn) : null;
           const descriptorBody = objectPropValue(node, "data") ?? objectPropValue(node, "json") ?? objectPropValue(node, "body");
           const descriptorSchema = descriptorBody ? bodySchema(descriptorBody) : null;
@@ -2697,6 +2738,53 @@ function optionsMethod(arg: Node | undefined): string | null {
   if (obj?.type !== "object") return null;
   const verb = heldLiteral(obj, "method");
   return verb && HTTP_VERBS.has(verb.toLowerCase()) ? verb.toLowerCase() : null;
+}
+
+/**
+ * The test of the one conditional a URL value takes its arms from: a ternary written in place, or a local the
+ * value opens with or is (`requestUrl`, `` `${requestUrl}?…` ``) whose initializer is one.
+ */
+function urlCondition(v: Node): string | null {
+  const n = unwrapExpression(v);
+  if (!n) return null;
+  if (n.type === "ternary_expression") return n.childForFieldName("condition")?.text ?? null;
+  const head = n.type === "identifier" ? n
+    : n.type === "template_string" && n.namedChildren[0]?.type === "template_substitution" && n.namedChildren[0].startIndex === n.startIndex + 1
+      ? n.namedChildren[0].namedChild(0)
+      : null;
+  if (head?.type !== "identifier" || declaredParamInScope(head.text, head)) return null;
+  const init = unwrapExpression(localInitializer(head));
+  return init?.type === "ternary_expression" ? init.childForFieldName("condition")?.text ?? null : null;
+}
+
+/**
+ * The call a `const` object literal is handed to whole, in the scope that declares it
+ * (`const ajaxOptions = { url, method }; createAjaxRequest(ajaxOptions)`): the first such call after the
+ * declaration. Null for an object with a spread (it could bring another URL or method), a `let`, or none.
+ */
+function objectHandedTo(obj: Node): Node | null {
+  const decl = obj.parent;
+  if (decl?.type !== "variable_declarator" || decl.childForFieldName("value")?.id !== obj.id) return null;
+  if (!/^const\b/.test(decl.parent?.text ?? "") || obj.namedChildren.some((c) => c.type === "spread_element")) return null;
+  const name = decl.childForFieldName("name");
+  if (name?.type !== "identifier") return null;
+  let scope: Node | null = decl.parent;
+  while (scope && !FUNCTION_SCOPES.has(scope.type) && scope.type !== "statement_block" && scope.type !== "program") scope = scope.parent;
+  if (!scope) return null;
+  let found: Node | null = null;
+  const visit = (n: Node): void => {
+    if (found || n.endIndex <= decl.endIndex) return;
+    if (n.type === "call_expression" && n.startIndex > decl.endIndex) {
+      const args = n.childForFieldName("arguments")?.namedChildren ?? [];
+      if (args.some((a) => a.type === "identifier" && a.text === name.text) && !declaredParamInScope(name.text, n)) {
+        found = n;
+        return;
+      }
+    }
+    for (const c of n.namedChildren) visit(c);
+  };
+  visit(scope);
+  return found;
 }
 
 /** An init object literal with no `method` and no spread that could bring one. */

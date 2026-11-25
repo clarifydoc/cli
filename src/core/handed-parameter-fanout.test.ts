@@ -69,6 +69,25 @@ import { useSearch } from '../composables/useSearch';
 const { run } = useSearch((params) => MatchApi.list(params));
 </script>
 `,
+  // A callback default (real-repo FP): a screen calling the composable with no argument runs the default; a
+  // default doing more than one call states nothing.
+  "src/composables/useReport.ts": `import MatchApi from '../api/matchApi';
+export function useReport(fetcher = (params: any) => MatchApi.docs(params)) {
+  const fetchPage = async (page: number) => fetcher({ page });
+  return { open: (page: number) => fetchPage(page) };
+}
+export function useLog(fetcher = (params: any) => { console.log(params); return MatchApi.list(params); }) {
+  const fetchPage = async (page: number) => fetcher({ page });
+  return { open: (page: number) => fetchPage(page) };
+}
+`,
+  "src/views/Report.vue": `<template><button @click="open(1)">Report</button><button @click="openLog(1)">Log</button></template>
+<script setup lang="ts">
+import { useReport, useLog } from '../composables/useReport';
+const { open } = useReport();
+const { open: openLog } = useLog();
+</script>
+`,
   "src/server.js": `const express = require('express');
 const app = express();
 app.get('/api/matches', (req, res) => res.json([]));
@@ -98,6 +117,12 @@ describe("a function handed to a composable, with a spec calling it with a mock"
 
   it("follows the function a screen hands the composable, whatever its spec passes", () => {
     expect(hop("src/composables/useDrilldown.ts", "fetchPage", "fetcher")).toEqual(["matchApi.ts::MatchApi.list"]);
+  });
+
+  it("runs a callback default when a screen leaves the parameter out, and nothing for a default doing more", () => {
+    expect(hop("src/composables/useReport.ts", "fetchPage", "fetcher")).toEqual(["matchApi.ts::MatchApi.docs"]);
+    expect(hop("src/composables/useReport.ts", "fetchPage", "fetcher").length).toBe(1);
+    expect(summary.symbolLinks.filter((l) => l.sourceFile === "src/composables/useReport.ts" && l.callName === "fetcher" && l.targetSymbol === "MatchApi.list")).toEqual([]);
   });
 
   it("links nothing for a parameter two screens state differently, and runs each screen's own", () => {
@@ -196,5 +221,106 @@ describe("a composable running the callbacks of its options object", () => {
     expect(rows().filter((r) => r.startsWith("src/components/SignPlayerForm.vue") && r.endsWith("close"))).toEqual([]);
     expect(rows().filter((r) => r.includes("legacy") || r.endsWith("parkCar"))).toEqual([]);
     expect(rows().filter((r) => r.startsWith("src/components/RenameClubForm.vue") && r.endsWith("signPlayer"))).toEqual([]);
+  });
+});
+
+/**
+ * A composable with a callback default, called by screens that disagree (real-repo FP): one leaves the argument out
+ * and runs the default, one hands an arrow calling its own prop (bound by the screen that renders it), one hands
+ * its own request. Each screen's call runs its own.
+ */
+const USAGE_FILES: Record<string, string> = {
+  "package.json": `{ "name": "league-ui", "dependencies": { "vue": "^3.4.0", "axios": "^1.0.0" } }\n`,
+  "src/api/matchApi.ts": `import axios from 'axios';
+class MatchApi {
+  list(params: any) { return axios.get('/api/matches', { params }); }
+  docs(params: any) { return axios.get('/api/docs', { params }); }
+}
+export default new MatchApi();
+`,
+  "src/composables/useUsage.ts": `import MatchApi from '../api/matchApi';
+export function useUsage(fetcher = (params: any) => MatchApi.docs(params)) {
+  const fetchPage = async (page: number) => fetcher({ page });
+  const open = (page: number) => fetchPage(page);
+  return { open };
+}
+`,
+  "src/views/UsageDrawer.vue": `<template><button @click="load">Load</button></template>
+<script setup lang="ts">
+import { useUsage } from '../composables/useUsage';
+const props = defineProps({ fetcher: { type: Function, required: true } });
+const { open } = useUsage((params) => props.fetcher(params));
+function load() { open(1); }
+</script>
+`,
+  "src/views/PlayerUsage.vue": `<template><UsageDrawer :fetcher="fetchPlayers" /></template>
+<script setup lang="ts">
+import MatchApi from '../api/matchApi';
+import UsageDrawer from './UsageDrawer.vue';
+const fetchPlayers = (params: any) => MatchApi.list(params);
+</script>
+`,
+  "src/views/DefaultUsage.vue": `<template><button @click="load">Load</button></template>
+<script setup lang="ts">
+import { useUsage } from '../composables/useUsage';
+const { open } = useUsage();
+function load() { open(1); }
+</script>
+`,
+  "src/views/PlainDefault.vue": `<template><button @click="load">Load</button></template>
+<script setup>
+import { useUsage } from '../composables/useUsage';
+const {
+  open: openUsage,
+} = useUsage();
+function load() { openUsage(1); }
+</script>
+`,
+  "src/views/OddUsage.vue": `<template><button @click="load">Load</button></template>
+<script setup lang="ts">
+import MatchApi from '../api/matchApi';
+import { useUsage } from '../composables/useUsage';
+const { open } = useUsage((params) => MatchApi.list(params));
+function load() { open(1); }
+</script>
+`,
+  "src/server.js": `const express = require('express');
+const app = express();
+app.get('/api/matches', (req, res) => res.json([]));
+app.get('/api/docs', (req, res) => res.json([]));
+`,
+};
+
+describe("a composable's callback default and a prop-calling arrow, per screen", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "cd-usage-"));
+    for (const [rel, text] of Object.entries(USAGE_FILES)) {
+      await mkdir(dirname(join(dir, "app", rel)), { recursive: true });
+      await writeFile(join(dir, "app", rel), text);
+    }
+    await analyze({ projectRoot: join(dir, "app"), outputDir: join(dir, "out"), lsp: false, gitHistory: false });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 180_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const hop = (file: string, symbol: string, call: string): string[] =>
+    summary.symbolLinks.filter((l) => l.sourceFile === file && l.sourceSymbol === symbol && l.callName === call)
+      .map((l) => `${l.targetFile.split("/").pop()}::${l.targetSymbol}`).sort();
+
+  it("runs the default for a screen leaving the argument out, never every screen's at once", () => {
+    expect(hop("src/views/DefaultUsage.vue", "load", "open")).toContain("matchApi.ts::MatchApi.docs");
+    expect(hop("src/views/PlainDefault.vue", "load", "openUsage")).toContain("matchApi.ts::MatchApi.docs");
+    expect(hop("src/views/DefaultUsage.vue", "load", "open").filter((t) => t.includes("useUsage:arg0"))).toEqual([]);
+    expect(hop("src/composables/useUsage.ts", "fetchPage", "fetcher")).toEqual([]);
+  });
+
+  it("holds an arrow calling a prop and reaches what the rendering screen binds", () => {
+    expect(hop("src/views/UsageDrawer.vue", "load", "open")).toContain("UsageDrawer.vue::<useUsage:arg0@5>");
+    expect(hop("src/views/UsageDrawer.vue", "<useUsage:arg0@5>", "props.fetcher")).toEqual(["PlayerUsage.vue::fetchPlayers"]);
+    expect(hop("src/views/OddUsage.vue", "load", "open").filter((t) => t.startsWith("matchApi"))).toEqual(["matchApi.ts::MatchApi.list"]);
   });
 });

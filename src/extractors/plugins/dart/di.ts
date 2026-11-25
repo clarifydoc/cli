@@ -109,12 +109,37 @@ export function productOf(expr: string): string | null {
     else {
       const open = lambda[0].length - 1;
       if (closeOf(text, open) !== text.length) return null;
-      const ret = text.slice(open + 1, -1).trim().match(/^return\s+([\s\S]+?);?$/);
-      if (!ret) return null;
-      text = ret[1]!;
+      const ret = finalReturn(text.slice(open + 1, -1));
+      if (ret === null) return null;
+      text = ret;
     }
   }
   return constructionOf(text)?.impl ?? null;
+}
+
+/**
+ * The value a block body returns when its one `return` is its last statement
+ * (`{ final db = ref.watch(dbProvider); return ClubService(db); }`). Any other `return` in the
+ * body — an `if` block's (`if (Platform.isAndroid) { return AndroidClub(); }`), a nested
+ * closure's — leaves the product undecided.
+ */
+function finalReturn(body: string): string | null {
+  const text = body.trim();
+  let depth = 0;
+  let at = -1;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === "(" || ch === "{" || ch === "[") depth++;
+    else if (ch === ")" || ch === "}" || ch === "]") depth--;
+    else if (ch === "r" && /^return\b/.test(text.slice(i, i + 7)) && (i === 0 || !/[\w$]/.test(text[i - 1]!))) {
+      if (at >= 0 || depth !== 0) return null;
+      at = i;
+    }
+  }
+  if (at < 0) return null;
+  const ret = text.slice(at).match(/^return\s+([\s\S]+?);?\s*$/);
+  // Nothing may follow the return's own statement.
+  return ret && !/;\s*\S/.test(ret[1]!.replace(/\([^]*\)|\{[^]*\}/g, "")) ? ret[1]! : null;
 }
 
 // ─── Registrations ─────────────────────────────────────────────────────────
@@ -211,7 +236,10 @@ function providerWidget(lines: string[], i: number, at: number, via: string): Di
 /**
  * Riverpod `final repoProvider = Provider<UserRepo>((ref) => PgRepo());` — the
  * provider variable is the token `ref.read(repoProvider)` asks for, so the
- * binding is keyed by it alone.
+ * binding is keyed by it alone. The factory may be a block whose last statement
+ * returns the product (`(ref) { final db = …; return ClubService(db); }`) or a
+ * notifier's tear-off beside named arguments (`NotifierProvider<N, S>(N.new,
+ * dependencies: […])`), which `ref.read(squadProvider.notifier)` reaches.
  */
 function riverpodProvider(lines: string[], i: number): DiBinding | null {
   const decl = codeOf(lines[i]!).match(RIVERPOD_DECL_RE);
@@ -220,7 +248,9 @@ function riverpodProvider(lines: string[], i: number): DiBinding | null {
   // The call starts at the last segment: `Provider.autoDispose.family<…>(`.
   const call = callAt(code, raw, decl.index! + decl[0].search(/[A-Za-z_$]\w*\s*$/));
   const factory = call?.args.positional[0];
-  if (!call || !factory || call.args.named.size > 0) return null;
+  // Named arguments beside the factory (`dependencies: […]`, `name:`) say nothing about what it builds; a
+  // `create:` / `value:` one is another package's provider widget.
+  if (!call || !factory || call.args.named.has("create") || call.args.named.has("value")) return null;
   const impl = productOf(factory.code);
   return impl ? tokenBinding(decl[1]!, impl, i + 1, decl[2]!) : null;
 }

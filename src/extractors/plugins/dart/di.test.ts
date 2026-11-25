@@ -358,4 +358,38 @@ describe("dart container registrations", () => {
       { service: "repoProvider", implementation: "MemRepo", via: "overrideWithValue", keyedOnly: true },
     ]);
   });
+
+  it("reads a provider whose block body returns after other statements, and a notifier tear-off beside named arguments (real-repo FP)", () => {
+    expect(
+      bindings(
+        [
+          "final clubServiceProvider = Provider((ref) {",
+          "  final db = ref.watch(dbProvider);",
+          "  return ClubService(",
+          "    db.clubRepository,",
+          "  );",
+          "});",
+          "final squadProvider = NotifierProvider<SquadNotifier, SquadState>(SquadNotifier.new, dependencies: [clubServiceProvider]);",
+          "final pickProvider = Provider((ref) {",
+          "  if (ref.watch(flagProvider)) return FastPicker();",
+          "  return SlowPicker();",
+          "});",
+          "final kitProvider = Provider((ref) {",
+          "  ref.onDispose(() => ref.invalidate(dbProvider));",
+          "  return KitService();",
+          "});",
+          "final pitProvider = Provider<PitHandler>((ref) {",
+          "  if (Platform.isAndroid) {",
+          "    return AndroidPitHandler(ref);",
+          "  }",
+          "  return const StubPitHandler();",
+          "});",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      { service: "clubServiceProvider", implementation: "ClubService", via: "Provider", keyedOnly: true },
+      { service: "squadProvider", implementation: "SquadNotifier", via: "NotifierProvider", keyedOnly: true },
+      { service: "kitProvider", implementation: "KitService", via: "Provider", keyedOnly: true },
+    ]);
+  });
 });

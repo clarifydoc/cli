@@ -858,7 +858,6 @@ function handedParameterLinks(links: readonly SymbolLink[], ctx: LinkContext): S
   const out: SymbolLink[] = [];
   const seen = new Set<string>();
   const instanceLinks = (w: Candidate, rest: string, dflt: string | undefined): void => {
-    if (dflt) return;
     const ownerKey = `${w.analysis.filePath}\0${w.owner.name}`;
     // The function that makes the call, and the functions of the composable that reach it (`open` → `fetchPage`
     // → `fetcher(…)`): a screen calling any of them runs its own instance's argument.
@@ -880,9 +879,15 @@ function handedParameterLinks(links: readonly SymbolLink[], ctx: LinkContext): S
       // The calls of the composable made in the file the nested function was reached from.
       const made = (sitesOf.get(ownerKey) ?? []).filter((x) => x.file === into.sourceFile);
       if (made.length !== 1) continue;
-      const arg = made[0]!.call.args?.[w.index];
+      const site = made[0]!;
+      const arg = site.call.args?.[w.index];
+      // A call passing fewer arguments than the parameter's place runs its default (`useReport()`): its stated
+      // arguments end before it, or its count does.
+      const passed = site.call.args?.length ?? site.call.argCount;
+      const byDefault = !arg && dflt !== undefined && passed !== undefined && passed <= w.index;
       if (w.typed && !arg?.startsWith("{")) continue;
-      const hit = arg ? resolveStated(made[0]!.file, made[0]!.symbol, arg, rest, w.call.line) : null;
+      const hit = arg ? resolveStated(site.file, site.symbol, arg, rest, w.call.line)
+        : byDefault ? resolveStated(w.analysis.filePath, "<setup>", dflt, rest, w.call.line) : null;
       if (!hit) continue;
       const key = `${into.sourceFile}\0${into.sourceSymbol}\0${into.sourceLine}\0${into.callName}\0${hit.targetFile}\0${hit.targetSymbol}`;
       if (seen.has(key)) continue;
@@ -910,7 +915,8 @@ function handedParameterLinks(links: readonly SymbolLink[], ctx: LinkContext): S
       else complete = false;
     }
     const param = w.owner.params[w.index]!;
-    const dflt = param.defaultValue && /^[\w$]+$/.test(param.defaultValue) ? param.defaultValue : undefined;
+    // A default naming a function (`onDone = close`), or a callback calling one (`fetcher = (p) => Api.get(p)`).
+    const dflt = param.defaultValue && /^[\w$]+$/.test(param.defaultValue) ? param.defaultValue : param.defaultCallback;
     if (dflt) stated.push({ file: w.analysis.filePath, symbol: "<setup>", text: dflt });
     // Without a default, every call site must state it; with one, the sites that do and the default.
     if (stated.length === 0 || (!dflt && !complete)) {
@@ -920,7 +926,9 @@ function handedParameterLinks(links: readonly SymbolLink[], ctx: LinkContext): S
     const found = stated.map((st) => resolveStated(st.file, st.symbol, st.text, rest, w.call.line));
     const targets = new Map<string, SymbolLink>();
     for (const f of found) if (f) targets.set(`${f.targetFile}\0${f.targetSymbol}`, f);
-    if (found.some((f) => !f) || (targets.size > 1 && !dflt)) {
+    // With a default the sites and it may disagree too: where the composable runs it from a nested function, each
+    // screen's own instance (the default for a site passing none) says more than all of them at once.
+    if (found.some((f) => !f) || (targets.size > 1 && (!dflt || w.fn !== w.owner))) {
       // The call sites disagree (`useTableSort(a, onA)` in one screen, `useTableSort(b, onB)` in another):
       // each screen's own instance is what ITS call of the nested function (`sort(…)`) runs. When the
       // file holds one call of the composable, that call's arguments are the instance's.

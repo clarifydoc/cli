@@ -91,6 +91,10 @@ function heldName(fn: Node, imported: () => ReadonlySet<string>): string | null 
     const sub = subscriptionOf(call);
     if (sub) return `<${sub.component.replace(/^this\./, "")}@${sub.event}@${line}>`;
   }
+  if (parent.type === "arguments") {
+    const handed = hookPropCallback(fn, parent, line);
+    if (handed) return handed;
+  }
   if (parent.type === "jsx_expression") return jsxPropFunction(fn, parent, line);
   if (parent.type === "pair") return libraryCallbackName(fn) ?? pairName(parent, line, imported);
   // `toast.action = () => …` inside a function: what runs when the holder's member is called.
@@ -101,6 +105,26 @@ function heldName(fn: Node, imported: () => ReadonlySet<string>): string | null 
     return insideFunction(parent) ? `<${path}@${line}>` : null;
   }
   return null;
+}
+
+/**
+ * `useFixtureList((params) => props.fetcher(params))`: an arrow handed to a hook that only calls a function the
+ * component's own props hold → `<useFixtureList:arg0@34>`. The hook runs it later; the prop is bound by whoever renders
+ * the component, which a link from the arrow's own function reaches once the props are joined.
+ */
+function hookPropCallback(fn: Node, args: Node, line: number): string | null {
+  const callee = args.parent?.type === "call_expression" ? args.parent.childForFieldName("function") : null;
+  if (callee?.type !== "identifier" || !/^use[A-Z][\w$]*$/.test(callee.text)) return null;
+  let body = fn.childForFieldName("body");
+  if (body?.type === "statement_block" && body.namedChildCount === 1) {
+    const only = body.namedChild(0);
+    body = only?.type === "expression_statement" || only?.type === "return_statement" ? only.namedChild(0) : null;
+  }
+  if (body?.type === "await_expression") body = body.namedChild(0);
+  const called = body?.type === "call_expression" ? body.childForFieldName("function") : null;
+  if (!called || !/^props\.[A-Za-z_$][\w$]*$/.test(called.text)) return null;
+  const index = args.namedChildren.filter((a) => a?.type !== "comment").findIndex((a) => a!.id === fn.id);
+  return index < 0 ? null : `<${callee.text}:arg${index}@${line}>`;
 }
 
 /**

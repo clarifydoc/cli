@@ -1134,6 +1134,12 @@ export interface ParamInfo {
   type: string | null;
   defaultValue: string | null;
   /**
+   * A default that is a callback calling one function (`fetcher = (p) => ClubsApi.list(p)`), spelled as a call's
+   * argument of that shape is (`=>ClubsApi.list`, `CallInfo.args`): what a call leaving the parameter out runs.
+   * Omitted for any other default.
+   */
+  defaultCallback?: string;
+  /**
    * The name a call writes for this parameter when it is not `name` (Swift's external label: `callback handler: …`
    * is passed as `callback:`; `_` for a parameter a call names not at all). Omitted when the call writes `name`.
    */

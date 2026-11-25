@@ -297,7 +297,12 @@ const EVENT_NAME = /^['"][\w.:-]+['"]$/;
 function handedArgs(node: Node): string[] | null {
   if (node.type !== "call_expression") return null;
   const args = node.childForFieldName("arguments")?.namedChildren.filter((a): a is Node => !!a && a.type !== "comment") ?? [];
-  if (args.length === 0 || args.length > 8) return null;
+  // A hook called with nothing (`useFixtureList()`) states that it passes nothing: its parameters take their defaults.
+  if (args.length === 0) {
+    const callee = node.childForFieldName("function");
+    return callee?.type === "identifier" && HOOK_NAME.test(callee.text) && node.childForFieldName("arguments")?.type === "arguments" ? [] : null;
+  }
+  if (args.length > 8) return null;
   const fn = node.childForFieldName("function");
   // A project wrapper sending the event its caller names (`this.socket.clientSend("match_update", room)`):
   // the literal, quoted as written, for core to fill the wrapper's channel parameter with.
@@ -324,7 +329,8 @@ function handedArgs(node: Node): string[] | null {
   // A hook / composable (`useTableSort(sortBy, resetPage)`): what it is handed is what its body calls by the
   // parameter's name — a function or object named by an identifier, or a callback arrow that only calls one.
   if (HOOK_NAME.test(fn.text)) {
-    const spell = (a: Node): string => (chain(a) || isParam(a) || a.type === "identifier" && a.text !== "undefined" && !memberParam(a) ? a.text : callbackTarget(a));
+    // An arrow held as a function of its own (`<useFixtureList:arg0@34>`, calling a prop) is handed by that name.
+    const spell = (a: Node): string => (chain(a) || isParam(a) || a.type === "identifier" && a.text !== "undefined" && !memberParam(a) ? a.text : handedHeld(a) ?? callbackTarget(a));
     // An options object (`useForm({ onSubmit: async (d) => save(d), onSuccess: close })`): each member the hook may
     // call as `config.onSubmit(…)`, spelled as an argument would be, `{onSubmit:=>save,onSuccess:close}`.
     const handed = args.map((a) => (a.type === "object" ? optionsArg(a, spell) : spell(a)));
@@ -361,6 +367,12 @@ function optionsArg(obj: Node, spell: (a: Node) => string): string {
   return parts.length > 0 ? `{${parts.join(",")}}` : "";
 }
 
+/** The held function an argument arrow is (`<useFixtureList:arg0@34>`, see held-functions.ts `hookPropCallback`), else null. */
+function handedHeld(a: Node): string | null {
+  const held = heldFunction(a);
+  return held && /:arg\d+@\d+>$/.test(held) ? held : null;
+}
+
 /** A method or function expression whose body is one call: `=>callee`, as `callbackTarget` spells an arrow's. */
 function methodTarget(fn: Node): string {
   const body = fn.childForFieldName("body");
@@ -376,7 +388,7 @@ function methodTarget(fn: Node): string {
 const HOOK_NAME = /^use[A-Z][\w$]*$/;
 
 /** `x => emit2(x)` / `() => save(club)`: `=>emit2` — a callback arrow whose body is one call of a plain name or member chain. */
-function callbackTarget(arg: Node): string {
+export function callbackTarget(arg: Node): string {
   if (arg.type !== "arrow_function") return "";
   let body = arg.childForFieldName("body");
   if (body?.type === "statement_block" && body.namedChildCount === 1) {
