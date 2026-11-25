@@ -37,9 +37,9 @@ export class EffectsCollector {
 
   get throwsFull(): boolean { return this.thrown.length >= MAX_FACTS; }
 
-  addThrow(type: string, line: number, declared?: true): void {
+  addThrow(type: string, line: number, declared?: true, exact?: true): void {
     if (this.thrown.length >= MAX_FACTS) return;
-    this.thrown.push({ type, line, ...(declared ? { declared } : {}) });
+    this.thrown.push({ type, line, ...(declared ? { declared } : {}), ...(exact ? { exact } : {}) });
   }
 
   result(): Effects | null {

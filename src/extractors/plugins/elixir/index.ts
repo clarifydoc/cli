@@ -1,5 +1,7 @@
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractClassesWithSpec } from "../shared/regex-base.js";
+import { applyEffects } from "../shared/member-effects-kit.js";
+import { elixirAliases, elixirMemberEffects } from "./member-effects.js";
 import type { ClassInfo, DataSourceInfo, ImportInfo, ScreenInfo } from "../../../types/analysis.js";
 import { heexSigils, readHeex } from "./heex.js";
 import { attachEctoSchema, attachPatternKeys, extractEctoRelations, extractElixirRequestAccess, extractPhoenixRoutes } from "./phoenix.js";
@@ -573,10 +575,13 @@ export const elixirSpec: RegexLangSpec = {
   /** Ecto `schema` fields → properties; action-head pattern keys → `requestAccess`. */
   postProcessClasses: (lines, classes) => {
     const channel = isChannelModule(lines);
+    const aliases = elixirAliases(lines, extractElixirImports(lines));
     for (const cls of classes) {
       attachEctoSchema(lines, cls);
       attachPatternKeys(lines, cls.methods);
       nameEventClauses(lines, cls, channel);
+      // The exception modules each function raises.
+      for (const m of cls.methods) applyEffects(m, elixirMemberEffects(lines, m, aliases));
     }
     return classes;
   },

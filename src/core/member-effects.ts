@@ -202,7 +202,8 @@ export function joinMemberEffects(
       fieldWrites.push({ class: target.cls.name, classFile: target.file, member: w.member, function: symbol, file: a.filePath, line: w.line, via });
     }
     for (const t of fn.throws ?? []) {
-      const known = locate(t.type, a.filePath, project, t.line);
+      // A name stated whole (`exact`) is the class of exactly that name, never one sharing its last segment.
+      const known = t.exact && !byName.has(t.type) ? null : locate(t.type, a.filePath, project, t.line);
       thrownTypes.push({ type: t.type, function: symbol, file: a.filePath, line: t.line, ...(t.declared ? { declared: true as const } : {}), ...(known ? { classFile: known.file } : {}) });
     }
   };

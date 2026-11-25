@@ -1738,8 +1738,10 @@ export interface FunctionInfo {
    * The exception types the function throws: `throw new Overdrawn(…)` (the type as written, qualifier kept) and what its
    * signature declares (Java `throws`, Kotlin `@Throws`; `declared`). A rethrow of a variable and a thrown call result
    * state nothing. Core resolves the types to project classes (`ProjectAnalysis.thrownTypes`). Absent when it throws none.
+   * `exact` says the written name is the type's whole name (an Elixir module, `File.Error`): core matches it whole,
+   * never by its last segment.
    */
-  throws?: Array<{ type: string; line: number; declared?: true }>;
+  throws?: Array<{ type: string; line: number; declared?: true; exact?: true }>;
   line: number;
   endLine: number;
   /** The first sentence of its doc comment or docstring, capped (core/doc-comments.ts). Absent when it has none. */

@@ -1065,3 +1065,66 @@ describe("member effects, C++", () => {
     expect(thrown).toEqual(["ClubClosed <- Club.win:16"]);
   });
 });
+
+describe("member effects, Elixir", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-member-effects-elixir-"));
+    await mkdir(join(dir, "lib", "league"), { recursive: true });
+    await writeFile(join(dir, "mix.exs"), "defmodule League.MixProject do\n  use Mix.Project\n  def project, do: [app: :league]\nend\n");
+    await writeFile(join(dir, "lib", "league", "club.ex"), [
+      "defmodule League.ClubClosed do",
+      "  defexception message: \"closed\"",
+      "end",
+      "",
+      "defmodule League.Club do",
+      "  alias League.ClubClosed",
+      "",
+      "  def win(club, n) do",
+      "    if n < 0, do: raise(ClubClosed)",
+      "    if n == 0 do",
+      "      raise ClubClosed, message: \"zero\"",
+      "    end",
+      "    raise League.Missing, \"nope\"",
+      "  end",
+      "",
+      "  def close(club) do",
+      "    try do",
+      "      win(club, 1)",
+      "    rescue",
+      "      e in ArgumentError -> reraise e, __STACKTRACE__",
+      "    end",
+      "    # raise ClubClosed",
+      "    raise \"raise ClubClosed\"",
+      "  end",
+      "",
+      "  def open!(path), do: File.read(path) || raise(File.Error)",
+      "end",
+      "",
+      "defmodule League.Missing do",
+      "  defexception [:message]",
+      "end",
+      "",
+      "defmodule Error do",
+      "  defstruct [:code]",
+      "end",
+    ].join("\n"));
+    await analyze({ projectRoot: dir, outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 60_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("lists the module after raise through the file's aliases, a dotted name whole, never a reraised variable or a message", () => {
+    const thrown = (summary.thrownTypes ?? []).map((t) => `${t.type} <- ${t.function}:${t.line}${t.classFile ? " known" : ""}`).sort();
+    expect(thrown).toEqual([
+      "File.Error <- League.Club.open!:26",
+      "League.ClubClosed <- League.Club.win:11 known",
+      "League.ClubClosed <- League.Club.win:9 known",
+      "League.Missing <- League.Club.win:13 known",
+    ]);
+    expect(summary.fieldWrites ?? []).toEqual([]);
+  });
+});
