@@ -35,12 +35,40 @@ const FILES: Record<string, string> = {
     "export default GarageGateway;",
   ].join("\n"),
   "web/src/other/Plain.ts": "export const Settings = { closeClub() { return 3; } };\n",
+  // A literal that mixes values with its functions (real-repo shape): a gateway holding its base and a retry count,
+  // and a controller written as a function declaration whose result the module exports.
+  "web/src/gateways/Stand.gateway.ts": [
+    "import request from '../utils/request';",
+    "const base = '/api/stands';",
+    "const StandApi = () => ({",
+    "  base,",
+    "  retries: 3,",
+    "  listStands() { return request({ url: '/api/stands' }); },",
+    "});",
+    "export default StandApi();",
+  ].join("\n"),
+  "web/src/menu/pitch.ts": [
+    "export function pitchController(label: string) {",
+    "  return {",
+    "    label,",
+    "    size: label.length,",
+    "    whistle: () => label.toUpperCase(),",
+    "    close() { return label; },",
+    "  } as const;",
+    "}",
+    "export const pitchLeft = pitchController('left');",
+  ].join("\n"),
+  // The decoy: an exported factory whose RESULT no module exports keeps its literal whole.
+  "web/src/other/Kit.ts": "export function kitController() {\n  return { colour: 'red', whistle: () => 1, close() { return 2; } };\n}\n",
   "web/src/Panel.tsx": [
     "import { useMutation } from '@tanstack/react-query';",
     "import LeagueGateway from './gateways/League.gateway';",
     "import { PlayerGateway } from './gateways/Plain.gateway';",
     "import GarageGateway from './other/Garage.gateway';",
     "import { Settings } from './other/Plain';",
+    "import StandGateway from './gateways/Stand.gateway';",
+    "import { pitchLeft } from './menu/pitch';",
+    "import { kitController } from './other/Kit';",
     "export function Panel() {",
     "  const close = useMutation({ mutationFn: LeagueGateway.closeClub });",
     "  const garage = useMutation({ mutationFn: GarageGateway.closeClub });",
@@ -52,8 +80,12 @@ const FILES: Record<string, string> = {
     "export const loadClubs = () => LeagueGateway.getClubs();",
     "export const loadPlayers = () => PlayerGateway.listPlayers();",
     "export const loadUnknown = () => LeagueGateway.renameClub();",
+    "export const loadStands = () => StandGateway.listStands();",
+    "export const blowWhistle = () => pitchLeft.whistle();",
+    "export const shutPitch = () => pitchLeft.close();",
+    "export const kitWhistle = () => kitController().whistle();",
   ].join("\n"),
-  "server/app.js": "const express = require('express');\nconst app = express();\napp.get('/api/clubs', (q, s) => s.json([]));\napp.delete('/api/clubs/:id', (q, s) => s.json({}));\napp.get('/api/players', (q, s) => s.json([]));\n",
+  "server/app.js": "const express = require('express');\nconst app = express();\napp.get('/api/clubs', (q, s) => s.json([]));\napp.delete('/api/clubs/:id', (q, s) => s.json({}));\napp.get('/api/players', (q, s) => s.json([]));\napp.get('/api/stands', (q, s) => s.json([]));\n",
 };
 
 describe("a gateway exported as a factory's result", () => {
@@ -95,6 +127,19 @@ describe("a gateway exported as a factory's result", () => {
     expect(all.some((r) => r.startsWith("onGarage ") && r.includes("League.gateway"))).toBe(false);
     expect(all.some((r) => r.startsWith("onSettings ") && r.includes("gateways/"))).toBe(false);
     expect(all.some((r) => r.startsWith("loadUnknown ") && r.includes("League.gateway"))).toBe(false);
+  });
+
+  it("splits a literal that mixes values with functions when the module exports the factory's result", () => {
+    expect(rows()).toEqual(expect.arrayContaining([
+      "loadStands -StandGateway.listStands-> web/src/gateways/Stand.gateway.ts#StandApi.listStands INFERRED",
+      "blowWhistle -pitchLeft.whistle-> web/src/menu/pitch.ts#pitchController.whistle INFERRED",
+      "shutPitch -pitchLeft.close-> web/src/menu/pitch.ts#pitchController.close INFERRED",
+    ]));
+    const routes = (summary.symbolLinks ?? []).filter((l) => l.sourceFile === "web/src/gateways/Stand.gateway.ts" && l.strategy === "api-route").map((l) => `${l.sourceSymbol} ${l.targetSymbol}`);
+    expect(routes).toEqual(["StandApi.listStands route:GET /api/stands"]);
+    // A value member is no function, and the decoy whose result no module exports keeps its literal whole.
+    expect(rows().some((r) => r.includes("#StandApi.base") || r.includes("#StandApi.retries") || r.includes("#pitchController.size"))).toBe(false);
+    expect(rows().some((r) => r.startsWith("kitWhistle ") && r.includes("menu/pitch.ts"))).toBe(false);
   });
 
   it("carries a member's click to its own route only, never to a sibling member's", () => {

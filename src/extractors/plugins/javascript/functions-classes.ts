@@ -2660,6 +2660,14 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
         child.type === "generator_function_declaration"
       ) {
         functions.push(this.parseJsFunction(child, isExported));
+        // `export function menuController(store) { return { subscribe: store.subscribe, toggle: (…) => … } }` with
+        // `export const menuLeft = menuController(leftStore)`: the module exports the factory's result, so each function
+        // member is a function of its own (`menuController.toggle`), as for an arrow factory (once: a default-exported
+        // component factory was split above).
+        const declared = moduleLevel ? child.childForFieldName("name")?.text : undefined;
+        const singleton = declared && exportedFactoryNames(child).has(declared) && !functions.some((f) => f.name.startsWith(`${declared}.`))
+          ? functionObjectReturned(child, 1, true) : null;
+        if (singleton) this.extractObjectMembers(declared!, singleton, functions, false, 0);
         // Descend into the body: NAMED functions nested inside a function are
         // real symbols — a React component's `const onSubmitHandler = async
         // (e) => {…}` is where the click handling (and its api-calls) actually
@@ -2719,8 +2727,9 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
               // `XApiAxiosParamCreator = function (configuration) { return { createX: async (…) => {…} } }`:
               // each member is a function of its own (`XApiAxiosParamCreator.createX`), so a request
               // it builds belongs to that operation, not to the factory.
-              // A factory the file exports the RESULT of (`export default new Proxy(ClubApi(), …)`) is the same client: its members too.
-              const members = !built && moduleLevel ? (isExported ? functionObjectReturned(value) : exportedFactoryNames(value).has(name) ? functionObjectReturned(value, 1) : null) : null;
+              // A factory the file exports the RESULT of (`export default new Proxy(ClubApi(), …)`) is the same client: its
+              // function members too, even beside values (`{ base, listStands() {…} }`).
+              const members = !built && moduleLevel ? (exportedFactoryNames(value).has(name) ? functionObjectReturned(value, 1, true) : isExported ? functionObjectReturned(value) : null) : null;
               if (members) this.extractObjectMembers(name, members, functions, false, 0);
               // react-redux's function-form `mapDispatchToProps = dispatch => ({ onSave: … })`: each
               // member is the prop a component calls (`this.props.onSave(club)`), a function of its own.
@@ -3928,13 +3937,18 @@ function addDispatchPropCalls(fn: FunctionInfo, props: ReadonlyMap<string, strin
   fn.calls.push(...extra);
 }
 
-/** The object a factory returns when every member (`least` or more, two by default) is a function, else null. */
-function functionObjectReturned(fn: Node, least = 2): Node | null {
+/**
+ * The object a factory returns when every member (`least` or more, two by default) is a function, else null. `mixed`:
+ * the literal may hold values beside its functions (`{ base, retries: 3, listStands() {…} }`) — `least` functions are
+ * enough, and only they become functions of their own; for a factory whose result the module exports, the singleton.
+ */
+function functionObjectReturned(fn: Node, least = 2, mixed = false): Node | null {
   const obj = factoryObject(fn);
   if (!obj) return null;
   const members = obj.namedChildren.filter((m) => m.type !== "comment");
-  if (members.length < least) return null;
   const isFn = (m: Node) => m.type === "method_definition" || (m.type === "pair" && /^(?:arrow_function|function_expression)$/.test(m.childForFieldName("value")?.type ?? ""));
+  if (mixed) return members.filter(isFn).length >= least ? obj : null;
+  if (members.length < least) return null;
   return members.every(isFn) ? obj : null;
 }
 
@@ -3945,8 +3959,7 @@ function factoryObject(fn: Node): Node | null {
   const body = fn.childForFieldName("body");
   if (body?.type !== "statement_block") return null;
   const last = body.namedChildren.filter((n) => n.type !== "comment").pop();
-  let ret = last?.type === "return_statement" ? last.namedChild(0) : null;
-  while (ret?.type === "parenthesized_expression") ret = ret.namedChild(0);
+  const ret = typeOnlyUnwrapped(last?.type === "return_statement" ? last.namedChild(0) : null);
   return ret?.type === "object" ? ret : null;
 }
 
@@ -3974,9 +3987,14 @@ export function objectAssignArgs(node: Node | null | undefined): Node[] {
 
 function returnedObject(fn: Node): Node | null {
   if (fn.type !== "arrow_function") return null;
-  let body: Node | null = fn.childForFieldName("body");
-  while (body?.type === "parenthesized_expression") body = body.namedChild(0);
+  const body = typeOnlyUnwrapped(fn.childForFieldName("body"));
   return body?.type === "object" ? body : null;
+}
+
+/** An expression without the parentheses and TypeScript-only wrappers around it: `({ … }) as const`, `{ … } satisfies T` are the literal. */
+function typeOnlyUnwrapped(n: Node | null): Node | null {
+  while (n && (n.type === "parenthesized_expression" || n.type === "as_expression" || n.type === "satisfies_expression")) n = n.namedChild(0);
+  return n;
 }
 
 /**
