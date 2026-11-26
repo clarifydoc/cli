@@ -191,11 +191,14 @@ const GENERIC_RULES: SecurityRule[] = [
   // A template literal is only SQL when it contains a real statement shape
   // (SELECT … FROM / INSERT INTO / UPDATE … SET / DELETE FROM) next to an
   // interpolation — a bare keyword substring matches ordinary prose and
-  // identifiers (`totalSelected`, `effectsOfUpdate`).
+  // identifiers (`totalSelected`, `effectsOfUpdate`). The spans between the
+  // statement and the interpolation stop at a line break: findings are read per
+  // line anyway, and on the whole-text gate an unbounded `[^`]*` read from every
+  // statement to the end of a file with no backtick (a 5 MB SQL dump: 80 s).
   {
     category: "sql-injection",
     severity: "high",
-    pattern: /\b(?:SELECT\s+[\w*,\s]+?\s*FROM|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM)\b[^`]*\$\{|\$\{[^}]*\}[^`]*\b(?:SELECT\s+[\w*,\s]+?\s*FROM|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM)\b/i,
+    pattern: /\b(?:SELECT\s+[\w*,\s]+?\s*FROM|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM)\b[^`\n]*\$\{|\$\{[^}\n]*\}[^`\n]*\b(?:SELECT\s+[\w*,\s]+?\s*FROM|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM)\b/i,
     message: "Possible SQL injection via template literal. Use parameterized queries.",
     priority: 12,
     excludeTest: true,

@@ -31,6 +31,20 @@ describe("scanSecurity — sql-injection template rule", () => {
     expect(cats("db.query(`SELECT * FROM players WHERE id = ${id}`);", "src/app.spec.ts"))
       .not.toContain("sql-injection");
   });
+
+  // A large SQL dump has thousands of statements and no backtick: the whole-text gate once read from every
+  // statement to the end of the file looking for an interpolation (a 5 MB dump took 80 s). (real-repo FP)
+  it("reads a large file of statements with no backtick in linear time", () => {
+    const dump = "INSERT INTO clubs (id, name) VALUES (1, 'Rovers');\nSELECT id, name FROM players;\n".repeat(5_000);
+    const started = Date.now();
+    expect(scanSecurity(dump, "db/league.sql", "sql").map((i) => i.category)).not.toContain("sql-injection");
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it("still finds a statement and its interpolation on one line of a large file", () => {
+    const body = "SELECT id, name FROM players;\n".repeat(20_000);
+    expect(cats(`${body}db.query(\`SELECT * FROM clubs WHERE id = \${id}\`);\n`)).toContain("sql-injection");
+  });
 });
 
 // ─── XSS: innerHTML assignments ─────────────────────────────────────────────
