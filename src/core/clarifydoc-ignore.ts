@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from "fs";
 import { sep, posix, resolve, dirname } from "path";
 import { trimTrailingSlashes } from "../extractors/plugins/shared/path-utils.js";
 import { glob, type GlobOptions } from "./glob.js";
+import { perRunAnswer } from "../extractors/shared/dir-listings.js";
 
 /**
  * Full gitignore-semantics ignore-file support for ClarifyDoc.
@@ -83,6 +84,12 @@ export interface IgnorePattern {
  * dropped (see below).
  */
 export function loadIgnorePatterns(root: string, scanRoot: string = root): IgnorePattern[] {
+  // Read once per analysis and root: every reader that walks the tree asks again, and each ask walked up to the
+  // project root checking markers (about 600 `existsSync` calls from a tree with no VCS directory). The callers only read it.
+  return perRunAnswer(`ignore\0${resolve(root)}\0${resolve(scanRoot)}`, () => readIgnorePatterns(root, scanRoot));
+}
+
+function readIgnorePatterns(root: string, scanRoot: string): IgnorePattern[] {
   const absRoot = resolve(root);
   const ceiling = findProjectRoot(absRoot) ?? absRoot;
 

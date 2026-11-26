@@ -43,6 +43,20 @@ let sharing = 0;
 
 const listingKey = (dir: string): string => (dir.length > 1 && (dir.endsWith("/") || dir.endsWith("\\")) ? dir.slice(0, -1) : dir);
 
+const runAnswers = new Map<string, unknown>();
+
+/**
+ * An answer read from the tree (an ignore file's patterns) kept for the analysis that asked, like the
+ * listings: asked outside a run, or after it ended, `make` runs every time. The answer is shared, never mutated.
+ */
+export function perRunAnswer<T>(key: string, make: () => T): T {
+  if (sharing === 0) return make();
+  if (runAnswers.has(key)) return runAnswers.get(key) as T;
+  const answer = make();
+  runAnswers.set(key, answer);
+  return answer;
+}
+
 /** Start sharing listings; call the returned function when the analysis ends (the last one out empties them). */
 export function shareDirectoryEntries(): () => void {
   sharing++;
@@ -50,7 +64,10 @@ export function shareDirectoryEntries(): () => void {
   return () => {
     if (ended) return;
     ended = true;
-    if (--sharing === 0) entryListings.clear();
+    if (--sharing === 0) {
+      entryListings.clear();
+      runAnswers.clear();
+    }
   };
 }
 

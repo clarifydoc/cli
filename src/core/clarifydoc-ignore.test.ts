@@ -5,6 +5,7 @@ import { join } from "path";
 import { loadIgnorePatterns, isIgnored, fnmatch, ignoredDirectories } from "./clarifydoc-ignore.js";
 import { discoverFiles } from "./file-discovery.js";
 import { glob } from "./glob.js";
+import { shareDirectoryEntries } from "../extractors/shared/dir-listings.js";
 
 let root: string;
 
@@ -306,5 +307,20 @@ describe("an anchored pattern against the leading directories of a path", () => 
     expect(isIgnored("/r/distant/a.js", "/r", patterns)).toBe(false);
     expect(isIgnored("/r/lib/gen/a.js", "/r", [anchored("lib/gen")])).toBe(true);
     expect(isIgnored("/r/lib/other/a.js", "/r", [anchored("lib/gen")])).toBe(false);
+  });
+});
+
+describe("ignore patterns are read once per analysis", () => {
+  it("answers from the first read while a run shares, and re-reads outside one", () => {
+    writeFileSync(join(root, ".clarifydocignore"), "dist/\n");
+    const end = shareDirectoryEntries();
+    try {
+      const first = loadIgnorePatterns(root);
+      writeFileSync(join(root, ".clarifydocignore"), "dist/\nbuild/\n");
+      expect(loadIgnorePatterns(root)).toBe(first);
+    } finally {
+      end();
+    }
+    expect(loadIgnorePatterns(root).map((p) => p.glob)).toEqual(["dist", "build"]);
   });
 });
