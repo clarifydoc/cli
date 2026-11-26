@@ -6245,9 +6245,14 @@ function resolveCallToDefinitionBody(
   if (statedFactory && statedMember !== "open") {
     const member = statedMember;
     if (member === "factory") {
-      // A member the module's exported object holds, written in the literal the factory returns: the factory's own
-      // code is that member's (INFERRED, the factory is a stand-in for the function the literal does not name).
-      return mkLink(statedFactory.file, statedFactory.def.name, statedFactory.def.line, "INFERRED", exportedVia && !call.via ? "direct" : "factory-via");
+      // A member the module's exported object holds, written in the literal the factory returns: the plugin states it
+      // as a function of its own (`ClubApi.closeClub`), and the call lands there — never on the factory, whose other
+      // members' requests are not this member's. A literal it did not split links nothing.
+      if (exportedVia && !call.via) {
+        const own = statedFactory.analysis.functions.filter((f) => f.name === `${statedFactory.def.name}.${parts[1]}` && f.line >= statedFactory.def.line && f.endLine <= statedFactory.def.endLine);
+        return own.length === 1 ? mkLink(statedFactory.file, own[0]!.name, own[0]!.line, "INFERRED", "direct") : null;
+      }
+      return mkLink(statedFactory.file, statedFactory.def.name, statedFactory.def.line, "INFERRED", "factory-via");
     }
     if (member) {
       const at = statedFactory.analysis.functions.filter((f) => f.name === member && f.line > statedFactory.def.line && f.endLine <= statedFactory.def.endLine);

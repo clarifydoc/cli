@@ -1,4 +1,5 @@
 import { responsesOf } from "./responses.js";
+import { exportedFactoryNames } from "./imports-exports.js";
 import { derivedLocalsOf } from "./arg-origins.js";
 import { extractZodSchemas } from "./zod-schemas.js";
 import type { Node, Tree } from "web-tree-sitter";
@@ -2673,7 +2674,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
               // `XApiAxiosParamCreator = function (configuration) { return { createX: async (…) => {…} } }`:
               // each member is a function of its own (`XApiAxiosParamCreator.createX`), so a request
               // it builds belongs to that operation, not to the factory.
-              const members = !built && moduleLevel && isExported ? functionObjectReturned(value) : null;
+              // A factory the file exports the RESULT of (`export default new Proxy(ClubApi(), …)`) is the same client: its members too.
+              const members = !built && moduleLevel ? (isExported ? functionObjectReturned(value) : exportedFactoryNames(value).has(name) ? functionObjectReturned(value, 1) : null) : null;
               if (members) this.extractObjectMembers(name, members, functions, false, 0);
               // react-redux's function-form `mapDispatchToProps = dispatch => ({ onSave: … })`: each
               // member is the prop a component calls (`this.props.onSave(club)`), a function of its own.
@@ -3881,12 +3883,12 @@ function addDispatchPropCalls(fn: FunctionInfo, props: ReadonlyMap<string, strin
   fn.calls.push(...extra);
 }
 
-/** The object a factory returns when every member (two or more) is a function, else null. */
-function functionObjectReturned(fn: Node): Node | null {
+/** The object a factory returns when every member (`least` or more, two by default) is a function, else null. */
+function functionObjectReturned(fn: Node, least = 2): Node | null {
   const obj = factoryObject(fn);
   if (!obj) return null;
   const members = obj.namedChildren.filter((m) => m.type !== "comment");
-  if (members.length < 2) return null;
+  if (members.length < least) return null;
   const isFn = (m: Node) => m.type === "method_definition" || (m.type === "pair" && /^(?:arrow_function|function_expression)$/.test(m.childForFieldName("value")?.type ?? ""));
   return members.every(isFn) ? obj : null;
 }

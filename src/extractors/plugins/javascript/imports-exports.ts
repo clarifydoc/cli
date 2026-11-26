@@ -812,3 +812,33 @@ function factoryResultOf(value: Node | null | undefined): string | null {
   const callee = at.childForFieldName("function");
   return callee?.type === "identifier" ? callee.text : null;
 }
+
+const exportedResults = new WeakMap<object, ReadonlySet<string>>();
+
+/**
+ * The factories whose result the file exports (`export default new Proxy(ClubApi(), …)`, `export default gateway` after
+ * `const gateway = ClubApi()`, `export const gateway = ClubApi()`): the names `ExportInfo.factoryOf` states, read once per tree.
+ */
+export function exportedFactoryNames(root: Node): ReadonlySet<string> {
+  const known = exportedResults.get(root.tree);
+  if (known) return known;
+  const out = new Set<string>();
+  for (const stmt of root.tree.rootNode.namedChildren) {
+    if (stmt?.type !== "export_statement") continue;
+    const declaration = stmt.childForFieldName("declaration");
+    if (declaration) {
+      for (const d of declaration.namedChildren) {
+        if (d?.type !== "variable_declarator") continue;
+        const f = factoryResultOf(d.childForFieldName("value"));
+        if (f) out.add(f);
+      }
+      continue;
+    }
+    if (!stmt.children.some((k) => k.type === "default" || k.type === "=")) continue;
+    const value = stmt.childForFieldName("value");
+    const f = value?.type === "identifier" ? factoryResultOf(topLevelInitializer(root.tree.rootNode, value.text)) : factoryResultOf(value);
+    if (f) out.add(f);
+  }
+  exportedResults.set(root.tree, out);
+  return out;
+}

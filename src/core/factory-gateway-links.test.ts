@@ -76,15 +76,15 @@ describe("a gateway exported as a factory's result", () => {
 
   it("links a call on the exported binding to the factory whose literal states the member", () => {
     expect(rows()).toEqual(expect.arrayContaining([
-      "loadClubs -LeagueGateway.getClubs-> web/src/gateways/League.gateway.ts#ClubApi INFERRED",
-      "loadPlayers -PlayerGateway.listPlayers-> web/src/gateways/Plain.gateway.ts#ClubApi INFERRED",
+      "loadClubs -LeagueGateway.getClubs-> web/src/gateways/League.gateway.ts#ClubApi.getClubs INFERRED",
+      "loadPlayers -PlayerGateway.listPlayers-> web/src/gateways/Plain.gateway.ts#ClubApi.listPlayers INFERRED",
     ]));
   });
 
   it("reaches the factory from a mutation whose option names a member of the imported gateway", () => {
     expect(rows()).toEqual(expect.arrayContaining([
-      "onClose -close.mutateAsync-> web/src/gateways/League.gateway.ts#ClubApi INFERRED",
-      "onGarage -garage.mutate-> web/src/other/Garage.gateway.ts#ClubApi INFERRED",
+      "onClose -close.mutateAsync-> web/src/gateways/League.gateway.ts#ClubApi.closeClub INFERRED",
+      "onGarage -garage.mutate-> web/src/other/Garage.gateway.ts#ClubApi.closeClub INFERRED",
     ]));
   });
 
@@ -97,9 +97,15 @@ describe("a gateway exported as a factory's result", () => {
     expect(all.some((r) => r.startsWith("loadUnknown ") && r.includes("League.gateway"))).toBe(false);
   });
 
-  it("carries the click through the factory to its routes", () => {
-    const links = (summary.symbolLinks ?? []).filter((l) => l.sourceFile === "web/src/gateways/League.gateway.ts" && l.strategy === "api-route").map((l) => l.targetSymbol);
-    expect(links).toEqual(expect.arrayContaining(["route:GET /api/clubs", "route:DELETE /api/clubs/:id"]));
-    expect(links).not.toContain("route:GET /api/players");
+  it("carries a member's click to its own route only, never to a sibling member's", () => {
+    const routesOf = (symbol: string): string[] => (summary.symbolLinks ?? [])
+      .filter((l) => l.sourceFile === "web/src/gateways/League.gateway.ts" && l.sourceSymbol === symbol && l.strategy === "api-route")
+      .map((l) => l.targetSymbol);
+    expect(routesOf("ClubApi.closeClub")).toEqual(["route:DELETE /api/clubs/:id"]);
+    expect(routesOf("ClubApi.getClubs")).toEqual(["route:GET /api/clubs"]);
+    // The click's handler reaches the member (and so only its route); the factory itself holds no request.
+    expect(rows()).toContain("onClose -close.mutateAsync-> web/src/gateways/League.gateway.ts#ClubApi.closeClub INFERRED");
+    expect(rows().some((r) => r.startsWith("onClose ") && r.includes("#ClubApi INFERRED"))).toBe(false);
+    expect(routesOf("ClubApi")).toEqual([]);
   });
 });
