@@ -951,6 +951,12 @@ export interface ImportInfo {
   isType: boolean;
   line: number;
   /**
+   * A preprocessor include's file name without its extension (`#include "club_ops.h"` → `club_ops`). The include binds
+   * no name (`specifiers` stays empty); the stem is only what a header named like its main declaration (`Club.h`
+   * declaring `Club`, `utility.h` declaring `namespace utility`) lets the linker read as that declaration's import.
+   */
+  includeStem?: string;
+  /**
    * The lines of the function whose body holds the import (Python `def f(): from x import y`, decorators
    * included): the name binds there and in the functions nested in it, not in the rest of the file. Absent for
    * an import at the module's or a class body's level.

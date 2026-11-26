@@ -742,9 +742,10 @@ function mayRead(imports: readonly ImportInfo[], target: string, names: Readonly
   let relates = false;
   for (const i of imports) {
     if (i.executes) continue;
-    const listed = [...i.specifiers, ...Object.values(i.aliases ?? {})];
+    // An include's header stem reads as a name it spells: a header named like the edited name may declare it.
+    const listed = [...i.specifiers, ...(i.includeStem ? [i.includeStem] : []), ...Object.values(i.aliases ?? {})];
     if (listed.some((n) => names.has(n)) || i.specifiers.includes("*")) return true;
-    const spelled = i.specifiers.includes(stem) || pathWords(i.source).includes(stem);
+    const spelled = i.specifiers.includes(stem) || i.includeStem === stem || pathWords(i.source).includes(stem);
     if (!spelled) continue;
     relates = true;
     if (i.isNamespace || i.isDefault || i.specifiers.length === 0 || i.specifiers.includes(stem)) return true;

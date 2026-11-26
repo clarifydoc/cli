@@ -114,10 +114,7 @@ export const cSpec: RegexLangSpec = {
     {
       pattern: /^\s*#\s*include\s*[<"]([^>"]+)[>"]/,
       getSource: (m) => m[1],
-      getSpecifiers: (m) => {
-        const last = m[1].split(/[\\/]/).pop() ?? m[1];
-        return [last.replace(/\.[hH](pp)?$/, "")];
-      },
+      getIncludeStem: (m) => (m[1].split(/[\\/]/).pop() ?? m[1]).replace(/\.[hH](pp)?$/, ""),
     },
   ],
 

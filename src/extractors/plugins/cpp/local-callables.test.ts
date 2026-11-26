@@ -77,6 +77,8 @@ describe("C++ locals and parameters a body calls", () => {
       "declaredHere@37 kick -> src/box.cpp::kick",
       "globalCall@24 box -> src/box.cpp::box",
       "globalCall@24 kick -> src/box.cpp::kick",
+      // `kick = &box` holds `box`: the pointer's call is a call of it, though `#include "box.h"` is named alike.
+      "pointerShadow@20 kick -> src/box.cpp::box",
     ]);
   });
 
@@ -107,6 +109,7 @@ describe("C++ locals and parameters a body calls, on the line-scan reading (no-a
       "declaredHere kick -> src/box.cpp::kick",
       "globalCall box -> src/box.cpp::box",
       "globalCall kick -> src/box.cpp::kick",
+      "pointerShadow kick -> src/box.cpp::box",
     ]);
   });
 });

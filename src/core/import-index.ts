@@ -362,9 +362,9 @@ export function importResolveContext(analyses: readonly FileAnalysis[], knownFil
       }
       return names.has(name);
     },
-    globImportsOf: (file) => (byPath.get(file)?.imports ?? []).filter((i) => (i.specifiers ?? []).length === 0 || i.specifiers.includes("*")).map((i) => i.source),
+    globImportsOf: (file) => (byPath.get(file)?.imports ?? []).filter((i) => ((i.specifiers ?? []).length === 0 && i.includeStem === undefined) || i.specifiers.includes("*")).map((i) => i.source),
     namedImportOf: (file, name) => {
-      const imp = (byPath.get(file)?.imports ?? []).find((i) => !i.isType && i.specifiers.includes(name));
+      const imp = (byPath.get(file)?.imports ?? []).find((i) => !i.isType && (i.specifiers.includes(name) || i.includeStem === name));
       return imp ? { source: imp.source, name: imp.aliases?.[name] ?? name } : null;
     },
   };
@@ -412,17 +412,19 @@ export function buildImportIndex(analyses: FileAnalysis[], subProjects?: readonl
       // Imports with no name bindings = namespace/wildcard/side-effect.
       // C# `using System.Linq`, Java/Kotlin `import com.foo.*`, Python
       // `from pkg import *`, JS side-effect `import 'reflect-metadata'`.
-      if ((imp.specifiers ?? []).length === 0) {
+      // An include states its header's stem, not a binding: the stem names the header's file like a spelled-out import.
+      const named = imp.includeStem ? [...(imp.specifiers ?? []), imp.includeStem] : imp.specifiers ?? [];
+      if (named.length === 0) {
         if (imp.source) ns.push(imp.source);
         continue;
       }
-      for (const spec of imp.specifiers) {
+      for (const spec of named) {
         if (!sm.has(spec)) sm.set(spec, imp.source);
       }
       // Resolved per specifier, not once per import: `from app.api.routes
       // import authentication, comments` names two different FILES in one
       // statement, so a single resolution would map both to whichever one won.
-      for (const spec of imp.specifiers) {
+      for (const spec of named) {
         if (lm.has(spec)) continue;
         // An aliased name (`from app.api import items as legacy`) names the module it was exported as.
         const resolved = resolveSpecifier(a.filePath, imp, spec);
@@ -454,7 +456,7 @@ export function buildImportIndex(analyses: FileAnalysis[], subProjects?: readonl
       const imp = a?.imports.find((i) => i.source === src);
       let resolved: string | null = null;
       if (a && imp) {
-        resolved = resolveSpecifier(file, imp, imp.specifiers[0]) ?? null;
+        resolved = resolveSpecifier(file, imp, imp.specifiers[0] ?? imp.includeStem) ?? null;
       }
       bySource.set(key, resolved);
       return resolved;

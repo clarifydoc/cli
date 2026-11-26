@@ -134,6 +134,7 @@ One file each; the header holds the rules.
 - **Pure functions** — no file IO except `output-writer.ts` and `html-report.ts`; input is `FileAnalysis[]`, output typed results.
 - **Optional fields** — new `ProjectAnalysis` / `FileAnalysis` fields are optional so old `project-summary.json` files load.
 - **One import contract** — `import-index.ts` turns every specifier into a file through one helper (`resolveSpecifier`), by the name the module exports (`ImportInfo.aliases[local]`, never the local alias), for a language's own `resolveImport` and the generic path, in `localFor` and `fileForSource` alike.
+- **An include states no binding** — a plugin leaves `ImportInfo.specifiers` empty for `#include` and states the header's stem as `includeStem`; core never guesses a stem from `source`. Readers that need the stem name it (`buildReverseReferenceLinks`, `moduleReceiver`, `import-index.ts`, the component graph's name guesses, `dead-code.ts`, `mayRead`, link rows); a reader that treats empty specifiers as a whole-module import must test `includeStem` first.
 - **Progress** through `ProgressReporter` in `analyzer.ts`, never `console.log`.
 - **BFS** with an index pointer (`let qi = 0; while (qi < queue.length) { ... queue[qi++]; ... }`), never `Array.shift()`.
 - **Link guards** — a heuristic link needs a stated basis (declared type, import, same sub-project, one candidate); the undecidable stays unlinked or AMBIGUOUS.

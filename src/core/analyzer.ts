@@ -4161,7 +4161,8 @@ export function buildComponentGraph(
       // Works for Java (import com.example.api.service.UserService → specifier "UserService")
       // Works for Python (from app.services import UserService → specifier "UserService")
       // Works for C# (using MyApp.Services → specifier matching)
-      for (const local of guessNames ? imp.specifiers : []) {
+      // An include's header stem is guessed as an exported name too (`Club.h` → the `Club` it declares).
+      for (const local of guessNames ? (imp.includeStem ? [...imp.specifiers, imp.includeStem] : imp.specifiers) : []) {
         // An aliased import names the module's own export.
         const spec = imp.aliases?.[local] ?? local;
         if (!spec) continue;
@@ -4231,7 +4232,7 @@ export function buildComponentGraph(
           // implies a dependency when the file actually uses a symbol named like
           // the matched file. A named import (specifiers) is a direct reference,
           // so keep it unconditionally.
-          if (imp.specifiers.length > 0 || usedNames.has(lastSegment)) {
+          if (imp.specifiers.length > 0 || imp.includeStem !== undefined || usedNames.has(lastSegment)) {
             addRef(target);
           }
         }

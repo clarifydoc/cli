@@ -2876,11 +2876,13 @@ function moduleReceiver(analysis: FileAnalysis, head: string, targetFile: string
   }
   for (const imp of analysis.imports) {
     const resolved = importPath(ctx, imp.source, analysis.filePath);
-    if (imp.specifiers.length === 0) {
+    // An include binds no name: the header's stem is the only head it can be the module of, never "any head".
+    const names = imp.includeStem !== undefined ? [imp.includeStem] : imp.specifiers;
+    if (names.length === 0) {
       if (resolved === targetFile) return true;
       continue;
     }
-    const binds = imp.specifiers.some((spec) => spec === head || spec.startsWith(head + ".")) || (!!imp.aliases && head in imp.aliases);
+    const binds = names.some((spec) => spec === head || spec.startsWith(head + ".")) || (!!imp.aliases && head in imp.aliases);
     if (!binds) continue;
     if (!resolved) {
       const project = ctx.projectOf.get(targetFile);
@@ -4907,11 +4909,8 @@ function valueFlowLinks(links: readonly SymbolLink[], ctx: LinkContext): SymbolL
     classAt: (file, name) => ctx.classAt.get(memberKey(file, name)),
     importedBinding(file, name) {
       const analysis = analysisAt.get(file);
-      const shares = !!analysis && importsShareScope(analysis.language);
-      // Where an include puts a header in scope without naming anything (`importsShareScope`), the stem a plugin states for
-      // `#include "club_ops.h"` is the file's name, not a binding: it must not hide a struct `club_ops` the header declares.
-      const imp = analysis?.imports.find((i) => !i.isType && !i.executes && (i.aliases?.[name] !== undefined
-        || (i.specifiers.includes(name) && !(shares && /\.\w+$/.test(i.source) && i.source.replace(/^.*[\\/]/, "").replace(/\.\w+$/, "") === name))));
+      // An include states no binding (`ImportInfo.includeStem`): `#include "club_ops.h"` never hides a struct `club_ops` the header declares.
+      const imp = analysis?.imports.find((i) => !i.isType && !i.executes && (i.aliases?.[name] !== undefined || i.specifiers.includes(name)));
       if (!analysis || !imp) return null;
       const files = importFiles(ctx, imp, file);
       if (files.length !== 1) return null;
@@ -6550,7 +6549,8 @@ function resolveCallToDefinitionBody(
   // that package defining the called symbol.
   if (!def && isQualified) {
     const head = parts[0]!;
-    const imp = analysis.imports.find((i) => !i.isType && i.specifiers.includes(head));
+    // An include names its header's stem as the qualifier of what the header declares (`utility::trim` through `utility.h`).
+    const imp = analysis.imports.find((i) => !i.isType && (i.specifiers.includes(head) || i.includeStem === head));
     // The one directory the import names, when the language's package rule
     // decides it (a Go import by its go.mod module path): the symbol is that
     // package's, or no project file's — the standard library, a download.
@@ -11972,7 +11972,8 @@ function buildReverseReferenceLinks(
       const targetSymbols = symbolIndex.get(targetFile);
       if (!targetSymbols) continue;
 
-      for (const spec of imp.specifiers) {
+      // An include names its header's stem, which reads as the declaration of that name the header holds (`Club.h`).
+      for (const spec of imp.includeStem ? [...imp.specifiers, imp.includeStem] : imp.specifiers) {
         // `import pump from "./tyre"` names the module's default export, by whatever name the module gives it.
         const own = defaultBinding(imp, spec)
           ? analysisAt.get(targetFile)?.exports.find((e) => e.kind === "default")?.sourceName
@@ -12029,9 +12030,9 @@ function importResolveContext(ctx: LinkContext): ImportResolveContext {
       const a = byFile.get(file);
       return !!a && (a.functions.some((f) => f.name === name) || a.classes.some((c) => c.name === name));
     },
-    globImportsOf: (file) => (byFile.get(file)?.imports ?? []).filter((i) => (i.specifiers ?? []).length === 0 || i.specifiers.includes("*")).map((i) => i.source),
+    globImportsOf: (file) => (byFile.get(file)?.imports ?? []).filter((i) => ((i.specifiers ?? []).length === 0 && i.includeStem === undefined) || i.specifiers.includes("*")).map((i) => i.source),
     namedImportOf: (file, name) => {
-      const imp = (byFile.get(file)?.imports ?? []).find((i) => !i.isType && i.specifiers.includes(name));
+      const imp = (byFile.get(file)?.imports ?? []).find((i) => !i.isType && (i.specifiers.includes(name) || i.includeStem === name));
       return imp ? { source: imp.source, name: imp.aliases?.[name] ?? name } : null;
     },
   };

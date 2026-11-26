@@ -497,7 +497,7 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
           explained.add(t);
           // No binding (dynamic import, bare require, side-effect import) or a
           // namespace binding: the module object escapes, every export may be read.
-          if (imp.isNamespace || imp.specifiers.length === 0) {
+          if (imp.isNamespace || (imp.specifiers.length === 0 && imp.includeStem === undefined)) {
             requests.push([t, "*"]);
             continue;
           }
@@ -512,6 +512,8 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
           if (imp.isDefault) requests.push([t, "default"]);
           // An aliased import requests the name the module exports.
           for (const s of imp.specifiers) requests.push([t, imp.aliases?.[s] ?? s]);
+          // An include asks for what its header's stem names (`Club.h` → `Club`), never for every export.
+          if (imp.includeStem !== undefined) requests.push([t, imp.includeStem]);
         }
       }
       for (const e of a.exports) {

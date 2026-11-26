@@ -51,6 +51,8 @@ export interface ImpPattern {
   pattern: RegExp;
   getSource: (m: RegExpMatchArray) => string;
   getSpecifiers?: (m: RegExpMatchArray) => string[];
+  /** The file stem of an include that binds no name (`ImportInfo.includeStem`). */
+  getIncludeStem?: (m: RegExpMatchArray) => string | undefined;
   /** Local name → the name the module declares, for the specifiers bound under another name (`ImportInfo.aliases`). */
   getAliases?: (m: RegExpMatchArray) => Record<string, string> | undefined;
 }
@@ -934,13 +936,14 @@ export function extractClassesWithSpec(lines: string[], spec: RegexLangSpec): Cl
 export function extractImportsWithSpec(lines: string[], spec: RegexLangSpec): ImportInfo[] {
   const imports: ImportInfo[] = [];
   for (let i = 0; i < lines.length; i++) {
-    for (const { pattern, getSource, getSpecifiers, getAliases } of spec.importPatterns) {
+    for (const { pattern, getSource, getSpecifiers, getIncludeStem, getAliases } of spec.importPatterns) {
       const m = lines[i].match(pattern);
       if (m) {
         // An empty source names nothing to load (`@use "sass:math"`, a URL).
         const source = getSource(m);
         if (!source) break;
         const aliases = getAliases?.(m);
+        const includeStem = getIncludeStem?.(m);
         imports.push({
           source,
           specifiers: getSpecifiers?.(m) ?? [],
@@ -948,6 +951,7 @@ export function extractImportsWithSpec(lines: string[], spec: RegexLangSpec): Im
           isNamespace: false,
           isType: false,
           line: i + 1,
+          ...(includeStem ? { includeStem } : {}),
           ...(aliases && Object.keys(aliases).length > 0 ? { aliases } : {}),
         });
         break;

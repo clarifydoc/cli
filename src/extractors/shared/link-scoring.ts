@@ -134,8 +134,10 @@ export function buildLinkGraph(analyses: FileAnalysis[]): LinkInfo[] {
     // 1. ALL imports create links — explicit in source.
     for (const imp of a.imports) {
       if (imp.isType) continue;
-      const proximity = getImportProximity(imp.specifiers, a);
-      for (const spec of imp.specifiers) {
+      // An include's header stem is the name its link row states.
+      const names = imp.includeStem ? [...imp.specifiers, imp.includeStem] : imp.specifiers;
+      const proximity = getImportProximity(names, a);
+      for (const spec of names) {
         addLink(a.filePath, imp.source, spec, proximity, `imports ${spec}`, "EXTRACTED");
       }
     }
