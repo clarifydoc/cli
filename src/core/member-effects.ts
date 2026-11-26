@@ -91,7 +91,7 @@ export function joinMemberEffects(
   };
 
   /**
-   * Does the qualifier of `name` (`java.io` in `java.io.IOException`, `Faraday` in `Faraday::Error`) name something
+   * Does the qualifier of `name` (`java.io` in `java.io.IOException`, `Net` in `Net::ReadTimeout`) name something
    * the project declares that holds class `c`? A qualifier that is a library's package or module (`requests`, `std::io`,
    * `Foundation`) backs no project class of the same leaf, so a namesake is never the type meant. Backed when the
    * qualifier is a namespace/package `c` is declared in, a directory or file stem on `c`'s path (a Java package, a

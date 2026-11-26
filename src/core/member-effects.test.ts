@@ -1268,10 +1268,10 @@ describe("member effects, qualified type names", () => {
       "def mine():",
       "    raise problems.HTTPError()",
     ].join("\n"));
-    await write("rb/errors.rb", "module League\n  class ClubClosed < StandardError; end\n  class Error < StandardError; end\nend\n");
+    await write("rb/errors.rb", "module League\n  class ClubClosed < StandardError; end\n  class Error < StandardError; end\n  class ReadTimeout < StandardError; end\nend\n");
     await write("rb/club.rb", [
       "class Club",
-      "  def lib; raise Faraday::Error, 'x'; end",
+      "  def lib; raise Net::ReadTimeout, 'x'; end",
       "  def own; raise League::Error; end",
       "end",
     ].join("\n"));
@@ -1313,7 +1313,7 @@ describe("member effects, qualified type names", () => {
       "py/club.py:lib requests.HTTPError",
       "py/club.py:mine problems.HTTPError -> py/errors.py",
       "py/club.py:own problems.ClubClosed -> py/errors.py",
-      "rb/club.rb:Club.lib Faraday::Error",
+      "rb/club.rb:Club.lib Net::ReadTimeout",
       "rb/club.rb:Club.own League::Error -> rb/errors.rb",
       "swift/Club.swift:Club.lib Foundation.URLError",
       "ts/club.ts:lib vendor.PostponedError",
