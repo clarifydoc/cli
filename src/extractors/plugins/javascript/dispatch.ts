@@ -531,7 +531,9 @@ export class JsComponentRenderResolver implements DispatchResolver {
  * `onRelease={handleRelease}`): the parent's call of that name names the factory (`CallInfo.via`), its module and the
  * member a renamed local stands for, and the link lands on the function the factory returns under that member
  * (`returnedMembers`, kind `function`, declared inside the factory); a member returned as a value, or a factory no
- * module the call names declares, joins nothing.
+ * module the call names declares, joins nothing. A hook stating no members that only reads a context (`useContext(Ctx)`)
+ * hands back what the module's `<Ctx.Provider>` component holds (`contextMember`). A props interface's method signature
+ * (`interface IProps { onSave(club: Club): void }`) is a type: it never makes the prop a function the child owns.
  *
  * A component taking `{ n, ...others }` calls the prop `table.nextPage` as `others.table.nextPage()`
  * (`destructuredRest`, the resolver's `restOf`); a destructuring parameter named by its pattern
@@ -708,12 +710,33 @@ export class JsPropCallbackResolver implements DispatchResolver {
         return null;
       };
       const found = owner(target, parent.filePath, via, 0);
+      if (found && !found.factory.returnedMembers) return contextMember(found.file, found.factory, member);
       const returned = found?.factory.returnedMembers?.find((m) => m.key === member);
       if (!found || returned?.kind !== "function") return null;
       const local = returned.local ?? returned.key;
       // The function the factory returns: the one of that name inside the factory's own lines.
       const inside = spans(found.file).filter((sp) => sp.symbol === local && sp.line >= found.factory.line && sp.line <= found.factory.endLine);
       return inside.length === 1 ? { file: found.file.filePath, span: inside[0]! } : null;
+    };
+
+    /**
+     * A handler destructured from a hook that reads a React context (`const useSquad = () => useContext(SquadContext)`,
+     * `const { releasePlayer } = useSquad()`): the function of that name inside the provider component of the hook's
+     * own module, the one rendering `<SquadContext.Provider value={…}>`. The hook states no object of its own, so the
+     * context it reads names the provider; a module holding no such provider, two, or no function of that name in it
+     * joins nothing (a namesake in another module's provider is never reached).
+     */
+    const contextMember = (file: FileAnalysis, hook: FunctionInfo, member: string): { file: string; span: SymbolSpan } | null => {
+      if (hook.returnedFrom?.length !== 1 || !/^(?:React\.)?useContext\(\)$/.test(hook.returnedFrom[0]!)) return null;
+      const reads = hook.calls.filter((c) => /^(?:React\.)?useContext$/.test(c.name) && c.args?.length === 1 && /^[A-Za-z_$][\w$]*$/.test(c.args[0]!));
+      if (reads.length !== 1) return null;
+      const tag = `${reads[0]!.args![0]}.Provider`;
+      const providers = (file.subComponents ?? []).filter((sub) => sub.name === tag);
+      if (providers.length !== 1) return null;
+      const host = enclosingFunctions(file, providers[0]!.line)[0];
+      if (!host) return null;
+      const inside = spans(file).filter((sp) => sp.symbol === member && sp.line > host.line && sp.endLine <= host.endLine);
+      return inside.length === 1 ? { file: file.filePath, span: inside[0]! } : null;
     };
 
     /** The functions a prop of `file` reaches: each parent's bound handler, through drilled props — with the binding site on the child's own tag. */
@@ -742,7 +765,8 @@ export class JsPropCallbackResolver implements DispatchResolver {
         }
         const name = cleanHandler(b.handler);
         if (!name) continue;
-        const own = spans(b.parent).find((sp) => sp.symbol === name || sp.symbol.endsWith(`.${name}`));
+        const parentSignatures = signaturesOf(b.parent);
+        const own = spans(b.parent).find((sp) => !parentSignatures.has(sp.symbol) && (sp.symbol === name || sp.symbol.endsWith(`.${name}`)));
         const fromMixin = own ? null : scopeMember(b.parent, name);
         // A function the file imports, held in a dispatch map it hands down (`{ save: saveClub }`).
         const imported = own || fromMixin || !b.handlerImport ? null : importedExport(b.parent, b.handlerImport);
@@ -767,7 +791,9 @@ export class JsPropCallbackResolver implements DispatchResolver {
       const child = byPath.get(childFile)!;
       // A component declared beside its user: only the calls inside its own body are the child's.
       const within = localName ? spans(child).find((sp) => sp.symbol === localName) : undefined;
-      const defined = new Set(spans(child).map((sp) => sp.symbol.split(".").pop()!));
+      // A props interface's method signature (`interface IProps { onSubmit(f: Form): void }`) is a type, not a function the child owns.
+      const signatures = signaturesOf(child);
+      const defined = new Set(spans(child).filter((sp) => !signatures.has(sp.symbol)).map((sp) => sp.symbol.split(".").pop()!));
       for (const prop of byProp.keys()) {
         if (defined.has(prop)) continue; // the child's own function of that name
         const targets = targetsOf(childKey, prop, 0, new Set());
@@ -836,6 +862,11 @@ export class JsPropCallbackResolver implements DispatchResolver {
     }
     return links;
   }
+}
+
+/** The body-less member signatures of the interfaces `file` declares (`IProps.onSave`): types, never functions a prop can run. */
+function signaturesOf(file: FileAnalysis): Set<string> {
+  return new Set(file.classes.filter((c) => c.kind === "interface").flatMap((c) => c.methods.map((m) => `${c.name}.${m.name}`)));
 }
 
 /** The element names of the callbacks around `line` that iterate one of `sources` (`FileAnalysis.propElements`). */

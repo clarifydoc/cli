@@ -314,6 +314,92 @@ describe("JsPropCallbackResolver — a handler the parent destructured from a ho
   });
 });
 
+describe("JsPropCallbackResolver — a handler read through a context hook, a prop typed by an interface (real-repo FP)", () => {
+  const call = (name: string, line: number, over: object = {}) => ({ name, kind: "cross-file" as const, target: null, line, ...over });
+  // `const useSquad = () => useContext(SquadContext)`; the provider holds the functions the context carries.
+  const squad = fa("src/providers/Squad.provider.tsx", {
+    functions: [
+      { ...fn("useSquad", 6, 6), returnedFrom: ["useContext()"], calls: [call("useContext", 6, { args: ["SquadContext"] })] },
+      fn("SquadProvider", 7, 16),
+      fn("releasePlayer", 9, 9),
+      fn("signPlayer", 10, 10),
+    ],
+    subComponents: [{ name: "SquadContext.Provider", importSource: null, props: ["value"], line: 15 }],
+  });
+  // A namesake: another module's hook and provider with a member of the same name.
+  const bench = fa("src/providers/Bench.provider.tsx", {
+    functions: [
+      { ...fn("useBench", 3, 3), returnedFrom: ["useContext()"], calls: [call("useContext", 3, { args: ["BenchContext"] })] },
+      fn("BenchProvider", 4, 9),
+      fn("releasePlayer", 5, 5),
+    ],
+    subComponents: [{ name: "BenchContext.Provider", importSource: null, props: ["value"], line: 8 }],
+  });
+  const row = fa("src/components/RosterRow.tsx", {
+    functions: [{ ...fn("RosterRow", 3, 8), params: [{ name: "{ onRelease }", type: "IProps", defaultValue: null }], calls: [{ name: "onRelease", kind: "internal" as const, target: null, line: 5 }] }],
+    // The props interface declares `onRelease(id): void`: a type, never a function of the row.
+    classes: [{ name: "IProps", extends: null, implements: [], decorators: [], properties: [], isExported: false, line: 1, endLine: 2, kind: "interface" as const, methods: [fn("onRelease", 2, 2)] }],
+  });
+  const roster = (hook: string, target: string) =>
+    fa("src/components/Roster.tsx", {
+      functions: [{ ...fn("Roster", 4, 12), calls: [call(hook, 5, { target }), call("releasePlayer", 6, { target, via: hook, member: "releasePlayer", passed: "attribute" })] }],
+      interactiveElements: [{ element: "custom", event: "onRelease", handler: "releasePlayer", line: 9, component: "RosterRow" }],
+      subComponents: [{ name: "RosterRow", importSource: "./RosterRow", props: [], line: 9 }],
+    });
+  const show = (links: Array<{ sourceFile: string; sourceSymbol: string; callName: string; targetFile: string; targetSymbol: string }>) =>
+    links.map((l) => `${l.sourceFile}::${l.sourceSymbol} -${l.callName}-> ${l.targetFile}::${l.targetSymbol}`);
+
+  it("links the row's onRelease to the function inside the provider of the context the hook reads, not to a namesake", async () => {
+    const { JsPropCallbackResolver } = await import("./dispatch.js");
+    expect(show(new JsPropCallbackResolver().resolve([roster("useSquad", "../providers/Squad.provider"), squad, bench, row]))).toEqual([
+      "src/components/RosterRow.tsx::RosterRow -onRelease-> src/providers/Squad.provider.tsx::releasePlayer",
+    ]);
+    expect(show(new JsPropCallbackResolver().resolve([roster("useBench", "../providers/Bench.provider"), squad, bench, row]))).toEqual([
+      "src/components/RosterRow.tsx::RosterRow -onRelease-> src/providers/Bench.provider.tsx::releasePlayer",
+    ]);
+  });
+
+  it("joins nothing for a member the provider holds no function of", async () => {
+    const { JsPropCallbackResolver } = await import("./dispatch.js");
+    const noFunction = { ...squad, functions: squad.functions.filter((f) => f.name !== "releasePlayer") };
+    expect(new JsPropCallbackResolver().resolve([roster("useSquad", "../providers/Squad.provider"), noFunction, bench, row])).toEqual([]);
+  });
+});
+
+describe("JsPropCallbackResolver — a wrapper forwarding its own prop, typed by an interface (real-repo FP)", () => {
+  const call = (name: string, line: number) => ({ name, kind: "internal" as const, target: null, line });
+  const iface = (name: string, member: string) => ({ name, extends: null, implements: [], decorators: [], properties: [], isExported: false, line: 1, endLine: 2, kind: "interface" as const, methods: [fn(member, 2, 2)] });
+  // The content calls its prop; the wrapper hands its own `onPick` (declared by `PickModalProps`) on to it.
+  const content = fa("src/PickModalContent.tsx", { functions: [{ ...fn("PickModalContent", 3, 8), params: [{ name: "{ onPick }", type: "IProps", defaultValue: null }], calls: [call("onPick", 5)] }] });
+  const wrapper = fa("src/PickModal.tsx", {
+    functions: [{ ...fn("PickModal", 4, 9), params: [{ name: "{ onPick }", type: "PickModalProps", defaultValue: null }] }],
+    classes: [iface("PickModalProps", "onPick")],
+    interactiveElements: [{ element: "custom", event: "onPick", handler: "onPick", line: 7, component: "PickModalContent" }],
+    subComponents: [{ name: "PickModalContent", importSource: "./PickModalContent", props: [], line: 7 }],
+  });
+  const page = fa("src/Page.tsx", {
+    functions: [fn("Page", 3, 12), fn("pickPlayer", 5, 6)],
+    interactiveElements: [{ element: "custom", event: "onPick", handler: "pickPlayer", line: 10, component: "PickModal" }],
+    subComponents: [{ name: "PickModal", importSource: "./PickModal", props: [], line: 10 }],
+  });
+  const show = (links: Array<{ sourceFile: string; sourceSymbol: string; callName: string; targetFile: string; targetSymbol: string }>) =>
+    links.map((l) => `${l.sourceFile}::${l.sourceSymbol} -${l.callName}-> ${l.targetFile}::${l.targetSymbol}`);
+
+  it("follows the forwarded prop to the grandparent's handler, never to the interface's signature", async () => {
+    const { JsPropCallbackResolver } = await import("./dispatch.js");
+    expect(show(new JsPropCallbackResolver().resolve([content, wrapper, page]))).toEqual([
+      "src/PickModalContent.tsx::PickModalContent -onPick-> src/Page.tsx::pickPlayer",
+      // The wrapper's own markup hands the prop on: the pre-existing drilled-prop link.
+      "src/PickModal.tsx::<template> -onPick-> src/Page.tsx::pickPlayer",
+    ]);
+  });
+
+  it("draws no link when nobody binds the wrapper's prop", async () => {
+    const { JsPropCallbackResolver } = await import("./dispatch.js");
+    expect(show(new JsPropCallbackResolver().resolve([content, wrapper]))).toEqual([]);
+  });
+});
+
 describe("JsPropCallbackResolver — a callback prop handed down under another name", () => {
   it("links the child's props.follow() to the creator connect() bound to the parent's onFollow, and not to a namesake (real-repo FP)", async () => {
     const { JsPropCallbackResolver } = await import("./dispatch.js");
