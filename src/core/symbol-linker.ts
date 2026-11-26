@@ -1267,12 +1267,16 @@ function buildSymbolIndex(
  * against each overload's declared parameter types, folded to the same keys by
  * the plugin's `calls.overloadTypeKey` — `new NotFound(Club.class, id)` is the
  * `(Class, Object)` constructor, not `(String, Throwable)`. When neither tells
- * (no kinds, a tie), the link is left as it was. Returns the links whose
+ * (no kinds, a tie), the link rests on one of the tied overloads (where it was, else the first declared)
+ * (`overloadsFit` = how many, confidence `AMBIGUOUS`), never on a body outside
+ * them. A call no overload's arity accepts links to nothing wherever the plugin
+ * states parameters (an extension method also takes its receiver as the first
+ * argument). Returns the links whose
  * target is overloaded (whose `targetLine` tells which overload they reach).
  */
 function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[], analysisAt: ReadonlyMap<string, FileAnalysis>): Set<SymbolLink> {
   const touched = new Set<SymbolLink>();
-  type Overload = { line: number; min: number; max: number; params: ParamInfo[]; variadic: boolean; typeKey?: (t: string) => string; strict?: boolean; ranked?: boolean; specializedOn?: string[]; explicit?: boolean };
+  type Overload = { line: number; stated: boolean; receiver: boolean; min: number; max: number; params: ParamInfo[]; variadic: boolean; typeKey?: (t: string) => string; strict?: boolean; ranked?: boolean; specializedOn?: string[]; explicit?: boolean };
   const overloads = new Map<string, Overload[]>();
   // `${file}\0${Class}` → the symbol its constructors share (`Club.constructor`, `Garage.Garage`): a call
   // naming the class (`Club(3)`, `new Garage(4)`) reaches one of them, whether its link names the class or one.
@@ -1284,7 +1288,7 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[], a
     const key = `${file}\u0000${name}`;
     let list = overloads.get(key);
     if (!list) overloads.set(key, (list = []));
-    list.push({ line: fn.line, min, max: variadic ? Number.POSITIVE_INFINITY : params.length, params, variadic, typeKey, ...(strict ? { strict } : {}),
+    list.push({ line: fn.line, stated: params.length > 0, receiver: fn.params.some((p) => p.isReceiver), min, max: variadic ? Number.POSITIVE_INFINITY : params.length, params, variadic, typeKey, ...(strict ? { strict } : {}),
       ...(flags?.ranked ? { ranked: true } : {}),
       ...(flags?.explicit ? { explicit: true } : {}),
       ...(fn.specializedOn ? { specializedOn: fn.specializedOn } : {}) });
@@ -1353,14 +1357,14 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[], a
    * the number that fit when several do and nothing tells them apart (`process(int)` /
    * `process(long)` with `42`).
    */
-  const choose = (list: Overload[], link: SymbolLink): { line: number } | { tie: number } | undefined => {
+  const choose = (list: Overload[], link: SymbolLink): { line: number } | { tie: number; lines: number[] } | undefined => {
     // Several calls of the name on the link's line (`f(a) || f(a, b)`): only a choice they all agree on is the link's.
     const results = sitesAt(link.sourceFile, link.sourceLine, link.callName).map((site) => chooseAt(list, site));
     if (results.length === 0) return undefined;
     const first = JSON.stringify(results[0]);
     return results.every((r) => JSON.stringify(r) === first) ? results[0] : undefined;
   };
-  const chooseAt = (list: Overload[], site: Site): { line: number } | { tie: number } | undefined => {
+  const chooseAt = (list: Overload[], site: Site): { line: number } | { tie: number; lines: number[] } | undefined => {
     const n = site.call.argCount;
     if (n === undefined) return undefined;
     let fits = list.filter((o) => n >= o.min && n <= o.max);
@@ -1386,9 +1390,9 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[], a
       })), typesOf(), fits[0]!.ranked);
       if (best >= 0) return { line: fits[best]!.line };
     }
-    return fits.length > 1 ? { tie: fits.length } : undefined;
+    return fits.length > 1 ? { tie: fits.length, lines: fits.map((o) => o.line) } : undefined;
   };
-  /** Whether the arguments chose one body; a tie leaves the link on the body it found, said to be one of several (`SymbolLink.overloadsFit`). */
+  /** Whether the arguments chose one body; a tie is said (`SymbolLink.overloadsFit`) and left on the link the caller keeps. */
   const settle = (link: SymbolLink, choice: ReturnType<typeof choose>): choice is { line: number } => {
     if (choice && "tie" in choice) link.overloadsFit = choice.tie;
     return !!choice && "line" in choice;
@@ -1402,10 +1406,13 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[], a
       const ctorOfCalled = dot > 0 && ctorsOf.get(`${link.targetFile}\u0000${link.targetSymbol.slice(0, dot)}`) === link.targetSymbol
         && leafOf(link.targetSymbol.slice(0, dot)) === callLeaf;
       if (callLeaf !== leafOf(link.targetSymbol) && !ctorOfCalled) continue;
-      // A call no definition's arity accepts, where arity is checked: the name is another's (a library's).
-      if (list[0]!.strict) {
+      // A call no definition's arity accepts: the name is another's (a library's). Where arity is checked
+      // (`strictArity`) a lone definition counts too; elsewhere a group whose plugin states parameters does.
+      if (list[0]!.strict || list.some((o) => o.stated)) {
         const counts = sitesAt(link.sourceFile, link.sourceLine, link.callName).map((x) => x.call.argCount);
-        if (counts.length > 0 && counts.every((n) => n !== undefined && !list.some((o) => n >= o.min && n <= o.max))) {
+        // An extension method called as a plain function (`Total(club, 3)`) passes its receiver as the first argument.
+        const accepts = (o: Overload, n: number): boolean => (n >= o.min && n <= o.max) || (o.receiver && n - 1 >= o.min && n - 1 <= o.max);
+        if (counts.length > 0 && counts.every((n) => n !== undefined && !list.some((o) => accepts(o, n)))) {
           unfit.add(link);
           continue;
         }
@@ -1414,6 +1421,11 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[], a
       touched.add(link);
       const choice = choose(list, link);
       if (settle(link, choice)) link.targetLine = choice.line;
+      // A tie: the link rests on one of the tied overloads — where it already is, else the first declared — never on a body outside them.
+      else if (choice && "tie" in choice) {
+        if (!choice.lines.includes(link.targetLine)) link.targetLine = Math.min(...choice.lines);
+        link.confidence = "AMBIGUOUS";
+      }
       continue;
     }
     // A link to the class itself (`Club(3)` beside `class Club`): to the constructor the arguments choose.

@@ -560,7 +560,8 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
           const param: ParamInfo = {
             name: pName,
             type: pType,
-            defaultValue: p.childForFieldName("value")?.text ?? null,
+            // Kotlin writes `= value` as siblings after the `parameter` node, not inside it.
+            defaultValue: p.childForFieldName("value")?.text ?? (p.type === "parameter" && p.nextSibling?.type === "=" ? p.nextSibling.nextSibling?.text ?? null : null),
           };
           const qualifier = pointQualifier(annotationNodes(p), pName, explicit);
           if (qualifier) param.qualifier = qualifier;

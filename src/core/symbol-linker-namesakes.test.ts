@@ -246,6 +246,7 @@ describe("same-name precision in the symbol linker", () => {
     const link = summary.symbolLinks.find((l) => l.sourceSymbol === "Match.keep" && l.callName === "scorer.save");
     expect(link?.targetSymbol).toMatch(/^Scorer\.save\((?:Club|Player)\)$/);
     expect(link?.overloadsFit).toBe(2);
-    expect(link?.confidence).not.toBe("AMBIGUOUS");
+    // A tie is said to be one: AMBIGUOUS, on one of the tied bodies (E-364).
+    expect(link?.confidence).toBe("AMBIGUOUS");
   });
 });
