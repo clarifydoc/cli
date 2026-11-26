@@ -35,7 +35,7 @@ function thrownType(n: Node | null | undefined): string | null {
  * What a C# method writes to fields/properties and throws (`FunctionInfo.fieldWrites` / `throws`): assignments,
  * compound assignments and `++`/`--` on `this.x`, a bare member `x` the method does not declare, `this.field.x` and a
  * typed parameter or local's `p.x`; `throw new T(…)` (statement or expression). `throw;` and a thrown variable state
- * nothing. A constructor states no writes — it initializes. Local functions and lambdas keep `this` and are walked.
+ * nothing. A property read (`fieldReads`) is `this.x`, `this.field.x` or a typed name's `p.x` that is no callee and no plain `=` target. A constructor states no writes — it initializes. Local functions and lambdas keep `this` and are walked.
  *
  * Core's `member-effects` pass resolves types to project classes by declared types only and only within the
  * language family; C# types found only
@@ -67,8 +67,19 @@ export function csharpMemberEffects(
     const t = dottedTarget(left, ACCESS, typed, locals);
     if (t) out.addWrite(t.receiver, t.member, at.startPosition.row + 1);
   };
+  /** A read: `this.x`, `this.field.x` or a typed name's `p.x` that is no callee and no plain `=` target (bare names state nothing: a local and a member look alike). */
+  const addRead = (n: Node): void => {
+    const parent = n.parent;
+    if (parent?.type === "assignment_expression" && parent.childForFieldName("left")?.id === n.id && parent.childForFieldName("operator")?.text === "=") return;
+    if (parent?.type === "invocation_expression" && parent.childForFieldName("function")?.id === n.id) return;
+    const t = dottedTarget(n, ACCESS, typed, locals);
+    if (t && t.receiver !== "") out.addRead(t.receiver, t.member, n.startPosition.row + 1);
+  };
   visitOwnScope(body, (n) => NESTED_TYPES.has(n.type), (n) => {
     switch (n.type) {
+      case "member_access_expression":
+        addRead(n);
+        break;
       case "assignment_expression":
         addWrite(n.childForFieldName("left"), n);
         break;

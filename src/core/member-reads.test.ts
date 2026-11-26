@@ -15,6 +15,9 @@ describe("member reads, end to end", () => {
     dir = await mkdtemp(join(tmpdir(), "clarifydoc-member-reads-"));
     await mkdir(join(dir, "ts"), { recursive: true });
     await mkdir(join(dir, "jvm"), { recursive: true });
+    await mkdir(join(dir, "cs"), { recursive: true });
+    await mkdir(join(dir, "py"), { recursive: true });
+    await mkdir(join(dir, "php"), { recursive: true });
     await writeFile(join(dir, "ts", "club.ts"), [
       "export class Car {",
       "  speed = 0;",
@@ -62,6 +65,76 @@ describe("member reads, end to end", () => {
       "class Hall { var name: String = \"\" }",
       "class Referee { fun scan(c: Cup, h: Hall): String { return c.name + h.name } }",
     ].join("\n"));
+    await writeFile(join(dir, "cs", "Club.cs"), [
+      "namespace League {",
+      "  public class Pitch { public int Grass { get; set; } }",
+      "  public class Hall { public string Name { get; set; } }",
+      "  public class Club {",
+      "    public string Name { get; set; }",
+      "    public Pitch Pitch { get; set; }",
+      "    public string Title() { return this.Name + this.Name; }",
+      "    public int Grass() { return this.Pitch.Grass; }",
+      "    public void Rename() { this.Name = \"x\"; this.Name += \"y\"; }",
+      "    public void Call() { this.Title(); this.Pitch.ToString(); }",
+      "    public string Bare() { return Name; }",
+      "  }",
+      "  public class Referee {",
+      "    public string Scan(Club c, Hall h, object u) { var k = (Club)u; return c.Name + h.Name + u.ToString(); }",
+      "    public string Local() { Club c = new Club(); return c.Name; }",
+      "  }",
+      "}",
+    ].join("\n"));
+    await writeFile(join(dir, "py", "club.py"), [
+      "from dataclasses import dataclass",
+      "class Pitch:",
+      "    grass: int = 0",
+      "class Hall:",
+      "    name: str = 'h'",
+      "class Club:",
+      "    name: str = 'c'",
+      "    def __init__(self, pitch: Pitch):",
+      "        self.pitch = pitch",
+      "        self.rank = 1",
+      "    def title(self):",
+      "        return self.name + self.name",
+      "    def grass(self):",
+      "        return self.pitch.grass",
+      "    def rename(self):",
+      "        self.name = 'x'",
+      "        self.rank += 1",
+      "    def call(self):",
+      "        self.title()",
+      "        self.pitch.mow()",
+      "@dataclass",
+      "class Cup:",
+      "    year: int",
+      "    def label(self):",
+      "        return self.year",
+      "class Referee:",
+      "    def scan(self, c: Club, h: Hall, u):",
+      "        return c.name + h.name + u.name",
+      "    def local(self):",
+      "        c: Club = Club(None)",
+      "        return c.name",
+    ].join("\n"));
+    await writeFile(join(dir, "php", "Club.php"), [
+      "<?php",
+      "class Pitch { public int $grass = 0; }",
+      "class Hall { public string $name = 'h'; }",
+      "class Club {",
+      "  public string $name = 'c';",
+      "  public int $rank = 1;",
+      "  public function __construct(public Pitch $pitch) {}",
+      "  public function title() { return $this->name . $this->name; }",
+      "  public function grass() { return $this->pitch->grass; }",
+      "  public function rename() { $this->name = 'x'; $this->rank += 1; }",
+      "  public function call() { $this->title(); $this->pitch->mow(); }",
+      "}",
+      "class Referee {",
+      "  public function scan(Club $c, Hall $h, $u) { return $c->name . $h->name . $u->name; }",
+      "  public function local() { $c = new Club(new Pitch()); return $c->name; }",
+      "}",
+    ].join("\n"));
     const out = join(dir, "out");
     await analyze({ projectRoot: dir, outputDir: out, lsp: false, gitHistory: false, stableOutput: true });
     summary = (await loadReportSummary(out)) as ProjectAnalysis;
@@ -99,6 +172,39 @@ describe("member reads, end to end", () => {
     expect(readers("Cup", "name", "jvm/Cup.kt")).toEqual(["Referee.scan:10", "Cup.title:5"].sort());
     expect(readers("Hall", "name", "jvm/Cup.kt")).toEqual(["Referee.scan:10"]);
     expect(readers("Pitch", "grass", "jvm/Cup.kt")).toEqual(["Cup.grass:6"]);
+  });
+
+  it("lists C# readers through this, a field's object and typed parameters, never a namesake's", () => {
+    expect(readers("Club", "Name", "cs/Club.cs")).toEqual(["Club.Rename:9", "Club.Title:7", "Referee.Local:15", "Referee.Scan:14"]);
+    expect(readers("Hall", "Name", "cs/Club.cs")).toEqual(["Referee.Scan:14"]);
+    expect(readers("Pitch", "Grass", "cs/Club.cs")).toEqual(["Club.Grass:8"]);
+    expect(readers("Club", "Pitch", "cs/Club.cs")).toEqual(["Club.Call:10", "Club.Grass:8"]);
+    const all = (summary.fieldReads ?? []).filter((r) => r.file === "cs/Club.cs");
+    expect(all.some((r) => r.member === "Title")).toBe(false);
+    expect(all.some((r) => r.function === "Club.Bare")).toBe(false);
+  });
+
+  it("lists Python readers through self, a typed parameter and a dataclass field, never a namesake's", () => {
+    expect(readers("Club", "name", "py/club.py")).toEqual(["Club.title:12", "Referee.local:31", "Referee.scan:28"]);
+    expect(readers("Hall", "name", "py/club.py")).toEqual(["Referee.scan:28"]);
+    expect(readers("Pitch", "grass", "py/club.py")).toEqual(["Club.grass:14"]);
+    expect(readers("Club", "pitch", "py/club.py")).toEqual(["Club.call:20", "Club.grass:14"]);
+    expect(readers("Club", "rank", "py/club.py")).toEqual(["Club.rename:17"]);
+    expect(readers("Cup", "year", "py/club.py")).toEqual(["Cup.label:25"]);
+    const all = (summary.fieldReads ?? []).filter((r) => r.file === "py/club.py");
+    expect(all.some((r) => r.member === "title" || r.member === "mow")).toBe(false);
+    expect(all.some((r) => r.function === "Club.rename" && r.member === "name")).toBe(false);
+  });
+
+  it("lists PHP readers through $this, a typed parameter and a promoted property, never a namesake's", () => {
+    expect(readers("Club", "name", "php/Club.php")).toEqual(["Club.title:8", "Referee.local:15", "Referee.scan:14"]);
+    expect(readers("Hall", "name", "php/Club.php")).toEqual(["Referee.scan:14"]);
+    expect(readers("Pitch", "grass", "php/Club.php")).toEqual(["Club.grass:9"]);
+    expect(readers("Club", "pitch", "php/Club.php")).toEqual(["Club.call:11", "Club.grass:9"]);
+    expect(readers("Club", "rank", "php/Club.php")).toEqual(["Club.rename:10"]);
+    const all = (summary.fieldReads ?? []).filter((r) => r.file === "php/Club.php");
+    expect(all.some((r) => r.member === "title" || r.member === "mow")).toBe(false);
+    expect(all.some((r) => r.function === "Club.rename" && r.member === "name")).toBe(false);
   });
 
   it("answers `direction=readers` and stays capped", () => {

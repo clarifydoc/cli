@@ -34,7 +34,8 @@ function thrownClass(n: Node | null | undefined, locals: () => ReadonlySet<strin
  * `raise XError(…)` and `raise XError` (a class named by a capitalized leaf; a variable or a call result states
  * nothing, nor does a bare `raise`). `__init__` states its `self.x` writes as `init` (declarations, never writers). Nested functions and lambdas keep
  * `self` and are walked; a nested class is not. A qualified name (`requests.HTTPError`) binds by its last segment only
- * through a qualifier the project backs (a Python module path).
+ * through a qualifier the project backs (a Python module path). A read (`fieldReads`) is `self.x`, `self.a.x` or a
+ * typed name's `p.x` that is no callee and no `=`, `for` or `del` target; `+=` reads.
  */
 export function pythonMemberEffects(
   node: Node,
@@ -82,8 +83,23 @@ export function pythonMemberEffects(
     }
     out.addWrite(receiver, member.text, line);
   };
+  /** A read: `self.x`, `self.a.x` or a typed name's `p.x` that is no callee, no `=`/`for`/`del` target (`+=` reads). */
+  const addRead = (n: Node): void => {
+    const object = n.childForFieldName("object");
+    const member = n.childForFieldName("attribute");
+    if (!member || !object || (object.type !== "identifier" && object.type !== "attribute")) return;
+    let top: Node = n;
+    while (top.parent && ["pattern_list", "tuple_pattern", "list_pattern", "list_splat_pattern"].includes(top.parent.type)) top = top.parent;
+    const parent = top.parent;
+    if (parent?.type === "call" && parent.childForFieldName("function")?.id === n.id) return;
+    if ((parent?.type === "assignment" || parent?.type === "for_statement" || parent?.type === "for_in_clause") && parent.childForFieldName("left")?.id === top.id) return;
+    if (parent?.type === "delete_statement") return;
+    const receiver = receiverOf(object);
+    if (receiver !== null) out.addRead(receiver, member.text, n.startPosition.row + 1);
+  };
   visitOwnScope(body, (n) => n.type === "class_definition", (n) => {
-    if (n.type === "assignment" || n.type === "augmented_assignment") addWrite(n.childForFieldName("left"), n);
+    if (n.type === "attribute") addRead(n);
+    else if (n.type === "assignment" || n.type === "augmented_assignment") addWrite(n.childForFieldName("left"), n);
     else if (n.type === "raise_statement" && !out.throwsFull) {
       const type = thrownClass(n.namedChildren[0], locals);
       if (type) out.addThrow(type, n.startPosition.row + 1);

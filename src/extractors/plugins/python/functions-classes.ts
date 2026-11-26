@@ -339,7 +339,7 @@ export class PythonExtractor extends FunctionClassExtractor {
         if (module && !local.type) local.module = module;
       }
     }
-    if (body && /\braise\b|\.\w+\s*(?::[^=\n]+)?(?:\*\*|\/\/|>>|<<|[-+*/|&^%@])?=(?!=)/.test(bodyText)) {
+    if (body && /\braise\b|\w\.[A-Za-z_]/.test(bodyText)) {
       // `self` / `cls`: the first parameter when named so (core states `this` only where a class owns the function).
       const first = paramsNode?.namedChild(0);
       const selfName = first?.type === "identifier" && (first.text === "self" || first.text === "cls") ? first.text : null;

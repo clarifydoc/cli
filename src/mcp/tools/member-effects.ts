@@ -3,7 +3,7 @@ import { bulletList, loc, plural } from "../format.js";
 import { noResults } from "../empty.js";
 
 /**
- * What a function writes and throws (`ProjectAnalysis.fieldWrites` / `thrownTypes`), as lines for `clarifydoc_explain`.
+ * What a function writes, reads and throws (`ProjectAnalysis.fieldWrites` / `fieldReads` / `thrownTypes`), as lines for `clarifydoc_explain`.
  * Null when it states neither. `file` narrows to one definition when the name is declared in several files.
  */
 export function functionEffectsText(summary: ProjectAnalysis, symbol: string, file?: string): string | null {
@@ -30,8 +30,11 @@ export function functionEffectsText(summary: ProjectAnalysis, symbol: string, fi
     lines.push(...bulletList(grouped(writes, (w) => `${w.class}.${w.member}`), 12, ({ row: w, lines: ls }) => `${w.class}.${w.member} at ${at(w.file, ls)}${w.classFile !== w.file ? ` (declared in ${w.classFile})` : ""}`));
   }
   if (reads.length > 0) {
-    lines.push(`Reads ${plural(new Set(reads.map((r) => `${r.class}.${r.member}`)).size, "property", "properties")}:`);
-    lines.push(...bulletList(reads, 12, (r) => `${r.class}.${r.member} at ${loc(r.file, r.line)}${r.classFile !== r.file ? ` (declared in ${r.classFile})` : ""}`));
+    // One line: reads are many and sit in the function's own file, so a line number is the location; where a
+    // property is declared is `trace direction=readers` of it.
+    const read = grouped(reads, (r) => `${r.class}.${r.member}`);
+    const shown = read.slice(0, 12).map(({ row: r, lines: ls }) => `${r.class}.${r.member} (:${ls.join(", ")})`);
+    lines.push(`Reads: ${shown.join(", ")}${read.length > shown.length ? `, +${read.length - shown.length} more` : ""}`);
   }
   if (throws.length > 0) {
     lines.push(`Throws ${plural(new Set(throws.map((t) => t.type)).size, "exception type")}:`);
@@ -89,7 +92,7 @@ export function readersText(summary: ProjectAnalysis, symbol: string, limit: num
     return noResults({
       headline: `No read of \`${symbol}\` is in the analysis.`,
       holds: `The analysis holds ${plural(all.length, "property read")} (${members.slice(0, 5).join(", ") || "none"}${members.length > 5 ? ", …" : ""}). ` +
-        `Reads are stated for TypeScript/JavaScript, Java and Kotlin, through \`this\`, \`this.field\` or a receiver whose type is declared, ` +
+        `Reads are stated for TypeScript/JavaScript, Java, Kotlin, C#, Python and PHP, through \`this\`, \`this.field\` or a receiver whose type is declared, ` +
         `where a project class declares the property; a method call and a plain assignment are not reads.`,
       next: [`clarifydoc_trace symbol="${symbol}" direction="writers" — who assigns it`, `clarifydoc_search query="${member || symbol}" — by name`],
     });
