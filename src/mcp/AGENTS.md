@@ -1,7 +1,7 @@
 # src/mcp — Model Context Protocol server
 
 Serves the analysis to AI agents. Started by `clarifydoc mcp` (see [src/cli.ts](../cli.ts)) and by the VS Code
-extension, which publishes the same command as an MCP server definition ([VsCode/src/mcp.ts](../../VsCode/src/mcp.ts)).
+extension, which publishes the same command as an MCP server definition (the extension's `src/mcp.ts`).
 
 With no arguments the server serves the project containing the working directory (`findProjectRoot` walks up to a
 `.git`/manifest marker) and reads `<root>/.clarifydoc/<name>` — where both `clarifydoc analyze` and the extension
@@ -170,3 +170,7 @@ write. That is what lets an external agent be configured as nothing but a comman
 
 Describe the tool in terms of the *question it answers*; the description is the only thing a model reads before
 choosing it.
+
+## Adding a tool
+
+- **Add an MCP tool** — a `McpTool` factory in [src/mcp/tools/](tools/), registered in `src/mcp/server.ts`; read [src/mcp/AGENTS.md](AGENTS.md) first (stdout is the JSON-RPC wire, and every list must be capped). A route whose handler is written inline is a definition every symbol tool reads: `inlineRouteDefinitions` ([core/route-symbol.ts](../core/route-symbol.ts)) lists `route:<METHOD> <path>` with its span from the final `routeMap` — extract, explain's Handler source, trace's miss, `search kinds=["symbol"]`, rename_plan's refusal.
