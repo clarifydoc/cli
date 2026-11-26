@@ -1387,6 +1387,18 @@ function returnedSegment(body: Node | null): string | null {
  * reads the environment or a store is a runtime value no other file's helper can be told from.
  */
 function namedBasePath(tpl: string, body: Node | null): string | undefined {
+  return namedBaseHandedPath(tpl, body, false);
+}
+
+/** A module constant read from the environment whose fallback is an origin only (`process.env.X ?? "https://api.example"`). */
+const ENV_ORIGIN_VALUE = /^(?:import\.meta\.env|process\.env)\b[\w$.\[\]'"]*\s*(?:\?\?|\|\|)\s*(['"`])https?:\/\/[^/'"`\s]+\/?\1$/;
+
+/**
+ * `${clubOrigin}{path}` → `path` when `clubOrigin` is a module constant that is an environment read with an origin
+ * as its fallback: a base that adds no path, so the path the caller hands in is the URL (the same reading as an
+ * awaited runtime origin). With `envOrigin` false only the named-base rule applies.
+ */
+function namedBaseHandedPath(tpl: string, body: Node | null, envOrigin: boolean): string | undefined {
   const m = /^\$\{([A-Za-z_$][\w$]*)\}\{([A-Za-z_$][\w$]*)\}$/.exec(tpl);
   if (!m) return undefined;
   if (/^[A-Z][A-Z0-9_]*$/.test(m[1]!)) return m[2];
@@ -1395,7 +1407,9 @@ function namedBasePath(tpl: string, body: Node | null): string | undefined {
     if (decl?.type !== "lexical_declaration" || !decl.text.startsWith("const")) continue;
     for (const d of decl.namedChildren) {
       const kind = d.childForFieldName("value")?.type;
-      if (d.childForFieldName("name")?.text === m[1] && (kind === "string" || kind === "template_string")) return m[2];
+      if (d.childForFieldName("name")?.text !== m[1]) continue;
+      if (!envOrigin && (kind === "string" || kind === "template_string")) return m[2];
+      if (envOrigin && ENV_ORIGIN_VALUE.test(d.childForFieldName("value")?.text.replace(/\s+/g, " ") ?? "")) return m[2];
     }
   }
   return undefined;
@@ -1413,7 +1427,7 @@ export function extractUrlTemplates(
 ): string[] {
   if (!body) return [];
 
-  const locals: Locals = { values: new Map(), appends: new Map(), reassigns: new Map(), unset: new Set(), assigned: new Map() };
+  const locals: Locals = { values: new Map(), appends: new Map(), reassigns: new Map(), unset: new Set(), assigned: new Map(), rewritten: new Set() };
   let returns: Node[] = [];
   if (body.type === "statement_block") {
     collectReturns(body.namedChildren, locals, returns, 0, null, paramNames);
@@ -1465,13 +1479,23 @@ export function extractUrlTemplates(
     // A parameter extended by a path piece (`{apiRoute}series`): the caller's argument completes it.
     // A named base before the path the caller hands in (`${API_BASE}${path}`): the hole stays, the base filled where the project states it.
     const basedPath = namedBasePath(tpl, body);
+    // `let url = clubOrigin + path; if (query) url = `${url}?…`` on an environment origin: the path handed in, unless
+    // a condition rewrites the path itself (a plain assignment to the local), which no one template states.
+    const envHanded = !rewritten && !pathOnly && !basedPath ? namedBaseHandedPath(tpl, body, true) : undefined;
+    const envPathOnly = !!envHanded && paramNames.has(envHanded) && URL_PARAM.test(envHanded);
+    if (envPathOnly) {
+      if (!templates.includes(`{${envHanded}}`)) templates.push(`{${envHanded}}`);
+      return templates.length >= MAX_URL_TEMPLATES;
+    }
     const ok = tpl.includes("/") || pathOnly || (!!basedPath && paramNames.has(basedPath) && URL_PARAM.test(basedPath)) || (bareMember && /^\$\{this\.[\w$]+\}$/.test(tpl)) || /^\{[A-Za-z_$][\w$]*\}[\w.-]+$/.test(tpl) ||
       // A helper handing back another of its class's URL methods (`${this.getResourceUrl({id}, 'download')}`).
       /^\$\{this\.[\w$]+\([^{}]*(?:\{[\w$]+\}[^{}]*)*\)\}$/.test(tpl);
     if (ok && !templates.includes(tpl)) templates.push(tpl);
     return templates.length >= MAX_URL_TEMPLATES;
   };
+  let rewritten = false;
   for (const raw of returns) {
+    rewritten = raw.type === "identifier" && locals.rewritten.has(raw.text);
     // `return url.toString()` / `url.href` with `let url = new URL(this.getResourceUrl(id, 'download'))`:
     // the URL object's path argument (query parameters appended to it change no path).
     const urlArg = urlObjectArgument(raw, locals);
@@ -1677,6 +1701,8 @@ interface Locals {
   unset: Set<string>;
   /** The values such a local is given (`endpoint = `/x/${id}``), one per assignment, whatever guards it. */
   assigned: Map<string, Node[]>;
+  /** Locals with a value that a plain assignment gives another one that does not read the first (`if (legacy) url = "/legacy" + path`). */
+  rewritten: Set<string>;
 }
 
 /** The guard of a `switch` arm: `switch@<start>#<arm>`; arms of one switch exclude each other. */
@@ -1762,6 +1788,8 @@ function collectReturns(
           const list = locals.reassigns.get(left.text) ?? [];
           list.push({ guard, expr: right });
           locals.reassigns.set(left.text, list);
+        } else if (left?.type === "identifier" && right && locals.values.has(left.text) && !params.has(left.text)) {
+          locals.rewritten.add(left.text);
         } else if (left?.type === "identifier" && right && locals.unset.has(left.text)) {
           const list = locals.assigned.get(left.text) ?? [];
           if (list.length < MAX_URL_TEMPLATES) list.push(right);
