@@ -52,8 +52,19 @@ export function memberEffectsOf(
     const receiver = receiverText(target.childForFieldName("object"), typed);
     if (receiver !== null) out.addWrite(receiver, prop.text, at.startPosition.row + 1);
   };
+  /** `this.x` / `a.x` / `this.a.x` read as a value: not a callee, not the target of a plain `=` (a `+=` and `++` read it too). */
+  const addRead = (n: Node): void => {
+    const prop = n.childForFieldName("property");
+    if (prop?.type !== "property_identifier") return;
+    const parent = n.parent;
+    if (parent?.type === "call_expression" && parent.childForFieldName("function")?.id === n.id) return;
+    if (parent?.type === "assignment_expression" && parent.childForFieldName("left")?.id === n.id) return;
+    const receiver = receiverText(n.childForFieldName("object"), typed);
+    if (receiver !== null) out.addRead(receiver, prop.text, n.startPosition.row + 1);
+  };
   visitOwnScope(body, (n) => OWN_SCOPE_BREAKS.has(n.type) || !!options.skip?.(n), (n) => {
-    if (n.type === "assignment_expression" || n.type === "augmented_assignment_expression") addWrite(n.childForFieldName("left"), n);
+    if (n.type === "member_expression") addRead(n);
+    else if (n.type === "assignment_expression" || n.type === "augmented_assignment_expression") addWrite(n.childForFieldName("left"), n);
     else if (n.type === "update_expression") addWrite(n.childForFieldName("argument"), n);
     else if (n.type === "throw_statement" && !out.throwsFull) {
       const thrown = n.namedChildren.find((c) => c.type !== "comment");

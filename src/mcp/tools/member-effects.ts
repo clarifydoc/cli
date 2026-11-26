@@ -10,7 +10,8 @@ export function functionEffectsText(summary: ProjectAnalysis, symbol: string, fi
   const here = (r: { function: string; file: string }): boolean => (r.function === symbol || r.function.endsWith(`.${symbol}`)) && (!file || r.file === file);
   const writes = (summary.fieldWrites ?? []).filter(here);
   const throws = (summary.thrownTypes ?? []).filter(here);
-  if (writes.length === 0 && throws.length === 0) return null;
+  const reads = (summary.fieldReads ?? []).filter(here);
+  if (writes.length === 0 && throws.length === 0 && reads.length === 0) return null;
   const lines: string[] = [];
   // One row per field or type and file, its lines together: four `throw new HttpException` sites are one fact.
   const grouped = <T extends { file: string; line: number }>(rows: readonly T[], key: (r: T) => string): Array<{ row: T; lines: number[] }> => {
@@ -27,6 +28,10 @@ export function functionEffectsText(summary: ProjectAnalysis, symbol: string, fi
   if (writes.length > 0) {
     lines.push(`Assigns ${plural(new Set(writes.map((w) => `${w.class}.${w.member}`)).size, "field")}:`);
     lines.push(...bulletList(grouped(writes, (w) => `${w.class}.${w.member}`), 12, ({ row: w, lines: ls }) => `${w.class}.${w.member} at ${at(w.file, ls)}${w.classFile !== w.file ? ` (declared in ${w.classFile})` : ""}`));
+  }
+  if (reads.length > 0) {
+    lines.push(`Reads ${plural(new Set(reads.map((r) => `${r.class}.${r.member}`)).size, "property", "properties")}:`);
+    lines.push(...bulletList(reads, 12, (r) => `${r.class}.${r.member} at ${loc(r.file, r.line)}${r.classFile !== r.file ? ` (declared in ${r.classFile})` : ""}`));
   }
   if (throws.length > 0) {
     lines.push(`Throws ${plural(new Set(throws.map((t) => t.type)).size, "exception type")}:`);
@@ -66,5 +71,32 @@ export function writersText(summary: ProjectAnalysis, symbol: string, limit: num
     lines.push(`# Who throws ${symbol} — ${plural(thrown.length, "site")}`, "");
     lines.push(...bulletList(thrown, limit, (t) => `${t.function} — ${loc(t.file, t.line)}${t.declared ? " (declared in the signature)" : ""}`));
   }
+  return lines.join("\n");
+}
+
+/**
+ * `clarifydoc_trace direction=readers`: who reads `Class.property` — one row per reading function (its first read), through
+ * `this`, a typed receiver or a field of a declared class. A read in a function with no declared receiver type states nothing.
+ */
+export function readersText(summary: ProjectAnalysis, symbol: string, limit: number, file?: string): string {
+  const dot = symbol.lastIndexOf(".");
+  const cls = dot > 0 ? symbol.slice(0, dot) : "";
+  const member = dot > 0 ? symbol.slice(dot + 1) : "";
+  const reads = dot > 0 ? (summary.fieldReads ?? []).filter((r) => r.class === cls.slice(cls.lastIndexOf(".") + 1) && r.member === member && (!file || r.classFile === file)) : [];
+  if (reads.length === 0) {
+    const all = summary.fieldReads ?? [];
+    const members = [...new Set(all.map((r) => `${r.class}.${r.member}`))].sort();
+    return noResults({
+      headline: `No read of \`${symbol}\` is in the analysis.`,
+      holds: `The analysis holds ${plural(all.length, "property read")} (${members.slice(0, 5).join(", ") || "none"}${members.length > 5 ? ", …" : ""}). ` +
+        `Reads are stated for TypeScript/JavaScript, Java and Kotlin, through \`this\`, \`this.field\` or a receiver whose type is declared, ` +
+        `where a project class declares the property; a method call and a plain assignment are not reads.`,
+      next: [`clarifydoc_trace symbol="${symbol}" direction="writers" — who assigns it`, `clarifydoc_search query="${member || symbol}" — by name`],
+    });
+  }
+  const homes = [...new Set(reads.map((r) => r.classFile))];
+  const lines = [`# Who reads ${cls}.${member} — ${plural(new Set(reads.map((r) => r.function)).size, "function")}`, ""];
+  if (homes.length > 1) lines.push(`Several classes are named ${cls} (${homes.join(", ")}); pass \`file\` to pick one.`, "");
+  lines.push(...bulletList(reads, limit, (r) => `${r.function} — ${loc(r.file, r.line)}${r.via === "typed" ? " (through a typed receiver)" : ""}`));
   return lines.join("\n");
 }

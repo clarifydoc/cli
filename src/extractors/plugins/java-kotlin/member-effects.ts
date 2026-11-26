@@ -54,6 +54,20 @@ function kotlinTarget(left: Node | null | undefined, typed: ReadonlySet<string>,
   return null;
 }
 
+/** Kotlin `this.x`, `a.x` or `this.a.x` as a value: a `navigation_expression` of one suffix on `this`, a typed name or `this.field`. */
+function kotlinReadTarget(n: Node, typed: ReadonlySet<string>): WriteTarget | null {
+  const [head, ...rest] = n.namedChildren;
+  if (!head || rest.length !== 1 || rest[0]!.type !== "navigation_suffix") return null;
+  const member = rest[0]!.namedChildren.find((c) => c.type === "simple_identifier")?.text;
+  if (!member) return null;
+  if (head.type === "this_expression") return { receiver: "this", member };
+  if (head.type === "simple_identifier") return typed.has(head.text) ? { receiver: head.text, member } : null;
+  if (head.type !== "navigation_expression") return null;
+  const [inner, ...suffix] = head.namedChildren;
+  const field = suffix.length === 1 && suffix[0]!.type === "navigation_suffix" ? suffix[0]!.namedChildren.find((c) => c.type === "simple_identifier")?.text : undefined;
+  return inner?.type === "this_expression" && field ? { receiver: `this.${field}`, member } : null;
+}
+
 /**
  * What a Java/Kotlin method writes to fields and throws (`FunctionInfo.fieldWrites` / `throws`): assignments and
  * `++`/`--` on `this.x`, a bare field `x` the method does not declare, `this.field.x` and a typed parameter or local's
@@ -107,8 +121,22 @@ export function jvmMemberEffects(
     const addWrite = (target: WriteTarget | null, at: Node): void => {
       if (!initializer && target) out.addWrite(target.receiver, target.member, at.startPosition.row + 1);
     };
+    /** A read: a field access that is no callee and no plain `=` target (`fieldReads`: `this`, `this.field` or a typed name; once per function). */
+    const addRead = (target: WriteTarget | null, n: Node): void => {
+      if (!target) return;
+      const parent = n.parent;
+      if (parent?.type === "assignment_expression" && parent.childForFieldName("left")?.id === n.id && parent.childForFieldName("operator")?.text === "=") return;
+      if (parent?.type === "call_expression" && parent.namedChildren[0]?.id === n.id) return;
+      out.addRead(target.receiver, target.member, n.startPosition.row + 1);
+    };
     visitOwnScope(body, (n) => OWN_SCOPE_BREAKS.has(n.type), (n) => {
       switch (n.type) {
+        case "field_access":
+          addRead(dottedTarget(n, JAVA_ACCESS, typed, locals), n);
+          break;
+        case "navigation_expression":
+          addRead(kotlinReadTarget(n, typed), n);
+          break;
         case "assignment_expression":
           addWrite(dottedTarget(n.childForFieldName("left"), JAVA_ACCESS, typed, locals), n);
           break;

@@ -1,4 +1,4 @@
-import type { ClassInfo, FieldWriteRow, FileAnalysis, FunctionInfo, ThrownTypeRow } from "../types/analysis.js";
+import type { ClassInfo, FieldReadRow, FieldWriteRow, FileAnalysis, FunctionInfo, ThrownTypeRow } from "../types/analysis.js";
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
 import { manifestFor } from "../extractors/registry.js";
 import { importResolveContext } from "./import-index.js";
@@ -45,7 +45,7 @@ type LanguageName = Parameters<typeof manifestFor>[0];
 export function joinMemberEffects(
   analyses: readonly FileAnalysis[],
   include: (file: string) => boolean = () => true,
-): { fieldWrites: FieldWriteRow[]; thrownTypes: ThrownTypeRow[] } {
+): { fieldWrites: FieldWriteRow[]; thrownTypes: ThrownTypeRow[]; fieldReads: FieldReadRow[] } {
   const byName = new Map<string, ClassRef[]>();
   for (const a of analyses) {
     if (!include(a.filePath)) continue;
@@ -203,6 +203,7 @@ export function joinMemberEffects(
   }
   const fieldWrites: FieldWriteRow[] = [];
   const thrownTypes: ThrownTypeRow[] = [];
+  const fieldReads: FieldReadRow[] = [];
 
   const dirOf = (file: string): string => file.slice(0, file.lastIndexOf("/") + 1);
   /** The unit a package variable belongs to: the directory's package where a directory shares its names (Go), else the file's module (its stem, or the folder of a `mod`/`index` file). */
@@ -275,6 +276,25 @@ export function joinMemberEffects(
       if (!target) continue;
       fieldWrites.push({ class: target.cls.name, classFile: target.file, member: w.member, function: symbol, file: a.filePath, line: w.line, via });
     }
+    for (const r of fn.fieldReads ?? []) {
+      // A read names a property its class DECLARES (an own or inherited one): never the owner by default, a method or an undeclared name.
+      let target: ClassRef | null = null;
+      let via: FieldReadRow["via"] = "typed";
+      if (r.receiver === "this" && owner) {
+        via = "this";
+        target = (self ? declaring(self)(r.member)?.ref : null) ?? declaring(owner)(r.member)?.ref ?? null;
+      } else if (r.receiver.startsWith("this.") && owner) {
+        const field = declaring(owner)(r.receiver.slice(5));
+        const type = field?.type ? pathOr(field.type, field.typePath, a.language) : null;
+        const typed = type ? locate(type, field!.ref.file, field!.ref.project, field!.ref.cls.line) : null;
+        target = typed ? declaring(typed)(r.member)?.ref ?? null : null;
+      } else if (r.receiver && !r.receiver.includes(".") && r.receiver !== "this") {
+        const type = typeOfName(r.receiver);
+        const typed = type ? locate(type, a.filePath, project, r.line) : null;
+        target = typed ? declaring(typed)(r.member)?.ref ?? null : null;
+      }
+      if (target) fieldReads.push({ class: target.cls.name, classFile: target.file, member: r.member, function: symbol, file: a.filePath, line: r.line, via });
+    }
     for (const t of fn.throws ?? []) {
       const known = locate(t.type, a.filePath, project, t.line);
       thrownTypes.push({ type: t.type, function: symbol, file: a.filePath, line: t.line, ...(t.declared ? { declared: true as const } : {}), ...(known ? { classFile: known.file } : {}) });
@@ -286,13 +306,14 @@ export function joinMemberEffects(
     for (const cls of a.classes) {
       const own: ClassRef = { cls, file: a.filePath, project: a.projectId ?? "" };
       const owner = spansFiles(a.language) ? locate(cls.name, a.filePath, own.project) ?? own : own;
-      for (const m of cls.methods) if (m.fieldWrites || m.throws) visit(a, m, `${cls.name}.${m.name}`, owner, beyondDirectory(a.language) ? own : null);
+      for (const m of cls.methods) if (m.fieldWrites || m.throws || m.fieldReads) visit(a, m, `${cls.name}.${m.name}`, owner, beyondDirectory(a.language) ? own : null);
     }
-    for (const fn of a.functions) if (fn.fieldWrites || fn.throws) visit(a, fn, fn.name, null);
+    for (const fn of a.functions) if (fn.fieldWrites || fn.throws || fn.fieldReads) visit(a, fn, fn.name, null);
   }
   const order = (x: { file: string; line: number; function: string }, y: { file: string; line: number; function: string }): number =>
     x.file < y.file ? -1 : x.file > y.file ? 1 : x.line - y.line || (x.function < y.function ? -1 : x.function > y.function ? 1 : 0);
   fieldWrites.sort(order);
   thrownTypes.sort(order);
-  return { fieldWrites, thrownTypes };
+  fieldReads.sort(order);
+  return { fieldWrites, thrownTypes, fieldReads };
 }

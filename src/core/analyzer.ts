@@ -2756,6 +2756,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
     ...(envVars.length > 0 ? { envVars } : {}),
     ...(configKeys.length > 0 ? { configKeys } : {}),
     ...(memberEffects.fieldWrites.length > 0 ? { fieldWrites: memberEffects.fieldWrites } : {}),
+    ...(memberEffects.fieldReads.length > 0 ? { fieldReads: memberEffects.fieldReads } : {}),
     ...(memberEffects.thrownTypes.length > 0 ? { thrownTypes: memberEffects.thrownTypes } : {}),
     ...(configFiles.length > 0 ? { configFiles } : {}),
     ...(ciDeploys.length > 0 ? { ciDeploys } : {}),

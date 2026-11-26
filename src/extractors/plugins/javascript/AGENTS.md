@@ -116,7 +116,7 @@ Reads JS/TS (`.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`), the script and templ
 
 ## Member effects
 
-- [member-effects.ts](member-effects.ts) states per function what it assigns (`FunctionInfo.fieldWrites`) and throws (`FunctionInfo.throws`); core resolves within the writer's language family by declared types only.
+- [member-effects.ts](member-effects.ts) states per function what it assigns (`FunctionInfo.fieldWrites`) and throws (`FunctionInfo.throws`); core resolves within the writer's language family by declared types only. It also states the property reads (`FunctionInfo.fieldReads`: `this.x`, a typed name's `x`, `this.field.x`; no callee, no plain `=` target, once per function and member); the Java/Kotlin reader ([member-effects.ts](java-kotlin/member-effects.ts)) does the same for `field_access` / `navigation_expression`.
 
 ## Reachability (dead code)
 

@@ -211,6 +211,7 @@ export const PROJECT_ANALYSIS_FIELDS: Presence<ProjectAnalysis> = {
   configKeys: "optional",
   configFiles: "optional",
   fieldWrites: "optional",
+  fieldReads: "optional",
   thrownTypes: "optional",
 };
 

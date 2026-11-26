@@ -1756,6 +1756,14 @@ export interface FunctionInfo {
    * state nothing. Core resolves the types to project classes (`ProjectAnalysis.thrownTypes`). Absent when it throws none.
    */
   throws?: Array<{ type: string; line: number; declared?: true }>;
+  /**
+   * Reads of a member of an object, as written (`this.status`, `club.status`, `this.club.status`): `receiver` is `this`,
+   * `this.<field>` or a parameter or local name with a declared type, as in `fieldWrites`; once per receiver and member
+   * (the first line). A method call's callee, a plain `=` target and an untyped receiver are not reads. Core keeps a
+   * read only where the receiver's class is a project class that declares the member (`ProjectAnalysis.fieldReads`).
+   * Absent when the function reads none, and in languages whose plugin does not state it.
+   */
+  fieldReads?: Array<{ member: string; receiver: string; line: number }>;
   line: number;
   endLine: number;
   /** The first sentence of its doc comment or docstring, capped (core/doc-comments.ts). Absent when it has none. */
@@ -5745,6 +5753,8 @@ export interface ProjectAnalysis {
   configKeys?: ConfigKeyUse[];
   /** Field assignments with the class they write, from `FunctionInfo.fieldWrites` (`core/member-effects.ts`). Absent when none resolves. */
   fieldWrites?: FieldWriteRow[];
+  /** Property reads with the project class that declares the property, from `FunctionInfo.fieldReads` (`core/member-effects.ts`). Absent when none resolves. */
+  fieldReads?: FieldReadRow[];
   /** Exception types functions throw, from `FunctionInfo.throws`, with the project class each names when it is one (`core/member-effects.ts`). */
   thrownTypes?: ThrownTypeRow[];
   /**
@@ -6172,6 +6182,20 @@ export interface FieldWriteRow {
    * `package`: a package variable (Go) — `class` is then the package's name and `member` the variable.
    */
   via: "this" | "typed" | "package";
+}
+
+/** One function's read of `<class>.<member>` (the first line it reads it on). */
+export interface FieldReadRow {
+  /** The class declaring the property read. */
+  class: string;
+  classFile: string;
+  member: string;
+  /** The reading function, `Class.method` or a free function's name. */
+  function: string;
+  file: string;
+  line: number;
+  /** `this`: through the own instance; `typed`: through a parameter, a local or a field of a declared class. */
+  via: "this" | "typed";
 }
 
 /** One thrown exception type of a function. `classFile` is set when the type is a class of the project. */

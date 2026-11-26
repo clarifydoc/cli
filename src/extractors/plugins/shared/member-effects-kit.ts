@@ -5,7 +5,7 @@ import { blankStringLiterals } from "./regex-base.js";
 /** Most facts one function states: a generated initializer would otherwise swell the file for no reader. */
 export const MAX_FACTS = 40;
 
-export type Effects = Pick<FunctionInfo, "fieldWrites" | "throws">;
+export type Effects = Pick<FunctionInfo, "fieldWrites" | "throws" | "fieldReads">;
 
 /** A written member and the receiver text it is written on (`""` bare, `this`, `this.field`, a typed name). */
 export interface WriteTarget { receiver: string; member: string }
@@ -91,6 +91,8 @@ export function applyEffects(fn: FunctionInfo, effects: Effects | null): void {
   else delete fn.fieldWrites;
   if (effects?.throws) fn.throws = effects.throws;
   else delete fn.throws;
+  if (effects?.fieldReads) fn.fieldReads = effects.fieldReads;
+  else delete fn.fieldReads;
 }
 
 /** The facts one function states, capped and de-duplicated by receiver, member and line. */
@@ -98,6 +100,17 @@ export class EffectsCollector {
   private readonly writes: NonNullable<Effects["fieldWrites"]> = [];
   private readonly thrown: NonNullable<Effects["throws"]> = [];
   private readonly declared = new Set<string>();
+  private readonly reads: NonNullable<Effects["fieldReads"]> = [];
+  private readonly readKeys = new Set<string>();
+
+  /** States a read of `receiver.member` — once per function (its first line): ten reads of `this.name` are one fact. */
+  addRead(receiver: string, member: string, line: number): void {
+    if (this.reads.length >= MAX_FACTS) return;
+    const key = `${receiver}\0${member}`;
+    if (this.readKeys.has(key)) return;
+    this.readKeys.add(key);
+    this.reads.push({ member, receiver, line });
+  }
 
   addWrite(receiver: string, member: string, line: number, init?: true, pkg?: true, cls?: string): void {
     if (this.writes.length >= MAX_FACTS) return;
@@ -120,8 +133,8 @@ export class EffectsCollector {
   }
 
   result(): Effects | null {
-    if (this.writes.length === 0 && this.thrown.length === 0) return null;
-    return { ...(this.writes.length > 0 ? { fieldWrites: this.writes } : {}), ...(this.thrown.length > 0 ? { throws: this.thrown } : {}) };
+    if (this.writes.length === 0 && this.thrown.length === 0 && this.reads.length === 0) return null;
+    return { ...(this.writes.length > 0 ? { fieldWrites: this.writes } : {}), ...(this.thrown.length > 0 ? { throws: this.thrown } : {}), ...(this.reads.length > 0 ? { fieldReads: this.reads } : {}) };
   }
 }
 

@@ -44,7 +44,7 @@ import { fileChangedNote, mustResolveFile, nearSymbols, requireAnalysis, resolve
 import { filterToDrop, missHeadline, noResults, type DroppableFilter } from "../empty.js";
 import { decisionsAbout } from "./decisions.js";
 import { filesNaming, namingIndex, rankByUse, targetsFromNames } from "../../core/member-dependents.js";
-import { writersText } from "./member-effects.js";
+import { readersText, writersText } from "./member-effects.js";
 import { boundLines, fileBound, refOf, routeBoundLine, routeLiterals, symbolBound, type CallerBound } from "./caller-bounds.js";
 
 /** ` (through the macro M)` for a link a macro's body makes, else nothing. */
@@ -977,16 +977,16 @@ export function traceTool(ctx: ToolContext): McpTool {
   return {
     name: "clarifydoc_trace",
     title: "Call traces (callers / callees)",
-    description: "Use for who calls a function or what it calls (through DI and interfaces), with file:line per hop, confidence and data effects reached. `to`: call paths to a symbol; direction=overrides: what a method overrides, and its overrides.",
+    description: "Use for who calls a function or what it calls (through DI and interfaces), with file:line per hop, confidence and data reached. `to`: call paths to a symbol; direction=overrides: what a method overrides, and its overrides.",
     inputSchema: {
       type: "object",
       properties: {
         symbol: { type: "string", description: "`Class.method` or a name; optional with `file`." },
         file: { type: "string" },
-        direction: { type: "string", enum: ["callers", "callees", "both", "overrides", "writers"] },
+        direction: { type: "string", enum: ["callers", "callees", "both", "overrides", "writers", "readers"] },
         depth: { type: "number", description: "1-4 (default 2)." },
         limit: { type: "number" },
-        to: { description: "Target symbol: the call paths to it.", type: "string" },
+        to: { description: "Target symbol: call paths to it.", type: "string" },
         toFile: { type: "string" },
         minConfidence: { type: "string", enum: ["EXTRACTED", "INFERRED", "AMBIGUOUS"] },
       },
@@ -997,12 +997,16 @@ export function traceTool(ctx: ToolContext): McpTool {
       const symbolArg = stringArg(args, "symbol");
       const symbol = symbolArg === undefined ? undefined : resolveSymbolArg(loaded.summary, symbolArg);
       const fileArg = stringArg(args, "file");
-      const direction = enumArg(args, "direction", ["callers", "callees", "both", "overrides", "writers"] as const) ?? "both";
+      const direction = enumArg(args, "direction", ["callers", "callees", "both", "overrides", "writers", "readers"] as const) ?? "both";
       const depth = numberArg(args, "depth", 2, { min: 1, max: 4 });
       const limit = numberArg(args, "limit", 20, { max: 200 });
       if (direction === "writers") {
         if (!symbol) throw new Error("`direction=writers` needs `symbol`: a field (\"Club.status\") or an exception class.");
         return { text: writersText(loaded.summary, symbol, limit, fileArg ? mustResolveFile(loaded, fileArg) : undefined) };
+      }
+      if (direction === "readers") {
+        if (!symbol) throw new Error("`direction=readers` needs `symbol`: a property (\"Club.status\").");
+        return { text: readersText(loaded.summary, symbol, limit, fileArg ? mustResolveFile(loaded, fileArg) : undefined) };
       }
       const minConfidence = enumArg(args, "minConfidence", ["EXTRACTED", "INFERRED", "AMBIGUOUS"] as const) ?? "AMBIGUOUS";
       if (!symbol && !fileArg) {
