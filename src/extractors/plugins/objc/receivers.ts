@@ -111,9 +111,10 @@ function propertiesOf(lines: string[], from: number, to: number): PropertyInfo[]
       // The name is the last identifier; a block or function-pointer property is none of ours.
       const name = /([A-Za-z_]\w*)\s*$/.exec(decl)?.[1];
       const type = objcType(decl.slice(0, decl.length - (name?.length ?? 0)));
-      if (name && type) {
+      // A scalar (`BOOL open`, `NSInteger points`) names no class but is a member a write names: kept, untyped. A block property is none of ours.
+      if (name && (type || !decl.includes("("))) {
         const attrs = (prop[1] ?? "").split(",").map((a) => a.trim());
-        const base: PropertyInfo = { name, type, visibility: "public", isStatic: attrs.includes("class"), isReadonly: attrs.includes("readonly") };
+        const base: PropertyInfo = { name, type: type ?? null, visibility: "public", isStatic: attrs.includes("class"), isReadonly: attrs.includes("readonly") };
         out.push(base, { ...base, name: `_${name}`, visibility: "private" });
       }
       continue;
@@ -129,7 +130,7 @@ function propertiesOf(lines: string[], from: number, to: number): PropertyInfo[]
   return out;
 }
 
-interface Block {
+export interface Block {
   kind: "implementation" | "interface" | "protocol";
   name: string;
   superclass: string | null;
@@ -142,7 +143,7 @@ interface Block {
 const BLOCK_HEAD = /^\s*@(implementation|interface|protocol)\s+([A-Za-z_]\w*)\s*(?:<[^>]*>\s*)?(?::\s*([A-Za-z_]\w*))?\s*(?:<([^>]*)>)?\s*(\(\s*\w*\s*\))?/;
 
 /** Each `@implementation`/`@interface`/`@protocol … @end` block of a file. */
-function blocksOf(lines: string[]): Block[] {
+export function blocksOf(lines: string[]): Block[] {
   const blocks: Block[] = [];
   for (let i = 0; i < lines.length; i++) {
     const m = BLOCK_HEAD.exec(lines[i]!);

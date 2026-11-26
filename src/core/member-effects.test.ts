@@ -1208,3 +1208,138 @@ describe("member effects, qualified type names", () => {
     expect(writes).toEqual(["go/club.go Club.N", "rs/club.rs Club.n"]);
   });
 });
+
+describe("member effects, Objective-C", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-member-effects-objc-"));
+    await mkdir(join(dir, "Models"), { recursive: true });
+    await mkdir(join(dir, "Other"), { recursive: true });
+    await writeFile(join(dir, "Models", "Club.h"), [
+      "#import <Foundation/Foundation.h>",
+      "",
+      "@interface Club : NSObject",
+      "@property (nonatomic, copy) NSString *name;",
+      "@property (nonatomic, assign) NSInteger points;",
+      "@property (nonatomic, assign) BOOL open;",
+      "@property (nonatomic, strong) Stats *stats;",
+      "- (void)win:(NSInteger)n;",
+      "@end",
+    ].join("\n"));
+    await writeFile(join(dir, "Models", "Club.m"), [
+      "#import \"Club.h\"",
+      "",
+      "@implementation ClubClosed",
+      "@end",
+      "",
+      "@interface Stats : NSObject",
+      "@property (nonatomic, assign) NSInteger goals;",
+      "@end",
+      "@implementation Stats",
+      "@end",
+      "",
+      "@implementation Club {",
+      "  NSInteger _visits;",
+      "}",
+      "",
+      "- (instancetype)initWithName:(NSString *)n {",
+      "  self = [super init];",
+      "  _name = n;",
+      "  _points = 1;",
+      "  return self;",
+      "}",
+      "",
+      "- (void)win:(NSInteger)n {",
+      "  NSInteger old = self.points;",
+      "  self.points += 3;",
+      "  self.stats.goals = n;",
+      "  _visits++;",
+      "  self.open = YES;",
+      "  self->_name = @\"self.ghost = 1\";",
+      "  // _points = 9;",
+      "  NSInteger count = 0;",
+      "  count = 4;",
+      "  if (old == _points) @throw [ClubClosed exceptionWithName:@\"closed\" reason:nil userInfo:nil];",
+      "}",
+      "",
+      "- (void)close {",
+      "  @try { [self win:1]; } @catch (NSException *e) { @throw; }",
+      "  [NSException raise:@\"Closed\" format:@\"x\"];",
+      "}",
+      "",
+      "- (void)fail {",
+      "  NSException *e = [[ClubClosed alloc] initWithName:@\"n\" reason:nil userInfo:nil];",
+      "  @throw e;",
+      "  @throw [[ClubClosed alloc] init];",
+      "}",
+      "",
+      "- (void)shadow {",
+      "  NSInteger _visits = 0;",
+      "  _visits = 2;",
+      "}",
+      "@end",
+    ].join("\n"));
+    await writeFile(join(dir, "Models", "Club+Report.m"), [
+      "#import \"Club.h\"",
+      "",
+      "@implementation Club (Report)",
+      "- (void)report {",
+      "  self.name = @\"report\";",
+      "  _points = 0;",
+      "}",
+      "@end",
+    ].join("\n"));
+    await writeFile(join(dir, "Models", "Garage.m"), [
+      "#import \"Club.h\"",
+      "",
+      "@implementation Garage",
+      "- (void)rename:(Club *)club {",
+      "  club.name = @\"Rovers\";",
+      "  Club *other = [[Club alloc] init];",
+      "  other.points = 2;",
+      "  NSMutableArray *plain = nil;",
+      "  plain.count = 3;",
+      "}",
+      "@end",
+    ].join("\n"));
+    await writeFile(join(dir, "Other", "Club.m"), [
+      "@implementation Club",
+      "@property (nonatomic, copy) NSString *label;",
+      "- (void)tag { self.label = @\"x\"; }",
+      "@end",
+    ].join("\n"));
+    await analyze({ projectRoot: dir, outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 60_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("lists writes through self, an instance variable, a typed parameter or local, never from an initializer or to a local", () => {
+    const rows = (summary.fieldWrites ?? []).map((w) => `${w.class}.${w.member} <- ${w.function}:${w.line} ${w.via} ${w.classFile}`).sort();
+    // The class-extension and category parts answer for the class in the directory; the namesake in Other/ keeps its own write.
+    expect(rows).toEqual([
+      "Club._name <- Club.win:29 this Models/Club.h",
+      "Club._points <- Club.report:6 this Models/Club.h",
+      "Club._visits <- Club.win:27 this Models/Club.m",
+      "Club.label <- Club.tag:3 this Other/Club.m",
+      "Club.name <- Club.report:5 this Models/Club.h",
+      "Club.name <- Garage.rename:5 typed Models/Club.h",
+      "Club.open <- Club.win:28 this Models/Club.h",
+      "Club.points <- Club.win:25 this Models/Club.h",
+      "Club.points <- Garage.rename:7 typed Models/Club.h",
+      "Stats.goals <- Club.win:26 typed Models/Club.m",
+    ]);
+  });
+
+  it("lists the class after @throw and raise, never a rethrow", () => {
+    const thrown = (summary.thrownTypes ?? []).map((t) => `${t.type} <- ${t.function}:${t.line}${t.classFile ? " known" : ""}`).sort();
+    expect(thrown).toEqual([
+      "ClubClosed <- Club.fail:44 known",
+      "ClubClosed <- Club.win:33 known",
+      "NSException <- Club.close:38",
+      "NSException <- Club.fail:43",
+    ]);
+  });
+});

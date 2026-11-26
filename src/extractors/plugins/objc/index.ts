@@ -3,6 +3,8 @@ import type { RegexLangSpec } from "../shared/regex-base.js";
 import type { ClassInfo } from "../../../types/analysis.js";
 import { extractCFamilyMacros } from "../shared/c-family-macros.js";
 import { extractSqlStringDataSources } from "../shared/sql-string-sources.js";
+import { applyEffects } from "../shared/member-effects-kit.js";
+import { objcDeclaredMembers, objcMemberEffects } from "./member-effects.js";
 import { declarationLines, extractObjcLocalTypes, objcClasses, objcParams, parseObjcReturnType } from "./receivers.js";
 
 /**
@@ -32,7 +34,19 @@ export const objcSpec: RegexLangSpec = {
   // A method declared in an `@interface` is no function: the `@implementation` holds its definition.
   postProcessFunctions: (lines, fns) => {
     const declared = declarationLines(lines);
-    return declared.size === 0 ? fns : fns.filter((fn) => !declared.has(fn.line));
+    const kept = declared.size === 0 ? fns : fns.filter((fn) => !declared.has(fn.line));
+    for (const fn of kept) applyEffects(fn, objcMemberEffects(lines, fn, null));
+    return kept;
+  },
+  // Writes through typed parameters and locals, and the types a C function throws; a method's own are read below.
+  postProcessClasses: (lines, classes) => {
+    const declared = objcDeclaredMembers(lines);
+    for (const cls of classes) {
+      if (cls.kind === "interface") continue;
+      const members = declared.get(cls.name);
+      for (const m of cls.methods) applyEffects(m, objcMemberEffects(lines, m, { members: members && members.size > 0 ? members : null }));
+    }
+    return classes;
   },
   extractParams: objcParams,
   parseReturnType: parseObjcReturnType,
