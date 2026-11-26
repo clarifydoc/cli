@@ -25,7 +25,7 @@ Build files and commands
 - [service-config.ts](service-config.ts) — `application*.yml`/`.properties`: client bases, `routeBaseOf` (`server.servlet.context-path`), `proxySources` (Spring Cloud Gateway / Zuul), `normalizeKey`. [gateway-routes.ts](gateway-routes.ts) — gateway routes.
 
 Structure and typing
-- [functions-classes.ts](functions-classes.ts) — functions, classes, enum constants, calls; [call-hooks.ts](call-hooks.ts) — receiver typing and call narrowing; [arg-kinds.ts](arg-kinds.ts), [arg-origins.ts](arg-origins.ts) — overload facts.
+- [functions-classes.ts](functions-classes.ts) — functions, classes, enum constants, calls; [call-hooks.ts](call-hooks.ts) — receiver typing and call narrowing; [arg-kinds.ts](arg-kinds.ts), [arg-origins.ts](arg-origins.ts) — overload facts (a local's declared or literal type is written onto the call's `argKinds`; `typed-local-overload.test.ts` pins it).
 - [java-anonymous.ts](java-anonymous.ts), [kotlin-delegation.ts](kotlin-delegation.ts), [kotlin-facade.ts](kotlin-facade.ts), [synthesized-members.ts](synthesized-members.ts), [type-bounds.ts](type-bounds.ts), [wrapper-elements.ts](wrapper-elements.ts), [element-types.ts](element-types.ts), [function-types.ts](function-types.ts), [member-effects.ts](member-effects.ts), [value-flow.ts](value-flow.ts) — each states one family of facts; read its header before editing.
 
 Frameworks

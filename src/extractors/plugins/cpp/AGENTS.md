@@ -7,7 +7,7 @@ Reads C++ (`.h`, `.hpp`, `.hxx`, `.hh`, `.cpp`, `.cc`, `.cxx`, CUDA `.cu`/`.cuh`
 - `manifest.ts` — static tier: include scope, compilation database, overload ranking, `.h` reading variant (`readingVariant`), vendored banners; the scope rules are documented there.
 - `index.ts` — the regex `RegexLangSpec` (patterns, `declarationCallPatterns`, direct-init and field-path calls); `meta.ts` wires it.
 - `antlr.ts` — the ANTLR front end: calls, locals, operators, iterators, maps, structured bindings, Qt string connects, callable fields.
-- `classes.ts` — class, namespace, one-line-class and template-head reading; `collection-element.ts` — container/map/pair element types; `arg-kinds.ts` — declared type → overload key.
+- `classes.ts` — class, namespace, one-line-class and template-head reading; `collection-element.ts` — container/map/pair element types; `arg-kinds.ts` — declared type → overload key. A built-in local (`int shirt`, `const char* tag`) has no `localTypes` entry, so `antlr.ts` (`builtinKind`) writes its overload key onto the call's `argKinds` when the function declares the name once, as a local; `typed-local-overload.test.ts` pins it.
 - `member-effects.ts` — field writes and throws; `qt-slots.ts`, `connect-elements.ts` — Qt connect reading; `project-markers.ts` — CMake `project()` root check; `frameworks.ts` (rule `qt`), `package-manifests.ts`, `packages.ts` — vcpkg/conan.
 
 ## Cross-file rules

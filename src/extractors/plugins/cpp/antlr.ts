@@ -170,7 +170,14 @@ interface OperatorSite { calls: PatternCallName[]; type: string; name: string; l
 interface Declared { cls: string | false; key: string; text: string; pointer: boolean; iterOf?: string; /** `for (auto& p : clubs)`: the container name `p` is an element of. */ rangeOf?: string }
 
 /** What a function sees by name: its parameters and locals, then the fields of the class it belongs to. */
-interface Scope { locals: Map<string, Declared>; owner: string | null; fields: () => Map<string, Map<string, Declared>>; templates?: string[] }
+interface Scope {
+  locals: Map<string, Declared>;
+  owner: string | null;
+  fields: () => Map<string, Map<string, Declared>>;
+  templates?: string[];
+  /** Per name, how many times the function declares it and whether one is a parameter: only a name declared once, as a local, is typed at its call (`builtinKind`). */
+  declared?: Map<string, { count: number; param: boolean }>;
+}
 
 /** A free `operator==(const Club&, int)` definition: the class of its first parameter and the overload key of its second. */
 interface FreeOperator { left: string; right: string | null }
@@ -294,6 +301,9 @@ function walk(root: ParseTree, stream: readonly Token[], text: string, isType: (
         const declared = templates ? withoutTemplateTypes(stated, templates) : stated;
         const map = objects.get(calls) ?? objects.set(calls, new Map()).get(calls)!;
         scopeOf(calls).locals.set(name, declared);
+        const seen = (scopeOf(calls).declared ??= new Map()).get(name);
+        if (seen) seen.count++;
+        else scopeOf(calls).declared!.set(name, { count: 1, param: ctx instanceof ParameterDeclarationContext });
         if (declared.cls) map.set(name, declared.cls);
         else map.delete(name);
       }
@@ -894,6 +904,7 @@ function postfixCalls(outer: PostfixExpressionContext, calls: PatternCallName[],
   const start = chain[0]!.start!;
   // `*u` over a smart pointer or an iterator is what it points at, which the overloads compare.
   const deref = scope ? (name: string): string | null => wrappedPointee(lookupIn(scope, name), scope) : undefined;
+  const builtin = scope ? (name: string): string | null => builtinKind(scope, name) : undefined;
   // The class the head of the chain is known to be (`it->`, `(*it).`, `std::next(it)->`): the head step then reads as that class.
   let typed: { cls: string; deref: boolean; pointer?: boolean; orig?: CalleeStep } | null = null;
   // The element class of `std::next(it)`'s iterator, until the arrow that takes it.
@@ -941,7 +952,7 @@ function postfixCalls(outer: PostfixExpressionContext, calls: PatternCallName[],
       if (advance) advanced = iteratorElement(lookupIn(scope!, advance), scope!);
       // `it->second.sign(` over a map's iterator: the value class's own call.
       if (named && scope && !typed) named = pairMemberCall(named, scope) ?? named;
-      if (named) calls.push(withArguments(named, argumentsOf(link.expressionList(), stream, calleeTemplateArgs(first, text), deref)));
+      if (named) calls.push(withArguments(named, argumentsOf(link.expressionList(), stream, calleeTemplateArgs(first, text), deref, builtin)));
       steps.push(callStep(steps));
     } else if (type === CPP14Lexer.Dot || type === CPP14Lexer.Arrow) {
       if (type === CPP14Lexer.Arrow && scope && !typed) {
@@ -1105,10 +1116,10 @@ function calleeTemplateArgs(callee: ParseTree | undefined, text: string): string
  * type, `@name` for a variable the linker types from the function's parameters and fields, `?` otherwise). Undefined
  * where a pack expansion hides the count.
  */
-function argumentsOf(list: { initializerList(): { initializerClause(): InitializerClauseContext[]; Ellipsis(): TerminalNode[] } } | null, stream: readonly Token[], templateArgs?: string[], deref?: (name: string) => string | null): CallArguments | undefined {
+function argumentsOf(list: { initializerList(): { initializerClause(): InitializerClauseContext[]; Ellipsis(): TerminalNode[] } } | null, stream: readonly Token[], templateArgs?: string[], deref?: (name: string) => string | null, builtin?: (name: string) => string | null): CallArguments | undefined {
   const clauses = list?.initializerList().initializerClause() ?? [];
   if (list && list.initializerList().Ellipsis().length > 0) return undefined;
-  const kinds = clauses.map((c) => argumentKind(c, stream, deref));
+  const kinds = clauses.map((c) => argumentKind(c, stream, deref, builtin));
   return {
     argCount: clauses.length,
     ...(kinds.some((k) => k !== "?") ? { argKinds: kinds } : {}),
@@ -1117,9 +1128,23 @@ function argumentsOf(list: { initializerList(): { initializerClause(): Initializ
 }
 
 /** One argument's kind: a literal's canonical type, `@name` for a plain name, `?` for any other expression. */
-function argumentKind(clause: InitializerClauseContext, stream: readonly Token[], deref?: (name: string) => string | null): string {
+function argumentKind(clause: InitializerClauseContext, stream: readonly Token[], deref?: (name: string) => string | null, builtin?: (name: string) => string | null): string {
   if (!clause.start || !clause.stop) return "?";
-  return tokenKind(stream.slice(clause.start.tokenIndex, clause.stop.tokenIndex + 1).filter((t) => t.channel === Token.DEFAULT_CHANNEL), deref);
+  const kind = tokenKind(stream.slice(clause.start.tokenIndex, clause.stop.tokenIndex + 1).filter((t) => t.channel === Token.DEFAULT_CHANNEL), deref);
+  return builtin && kind.startsWith("@") && !kind.startsWith("@*") ? builtin(kind.slice(1)) ?? kind : kind;
+}
+
+/**
+ * The overload key of a local declared once in the function with a built-in type (`int shirt`, `double pace`, `const char* tag`,
+ * `bool ok`): what the argument `shirt` is, which `localTypes` never states (a primitive has no members to call). A class
+ * type, a smart pointer, a pointer to a non-character, an array, `auto` and a name declared again (another block's
+ * namesake) or as a parameter stay `@name`, which the linker types from the parameters, the locals and the fields.
+ */
+function builtinKind(scope: Scope, name: string): string | null {
+  const seen = scope.declared?.get(name);
+  const d = scope.locals.get(name);
+  if (!seen || seen.count !== 1 || seen.param || !d || d.cls || d.key === "?" || d.key === "basic_string") return null;
+  return /^(?:int|long|short|char|float|double|boolean|string)$/.test(d.key) ? d.key : null;
 }
 
 /** The kind the tokens of one expression state; `deref` types `*name` for a smart pointer or an iterator. */
