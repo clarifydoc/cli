@@ -1138,6 +1138,12 @@ export interface ParamInfo {
   /** The parameter's name; a destructuring parameter's is its pattern as written (`{ table, onSave = noop }`, `[first, second]`). */
   name: string;
   type: string | null;
+  /**
+   * The type as written when it names a class through a namespace path (PHP `\App\Models\Club`, `Models\Club`);
+   * `type` keeps the bare name. Core binds the path through the file's own evidence, so a namesake class of the
+   * writer's own namespace never answers for it. Omitted for a bare name.
+   */
+  typePath?: string;
   defaultValue: string | null;
   /**
    * A default that is a callback calling one function (`fetcher = (p) => ClubsApi.list(p)`), spelled as a call's
@@ -1738,8 +1744,10 @@ export interface FunctionInfo {
    * it declares the member for core (`this.x = …` there is where the attribute exists) and is listed as no writer.
    * `package` marks a bare name the function does not bind itself (Go `clubCount = 0`, `cache[id] = c`): a candidate
    * package variable, which core lists only when a file of the same package declares it (`FileAnalysis.packageVariables`).
+   * `class` names the class a static member is written on from outside it, as written (PHP `Club::$count = 0`,
+   * `\App\Models\Club::$count`; `receiver` is ""): core binds it through the file's evidence like a thrown type.
    */
-  fieldWrites?: Array<{ member: string; receiver: string; line: number; init?: true; package?: true }>;
+  fieldWrites?: Array<{ member: string; receiver: string; line: number; init?: true; package?: true; class?: string }>;
   /**
    * The exception types the function throws: `throw new Overdrawn(…)` (the type as written, qualifier kept) and what its
    * signature declares (Java `throws`, Kotlin `@Throws`; `declared`). A rethrow of a variable and a thrown call result
@@ -1975,6 +1983,8 @@ export interface TestFunctionRow {
 export interface PropertyInfo {
   name: string;
   type: string | null;
+  /** The type as written when it names a class through a namespace path (see `ParamInfo.typePath`). Omitted for a bare name. */
+  typePath?: string;
   visibility: "public" | "private" | "protected" | null;
   isStatic: boolean;
   isReadonly: boolean;

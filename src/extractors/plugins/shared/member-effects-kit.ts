@@ -99,10 +99,10 @@ export class EffectsCollector {
   private readonly thrown: NonNullable<Effects["throws"]> = [];
   private readonly declared = new Set<string>();
 
-  addWrite(receiver: string, member: string, line: number, init?: true, pkg?: true): void {
+  addWrite(receiver: string, member: string, line: number, init?: true, pkg?: true, cls?: string): void {
     if (this.writes.length >= MAX_FACTS) return;
-    if (this.writes.some((w) => w.receiver === receiver && w.member === member && w.line === line)) return;
-    this.writes.push({ member, receiver, line, ...(init ? { init } : {}), ...(pkg ? { package: pkg } : {}) });
+    if (this.writes.some((w) => w.receiver === receiver && w.member === member && w.line === line && w.class === cls)) return;
+    this.writes.push({ member, receiver, line, ...(init ? { init } : {}), ...(pkg ? { package: pkg } : {}), ...(cls ? { class: cls } : {}) });
   }
 
   /** States a member's declaration — an `init` write on `this` at `line` — once per function; line 0 (a member core knows already) states nothing. */

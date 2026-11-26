@@ -17,6 +17,16 @@ function mayHoldCallable(p: ParamInfo): boolean {
   return !p.type || p.type.split("|").some((t) => CALLABLE_TYPE.test(t.trim().replace(/^\\/, "")));
 }
 
+/**
+ * The namespace path a native type is written with, when it names one class: `\App\Models\Club`, `?Models\Club`,
+ * `\App\Club|null`; null for a bare name, a union of classes or an intersection. Core binds it through the file's evidence.
+ */
+function typePathOf(n: Node): string | null {
+  if (n.type === "intersection_type" || n.type === "disjunctive_normal_form_type") return null;
+  const parts = n.text.replace(/^\?/, "").split("|").map((x) => x.trim()).filter((x) => x && x.toLowerCase() !== "null");
+  return parts.length === 1 && parts[0]!.includes("\\") && /^\\?[A-Za-z_][\w\\]*$/.test(parts[0]!) ? parts[0]! : null;
+}
+
 type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
 
 /**
@@ -362,6 +372,8 @@ export class PhpExtractor extends FunctionClassExtractor {
           type: typeText,
           defaultValue: defaultNode?.text ?? null,
         };
+        const path = this.parseParamTypePath(p);
+        if (path && this.parseParamType(p) !== null) param.typePath = path;
         const qualifier = injectionQualifier(this.parseAttributes(p));
         if (qualifier) param.qualifier = qualifier;
         if (p.type === "variadic_parameter") param.variadic = true;
@@ -375,6 +387,12 @@ export class PhpExtractor extends FunctionClassExtractor {
     for (const c of p.children) {
       if (this.isTypeNode(c)) return this.normalizeType(c);
     }
+    return null;
+  }
+
+  /** The namespace path a parameter's native type is written with (`\\App\\Models\\Club`), when it names one class. */
+  private parseParamTypePath(p: Node): string | null {
+    for (const c of p.children) if (this.isTypeNode(c)) return typePathOf(c);
     return null;
   }
 
@@ -435,6 +453,7 @@ export class PhpExtractor extends FunctionClassExtractor {
     let isStatic = false;
     let isReadonly = false;
     let typeText: string | null = null;
+    let typePath: string | null = null;
     const decorators = this.parseAttributes(node);
     const qualifier = injectionQualifier(decorators);
 
@@ -448,6 +467,7 @@ export class PhpExtractor extends FunctionClassExtractor {
         isReadonly = true;
       } else if (this.isTypeNode(c)) {
         typeText = this.propertyType(c);
+        typePath = typePathOf(c);
       } else if (c.type === "property_element") {
         const varNode = this.findChildByType(c, "variable_name");
         const nameNode = varNode ? this.findChildByType(varNode, "name") : null;
@@ -459,6 +479,7 @@ export class PhpExtractor extends FunctionClassExtractor {
           const prop: PropertyInfo = { name, type: typeText ?? docType, visibility, isStatic, isReadonly };
           if (decorators.length > 0) prop.decorators = decorators;
           if (qualifier) prop.qualifier = qualifier;
+          if (typePath && typeText) prop.typePath = typePath;
           if (typeText && !isNullableType(typeText) && !hasDefault) prop.isRequired = true;
           out.push(prop);
         }
@@ -502,10 +523,12 @@ export class PhpExtractor extends FunctionClassExtractor {
       const name = left.childForFieldName("name")?.text;
       if (!name) continue;
       let type: string | null = null;
+      let typePath: string | undefined;
       let qualifier: string | undefined;
       if (right.type === "variable_name") {
         const param = params.get(right.text.replace(/^\$/, ""));
         type = param?.type ?? null;
+        typePath = param?.typePath;
         qualifier = param?.qualifier;
       } else {
         const looked = phpLocatorType(right, this.fileAliases);
@@ -519,9 +542,11 @@ export class PhpExtractor extends FunctionClassExtractor {
       if (existing) {
         if (existing.type) continue;
         existing.type = type;
+        if (typePath) existing.typePath = typePath;
         if (qualifier && !existing.qualifier) existing.qualifier = qualifier;
       } else {
         const prop: PropertyInfo = { name, type, visibility: null, isStatic: false, isReadonly: false };
+        if (typePath) prop.typePath = typePath;
         if (qualifier) prop.qualifier = qualifier;
         out.push(prop);
         byName.set(name, prop);
@@ -546,6 +571,7 @@ export class PhpExtractor extends FunctionClassExtractor {
       let visibility: PropertyInfo["visibility"] = "public";
       let isReadonly = false;
       let typeText: string | null = null;
+      let typePath: string | null = null;
       for (const c of p.children) {
         if (c.type === "visibility_modifier") {
           const v = c.text.toLowerCase();
@@ -554,10 +580,12 @@ export class PhpExtractor extends FunctionClassExtractor {
           isReadonly = true;
         } else if (this.isTypeNode(c)) {
           typeText = this.propertyType(c);
+          typePath = typePathOf(c);
         }
       }
       const hasDefault = !!p.childForFieldName("default_value");
       const prop: PropertyInfo = { name, type: typeText, visibility, isStatic: false, isReadonly };
+      if (typePath && typeText) prop.typePath = typePath;
       const decorators = this.parseAttributes(p);
       if (decorators.length > 0) prop.decorators = decorators;
       const qualifier = injectionQualifier(decorators);

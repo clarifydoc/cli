@@ -318,6 +318,64 @@ describe("member effects, PHP", () => {
   });
 });
 
+/** PHP: a type written through a namespace path binds by that path, never to a namesake of the writer's own namespace. */
+describe("member effects, PHP namespace paths", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-member-effects-php-ns-"));
+    await mkdir(join(dir, "app", "Models"), { recursive: true });
+    await mkdir(join(dir, "app", "Rival"), { recursive: true });
+    await mkdir(join(dir, "app", "Svc"), { recursive: true });
+    await writeFile(join(dir, "app", "Models", "Club.php"), "<?php\nnamespace App\\Models;\nclass Club { public string $name = ''; public static int $count = 0; }\n");
+    await writeFile(join(dir, "app", "Rival", "Club.php"), "<?php\nnamespace App\\Rival;\nclass Club { public string $name = ''; public static int $count = 0; }\n");
+    await writeFile(join(dir, "app", "Svc", "Svc.php"), [
+      "<?php",
+      "namespace App\\Svc;",
+      "use App\\Rival\\Club as Rival;",
+      "class Club { public string $name = ''; public static int $count = 0; }",
+      "class Svc {",
+      "    private \\App\\Models\\Club $club;",
+      "    public function __construct(private \\App\\Rival\\Club $rival) {}",
+      "    public function move(\\App\\Models\\Club $c, ?\\App\\Rival\\Club $r, Club $own) {",
+      "        $c->name = 'x'; $r->name = 'y'; $own->name = 'z';",
+      "        $this->club->name = 'a'; $this->rival->name = 'b';",
+      "    }",
+      "    public function reset() {",
+      "        \\App\\Models\\Club::$count = 0; Club::$count = 1; Rival::$count = 2; \\App\\Rival\\Club::$count = 3;",
+      "    }",
+      "}",
+      "function free() { \\App\\Models\\Club::$count = 4; $x = 'Club'; $x::$count = 5; }",
+    ].join("\n"));
+    await analyze({ projectRoot: dir, outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 60_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const rows = (): string[] => (summary.fieldWrites ?? []).map((w) => `${w.function}:${w.line} ${w.member} -> ${w.classFile}`).sort();
+
+  it("binds typed parameters and properties written with a namespace path to the class that path names", () => {
+    expect(rows().filter((r) => r.startsWith("Svc.move") && r.includes(" name "))).toEqual([
+      "Svc.move:9 name -> app/Models/Club.php",
+      "Svc.move:9 name -> app/Rival/Club.php",
+      "Svc.move:9 name -> app/Svc/Svc.php",
+      "Svc.move:10 name -> app/Models/Club.php",
+      "Svc.move:10 name -> app/Rival/Club.php",
+    ].sort());
+  });
+
+  it("binds a static property written from outside its class through the writer's evidence", () => {
+    expect(rows().filter((r) => r.includes(" count "))).toEqual([
+      "Svc.reset:13 count -> app/Models/Club.php",
+      "Svc.reset:13 count -> app/Rival/Club.php",
+      "Svc.reset:13 count -> app/Svc/Svc.php",
+      "free:16 count -> app/Models/Club.php",
+    ]);
+  });
+});
+
 /** Go: fields written through the receiver, typed parameters and locals; package variables joined to the file that declares them. */
 describe("member effects, Go", () => {
   let dir: string;

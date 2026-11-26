@@ -58,6 +58,11 @@ export function phpMemberEffects(
       const scope = left.childForFieldName("scope") ?? left.namedChildren[0];
       const name = variableName(left.childForFieldName("name") ?? left.namedChildren[left.namedChildren.length - 1]);
       if (scope?.type === "relative_scope" && /^(?:self|static)$/.test(scope.text) && name) out.addWrite("this", name, row);
+      else if ((scope?.type === "name" || scope?.type === "qualified_name") && name) {
+        // `Club::$count = 0` from outside the class: the class as written, bound by core through the file's evidence.
+        const written = scope.text.replace(/\s+/g, "");
+        if (/^\\?[A-Za-z_][\w\\]*$/.test(written)) out.addWrite("", name, row, undefined, undefined, written);
+      }
       return;
     }
     if (left.type !== "member_access_expression") return;

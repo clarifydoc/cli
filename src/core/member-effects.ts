@@ -18,6 +18,11 @@ interface ClassRef { cls: ClassInfo; file: string; project: string; parts?: Clas
 const MAX_HOPS = 8;
 
 /** Does `language` declare one type across the files of a directory (`typesSpanFiles`)? */
+/** The class a declared type names: its namespace path as written when the plugin states one that names the same class, else the bare name. */
+const pathOr = (type: string | null | undefined, path: string | undefined, language: string): string | null => {
+  const bare = receiverTypeName(type, language as LanguageName);
+  return bare && path && receiverTypeName(path, language as LanguageName) === bare ? path : writtenTypeName(type, language);
+};
 const spansFiles = (language: string): boolean => manifestFor(language as LanguageName)?.typesSpanFiles === true;
 
 /** The language family a file's language belongs to (its manifest's `family`, else the language itself). */
@@ -166,7 +171,7 @@ export function joinMemberEffects(
   };
 
   /** The class in `ref`'s own, base or embedded chain that declares property `member` (itself when it does). */
-  const declaring = (ref: ClassRef): ((member: string) => { ref: ClassRef; type?: string } | null) => (member) => {
+  const declaring = (ref: ClassRef): ((member: string) => { ref: ClassRef; type?: string; typePath?: string } | null) => (member) => {
     const seen = new Set<ClassInfo>();
     const queue: ClassRef[] = [ref];
     for (let hop = 0; queue.length > 0 && hop < MAX_HOPS * 4; hop++) {
@@ -175,7 +180,7 @@ export function joinMemberEffects(
       seen.add(at.cls);
       for (const part of at.parts ?? [at]) {
         const prop = part.cls.properties?.find((p) => p.name === member);
-        if (prop) return { ref: part, ...(prop.type ? { type: prop.type } : {}) };
+        if (prop) return { ref: part, ...(prop.type ? { type: prop.type } : {}), ...(prop.typePath ? { typePath: prop.typePath } : {}) };
         if (initMembers(part.cls).has(member)) return { ref: part };
       }
       for (const part of at.parts ?? [at]) {
@@ -218,7 +223,7 @@ export function joinMemberEffects(
     const project = a.projectId ?? "";
     const typeOfName = (name: string): string | null => {
       const param = fn.params.find((p) => p.name === name);
-      if (param) return writtenTypeName(param.type, a.language);
+      if (param) return pathOr(param.type, param.typePath, a.language);
       const locals = (fn.localTypes ?? []).filter((l) => l.name === name);
       if (locals.length === 0 || locals.some((l) => !l.type || l.choice !== undefined || l.soft)) return null;
       const types = new Set(locals.map((l) => writtenTypeName(l.type, a.language)));
@@ -239,12 +244,16 @@ export function joinMemberEffects(
         via = "this";
         // The writing class itself first: a namesake declared in the same directory (a second `Club` of another module) never answers for it.
         target = (self ? declaring(self)(w.member)?.ref : null) ?? declaring(owner)(w.member)?.ref ?? (spans ? null : owner);
+      } else if (w.class) {
+        // A static member written from outside: the class as written, bound through the writer's own evidence.
+        const typed = locate(w.class, a.filePath, project, w.line);
+        target = typed ? declaring(typed)(w.member)?.ref ?? null : null;
       } else if (w.receiver === "" && owner) {
         via = "this";
         target = declaring(owner)(w.member)?.ref ?? null;
       } else if (w.receiver.startsWith("this.") && owner) {
         const field = declaring(owner)(w.receiver.slice(5));
-        const type = field?.type ? writtenTypeName(field.type, a.language) : null;
+        const type = field?.type ? pathOr(field.type, field.typePath, a.language) : null;
         const typed = type ? locate(type, field!.ref.file, field!.ref.project, field!.ref.cls.line) : null;
         target = typed ? declaring(typed)(w.member)?.ref ?? null : null;
       } else if (w.receiver && !w.receiver.includes(".") && w.receiver !== "this") {
