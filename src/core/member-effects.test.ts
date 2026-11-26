@@ -720,6 +720,45 @@ describe("member effects, Rust", () => {
       "    pub fn call(&mut self) { self.name = String::new(); }",
       "}",
     ].join("\n"));
+    await writeFile(join(dir, "src", "lib.rs"), "pub mod models;\npub mod services;\npub mod stats;\npub mod report;\n");
+    await writeFile(join(dir, "src", "models", "team.rs"), [
+      "use std::cell::RefCell;",
+      "use std::rc::Rc;",
+      "use std::sync::Mutex;",
+      "pub struct Tally { pub goals: u32 }",
+      "pub struct Team {",
+      "    pub tally: Rc<RefCell<Tally>>,",
+      "    pub locked: Mutex<Tally>,",
+      "    pub count: &'static mut u32,",
+      "    pub wins: u32,",
+      "}",
+      "impl Team {",
+      "    pub fn score(&mut self) {",
+      "        self.tally.borrow_mut().goals += 1;",
+      "        self.locked.lock().unwrap().goals = 0;",
+      "        *self.count += 1;",
+      "        let cell = RefCell::new(Tally { goals: 0 });",
+      "        cell.borrow_mut().goals += 1;",
+      "    }",
+      "}",
+      "pub fn win(t: Rc<RefCell<Team>>, plain: Rc<RefCell<crate::services::other::Other>>) {",
+      "    t.borrow_mut().wins = 2;",
+      "    plain.borrow_mut().wins = 3;",
+      "    *t.borrow_mut().count = 4;",
+      "}",
+    ].join("\n"));
+    await writeFile(join(dir, "src", "services", "other.rs"), "pub struct Tally { pub goals: u32 }\npub struct Other { pub wins: u32 }\n");
+    await writeFile(join(dir, "src", "stats.rs"), "pub static mut TOTAL: u32 = 0;\n");
+    await writeFile(join(dir, "src", "services", "stats.rs"), "pub static mut TOTAL: u32 = 0;\n");
+    await writeFile(join(dir, "src", "report.rs"), [
+      "use crate::stats;",
+      "use crate::stats::TOTAL;",
+      "pub fn a() { unsafe { crate::stats::TOTAL += 1; } }",
+      "pub fn b() { unsafe { stats::TOTAL = 0; } }",
+      "pub fn c() { unsafe { TOTAL += 1; } }",
+      "pub fn d() { unsafe { crate::services::stats::TOTAL = 2; } }",
+      "pub fn e() { unsafe { crate::nowhere::TOTAL = 2; } }",
+    ].join("\n"));
     await analyze({ projectRoot: dir, outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
     summary = await loadReportSummary(join(dir, "out"));
   }, 60_000);
@@ -728,9 +767,10 @@ describe("member effects, Rust", () => {
   });
 
   const rows = (): string[] => (summary.fieldWrites ?? []).map((w) => `${w.class}.${w.member} <- ${w.function}:${w.line} ${w.via} ${w.classFile}`).sort();
+  const own = (r: string): boolean => !r.includes("team.rs") && !r.includes("report.rs") && !r.includes("other.rs");
 
   it("lists writes through self, a field's struct, a typed parameter and a typed local, in the struct that declares them", () => {
-    expect(rows().filter((r) => !r.includes("TOTAL"))).toEqual([
+    expect(rows().filter((r) => !r.includes("TOTAL") && own(r))).toEqual([
       "Club.name <- Club.call:3 this src/services/club.rs",
       "Club.points <- Club.reset:4 this src/models/club.rs",
       "Club.points <- Club.win:11 this src/models/club.rs",
@@ -747,8 +787,28 @@ describe("member effects, Rust", () => {
   });
 
   it("joins a static mut written bare to the file that declares it, and never lists a thrown type", () => {
-    expect(rows().filter((r) => r.includes("TOTAL"))).toEqual(["garage.TOTAL <- rename:8 package src/services/garage.rs"]);
+    expect(rows().filter((r) => r.includes("<- rename:") && r.includes("TOTAL"))).toEqual(["garage.TOTAL <- rename:8 package src/services/garage.rs"]);
     expect((summary.thrownTypes ?? []).length).toBe(0);
+  });
+
+  it("lists a field written through a shared cell or a deref, never a local cell or a namesake type", () => {
+    expect(rows().filter((r) => (r.includes("team.rs") || r.includes("other.rs")) && !r.includes("TOTAL"))).toEqual([
+      "Tally.goals <- Team.score:13 typed src/models/team.rs",
+      "Tally.goals <- Team.score:14 typed src/models/team.rs",
+      "Team.count <- Team.score:15 this src/models/team.rs",
+      "Team.count <- win:23 typed src/models/team.rs",
+      "Team.wins <- win:21 typed src/models/team.rs",
+      "Other.wins <- win:22 typed src/services/other.rs",
+    ].sort());
+  });
+
+  it("joins a static mut written through its module path, or bare after a use, to the file that declares it", () => {
+    expect(rows().filter((r) => r.includes("<- a:") || r.includes("<- b:") || r.includes("<- c:") || r.includes("<- d:") || r.includes("<- e:"))).toEqual([
+      "stats.TOTAL <- a:3 package src/stats.rs",
+      "stats.TOTAL <- b:4 package src/stats.rs",
+      "stats.TOTAL <- c:5 package src/stats.rs",
+      "stats.TOTAL <- d:6 package src/services/stats.rs",
+    ].sort());
   });
 });
 

@@ -1,6 +1,7 @@
 import type { ClassInfo, FieldWriteRow, FileAnalysis, FunctionInfo, ThrownTypeRow } from "../types/analysis.js";
 import { receiverTypeName } from "../extractors/shared/type-parser.js";
 import { manifestFor } from "../extractors/registry.js";
+import { importResolveContext } from "./import-index.js";
 import { declaresEvidenceName, evidenceFullName } from "./class-evidence.js";
 
 /**
@@ -219,6 +220,16 @@ export function joinMemberEffects(
     return homes.length === 1 ? homes[0]!.filePath : null;
   };
 
+  /** The file a package variable written through its module path (`FieldWrite.receiver` on a `package` write) lives in: the language's own import resolver reads the path, and the file must declare the variable. */
+  let resolveCtx: ReturnType<typeof importResolveContext> | null = null;
+  const moduleVariableHome = (a: FileAnalysis, path: string, name: string): string | null => {
+    const resolve = manifestFor(a.language as LanguageName)?.resolveImport;
+    if (!resolve) return null;
+    resolveCtx ??= importResolveContext(analyses, new Set(analysisByFile.keys()));
+    const file = resolve(a.filePath, path, name, resolveCtx);
+    return file && include(file) && analysisByFile.get(file)?.packageVariables?.some((v) => v.name === name) ? file : null;
+  };
+
   const visit = (a: FileAnalysis, fn: FunctionInfo, symbol: string, owner: ClassRef | null, self: ClassRef | null = null): void => {
     const project = a.projectId ?? "";
     const typeOfName = (name: string): string | null => {
@@ -234,7 +245,7 @@ export function joinMemberEffects(
     for (const w of fn.fieldWrites ?? []) {
       if (w.init) continue;
       if (w.package) {
-        const home = packageVariableHome(a, w.member);
+        const home = w.receiver ? moduleVariableHome(a, w.receiver, w.member) : packageVariableHome(a, w.member);
         if (home) fieldWrites.push({ class: packageName(home), classFile: home, member: w.member, function: symbol, file: a.filePath, line: w.line, via: "package" });
         continue;
       }

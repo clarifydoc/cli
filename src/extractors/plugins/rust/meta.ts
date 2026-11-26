@@ -68,7 +68,7 @@ export const rustMeta: LanguagePluginMeta = {
   // Auto-deref: `self.repo.find()` on a `repo: Arc<dyn UserRepo>` calls the
   // trait's `find`. `RefCell`/`Mutex` are not listed — their calls go through
   // `.borrow()` / `.lock()` first.
-  transparentTypeWrappers: ["Arc", "Box", "Rc", "Cow"],
+  transparentTypeWrappers: ["Arc", "Box", "Rc", "Cow", "RefCell", "Mutex", "RwLock"],
   knownPackages: cargoPackages,
   entities: new RustEntityExtractor(),
   requestSchema: rustRequestSchema,

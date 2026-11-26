@@ -1746,6 +1746,8 @@ export interface FunctionInfo {
    * package variable, which core lists only when a file of the same package declares it (`FileAnalysis.packageVariables`).
    * `class` names the class a static member is written on from outside it, as written (PHP `Club::$count = 0`,
    * `\App\Models\Club::$count`; `receiver` is ""): core binds it through the file's evidence like a thrown type.
+   * A `package` write that states a `receiver` names the module path it is read through (Rust `crate::stats::TOTAL`):
+   * core resolves it with the language's import resolver to the one file that must declare the variable.
    */
   fieldWrites?: Array<{ member: string; receiver: string; line: number; init?: true; package?: true; class?: string }>;
   /**
