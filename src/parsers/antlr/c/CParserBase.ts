@@ -299,11 +299,11 @@ export abstract class CParserBase extends Parser {
     return (SPECIFIER_KEYWORDS.has(after.type) || this.known(after)) && this.declarationFollows(after);
   }
 
-  /** From `t`, a `(` comes before a `{`, or the file ends. */
+  /** From `t`, a `(` comes before a `{`, or the file ends; so does an `=`, which no K&R parameter has (`= { … }` initializes). */
   private declarationFollows(t: Token): boolean {
     let at: Token | null = t;
     for (let steps = 0; at && steps < 256; steps++, at = this.following(at)) {
-      if (at.type === CLexer.LeftParen) return true;
+      if (at.type === CLexer.LeftParen || at.type === CLexer.Assign) return true;
       if (at.type === CLexer.LeftBrace) return false;
     }
     return at === null;
@@ -359,7 +359,8 @@ export abstract class CParserBase extends Parser {
     if (!after) return false;
     // `TYPE_MAP(XX)` before `default:` or `}`, another macro: no `;` follows it.
     // A call is never followed by `}`, `case` or `default` in C, so a name of any case with arguments is a macro there.
-    if (after.type === CLexer.RightBrace || after.type === CLexer.Case || after.type === CLexer.Default) return true;
+    // So is `else`: `if (c) CLUB_SWAP(a, b)⏎else CLUB_SWAP(b, a)` — a macro whose body ends in its own `}` or `;`.
+    if (after.type === CLexer.RightBrace || after.type === CLexer.Case || after.type === CLexer.Default || after.type === CLexer.Else) return true;
     if (this.macroName(this.lt(1)) && this.macroName(after) && this.following(after)?.type === CLexer.LeftParen) return true;
     return holds && after.type === CLexer.Semi;
   }

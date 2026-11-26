@@ -83,6 +83,20 @@ function tagBodies(tokens: Token[]): Uint8Array {
   return out;
 }
 
+/** 1 where the innermost brace around a token opens an enum body (`enum e {`, `typedef enum {`). */
+function enumBodies(tokens: Token[]): Uint8Array {
+  const out = new Uint8Array(tokens.length);
+  const stack: boolean[] = [];
+  const type = (i: number) => tokens[i]?.type ?? -1;
+  tokens.forEach((t, i) => {
+    if (t.type === CLexer.RightBrace) stack.pop();
+    else if (stack.at(-1)) out[i] = 1;
+    if (t.type !== CLexer.LeftBrace) return;
+    stack.push(type(i - 1) === CLexer.Enum || (type(i - 1) === CLexer.Identifier && type(i - 2) === CLexer.Enum));
+  });
+  return out;
+}
+
 /**
  * Macros that stand where no grammar rule has them go to the hidden channel, so the parser reads the code around
  * them: the macro written before a cast's parentheses (`t->data = CLUB_DATA_T (uintptr_t) 0;`), and a list macro
@@ -90,7 +104,8 @@ function tagBodies(tokens: Token[]): Uint8Array {
  * a comma could stand. The same pass sets aside a macro in a cast's type, after an attribute, a call between a `*` and
  * the declared function's name, a name between a type and an attribute that precedes the declared name or between a
  * prototype's parameters and its attribute, one after `[` before a called name, and names alone before a struct
- * body's `}` or ending a file.
+ * body's `}` or ending a file, and a list macro (called or bare) before an enum's next name where no comma stands, and
+ * two or more bare macros at a struct member's start before its type (`CLUB_A⏎CLUB_B⏎int x;`).
  */
 function hideMacros(all: Token[]): void {
   const tokens = all.filter((t) => t.channel === Token.DEFAULT_CHANNEL && t.type !== Token.EOF);
@@ -112,6 +127,7 @@ function hideMacros(all: Token[]): void {
     for (let k = from; k <= to; k++) (tokens[k] as { channel: number }).channel = Token.HIDDEN_CHANNEL;
   };
   const tagBody = tagBodies(tokens);
+  const enumBody = enumBodies(tokens);
   // Initializer braces: the `{` after `=`, and the braces of its entries.
   const stack: boolean[] = [];
   for (let i = 0; i < n; i++) {
@@ -159,11 +175,20 @@ function hideMacros(all: Token[]): void {
     if (MACRO_NAME.test(name) && tagBody[i] === 1 && !called && (prev === CLexer.LeftBrace || prev === CLexer.Semi || prev === CLexer.RightBrace)) {
       let end = i;
       while (type(end + 1) === CLexer.Identifier && MACRO_NAME.test(tokens[end + 1]!.text ?? "") && type(end + 2) !== CLexer.LeftParen) end++;
-      if (type(end + 1) === CLexer.RightBrace) {
+      // `CLUB_HANDLE_FIELDS⏎CLUB_STREAM_FIELDS⏎int ipc;`: two or more before a member's type, which no declarator follows so.
+      if (type(end + 1) === CLexer.RightBrace || (end > i && SPECIFIER_KEYWORDS.has(type(end + 1)))) {
         hide(i, end);
         i = end;
         continue;
       }
+    }
+    // `CLUB_KIND_MAP(EMIT)⏎CLUB_LAST` in an enum body: a list macro, bare or called, standing where an enumerator
+    // starts and followed by the next name with no comma. An enumerator is followed by `,`, `=` or `}`, or by an attribute macro
+    // (`A CLUB_DEPRECATED(1) = 3,`, which has arguments or `=` after it).
+    if (MACRO_NAME.test(name) && enumBody[i] === 1 && (prev === CLexer.LeftBrace || prev === CLexer.Comma || tokens[i - 1]?.channel === Token.HIDDEN_CHANNEL)
+      && after === CLexer.Identifier && [CLexer.Comma, CLexer.RightBrace, CLexer.Identifier].includes(type((called ? close[i + 1]! : i) + 2))) {
+      hide(i, called ? close[i + 1]! : i);
+      continue;
     }
     if (MACRO_NAME.test(name) && stack.at(-1) === true && (prev === CLexer.LeftBrace || prev === CLexer.Comma || prev === CLexer.RightBrace)
       && (after === CLexer.Identifier || after === CLexer.LeftBrace || after === CLexer.Dot)) {
@@ -470,6 +495,8 @@ function facts(all: Token[], tokens: Token[], names: Array<string | undefined>, 
     return n;
   };
   const caps = (i: number) => isName(i) && isMacro(names[i]!) && !types.has(names[i]!);
+  /** An all-caps name, even one the first pass took for a type elsewhere (`M⏎int f(` and `N M⏎int g(`). */
+  const macroNamed = (i: number) => isName(i) && isMacro(names[i]!);
   /** The `}` at `i` ends a struct, union or enum body: `} name(…) {` then defines a function returning it. */
   const closesTag = (i: number) => {
     let level = 0;
@@ -525,7 +552,16 @@ function facts(all: Token[], tokens: Token[], names: Array<string | undefined>, 
     const next = typeOf(i + 1);
     // A bare macro may also follow another: `END_DECLS PUSH_DIAGNOSTICS`. Before `}` or a statement keyword no type
     // stands, whatever the first pass took the name for.
-    const capsHere = caps(i) || (isName(i) && isMacro(names[i]!) && (next === CLexer.RightBrace || STATEMENT_KEYWORDS.has(next)));
+    // The same name read before a keyword elsewhere (`M⏎int f(`) is a type to the first pass, yet `M N⏎int g(` is two macros.
+    const beforeMacroRun = isName(i) && isMacro(names[i]!) && caps(i + 1) && SPECIFIER_KEYWORDS.has(typeOf(i + 2));
+    // And `M N(a, b)⏎M2` at file scope: a macro call run, whose name M a use before `static` made a type to the first pass.
+    const callOpen2 = tokens[i + 2];
+    const beforeMacroCall = braces[i] === 0 && isName(i) && isMacro(names[i]!) && macroNamed(i + 1) && callOpen2?.type === CLexer.LeftParen && close[callOpen2.tokenIndex]! >= 0
+      && (() => {
+        const after = position.get(close[callOpen2.tokenIndex]!)! + 1;
+        return after >= tokens.length || SPECIFIER_KEYWORDS.has(typeOf(after)) || macroNamed(after);
+      })();
+    const capsHere = caps(i) || (isName(i) && isMacro(names[i]!) && (next === CLexer.RightBrace || STATEMENT_KEYWORDS.has(next) || beforeMacroRun || beforeMacroCall));
     // `TEST_BEGIN⏎ check(x);`, `TEST_BEGIN⏎ Garage *g;` in a body: before a call or a declaration it opens nothing,
     // whatever the first pass took it for there.
     if (isName(i) && isMacro(names[i]!) && !(tagBody[i] === 1 && types.has(names[i]!)) && braces[i]! > 0 && BARE_AFTER.has(prev) && !startsTagBody(i) && isName(i + 1) && (typeOf(i + 2) === CLexer.LeftParen || (types.has(names[i + 1]!) && typeOf(i + 2) === CLexer.Star) || writesMember(i + 1))) {
@@ -535,14 +571,16 @@ function facts(all: Token[], tokens: Token[], names: Array<string | undefined>, 
     // At file scope after a macro's arguments, a list's `LIST_START⏎ENTRY (a)⏎LIST_END`: a name alone, then more macros or the end.
     const callOpen = prev === CLexer.RightParen ? opens.get(tokens[i - 1]!.tokenIndex) : undefined;
     const callAt = callOpen === undefined ? -1 : position.get(callOpen)! - 1;
-    const afterCall = callAt >= 0 && isName(callAt) && (callAt === 0 || [CLexer.Semi, CLexer.RightBrace, CLexer.RightParen].includes(typeOf(callAt - 1)));
-    const endsFile = afterCall && braces[i] === 0 && (i + 1 === tokens.length || (caps(i + 1) && typeOf(i + 2) !== CLexer.Semi));
+    const afterCall = callAt >= 0 && isName(callAt) && (callAt === 0 || [CLexer.Semi, CLexer.RightBrace, CLexer.RightParen].includes(typeOf(callAt - 1))
+      || (retype[tokens[callAt - 1]!.tokenIndex] === CLexer.MacroName && braces[i] === 0));
+    // A run of macro calls then a name alone before the next declaration (`KICKOFF⏎FN(a, b)⏎FN(c, d)⏎FULLTIME⏎int f(`).
+    const endsFile = afterCall && braces[i] === 0 && (i + 1 === tokens.length || (caps(i + 1) && typeOf(i + 2) !== CLexer.Semi) || SPECIFIER_KEYWORDS.has(next));
     if (capsHere && (i === 0 || BARE_AFTER.has(prev) || endsFile || retype[tokens[i - 1]!.tokenIndex] === CLexer.MacroName)) {
       // Before `}` only after a statement or a block's `{`: `TEST_END }` closes a body, `= { NULL }` initializes.
       const bare = STATEMENT_KEYWORDS.has(next) || SPECIFIER_KEYWORDS.has(next) || next === CLexer.LeftBrace || i + 1 === tokens.length
         || (next === CLexer.RightBrace && (prev === CLexer.Semi || prev === CLexer.RightBrace || (prev === CLexer.LeftBrace && blockBrace(i - 1))))
         || (next === CLexer.Star && [CLexer.PlusPlus, CLexer.MinusMinus, CLexer.LeftParen].includes(typeOf(i + 2)))
-        || (caps(i + 1) && typeOf(i + 2) !== CLexer.Semi && !startsTagBody(i));
+        || (macroNamed(i + 1) && typeOf(i + 2) !== CLexer.Semi && !startsTagBody(i));
       if (bare) {
         retype[k] = CLexer.MacroName;
         return;

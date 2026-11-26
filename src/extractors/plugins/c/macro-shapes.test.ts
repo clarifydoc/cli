@@ -169,4 +169,131 @@ CLUB_DATA_FAST
 `;
     expect(shape(source)).toEqual({ errors: 0, functions: [["kick", ["go"]]] });
   });
+
+  it("sets aside a list macro between enumerators, and a bare one before the last (real-repo shape)", () => {
+    const source = `typedef enum {
+  CLUB_UNKNOWN = 0,
+#define EMIT(uc, lc) CLUB_##uc,
+  CLUB_KIND_MAP(EMIT)
+#undef EMIT
+  CLUB_FILE,
+  CLUB_KIND_MAX
+  CLUB_KIND_PRIVATE
+  CLUB_KIND_END
+} club_kind;
+void kick(void) { go(); }
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["kick", ["go"]]] });
+  });
+
+  it("keeps the enumerators of an enum whose entries are separated by commas", () => {
+    const source = `enum club_kind { CLUB_A, CLUB_B = 2, CLUB_C };
+enum { CLUB_X, CLUB_Y, };
+enum club_old { CLUB_OLD_A CLUB_DEPRECATED(8.3, "") = 3, CLUB_OLD_B CLUB_DEPRECATED(7.5, ""), CLUB_OLD_C };
+void kick(void) { go(); }
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["kick", ["go"]]] });
+  });
+
+  it("reads a macro seen before a declaration, again before another macro (real-repo shape)", () => {
+    const source = `CLUB_EXPORT
+int first(void) { return one(); }
+CLUB_EXPORT CLUB_NOINLINE
+int second(void) { return two(); }
+CLUB_EXPORT
+CLUB_NOINLINE
+static int third(void) { return three(); }
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["first", ["one"]], ["second", ["two"]], ["third", ["three"]]] });
+  });
+
+  it("reads a call-like statement macro at file scope before an initialized variable (real-repo shape)", () => {
+    const source = `int club_one(void) { return a(); }
+#ifdef CLUB_LIBC
+club_alias (club_one, one)
+#endif
+static const club_set_t full = {
+  [0 ... 0x80 / CLUB_BITS - 1] = CLUB_MAX
+};
+void kick(void) { go(); }
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["club_one", ["a"]], ["kick", ["go"]]] });
+  });
+
+  it("keeps a K&R definition after a file-scope macro call as a definition", () => {
+    const source = `club_declare (match)
+int score(a, b) int a; int b; { return add(a, b); }
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["score", ["add"]]] });
+  });
+
+  it("reads a run of list macros with keyword arguments, then a bare macro, before a declaration (real-repo shape)", () => {
+    const source = `CLUB_TARGET_WIDE
+CLUB_COUNT_FN(union, club_or)
+CLUB_COUNT_FN(and, club_and)
+CLUB_OFFSIDE_WIDE
+void kick(void) { go(); }
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["kick", ["go"]]] });
+  });
+
+  it("reads a statement macro with no `;` before `else` (real-repo shape)", () => {
+    const source = `void swap_all(char *a, char *b, long n, int c) {
+  if (c)
+    CLUB_SWAP(long, a, b, n)
+  else
+    CLUB_SWAP(char, a, b, n)
+  done(a);
+}
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["swap_all", ["CLUB_SWAP", "done"]]] });
+  });
+
+  it("keeps a call statement before `else`, where a `;` ends it", () => {
+    const source = `void swap_all(char *a, char *b, int c) {
+  if (c) swap(a, b); else swap(b, a);
+  done(a);
+}
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["swap_all", ["swap", "done"]]] });
+  });
+
+  it("reads two member macros before a member's type (real-repo shape)", () => {
+    const source = `struct club_pipe_s {
+  CLUB_HANDLE_FIELDS
+  CLUB_STREAM_FIELDS
+  int ipc;
+  club_t CLUB_FIELD_A;
+  CLUB_PIPE_PRIVATE_FIELDS
+};
+void kick(void) { go(); }
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["kick", ["go"]]] });
+  });
+
+  it("reads a bare macro before a macro the file also uses as a specifier (real-repo shape)", () => {
+    const source = `CLUB_PRIVATE_TYPES
+CLUB_EXTERN int club_open(club_t* req);
+CLUB_EXTERN int club_close(const char* x);
+CLUB_ALIGNED
+int club_first(void *v) { return one(v); }
+CLUB_TARGET_WIDE
+CLUB_ALIGNED
+int club_second(void *v) { return two(v); }
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["club_first", ["one"]], ["club_second", ["two"]]] });
+  });
+
+  it("reads a bare macro before a list macro call, where the same name stood before a keyword (real-repo shape)", () => {
+    const source = `CLUB_TARGET
+static inline unsigned club_sum(const club_vec v) {
+  return add(v);
+}
+CLUB_TARGET
+CLUB_COUNT_FN(or, club_or)
+CLUB_COUNT_FN(union, club_union)
+CLUB_OFFSIDE
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["club_sum", ["add"]]] });
+  });
 });

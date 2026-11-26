@@ -86,7 +86,9 @@ The settled decisions and retypes of each grammar are documented where they live
 `rust-settle.test.ts`), C in `c/CTypes.ts` (the first pass: type names, `hideMacros`) and `c/CParserBase.ts`
 (`settleDecisions`; `c-settle.test.ts`), C++ in `cpp/CppTypes.ts` (template-bracket, cast and macro retypes,
 `hideTypeMacroArguments`) and `cpp/CPP14ParserBase.ts` (`CPP14ParserBase.prepare`, `settleSpecifierLoop`, `settleTypeSpecifier`;
-`cpp-settle.test.ts`). A settled decision is held equal to prediction by parse trees on a corpus of real files and by
+`cpp-settle.test.ts`). The C macro shapes the first pass sets aside (`hideMacros`) or retypes (the retype block of `facts`), and the
+statement and file-scope macro predicates of `CParserBase`, each have a failing-first test with a decoy in
+`plugins/c/macro-shapes.test.ts`; a new shape goes there. A settled decision is held equal to prediction by parse trees on a corpus of real files and by
 the `*-settle.test.ts` of its grammar; read the corpus's full-context fall-backs too, since a wrong settle there still
 gives equal trees.
 
