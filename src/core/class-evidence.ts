@@ -26,3 +26,14 @@ export function declaresEvidenceName(other: FileAnalysis | undefined, sep: strin
   const spaces = named.length > 0 ? named.map((c) => c.namespace) : [other?.declaredNamespace];
   return spaces.some((ns) => (ns ? `${ns}${sep}${simple}` : simple).toLowerCase() === full);
 }
+
+/**
+ * The files among `files` declaring the class a stated namespace path names (`ParamInfo.typePath`: `\League\Cup\Fixture`,
+ * `Cup\Fixture`), read against `analysis` as `evidenceFullName` reads a written name: a namesake of another namespace
+ * is never in the answer, so an empty one says no project class bears that path.
+ */
+export function filesByTypePath(analysis: FileAnalysis, sep: string, typePath: string, files: readonly string[], analysisOf: (file: string) => FileAnalysis | undefined): string[] {
+  const simple = typePath.slice(typePath.lastIndexOf(sep) + 1).toLowerCase();
+  const full = evidenceFullName(analysis, sep, typePath);
+  return files.filter((f) => declaresEvidenceName(analysisOf(f), sep, simple, full));
+}

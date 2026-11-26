@@ -1,4 +1,4 @@
-import { declaresEvidenceName, evidenceFullName } from "./class-evidence.js";
+import { declaresEvidenceName, evidenceFullName, filesByTypePath } from "./class-evidence.js";
 import { routeSymbolName } from "./route-symbol.js";
 import { codeTwinsIndex, isJoinableRoute, type TwinRoute } from "./route-linker.js";
 import {
@@ -4182,6 +4182,8 @@ function buildMemberTypes(
         declaredIn = a.filePath,
         /** The file whose imports the written type is read against: the one declaring the member (a part's sibling). */
         importer: FileAnalysis = a,
+        /** The namespace path the type is written through (`PropertyInfo.typePath`), where the plugin states one. */
+        typePath?: string,
       ): void => {
         const name = nameKey(a.language, rawName);
         if (!overwrite && members.has(name)) return;
@@ -4231,15 +4233,24 @@ function buildMemberTypes(
           const other = fileOf(point.typeName, a.filePath, true);
           point.typeFile = other && other !== a.filePath ? other : null;
         }
+        // A type written through a namespace path is the class declared in exactly that namespace, never a namesake's.
+        const sep = typePath ? manifestFor(importer.language)?.classNamesByEvidence?.separator : undefined;
+        if (sep && typePath && typeName && point.typeName === typeName) {
+          const candidates = inSpace(classToFiles.get(typeName) ?? [], a.filePath);
+          if (candidates.length > 0) {
+            const named = filesByTypePath(importer, sep, typePath, candidates, (f) => analysisOf.get(f));
+            point.typeFile = named.length === 1 ? named[0]! : named.length === 0 ? null : point.typeFile;
+          }
+        }
         if (qualifier) point.qualifier = qualifier;
         if (type && type.includes("<")) point.written = type;
         members.set(name, point);
       };
       for (const m of cls.methods) {
         if (!isConstructor(m, cls)) continue;
-        for (const p of m.params) add(p.name, p.type, p.qualifier, true);
+        for (const p of m.params) add(p.name, p.type, p.qualifier, true, undefined, undefined, p.typePath);
       }
-      for (const prop of cls.properties) add(prop.name, prop.type, prop.qualifier, true);
+      for (const prop of cls.properties) add(prop.name, prop.type, prop.qualifier, true, undefined, undefined, prop.typePath);
       for (const partner of partners.get(`${dir}\0${cls.name}`) ?? []) {
         if (partner.cls === cls || partner.a.language !== a.language || partner.cls.fileLocal || cls.fileLocal) continue;
         for (const prop of partner.cls.properties) add(prop.name, prop.type, prop.qualifier, false, a.filePath, partner.a);
@@ -9269,6 +9280,16 @@ function scopedNameUncached(
       member: name,
       consumer,
     };
+    // A parameter written through a namespace path is the class declared in exactly that namespace, never a namesake's.
+    const pathSep = param?.typePath && typeName ? manifestFor(analysis.language as Language)?.classNamesByEvidence?.separator : undefined;
+    if (pathSep && param?.typePath && typeName && point.typeName === typeName) {
+      const candidates = nameableClassFiles(ctx, typeName, sourceFile);
+      if (candidates.length > 0) {
+        ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+        const named = filesByTypePath(analysis, pathSep, param.typePath, candidates, (f) => ctx.analysisByFile!.get(f));
+        point.typeFile = named.length === 1 ? named[0]! : named.length === 0 ? null : point.typeFile;
+      }
+    }
     if (declared.qualifier) point.qualifier = declared.qualifier;
     if (param && !param.qualifier && !param.injected) {
       const cls = consumer ? ctx.classAt.get(memberKey(sourceFile, consumer)) : undefined;

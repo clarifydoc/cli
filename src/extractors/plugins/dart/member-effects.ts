@@ -11,8 +11,8 @@ const NAMED_RE = new RegExp(String.raw`${START}([a-z_$][\w$]*)\.([A-Za-z_$][\w$]
 const BARE_RE = new RegExp(String.raw`${START}([A-Za-z_$][\w$]*)${END}`, "g");
 /** `count++`, `this.count--`, `++count`. */
 const STEP_RE = new RegExp(String.raw`${START}(?:(?:\+\+|--)\s*)?(this\.)?([A-Za-z_$][\w$]*)\s*(?:\+\+|--)?(?=\s*;)`, "g");
-/** `throw ClubException(…)`, `throw const Missing()`, `throw new Missing()`, a named constructor (`throw Missing.id(…)`). */
-const THROW_RE = /\bthrow\s+(?:const\s+|new\s+)?([A-Z][\w$]*)(?:\.[A-Za-z_$][\w$]*)?\s*(?:<[^>()]*>)?\s*\(/g;
+/** `throw ClubException(…)`, `throw const Missing()`, `throw new Missing()`, a named constructor (`throw Missing.id(…)`), a type through an import prefix (`throw errors.Missing(…)`, kept with its prefix). */
+const THROW_RE = /\bthrow\s+(?:const\s+|new\s+)?((?:[a-z_$][\w$]*\.)?[A-Z][\w$]*)(?:\.[A-Za-z_$][\w$]*)?\s*(?:<[^>()]*>)?\s*\(/g;
 /** A local the body declares (`var n = …`, `final Club c = …`, `int n;`), which a bare write then names, not a field. */
 const LOCAL_RE = /\b(?:var|final|const|late|[A-Za-z_$][\w$]*(?:<[^>()]*>)?\??)\s+([a-z_$][\w$]*)\s*(?:=(?!=)|;|\bin\b)/g;
 const KEYWORDS = new Set(["return", "throw", "await", "yield", "else", "case", "new", "const", "final", "var", "late", "is", "as", "in"]);

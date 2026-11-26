@@ -68,8 +68,18 @@ export function joinMemberEffects(
     if (from && spansFiles(from.language)) {
       // One type of a directory: its parts across the files, never a namesake of another package, nor a type written through a package qualifier.
       const beyond = beyondDirectory(from.language);
-      if (name.includes(".") && !beyond) return null;
-      const dir = nearFile.slice(0, nearFile.lastIndexOf("/") + 1);
+      let dir = nearFile.slice(0, nearFile.lastIndexOf("/") + 1);
+      if (!beyond) {
+        // A type written through a qualifier, or one no file of the writer's directory declares, is in the directory the
+        // namespace evidence names (`declaredAcross`): a qualifier the project backs, the writer's namespace or a `using`.
+        const nearby = (byName.get(leaf(name)) ?? []).some((c) => dirOf(c.file) === dir && analysisByFile.get(c.file)?.language === from.language);
+        if (name.includes(".") || !nearby) {
+          const elsewhere = declaredAcross(from, name);
+          if (!elsewhere) return null;
+          dir = dirOf(elsewhere.file);
+          name = elsewhere.cls.name;
+        }
+      }
       // A qualified name states which one it means: only a lone class of its last segment answers it.
       const qualified = beyond && /[.:]/.test(name);
       const parts = qualified ? [] : (byName.get(name) ?? []).filter((c) => c.file.slice(0, c.file.lastIndexOf("/") + 1) === dir && analysisByFile.get(c.file)?.language === from.language);
@@ -125,6 +135,26 @@ export function joinMemberEffects(
       const parts = source.split(/[/.]|::|\\/).filter((x) => x.length > 0 && x !== "..").map(norm);
       return at(path, parts);
     });
+  };
+
+  /**
+   * The one class a type of a directory-spanning language (`typesSpanFiles`, not `typesBeyondDirectory`) names from
+   * another directory than the writer's: a qualified name through a qualifier the project backs (`Garage.Models.Car`,
+   * Go `models.Car`), a bare one through the namespace the writer shares with it or imports (C#, VB). Where a
+   * directory is the package (`directoryNamesShared`) a bare name never leaves it. Null when no class, or two
+   * directories, answer.
+   */
+  const declaredAcross = (from: FileAnalysis, name: string): ClassRef | null => {
+    const qualified = /[.:]/.test(name);
+    if (!qualified && manifestFor(from.language as LanguageName)?.directoryNamesShared === true) return null;
+    const own = from.packageName ?? from.declaredNamespace;
+    const shares = (c: ClassRef): boolean => {
+      const home = analysisByFile.get(c.file);
+      const ns = c.cls.namespace ?? home?.packageName ?? home?.declaredNamespace;
+      return !!ns && (ns === own || from.imports.some((i) => i.source === ns));
+    };
+    const found = (byName.get(leaf(name)) ?? []).filter((c) => !c.cls.extension && analysisByFile.get(c.file)?.language === from.language && (qualified ? qualifierBacksClass(from, name, c) : shares(c)));
+    return found.length > 0 && new Set(found.map((c) => dirOf(c.file))).size === 1 ? found[0]! : null;
   };
 
   const locateIn = (name: string, nearFile: string, project: string, line: number, from: FileAnalysis | undefined): ClassRef | null => {
