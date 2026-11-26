@@ -1,6 +1,9 @@
 import type { TestTarget } from "../../../types/language-plugin.js";
 
 /** `dotnet test --filter` on the test classes and methods (FullyQualifiedName contains them). */
+/**
+ * `dotnet test --filter …`.
+ */
 export function dotnetTestCommand(tests: readonly TestTarget[]): string | null {
   const terms = new Set<string>();
   for (const t of tests) {

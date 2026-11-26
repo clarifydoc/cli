@@ -1,3 +1,11 @@
+/**
+ * Parses a Vue template's expressions in place: `{{ … }}`, bound attributes and a handler that sends a request in one
+ * statement (`@click="axios.post(`/api/clubs/${club.id}/archive`)"` — `sendsRequest`: `fetch(…)` or a client verb
+ * called with a URL, no top-level `;`) become `<setup>` statements, so the data-source reader reads the api-call at
+ * the handler's line. Markup calls come from markup-calls.ts; handler text is cleaned per framework (Svelte
+ * `cleanHandler` in `parsers/svelte-sfc.ts`).
+ */
+
 import { astroFrontmatter } from "../../../parsers/astro-sfc.js";
 import { projectCalleeIn, sendsRequest } from "./markup-calls.js";
 import { templateScopes } from "./template-scopes.js";

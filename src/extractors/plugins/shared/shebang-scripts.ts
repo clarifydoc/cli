@@ -12,7 +12,8 @@ import { sharedEntries } from "../../shared/dir-listings.js";
  * Bounded: only the given directories (where the language's files live), only
  * regular extension-less files (no links, no dotfiles), names that do not look
  * like credentials, and the first bytes are checked for `#!` before a file is
- * read whole.
+ * read whole. Discovery admits the same scripts as analyzed files through each manifest's `shebangInterpreter`
+ * (core/file-discovery.ts); the two share these bounds.
  */
 export async function findShebangScripts(
   projectRoot: string,

@@ -80,7 +80,12 @@ export const CORE_TOOLS = [
   "clarifydoc_analyze",
 ] as const;
 
-/** Tools a deferring host should load up front: find a thing, follow a call. */
+/**
+ * Tools a deferring host should load up front: find a thing, follow a call. They carry
+ * `_meta["anthropic/alwaysLoad"]: true`, which Claude Code reads to load those schemas up front while it defers the rest
+ * behind its tool search; `_meta` is not counted in the budget
+ * (it reaches the host, not the model).
+ */
 export const ALWAYS_LOAD: ReadonlySet<string> = new Set(["clarifydoc_search", "clarifydoc_trace"]);
 
 /** The tools a profile keeps, in the server's own order; throws on a name no tool has. */

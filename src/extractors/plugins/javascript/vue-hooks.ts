@@ -184,6 +184,11 @@ export function vuePreprocess(
  * A plain script that is itself a mixin taking on others (`export default { mixins: [baseActions] }`): the imports of
  * the mixins it names put their methods in scope by bare name, as a component's do — so a name a component leaves to
  * its mixin is found in the mixin's own mixins too.
+ *
+ * A mixin that lists `mixins: [base]` puts the base's imports in scope too: they are marked `inScope`, `scopeMember`
+ * follows the chain three levels (the nearer definition wins) and `ImportInfo.inScope.transitive`, set where a
+ * component or mixin file takes its `mixins:`, makes `inScopeMember` follow the chain, each file once, so
+ * `this.saveStadium()` in a page whose mixin takes on another links to it, cycles ending.
  */
 export function withMixinScope(
   outcome: PreprocessOutcome | { skip: string } | null,

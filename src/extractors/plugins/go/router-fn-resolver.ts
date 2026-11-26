@@ -135,6 +135,13 @@ function applyPackageRouters(analyses: FileAnalysis[]): void {
   }
 }
 
+/**
+ * Routes registered by a function on the router it is handed (`func Register(r *gin.RouterGroup)`) are `owner:
+ * "fn:<name>"` rows plus `router-call` facts, composed with ../shared/router-functions.ts. The mount site's guards
+ * (`api := r.Group("/api", auth.Required()); clubs.Register(api)`) become `RouteInfo.inheritedMiddleware`, resolved
+ * in the mount's file and joined as `viaMiddleware`. A route prefix from a constant (`router.Group(config.ApiUri)`)
+ * is filled through the module-value pass (module-values.ts).
+ */
 export const goRouterFnResolver: RouteResolver = {
   id: "go-router-functions",
   languages: ["go"],

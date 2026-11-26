@@ -32,7 +32,16 @@ interface ExtensionBlock {
 /** `extension [Name][<T …>] on Type {`, header text up to the body's brace. Never Dart 3 `extension type`. */
 const HEADER_RE = /^\s*extension\s+(?!type\b)(?:[A-Za-z_$][\w$]*\s*)?(?:<([^{]*?)>\s*)?on\s+([^{]+?)\s*\{/;
 
-/** Gives every instance member of an extension block in `lines` its receiver parameter. */
+/**
+ * Gives every instance member of an extension block in `lines` its receiver parameter (`isReceiver`): a named extension
+ * is read as a class and an unnamed one's members as free functions, so the linker resolves `type.showBadge()` on the
+ * type of `type`, and `this.x` inside the member on the extended type. A static member is called through the
+ * extension's name and keeps none. An extension on one of its own type parameters (`on P`) applies to the parameter's
+ * bound; an unbounded one applies to every type and states nothing. An extension on a builtin collection of one
+ * element (`on List<Club>`, `Iterable<Club>`, a bounded `List<T extends Club>`) names no project class: a call on a
+ * local, parameter or field of the caller's own class declared with that element (`collectionElementOf`) takes the one
+ * such extension, the receiver's own collection preferred (`collectionExtensionLink`), never another element's.
+ */
 export function applyDartExtensionReceivers(lines: string[], fns: FunctionInfo[]): void {
   if (fns.length === 0 || !lines.some((l) => /^\s*extension\s/.test(l))) return;
   const blocks = extensionBlocks(lines);

@@ -168,6 +168,8 @@ export function extractErbView(analysis: FileAnalysis, source: string): void {
       if (request) element("form", "submit", request, line, h[1]!);
       else if (postsToOwnPage(h[1]!, args, urlArg, model)) {
         // No URL and no model: the form posts to the page it is on (core joins it to the route rendering the page).
+        // `form_with`/`form_tag` with keyword options only (no `url:`/`model:`/positional/splat, POST) and a native
+        // `<form method="post">` qualify; a GET never, and a template expression in the attribute is a URL.
         elements.push({ element: "form", event: "submit", handler: null, line, ownViewPost: true });
         component("form", h[1]!, "container", line, []);
       }

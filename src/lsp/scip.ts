@@ -17,6 +17,14 @@ import type { DefinitionQuery } from "./lsp-enhancer.js";
  * Document.text(5), .position_encoding(6); Occurrence.range(1, packed int32, deprecated) or the typed_range oneof
  * single_line_range(8) / multi_line_range(9) — the typed one wins —, .symbol(2),
  * .symbol_roles(3).
+ *
+ * `local N` symbols resolve within their document; a symbol only a dependency defines gives no answer. Roles decide
+ * the targets: a `Test`/`Generated` definition is no answer for a reference that is not itself test/generated, and
+ * a real definition beats a `ForwardDefinition`. A document's `position_encoding` (UTF-8 bytes, UTF-32 code points)
+ * is converted to the queries' UTF-16 columns from its embedded text or the project file; an unspecified one is
+ * taken as written. A truncated index throws. `SymbolInformation.relationships` are not read. `--scip` repeats, one
+ * index per indexer, each mapped from its own root: a path two indexers cover stays two documents with their own
+ * `local N`. `lspStats.source` is `scip`, the servers the indexer's name.
  */
 
 export interface ScipOccurrence {
@@ -398,7 +406,9 @@ function documentPath(payload: Buffer): string {
  * file's metadata and document paths (to map them to the analysis's), the
  * questions are answered over two reads that decode only what they need.
  * Memory is one document, not the index — a monorepo's index runs to
- * gigabytes. Several files are several indexers'.
+ * gigabytes: the first read records where each document sits so later ones seek only the documents they want, and a
+ * document's occurrences are indexed by start line. Several files are several indexers'. `mergeScip` + `scipAnswers`
+ * in `scip-test-helpers.ts` are the in-memory equivalent, the test oracle, not part of the analyzer.
  */
 export function scipFileAnswers(
   files: readonly string[],

@@ -5,7 +5,9 @@ import { matchingParen } from "../shared/text-scan.js";
  * Alembic `op.create_table` / `op.drop_table` (and kin) → table classes +
  * `SchemaOp`s. A `schema="league"` kwarg prefixes the table (`league.clubs`)
  * so the data model joins the schema-qualified name code touches; a same-named
- * decoy without a schema, or under another schema, stays a different table.
+ * decoy without a schema, or under another schema, stays a different table. Only `upgrade` is read
+ * (`drop_table` / `rename_table` / `add_column` / `drop_column` included); the revision's own model copies are still
+ * not entities. A model's `__table_args__ = {"schema": …}` prefixes its table the same way.
  */
 
 export function alembicSchemaOf(source: string): { tables: ClassInfo[]; ops: SchemaOp[] } {

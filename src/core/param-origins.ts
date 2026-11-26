@@ -20,6 +20,19 @@ import { byOrdinal } from "./ordinal.js";
  * it) keeps that origin, the steps named (`ParamOrigin.derivation`, INFERRED)
  * — a function step only when it links to a project function, and a record
  * only when a property of it is read; otherwise the origin is `unknown`.
+ *
+ * Covers each `${slot}` that is a whole path segment or query value of the URL, and each `{slot}` of a
+ * generated SDK operation whose descriptor spreads its own parameter (`DataSourceInfo.pathValues`). The walk
+ * goes back from the call's enclosing function through its callers' `CallInfo.argOrigins`, by parameter name and,
+ * for an object argument, the property (`field: "path.id"`); eight deep, sixteen per slot; a dispatch link ends
+ * the walk; a call recorded twice is one site; a destructured parameter binds its own name. A component's `prop`
+ * origin goes on to the URL value the route rendering it hands that prop (`RouteInfo.propsFromRoute`) and to the
+ * value each parent's markup binds (`FileAnalysis.propBindings`, stated through `ast.propBindings`, the tag
+ * resolved among the files the parent imports, barrel re-exports followed to the declaring file,
+ * `throughBarrels`, three deep). A record handed whole or spread stands for the property a mutation callback
+ * takes; a record in a URL slot is `unknown`; a member of what a composable returns for it needs the linked
+ * function to state how it derives from that parameter (`FunctionInfo.derivedLocals`). The pass also reports the
+ * backend route parameter a slot binds (segments aligned from the end of the joined route).
  */
 
 const MAX_DEPTH = 8;

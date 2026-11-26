@@ -8,6 +8,16 @@ import { simpleClassName } from "./di.js";
  * (`return 'ledger'`, bound by `$this->app->bind('ledger', …)`) or a class
  * (`return Ledger::class`). The plugin only states which; core resolves it
  * through the container's registrations (`ClassInfo.staticProxyOf`).
+ *
+ * The accessor may be `return self::TOKEN;` / `static::TOKEN` (a string or `X::class` constant of the facade) or
+ * several returns that all yield the same value. When the constant is not the facade's own the accessor is
+ * `staticProxyOf: { constant }` and a trait's string constants ride its `fieldValues` (`proxyConstantValues`); a
+ * `static::TOKEN` declared on a trait or a parent facade is `staticProxyOf.constant`, and a class extending a
+ * `*Facade` base records its constants the same way. Core reads the one value the facade's traits and facade bases
+ * (up to four `extends` hops) agree on; a facade may extend such a base when it states the accessor itself. Core
+ * applies the proxy only when the evidence-named class declares no such member, through the DI registrations
+ * (`staticProxyLink`, `di-binding`); `config/app.php` `'aliases'` are registrations of their short name and a token
+ * nothing binds links nowhere.
  */
 export function facadeProxyOf(
   classNode: Node,

@@ -29,6 +29,12 @@ const elixirInlineGuard: InlineGuard = (code) => {
   return m ? { head: m[1]!, tail: m[2]!, negated: code.startsWith("unless") } : null;
 };
 
+/**
+ * Keyword-delimited control flow through the regex scanner with a `blockDelta` hook: blocks are `do … end` (a trailing
+ * `do`) and `fn … end`; the keyword form `if c, do: x` opens nothing; `else`/`rescue`/`catch`/`after` continue their
+ * block, the arms of `case`/`cond`/`with`/`receive` (`pattern ->`) are switch arms at the block's body level; `fn`
+ * closures are where the graph stops; Elixir has no `return`. The graph is marked approximate.
+ */
 export const ELIXIR_REGEX_CONTROL_FLOW: LanguageRegexControlFlowSpec = {
   lineComments: ["#"],
   blockComment: ["", ""],

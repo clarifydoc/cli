@@ -77,6 +77,9 @@ function terminates(stmt: Node | null | undefined): boolean {
  * pattern's own name, `x is Club c` → `c.Sign()`, is typed by the local). Also the `else` of `!(x is Club)` / `x is not Club`,
  * the statements after an early exit `if (x is not Club) return;`, the right side of `x is Club && x.Sign()` and the
  * consequence of `x is Club ? x.Sign() : …`. Never into a lambda; not after `x` is assigned in between.
+ *
+ * Narrowing is PER CALL: `CallInfo.receiverType` is set only on calls inside the region the test guards; a call
+ * outside it, in a callback body or after the name is reassigned gets none.
  */
 export function typeTestNarrowedType(call: Node, name: string): { type: string } | null {
   let seen = mentionsIs.get(call.tree);

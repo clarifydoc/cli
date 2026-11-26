@@ -51,6 +51,10 @@ function bindingCounts(body: Node): Map<string, number> {
  * `def load_backend(): import backend; return backend`: the module every `return` of the function hands back,
  * as the import states it (`backend`, `a.b` for `import a.b as x`) — a module-level import is read too, a
  * function's own first. Null when a return states anything else, or the name is bound again in the body.
+ * Core's `moduleLocalCall` (symbol-linker) links `m.save()` to that module's own top-level `save` (`import-file`,
+ * INFERRED) only when every binding of the local agrees on one module the plugin's `resolveImport` resolves; a
+ * non-literal `import_module(name)`, a conditional return, a returned class or a method of a class in the module links
+ * nothing, and a namesake `save` in a third module is never reached.
  */
 export function returnedModule(body: Node, paramNames: ReadonlySet<string>): string | null {
   const returns: Node[] = [];

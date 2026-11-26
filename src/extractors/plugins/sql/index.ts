@@ -735,6 +735,13 @@ function extractDmlStatements(lines: string[]): DataSourceInfo[] {
   return sources;
 }
 
+/**
+ * SQL regex spec. Tables and views are data shapes (`declaresSchemaTypes`): they stay out of the symbol linker's
+ * indexes, exports and type catalogs, while functions (a stored procedure, a named query) stay link targets. Table,
+ * view, foreign-key and column names read `[\p{L}\p{M}\p{N}_]` with the `u` flag, so `CREATE TABLE 球员` is an entity
+ * and `SELECT * FROM 球员` a table access; keywords stay ASCII, and index, sequence, trigger and procedure names and
+ * aliases are still ASCII.
+ */
 export const sqlSpec: RegexLangSpec = {
   language: "sql",
   // `.drift`: Drift (Dart) query files — tables and named queries (`mergedBucket:`) in plain SQL.

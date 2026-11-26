@@ -23,6 +23,10 @@ function refOf(literal: string | undefined, env: string | undefined): CallBaseRe
   return env ? { kind: "env", key: env } : null;
 }
 
+/**
+ * Client bases: resty `SetBaseURL`/`SetHostURL`, a URL-named field or assignment holding a literal or `os.Getenv`
+ * state `httpClientRegistrations`; the api-call row names its receiver `client`.
+ */
 export function extractGoHttpClientRegistrations(lines: string[]): HttpClientRegistration[] {
   const out: HttpClientRegistration[] = [];
   for (let i = 0; i < lines.length; i++) {

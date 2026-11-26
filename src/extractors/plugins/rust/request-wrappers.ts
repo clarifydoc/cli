@@ -209,6 +209,11 @@ function verbArg(arg: string): string | null {
  * The URL an argument of a client call requests, with `${…}` holes: a literal, a `format!`, a parameter of
  * the enclosing function (`${path}`), or a call handing that parameter last after a base
  * (`api_url(&self.origin, path)` → `${self.origin}${path}`). `local` reads a `let` the name binds.
+ *
+ * A project method that hands its path parameter to a client (`self.request(Method::POST, path)`) is joined by core's
+ * `expandRequestFactories` from each call site's `pathArgCalls` — a literal, a `format!` or the caller's own path
+ * parameter, with the type it is called on (`self` is the `impl`'s type, a parameter its declared type, fields walked
+ * from there are `receiverFields`).
  */
 export function rustUrlArg(arg: string, params: ReadonlyMap<string, string> | undefined, local?: (name: string) => string | null): string | null {
   const lit = stringLiteral(arg) ?? formatTemplate(arg);

@@ -42,7 +42,9 @@ import { joinRoutePath } from "./route-paths.js";
  * endpoints, so leaving them would inflate the route map with non-routes.
  *
  * Language-agnostic by construction: it reads only `FileAnalysis.routes` and the
- * import index, so any extractor that emits mounts in this shape participates.
+ * import index, so any extractor that emits mounts in this shape participates. The pass runs before the symbol
+ * linker, so `route:<METHOD> <path>` anchors carry the composed path. An extractor emits a mount only when the prefix
+ * is a LITERAL: an unresolvable one would leave a non-endpoint in the route map.
  * The analyzer invokes it once after per-file analysis, mirroring how
  * `reconcileProjectEntities` runs each entity plugin's cross-file pass. In-memory
  * only — the per-file JSON on disk is unchanged.

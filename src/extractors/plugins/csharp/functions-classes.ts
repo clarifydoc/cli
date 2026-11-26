@@ -520,6 +520,9 @@ export class CSharpExtractor extends FunctionClassExtractor {
     return scope && this.scope ? this.scope.within(scope, ASSIGNMENT) : [];
   }
 
+  /**
+   * Visibility: C# methods default to package-private (`isExported = false` unless `public`).
+   */
   private getCsharpVisibility(
     node: Node,
   ): "public" | "private" | "protected" | null {

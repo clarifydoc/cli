@@ -2,6 +2,9 @@ import type { Node, Tree } from "web-tree-sitter";
 import type { TypeAliasInfo } from "../../../types/analysis.js";
 
 /** `using Repo = League.ClubRepository;` — at the top of the file or inside a namespace. */
+/**
+ * `global using Alias = …` is the only alias that reaches past its own file.
+ */
 export function extractCsharpTypeAliases(tree: Tree): TypeAliasInfo[] {
   const out: TypeAliasInfo[] = [];
   const visit = (parent: Node): void => {

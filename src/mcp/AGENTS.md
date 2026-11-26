@@ -17,7 +17,13 @@ write. That is what lets an external agent be configured as nothing but a comman
 | [package-api.ts](package-api.ts) | `clarifydoc_extract package=`: an installed package's exported API (or one export's declaration) through the plugin's `PackageManagerSpec.installedApi`, looked up beside the manifests declaring it, then each sub-project, then the root |
 | [guidance.ts](guidance.ts) | When to reach for which tool, said once: the server instructions and `AGENT_GUIDANCE` (the AGENTS.md / CLAUDE.md section `clarifydoc install` and the editor write). A `fileOnly` rule goes only into the file — the instructions are on the up-front budget |
 | [role.ts](role.ts) | What a file or function is (route handler, data access, data model, screen, entry point, API client, shared utility, orchestrator), from extracted facts only — never a name token; `clarifydoc_explain`'s second line |
-| [tools/](tools/) | The tools themselves — `context.ts` (shared), `overview.ts`, `code.ts` (routes, contract, screens, file, trace, blast), `rename-plan.ts` (`clarifydoc_rename_plan`: the definition and every caller of a symbol as `file:line:col` spans re-lexed from the source line, read-only; it lists the route lines that register the symbol in their own section ("Route registrations": the span of its name on the route line, inside a string too; a route annotation on the method itself is the definition, and so is a route the analysis anchors on the method it names, whose declaration the resolver keeps as `RouteInfo.registeredAt` — `{ file, line }` — see [Ruby](../extractors/plugins/ruby/AGENTS.md); the plan lists that line's span of the name (`clubs#index`, `only: [:index]`, `action: :index`; written as a handler name, after `#` or `:`, never a path option that reads the same), refusing when the line spells no such name (a `resources :players` without `only:` names no action: the row is named, since renaming would drop the route; a same-named action of another controller has other rows and lines); `registrationSpan` is tested on those lines), and refuses — no partial plan — on an INFERRED/AMBIGUOUS link, a line naming it other than once, a route line spelling no such name, or an override/implementation/interface member, and says which rows), `extract.ts` (a function's source and its callees within a token budget — the one tool that reads source text, at the analyzed spans; a route written with an inline handler (`RouteInfo.handlerEndLine`, no `handler`) is a definition too, named `route:<METHOD> <path>`, spanning `line`..`handlerEndLine`; `inlineRouteDefinitions` ([core/route-symbol.ts](../core/route-symbol.ts), over the final `routeMap`, memoized) is the one list every symbol tool reads — `extract`, `explain`'s Handler source, `trace`'s miss ("defined at …"), `search kinds=["symbol"]` (a search that includes routes has the row already) and `rename_plan`, which refuses it as "a route with an inline handler", never as an unknown name), `data.ts`, `decisions.ts` (`clarifydoc_context_docs` and `clarifydoc_file`'s Decisions section: decision records, context documents and decision markers from `core/context-docs.ts`, reused for 30 s; `decisionsAbout(root, analysisDir, file)` ([decisions-api.ts](decisions-api.ts), exported from the package index) is the same facts as data — the documents naming a file with their `DocStaleness`, and its markers — for a host that is no MCP client; a document is read only from that list; per `file` (and `function`), the reasons comments and commit bodies state, from `core/stated-reasons.ts`), `commands.ts` (the CLI commands that print what an agent asks for, answered from the served analysis: `seq` → `clarifydoc_sequence`, `diff --base` → `clarifydoc_diff`, `export` → `clarifydoc_export` (one format; a folder-shaped bundle stays a command), `facts` → `clarifydoc_facts`; `lint` is `clarifydoc_status lint=true`, `report` is `clarifydoc_analyze report=true`, `schema` and `detect --json` are the resources `clarifydoc://analysis/schema` and `clarifydoc://project/detect`; `install`, `hook`, `lsp-update` and `ask` stay commands) |
+| [tools/](tools/) | The tools themselves — `context.ts` (shared: `freshnessBanner`, `resolveSymbolArg`), `overview.ts` (status, search), `code.ts` (routes, contract, screens, file, trace, blast), `rename-plan.ts`, `extract.ts`, `data.ts`, `decisions.ts` (+ [decisions-api.ts](decisions-api.ts), exported from the package index), `commands.ts` (CLI commands as tools: `seq`, `diff`, `export`, `facts`), `caller-bounds.ts` |
+| [http.ts](http.ts) | The Streamable HTTP transport (`serveHttp`): sessions, SSE streams, loopback and token rules |
+| [body-search.ts](body-search.ts), [search-rank.ts](search-rank.ts) | `clarifydoc_search`'s BM25 body index and its cross-kind ranking |
+| [paging.ts](paging.ts), [budget.test.ts](budget.test.ts), [hidden-tools.ts](hidden-tools.ts), [usage.ts](usage.ts) | Offset cursors and the output cut, the up-front size budget, `--tools core` rewrites, the session usage line |
+| [impact-worktree.ts](impact-worktree.ts) | `clarifydoc_impact worktree=`: another checkout of the analyzed repository |
+
+Per-tool behaviour (rename plan refusals, extract's class signatures and inline-route definitions, context docs, the CLI-command tools, caller bounds, body search) is in the doc comment at the top of each tool's file.
 
 ## Rules that keep it working
 
@@ -26,20 +32,9 @@ write. That is what lets an external agent be configured as nothing but a comman
   plugins log freely). Anything diagnostic goes through the `log` sink → stderr.
 - **Two transports, one server.** `serveStdio` reads newline-delimited JSON or `Content-Length: N` frames, decided per
   message by `FrameReader` (bytes, so split chunks and multi-byte text are safe) and answers in the framing each
-  message used. `http.ts` `serveHttp` (`clarifydoc mcp --http [--port] [--host] [--token-file]`) is the Streamable HTTP
-  subset: `POST /mcp` JSON-RPC message or batch → JSON, notifications → 202, body capped at 4 MB, every request sharing
-  the one `McpServer` (analysis loaded once). Sessions are a Map (id → created, last seen, `clientInfo`, open streams):
-  issued on `initialize`, idle expiry (`CLARIFYDOC_MCP_SESSION_TTL_MS`, default 30 min; a session with an open stream is
-  not idle), at most 64 (least recently seen evicted), `DELETE` ends one and closes its streams, an unknown or expired
-  id is 404 so the client re-initializes. `GET /mcp` with `Accept: text/event-stream` and a session id is a server-sent
-  event stream (keep-alive comment every 25 s; one session holds at most 4 — opening a fifth closes its oldest, `MAX_STREAMS_PER_SESSION`); `HttpHandle.broadcast` writes a notification to every open stream —
-  `server.ts` pushes `notifications/tools/list_changed` and `resources/list_changed` when an analysis this store ran
-  finishes (`AnalysisStore.onAnalysisChanged`) or the summary file's mtime moves (polled every 5 s: the editor or CLI
-  re-analyzed); `listChanged` is declared only on this transport. A GET without that Accept is 405. Loopback only by
-  default (`Host`/`Origin` must be loopback, on GET too); any other `--host` refuses to start without a token, checked as
-  a bearer with a constant-time compare on every method. Token precedence: `--token-file` (first line; warns when group/
-  world-readable), then `CLARIFYDOC_MCP_TOKEN`, then `--token` (stderr warning: it shows in the process list). The URL
-  goes to stderr only.
+  message used. [http.ts](http.ts) `serveHttp` (`clarifydoc mcp --http`) is the Streamable HTTP subset over the same
+  `McpServer`; its sessions, streams, `listChanged` notifications, loopback-only default and bearer-token rules are in
+  its header comment. Keep any new transport behaviour identical between the two.
 - **No new dependencies.** The whole transport is hand-rolled precisely because this code is bundled into the VS Code
   extension, whose bundle script ships the analyzer's production closure.
 - **One source of truth.** Every answer comes from `loadReportSummary` — the same denormalized, LSP-merged
@@ -63,37 +58,18 @@ write. That is what lets an external agent be configured as nothing but a comman
   than no next step, and a hint carrying a number is the difference between "try a looser filter" and a call that
   lands. Hints are **stateless by design**: a stdio server's "session" is not reliably one agent, so nothing is
   derived from what the caller asked earlier.
-- **Every answer says when it is stale.** `McpServerOptions.annotate` ends each tool's text with
-  `freshnessBanner` (tools/context.ts) while the analysis no longer describes the source — files changed, removed
-  or added since (`assessFreshness`: added files come from `git ls-files`, in directories the analysis covers,
-  written after its manifest — an extension-less one when it is a script discovery would read by its `#!` line
-  (`shebangScriptAt`) — never one discovery refuses — the manifest's `skipped` files, a credential-looking
-  name, a `.clarifydoc-ignore` match, or a file its plugin's `preprocess` skips, such as a `package.json`), and HEAD against the commit it was made at (`sourceRevision`, also in the
-  manifest) — then one bounded `rev-list --left-right --count` (`commitRelation`, core/source-revision.ts) says how: HEAD N commits ahead, older, diverged, or the analyzed commit gone from the repository (rebased away); `clarifydoc_status` shows it on its commit row even when HEAD moved without touching an analyzed file. The `post-git` hook (agents/hooks.ts) keeps it current: after a shell git command that moves the tree it starts one detached incremental `analyze`, coalesced by a lock file, with the options the analysis was made with (`Manifest.runOptions`, written by the analyzer: the output directory relative to the root, LSP on/off, git history, the `--feature` deviations, the `--spec` / `--coverage` files given as project-relative paths (one outside the root is dropped) — never a path outside the root or a secret; `refreshArgs`; the plain default for an older manifest). Codex gets it in `hooks.json` and in the `config.toml` block alike. An analysis a NEWER engine wrote is not stale (`engine-older`, versions compared as numbers): the
-  banner says the server is older and wants a restart, and `clarifydoc_analyze` refuses to write the older reading
-  over it (`EngineOlderError`). One stat pass per ten seconds, however many calls; `clarifydoc_status` and `clarifydoc_analyze` are
-  left alone, since they are about exactly that. Per file, the subject of `clarifydoc_file`,
-  `clarifydoc_blast_radius` and `clarifydoc_explain` gets a `⚠ … changed since the analysis` line under the heading
-  and each listed dependent a `(changed since the analysis)` suffix (`AnalysisStore.changedSinceAnalysis`: a stat
-  per path against the manifest, a hash only where the mtime moved, verdicts kept per mtime). No manifest, no note.
+- **Every answer says when it is stale.** `McpServerOptions.annotate` ends each tool's text with `freshnessBanner`
+  ([tools/context.ts](tools/context.ts), whose comment holds what counts as changed, the commit relation, the
+  `engine-older` rule, per-file `⚠` lines and the `post-git` hook that keeps it current) while the analysis no longer
+  describes the source. One stat pass per ten seconds, however many calls; `clarifydoc_status` and `clarifydoc_analyze`
+  are left alone.
 - **Lookups forgive a spelling.** A symbol argument of `extract`, `trace`, `explain` and `rename_plan` goes through
-  `resolveSymbolArg` ([tools/context.ts](tools/context.ts)): as written first (our own ids use `::` for C++ nested
-  types and Rust inline-module functions), else with `::` and `->` read as `.` — `Garage::park` finds `Garage.park` —
-  and as written again when neither is a name the analysis holds. A file path that matches nothing offers up to three
-  `nearFiles` (same extension, basename within two edits or equal ignoring case and separators, never another
-  language's file). `clarifydoc_search` flags matched definitions in generated files (a generated root, a generator's
-  file name, or the banner — `markGenerated` reads the per-file `generated` flag for the matched files only) and ranks
-  them after shipped ones at equal score, as tests rank. `clarifydoc_explain` of a class adds "Calls out of the class":
-  the callees of its methods outside it, grouped by target file and capped (`classOutCalls`).
-- **Body search is opt-in.** `clarifydoc_search body=true` (or `throws=`) builds a BM25 index over function
-  bodies and the doc comments above them — spans from the summary's complexity rows, text from the
-  source — once per loaded analysis, in memory (`body-search.ts`). The same call ranks functions and classes by
-  their `doc` (the first sentence, from the per-file JSON) as a name-search tier of its own, below every name and
-  path tier — never without `body`, since reading every per-file JSON is what it costs. When no name matches every
-  term (a question described in words), the body hits lead and the partial name matches follow under their own
-  heading; body hits in test files come after the code unless the query mentions tests. `signature=` reads parameters and
-  return types from the per-file JSON of the candidates only. The tools/list byte budget is tight:
-  new schema text has to pay for itself.
+  `resolveSymbolArg`; a file path that matches nothing offers up to three `nearFiles`. `clarifydoc_search` flags matched
+  definitions in generated files (`markGenerated`) and ranks them after shipped ones at equal score, as tests rank;
+  `clarifydoc_explain` of a class adds "Calls out of the class" (`classOutCalls`).
+- **Body search is opt-in.** `clarifydoc_search body=true` (or `throws=`) builds a BM25 index once per loaded analysis,
+  in memory ([body-search.ts](body-search.ts) says what it indexes and how doc and signature tiers rank). The
+  tools/list byte budget is tight: new schema text has to pay for itself.
 - **A symbol or file hit carries a `reached from:` line** — up to three routes/screens of its file's blast-radius `traceImpact`, `(+N)` for the rest; computed in `reachSuffix` only for the hits a page shows, after ranking, so it never changes order (asserted in search-reach.test.ts). File granularity: a lower bound.
 - **Search ranks across kinds, not within them.** `clarifydoc_search` flattens every source into one
   `Candidate` list ([search-rank.ts](search-rank.ts)) and prints one ranked list, because whatever prints first
@@ -101,18 +77,12 @@ write. That is what lets an external agent be configured as nothing but a comman
   contributes `Candidate`s; it must not print a section of its own. The tiers and tie-breaks are tuned against
   hand-labelled queries on real repositories, never against the tool's own output, and every one of them is pinned by a case in `search-rank.test.ts`.
 - **"No callers" is a lower bound, and says why.** A symbol, file or route nothing resolved to never reads as safe to
-  delete ([tools/caller-bounds.ts](tools/caller-bounds.ts)): the answer counts the unresolved calls elsewhere named
-  like the member (one pass over the per-file JSON per loaded analysis, up to five `file:line` examples, code before
-  tests), the interface/base declaration above it or the container registration that builds its class, and — for a
-  route — the files whose source holds its path literal with no call linked from them (a scan of the analysed files,
-  screen links like `to="/x"` skipped). A failed `trace to=` names the node its forward walk got nearest to the target
-  (in the target's file when it reached one, else the deepest) and how many of its calls did not resolve.
+  delete ([tools/caller-bounds.ts](tools/caller-bounds.ts) holds what it counts); a failed `trace to=` names the node its
+  forward walk got nearest to the target.
 - **`clarifydoc_impact` and `clarifydoc_blast_radius` charge by member.** With the diff's lines (git, `proposed`) impact's dependents are the files naming what changed, the importer count printed beside it (core/AGENTS.md); `clarifydoc_blast_radius` takes `members` (`Class.method`, a function or a type) and `adding` for the same cut, and without them ranks direct dependents by how much of the file they use, so the default limit of 20 keeps users before bare importers.
 - **`clarifydoc_impact` can read another checkout.** `worktree=<path>` (or the server's `CLARIFYDOC_WORKTREE`; the
-  working directory is never guessed) points at a linked worktree of the analyzed repository: the diff, its hunks, the
-  working-file re-analysis and a `proposed` edit's old text come from there, while paths stay the analysis's own
-  (the project keeps its place inside the worktree). [impact-worktree.ts](impact-worktree.ts) requires both to share
-  one `--git-common-dir` and refuses anything else; the answer's first line names the worktree.
+  working directory is never guessed) points at a linked worktree of the analyzed repository; [impact-worktree.ts](impact-worktree.ts)
+  requires both to share one `--git-common-dir` and refuses anything else.
 - **Tool failures are results, not transport errors.** A thrown handler is turned into `isError: true` content by
   `McpServer.callTool`, so the model reads the message. Throw with the fix in the text (candidate paths, the tool to
   call next).
@@ -134,19 +104,11 @@ write. That is what lets an external agent be configured as nothing but a comman
   ([budget.test.ts](budget.test.ts)), and `tools/list` alone (15,000 bytes) and the instructions (1,300 characters)
   under their own; a description that pushes past one is argued for in the commit that raises it. A tool's
   description is one "Use …" sentence plus its arguments in a few words; an example call goes to `EXAMPLES` in
-  [guidance.ts](guidance.ts), which only the AGENTS.md / CLAUDE.md section carries, and the instructions name
-  each question's tool in a line (`brief`) — the reasons are in that section too.
-  `CLARIFYDOC_MCP_LOG=<file>` logs each call locally (JSONL: tool, cut arguments, size, `bytes` and `sections` — bytes per heading-delimited part of the answer, `sectionBytes` in protocol.ts —, time, error, empty;
-  `node scripts/mcp-log-summary.mjs <log>` prints per tool the calls, bytes and each section's share) and
-  the session's `usageLine` at disconnect; `clarifydoc://session/usage` renders the same calls ([usage.ts](usage.ts)).
-  `--tools core` (`CORE_TOOLS`, `selectTools`) lists a smaller set and says so in the instructions; a tool left out
-  is not callable, so every mention of one — in an answer, a resource, a prompt, a tool description and the
-  instructions — is rewritten to `clarifydoc ask <tool> key=value` ([hidden-tools.ts](hidden-tools.ts), the server's
-  `rewrite` option, applied where text leaves it); mentions are rewritten, never dropped, and with the full list
-  nothing changes. Keep the core set what answers point to most all the same: a shell call costs a round trip.
-  `ALWAYS_LOAD` (search, trace) carry `_meta["anthropic/alwaysLoad"]: true`, which Claude Code reads to load
-  those schemas up front while it defers the rest behind its tool search; `_meta` is not counted in the budget
-  (it reaches the host, not the model).
+  [guidance.ts](guidance.ts), which only the AGENTS.md / CLAUDE.md section carries.
+  `CLARIFYDOC_MCP_LOG=<file>` logs each call locally (JSONL; `sectionBytes` in protocol.ts;
+  `node scripts/mcp-log-summary.mjs <log>` summarizes) and `clarifydoc://session/usage` renders the session's calls
+  ([usage.ts](usage.ts)). `--tools core` rewrites mentions of a hidden tool to `clarifydoc ask <tool> key=value`
+  ([hidden-tools.ts](hidden-tools.ts)); `ALWAYS_LOAD` (search, trace) is in `server.ts`.
 - **No call outlives the client's deadline.** An analysis a call waits for — `clarifydoc_analyze`, a cold
   start, or the base ref `clarifydoc_diff` analyzes (`AnalysisStore.waitWithin`) — gets `waitMs` (20 s, `CLARIFYDOC_MCP_WAIT_MS`); past it the call answers that the run is still going,
   with its stage and file count (`describeRun`, read off the analyzer's own progress line), and the run goes on.
@@ -157,8 +119,7 @@ write. That is what lets an external agent be configured as nothing but a comman
   lock held waits for the other run's summary instead of starting a competing scan; the lock heartbeats, so a long
   analysis is never stolen, and a crashed one is.
 
-- **No analysis behind the server.** When the output directory is missing, unreadable (`EACCES`/`EPERM`/`EISDIR`) or holds a summary that is not valid JSON, every tool answers — never throws past the protocol layer — with the path and the command that writes the analysis this server reads (`AnalysisStore.analyzeCommand`: `clarifydoc analyze <root> -o <dir>`, quoted when a path has spaces; `unreadableMessage` for a summary that cannot be read).
-- **A class over the extract budget.** `clarifydoc_extract` on a class whose body exceeds `maxTokens` returns its member signatures — fields from the facts, each method from its declaration at its start line, cut before the body, with `[line N]` — up to the budget or 120 members and a count of the rest, plus the call that extracts one member; a class that fits is printed whole, as before.
+- **No analysis behind the server.** When the output directory is missing, unreadable or holds a summary that is not valid JSON, every tool answers — never throws past the protocol layer — with the path and the command that writes the analysis (`AnalysisStore.analyzeCommand`, `unreadableMessage`).
 
 ## Adding a tool
 
@@ -171,4 +132,4 @@ write. That is what lets an external agent be configured as nothing but a comman
 Describe the tool in terms of the *question it answers*; the description is the only thing a model reads before
 choosing it.
 
-A route whose handler is written inline is a definition every symbol tool reads: `inlineRouteDefinitions` ([core/route-symbol.ts](../core/route-symbol.ts)) lists `route:<METHOD> <path>` with its span from the final `routeMap` — `extract`, `explain`'s Handler source, `trace`'s miss, `search kinds=["symbol"]`, `rename_plan`'s refusal.
+A route whose handler is written inline is a definition every symbol tool reads: `inlineRouteDefinitions` ([core/route-symbol.ts](../core/route-symbol.ts)); see [tools/extract.ts](tools/extract.ts).

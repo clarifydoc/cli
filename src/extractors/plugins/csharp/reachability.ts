@@ -9,6 +9,10 @@ import { conventionReachability, withPassive } from "../shared/reachability-kit.
  * type (usually through assembly scanning) is kept alive and never reported,
  * but anchors nothing — a class library full of controllers is still a
  * library.
+ *
+ * Reach by name is `declaredNames`; what the framework discovers (`[ApiController]`s, assembly scanning) is a
+ * `passiveReason`. `configMentions` (appsettings and the like) anchor what the framework instantiates by name. An
+ * import graph cannot prove C# files unreachable, hence the name-based model.
  */
 export const csharpReachability = conventionReachability({
   extensions: [".cs", ".csx"],

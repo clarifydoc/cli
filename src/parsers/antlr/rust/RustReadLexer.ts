@@ -26,7 +26,10 @@ const frame = (enumBody = false): Frame => ({ pending: false, pattern: false, he
  * class, from the tokens before the brace alone: an identifier before a `{` that is not the block of a condition, of
  * an item or of a closure with a return type, and not inside a macro's or an attribute's tokens (which stay a balanced
  * token tree). A brace it leaves as it was still reads either way, so a wrong guess costs a second reading, not a
- * different tree — the caller reads again with the plain lexer when this one's does not parse.
+ * different tree — the caller reads again with the plain lexer when this one's does not parse. The grammar itself was
+ * fixed where an SLL failure on valid code was an ambiguity SLL resolves to its first alternative: closure parameters
+ * are a `patternNoTopAlt` (`|b| f(b)` no longer reads the body as an alternative of the parameter), and `impl`/`dyn`
+ * bounds come before `typeNoBounds` (`impl A + B`).
  */
 export class RustReadLexer extends RustLexer {
   private readonly frames: Frame[] = [frame()];

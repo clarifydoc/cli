@@ -14,7 +14,9 @@ import type { DataSourceInfo, FunctionInfo } from "../../../types/analysis.js";
  * header — so the statement's table accesses, which the data-source pass
  * already reads line by line, belong to it. Decorated `@named-query("…")`
  * with the header's name as written. How a call names one (aiosql's
- * `queries.get_article_by_slug`) is the calling language's resolver's business.
+ * `queries.get_article_by_slug`) is the calling language's resolver's business. The `col = :name` filters of a
+ * statement are `DataSourceInfo.whereFields`; an argument given by name lands on the callee's parameter of that name
+ * (`CallArgOrigin.param`), the only kind of argument followed through a dispatch link (aiosql).
  */
 
 const HEADER = /^\s*--\s*(?:name\s*:\s*|:name\s+)([A-Za-z_][\w-]*)([!^$#*<>]*)|^([A-Za-z_]\w*)\s*(?:\([^)]*\))?\s*:\s*$/;

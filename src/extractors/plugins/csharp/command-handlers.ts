@@ -10,6 +10,14 @@ import type { PropertyInfo } from "../../../types/analysis.js";
 const COMMAND_BUILD_RE =
   /\b(\w+)\s*(?:=>|=)\s*new\s+[\w.]*Command\w*(?:<[^>()]*>)?\s*\(\s*(?:(?:async\s+)?\(\s*\w*\s*\)\s*=>\s*(?:await\s+)?|(?:async\s+)?\w+\s*=>\s*(?:await\s+)?)?(?:this\.)?([A-Za-z_]\w*)\s*(?=[,)(])/g;
 
+/**
+ * `KeepCommand = new RelayCommand(Keep)` (constructor, initializer or expression-bodied property;
+ * `DelegateCommand`, `AsyncRelayCommand`, `ReactiveCommand`, and the lambda forms `() => Keep()` /
+ * `async () => await Keep()`) makes the command property run `Keep`. Only a command built over one method of the
+ * class is recorded; a lambda body with other statements, or one assigned twice to different methods, names
+ * nothing. CommunityToolkit `[ObservableProperty]` on a field gives the class its generated public property, typed
+ * as the field (`_clubName` → `ClubName`, marked `accessor`/generated).
+ */
 export function attachCommandHandlers(classText: string, properties: PropertyInfo[]): void {
   if (!classText.includes("Command")) return;
   const found = new Map<string, string | null>();

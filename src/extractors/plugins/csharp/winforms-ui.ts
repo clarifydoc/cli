@@ -79,6 +79,11 @@ interface EventWiring {
 
 /** All `X.Event += Handler` subscriptions in the file, ungated (screens want
  *  lifecycle events too — `interactive` gating happens in the caller). */
+/**
+ * Event subscriptions (`MnuOpenFile.Click += MnuOpenFile_Click;`, legacy
+ * `this.button1.Click += new System.EventHandler(this.button1_Click);`) in `*.Designer.cs` `InitializeComponent()`
+ * and in hand-wired form code — it runs on every C# file and gates on the event name, not the file name.
+ */
 export function extractEventWirings(lines: string[]): EventWiring[] {
   const out: EventWiring[] = [];
   for (let i = 0; i < lines.length; i++) {
@@ -291,6 +296,9 @@ function toComponent(name: string, m: DesignerModel, childrenOf: Map<string, str
  * One ScreenInfo per `*.Designer.cs` form. Gated on the generated
  * `InitializeComponent()` body so `Resources.Designer.cs` (resx codegen, no
  * form) never produces a phantom screen.
+ *
+ * The Designer file is read as a full form description (control declarations, `Controls.Add(…)` containment,
+ * `DropDownItems.AddRange(…)`, `Text = "…"` captions, geometry): one `ScreenInfo` per form.
  */
 export function extractWinFormsScreens(sourceText: string, filePath: string): ScreenInfo[] {
   if (!/\.Designer\.cs$/i.test(filePath)) return [];

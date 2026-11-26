@@ -1,3 +1,10 @@
+/**
+ * Param origins also cover: a generated SDK descriptor `{ url: '/clubs/{id}', ...options }` takes `options.path.id`;
+ * derivations such as `clubStore.clubs[props.clubId].id`, `getSeasonIdFromClubId(props.clubId)` and a query-library
+ * member `query.data[.value][.prop]`; a record spread `{ ...club.value, name }` stands for the property a mutation
+ * callback takes.
+ */
+
 import type { Node } from "web-tree-sitter";
 import { FUNCTION_NODE } from "../../shared/node-helpers.js";
 import type { CallArgOrigin, ValueStep } from "../../../types/analysis.js";
@@ -897,6 +904,13 @@ function templateValue(anchor: Node, chain: readonly string[], declared: Readonl
  * `ref` every assignment of which is such a value (`club.value = await
  * getClub(id)` in `watch(() => toValue(clubId), async (id) => …)`). A local
  * with any other assignment, or one derived from no parameter, is left out.
+ *
+ * A returned ref or computed derived from a parameter is `FunctionInfo.derivedLocals`: a computed lookup keyed by it,
+ * or a ref every assignment of which is a lookup or a function's result for it (a `watch` callback's first parameter
+ * is the watched value; a `computed` over a TanStack Query result `query.data.value?.squad` of
+ * `useQuery(computed(() => clubQuery(toValue(clubId))))` derives through the options function). A call site reading
+ * the member (`const { club } = useClub(() => props.clubId)`, `club.value.id`) states a `returned` derivation step
+ * that `paramOrigins` follows.
  */
 export function derivedLocalsOf(fn: Node, locals: readonly string[]): Array<{ local: string; param: number; derivation?: ValueStep[] }> | undefined {
   const body = fn.childForFieldName("body");

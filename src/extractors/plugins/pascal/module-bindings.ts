@@ -17,6 +17,9 @@ const SECTIONS: ReadonlyMap<string, boolean> = new Map([
  * in the interface section is what `dmLeague.SaveClub` in any unit that `uses` it
  * calls through; one in the implementation section only the unit's own routines see.
  * Only a named type is kept (not `array of`, `^T` or a builtin): a receiver needs a class.
+ *
+ * They are `FileAnalysis.moduleBindings`, seen through `importsShareScope`. A program's or library's own globals
+ * are seen by nobody. Two used units typing one variable differently decide nothing.
  */
 export function pascalModuleBindings(tree: Tree): ModuleBindingInfo[] {
   const out: ModuleBindingInfo[] = [];

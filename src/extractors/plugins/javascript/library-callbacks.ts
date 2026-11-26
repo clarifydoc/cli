@@ -1,3 +1,29 @@
+/**
+ * A knowledge table of values a LIBRARY runs from the holder's method; each carries `CallInfo.libraryOption`, and the
+ * links are INFERRED `dispatch:library-option`.
+ *
+ * TanStack Table `on…Change` options under `table.nextPage`/`setSorting`… hold `useVueTable({ onPaginationChange })`
+ * under each method running it, only for a factory imported from the library's package and an option the literal
+ * writes; a child handed the object as a prop gets each method as a `functionProps` entry (`table.nextPage`). The
+ * table also names its columns' and rows' methods (`header.column.toggleSorting()`/`getToggleSortingHandler()` →
+ * `onSortingChange`, `toggleVisibility` → `onColumnVisibilityChange`, `toggleSelected` → `onRowSelectionChange`,
+ * `toggleExpanded` → `onExpandedChange`), held as `table.column.toggleSorting`. A local derived from the holder (a
+ * Vue `v-for` over `table.getHeaderGroups()`/`headerGroup.headers`, a `.map` callback parameter of the holder's
+ * results) holds them again under its own name (`header.column.toggleSorting`, `header.toggleSorting`), joined by the
+ * member path (`DEEP_MEMBER_CALL`, only to an entry held under exactly that path in the caller's file); a child
+ * handed the local (`:header="header"`, `header={header}`) gets them as props.
+ *
+ * TanStack Query's `useQuery` (`queryFn` ← `refetch`), `useInfiniteQuery` (`queryFn` ←
+ * `refetch`/`fetchNextPage`/`fetchPreviousPage`), `useMutation` (`mutationFn` ← `mutate`/`mutateAsync`; the callback
+ * is a held function and `paramOrigins` follows its `invoked via mutate` parameter back through the `m.mutate(x)`
+ * link) and Formik's `useFormik` (`onSubmit` ← `handleSubmit`/`submitForm`, `onReset` ← `handleReset`/`resetForm`)
+ * are library objects too. A library object's method handed to a JSX event attribute rather than called
+ * (`onSubmit={formik.handleSubmit}`, or `onSubmit={handleSubmit}` destructured from the result) is recorded as the
+ * call it makes on that event under the holder's entry name (`formik.handleSubmit`, `handleSubmit.handleSubmit`),
+ * only in a file importing a factory the table knows (`importsLibraryFactory`) and only for a method a written option
+ * runs.
+ */
+
 import type { Node, Tree } from "web-tree-sitter";
 import type { CallInfo, FunctionPropBinding } from "../../../types/analysis.js";
 import { keyText } from "./node-utils.js";
@@ -268,6 +294,14 @@ function importedLocals(tree: Tree): ReadonlySet<string> {
 /**
  * `Gateway.closeClub`, a member of a name the file imports (never `this`, a parameter or a local of that name): the
  * call name the linker resolves through the import, as it would the call `Gateway.closeClub()`.
+ *
+ * A library option naming a member of an imported object (`useMutation({ mutationFn: Gateway.closeClub })`; the head
+ * is an import binding no parameter shadows) is held under that call name and resolves the same way, so
+ * `mutation.mutateAsync()` reaches `ClubApi.closeClub` and its route alone. A Svelte store's auto-subscription on a
+ * library object (`$table.nextPage()` after `const table = createSvelteTable({ onPaginationChange })`) is named as
+ * the holder records it, `table.nextPage` (`librarySubscriptionCallee`; a nearer binding of `table` makes `$table`
+ * another store, and only a name the file declares as a library result counts); a markup handler
+ * (`on:click={() => $table.previousPage()}`) is cleaned to the same name.
  */
 function importedMemberName(member: Node): string | null {
   const object = member.childForFieldName("object");
@@ -304,6 +338,21 @@ function patternMembers(pattern: Node): Array<{ local: string; key: string }> {
  * `const { mutate, mutateAsync: save } = useMutation({ mutationFn })` → `mutate` runs `mutationFn`, and so does
  * `save`. Each binding is a holder of its own, one method long (`mutate.mutate`, `save.mutateAsync`), which
  * `libraryBindingCallee` names the bare call by. Only a method a stated option runs counts, never a state flag.
+ *
+ * `const { mutate, mutateAsync: go } = useMutation({ mutationFn })` holds the callback under one holder per bound
+ * name (`mutate.mutate`, `go.mutateAsync`) and `resolveCallName` names the bare call `mutate(x)` the same
+ * (`libraryBindingCallee`): the nearest declaration of the name wins — a parameter, loop or catch binding, function,
+ * class or import makes it plain — and only a method a stated option runs is renamed, never `refetch` or a state
+ * flag, so `dispatch:library-option` reaches the callback inside the declaring function. A destructured parameter's
+ * annotation types its bindings through a same-file `extends` or `&` (`objectTypesOf`; a base it cannot read marks
+ * the type open) and a nested pattern (`{ a: { store } }`, `patternPaths`); a binding the annotation gives no type
+ * here — a base or type from another file — is emitted as `localTypes` `{ name, from: "$paramN.key", member: true }`
+ * beside `{ name: "$paramN", type }`, which the linker types by the declared field or leaves untyped (a single-letter
+ * or `T…` annotation, a generic parameter, is never anchored); a nested pattern whose level is a type another file
+ * declares (`{ league: { table } }: Props` with `league: League` imported) anchors on that level (`$paramN_league`,
+ * `from: "$paramN_league.table"`). A nested destructured URL-builder parameter (`({ club: { id } })`) is filled from
+ * the call's nested object literal (`patternPaths` in `rewriteWith`). A default-exported map and an array-pattern
+ * parameter (`({ pair: [table] })`) are not read.
  */
 export function libraryDestructuredMembers(
   declarator: Node,

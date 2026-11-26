@@ -89,7 +89,44 @@ const JVM_BUILTIN_MEMBERS = [
   "setValue", "component1", "component2", "copy",
 ];
 
-/** Calls that take the value out of a JVM wrapper, and the wrappers each one unwraps (the `valueOut` hook's `calls`). */
+/**
+ * Calls that take the value out of a JVM wrapper, and the wrappers each one unwraps (the `valueOut` hook's `calls`).
+ *
+ * Only a wrapper the hook unwraps is listed. One whose members are its own (Java `Optional`/`Provider`, Kotlin `Lazy`)
+ * is never a `transparentTypeWrappers` entry: `opt.get()` would link to a `get` of the wrapped class. Core's
+ * `walkChain` asks the hook (`takes` before reading any declaration, `at` on the declared type) and goes on from the
+ * wrapper's first type argument when the call before one of these DECLARES a listed wrapper: `var c =
+ * repo.findAsync(id).join(); c.promote()` and `repo.findMono(id).block().relegate()` reach `Club`. A project class's
+ * own `get()` keeps its declared return type, an unlisted generic's `join()` unwraps nothing, and keys are read as
+ * own properties only (`toString` is no unwrapping call).
+ *
+ * A wrapper a field, parameter or method DECLARES (`private Provider<ClubRepo> provider; provider.get().save()`) is
+ * read by `unwrappedDeclared`/`wrappedHead` from the written type; the `members` table names Kotlin `.value` on a
+ * `Lazy<T>`. `wrapperShadowed`: the hook returns the head it read and core refuses a project class of that name, so
+ * `Box<ClubRepo>.value` or a project class with its own `get()`/`Value` unwraps nothing.
+ *
+ * A local holding the unwrapped value (`var c = repo.find(1); c.get().save()`) reads the wrapper off the declared
+ * return of the one call the local is initialized from (not awaited, no `choice`). A Kotlin `val s = lazy.value` and
+ * every plain member read (Java `var m = club.manager`, Kotlin `val t = settings.turf`; never a call, indexer or `?.`
+ * in the path) state `localTypes[].from` with `member: true`: the plugin never consults `members`, the linker takes the
+ * value out of a listed wrapper and else types the local by the member's declared type, untyped where that is no
+ * project class.
+ *
+ * Elements: `elementCalls` (`get`) with `elementOf` (`jvmIndexedElement`: a `List`'s element, a `Map`'s VALUE, one
+ * plain type name) take one element out of what the segment before DECLARES — `repo.all().get(0).promote()`,
+ * `club.players.get(0)`, Kotlin `var c = repo.all()[1]` (stated as written, an `index` segment of the receiver chain,
+ * kept only where the hook has an `index` member — Kotlin `get`). A project class's own `get(int)` keeps its declared
+ * return and a project class named like the collection shadows it. `arrayIndex` (Java) reads `x[i]` over a declared
+ * array (`Position.values()[0].label()`) and yields nothing for any other type; Kotlin `Array<X>` is indexed,
+ * `first`/`last` take an element. In `valueOut.calls` the keys are `join`, `get`, `orElseThrow`, `block` and Kotlin `await`
+ * (`Deferred`); `valueOut.arrayIndex` is the Java array step.
+ *
+ * Map entries: a loop over `m.entrySet()` / Kotlin `m.entries` / a map looped directly is a `kind: "entry"` state of the
+ * shared element chain (`ChainRules.entries`/`entryValue`/`entryKey`: `entrySet()` is a collection whose `elemState`
+ * carries the key and value types, never a `Map.Entry<K, V>` text), so `en.getValue()`, `en.getKey()` and Kotlin
+ * `en.value` type; a name two loops bind to different entries is dropped. Only a TYPED map root (parameter, field,
+ * typed local) is read; a call-initialized map (`repo.byName().entrySet()`) stays untyped.
+ */
 const JVM_UNWRAP_CALLS: Readonly<Record<string, readonly string[]>> = {
   join: ["CompletableFuture"],
   get: ["CompletableFuture", "Future", "Optional", "Provider", "Supplier"],

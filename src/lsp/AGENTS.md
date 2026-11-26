@@ -21,19 +21,27 @@ Optional enhancement that starts language servers in Docker containers and queri
 4. **Phase B**: for each exported symbol, query `textDocument/references` and create reference links
 5. `LspManager.shutdownAll()` — stops containers
 
-**Query positions matter.** LSP answers "the symbol at this exact position", so both phases re-read the source line to aim at the right token (`SourceLineCache` + `findTokenColumn` in [lsp-enhancer.ts](lsp-enhancer.ts)): definitions target the *leaf* identifier of the call (`svc.ListUsers` → `ListUsers`; at the expression's start column servers resolve the receiver and answer with its field/param/import declaration), references target the symbol's name on its declaration line (column 0 is a keyword like `func`/`public` — most servers return nothing there). Out-of-project answers (stdlib/framework) are dropped by `toHostPath`, so external calls record `target: null` in the ground truth. Set `CLARIFYDOC_LSP_DEBUG=1` to log raw definition responses and per-query failures.
+**Query positions matter.** Both phases re-read the source line to aim at the right token (`SourceLineCache` +
+`findTokenColumn` in [lsp-enhancer.ts](lsp-enhancer.ts)); out-of-project answers are dropped by `toHostPath`. The
+reasons and `CLARIFYDOC_LSP_DEBUG=1` are in the doc comment of `enhanceWithLsp`.
 
 ## Definition sources
 
-The passes ask a `DefinitionSource` (`initialize` → `clientFor(language)` → `shutdown`), never `LspManager` directly. `dockerDefinitionSource` is the default. An editor already runs the same servers, so it can stand in without Docker:
+The passes ask a `DefinitionSource` (`initialize` → `clientFor(language)` → `shutdown`), never `LspManager` directly.
+`dockerDefinitionSource` is the default; the others replay answers computed elsewhere and need no Docker:
 
-1. `lsp-update <dir> --emit-queries q.json` — `planDefinitionQueries` writes Phase A's questions (file, 1-based line, 0-based column at the leaf token, call name, language) and starts nothing.
-2. The editor answers each with its own definition provider and writes `{ source: "editor", servers, answers: [{ file, line, column, targets: [{ file, line }] }] }` — every location it got, project-relative, `[]` for none; questions it did not get to are left out.
-3. `lsp-update <dir> --answers a.json` — `answersDefinitionSource` replays them. More than one distinct target **abstains** (two providers, an overload set: layer 2 only adds links it can stand behind); a question left out is skipped, not a miss; paths outside the project are dropped on read. The source answers no references, so Phase B does not run.
+- **Editor** — `lsp-update <dir> --emit-queries q.json` (`planDefinitionQueries`) writes the questions, the editor
+  answers them, `lsp-update <dir> --answers a.json` replays them through `answersDefinitionSource` ([answers-source.ts](answers-source.ts):
+  file shape, abstention on several distinct targets, no Phase B).
+- **SCIP** — `lsp-update <dir> --scip index.scip` ([scip.ts](scip.ts): protobuf read by hand, `scipFileAnswers` streaming,
+  `scipPathMapper`, roles, position encodings; `lspStats.source` is `scip`).
+- **LSIF** — `--lsif dump.lsif` ([lsif.ts](lsif.ts), same path mapper; `lspStats.source` is `lsif`).
 
-A SCIP index answers the same questions without a server (`lsp-update <dir> --scip index.scip`, [scip.ts](scip.ts)): the occurrence at a question's position names a symbol, and the occurrence that DEFINES it is the target — `local N` symbols within their document, a symbol only a dependency defines gives none. The protobuf is read by hand (the few fields used; a truncated index throws): ranges from the `typed_range` oneof (fields 8/9, which wins) or the deprecated `range`; a document's `position_encoding` (UTF-8 bytes, UTF-32 code points) is converted to the queries' UTF-16 columns from its embedded text or the project file, an unspecified one is taken as written; `--scip` repeats, one index per indexer (each mapped from its own root, a path two indexers cover stays two documents with their own `local N`); roles decide the targets (a `Test`/`Generated` definition is no answer for a reference that is not itself test/generated, a real definition beats a `ForwardDefinition`). `scipFileAnswers` streams the files — metadata and paths, then one pass for the occurrences at question positions, one for the definitions of the symbols they named — so memory is one document, not the index (`mergeScip` + `scipAnswers` in [scip-test-helpers.ts](scip-test-helpers.ts) are the in-memory equivalent, the test oracle, and not part of the analyzer; the first read records where each document sits so the later ones seek only the documents they want, and a document's occurrences are indexed by start line). `SymbolInformation.relationships` are not read. And `scipPathMapper` adds or strips the directory prefix that names the most analysis files when the index was built at another root. The result goes through `answersDefinitionSource`, so the same abstention and in-project rules hold; `lspStats.source` is `scip`, the servers the indexer's name. Phase C (`recordImplementations`) asks `textDocument/implementation` at every call the dependency-injection resolver left on an interface member (strategy `injection`, the target an interface's method): it found several implementations and nothing binding one, so it refused to choose. The answers go into `lsp-ground-truth.json` as `implementations` and change no link — they are what the resolver's refusals can be measured against. An LSIF dump (`--lsif dump.lsif`, [lsif.ts](lsif.ts)) is read the same way: the innermost range at the question's position follows `next` to the vertex with a `textDocument/definition` result, whose `item` ranges are the targets; document URIs are taken relative to `metaData.projectRoot` and mapped by `scipPathMapper`; `metaData.positionEncoding` (`utf-8` / `utf-16` / `utf-32`, default UTF-16) is converted to the queries' UTF-16 columns from the project file the same way SCIP converts a document's encoding; `lspStats.source` is `lsif`.
-
-Links stay `resolvedBy: "lsp"`, `strategy: "lsp-definition"` — it is a language server's answer either way, and `lsp-compare` grades them alike; `lspStats.source` says where they came from. Only the Docker source writes `lsp-ground-truth.json`: an editor run is budgeted and must not overwrite a complete capture.
+Both indexes go through `answersDefinitionSource`, so the same abstention and in-project rules hold. Phase C
+(`recordImplementations`) asks `textDocument/implementation` at every call the dependency-injection resolver left on
+an interface member and records the answers in `lsp-ground-truth.json` as `implementations`; it changes no link.
+Links stay `resolvedBy: "lsp"`, `strategy: "lsp-definition"` (`lsp-compare` grades them alike); `lspStats.source` says
+where they came from. Only the Docker source writes `lsp-ground-truth.json`.
 
 ## Surviving a re-analysis
 
@@ -41,9 +49,10 @@ Links stay `resolvedBy: "lsp"`, `strategy: "lsp-definition"` — it is a languag
 
 ## Ground truth export
 
-Every query and its raw answer is recorded (`LspDefinitionRecord` / `LspReferenceRecord` in `types/analysis.ts`) and written to `lsp-ground-truth.json` next to `project-summary.json` — by both `analyze` (LSP enabled) and `lsp-update`. Unlike `lsp-enhancement.json` (merged links), it keeps **unresolved queries** (`target: null`) and **pre-redirect targets** (`redirectedTarget` holds the rewrite), so the text linker can be measured against what LSP resolved without re-running Docker: capture the ground truth
-once, improve the text linker, re-run the text analysis, and bucket each LSP-resolved call as matched, conflicting
-or missed by the text linker.
+`lsp-ground-truth.json` (next to `project-summary.json`, written by `analyze` with LSP and by `lsp-update`) keeps every
+query and raw answer, including **unresolved queries** (`target: null`) and **pre-redirect targets**
+(`redirectedTarget`), so the text linker can be measured without re-running Docker (see the root AGENTS.md,
+"Measuring linker quality"; record types `LspDefinitionRecord` / `LspReferenceRecord` in `types/analysis.ts`).
 
 Docker containers are tagged `clarifydoc-lsp-<lang>`. Images are cached between runs. Cleanup handlers stop containers on SIGINT/SIGTERM.
 

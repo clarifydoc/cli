@@ -1,3 +1,12 @@
+/**
+ * MQTT topics: a topic argument that is a constant of the file (declared once) reads as its value (a template keeps
+ * its `${…}` holes and fills ones the file's constants name); a name a project module exports (a JS import) is a row
+ * with `target: null` + `targetRef` that core's module-value pass fills; a lowercase variable or parameter names no
+ * topic. Module values are reported as `FileAnalysis.moduleValues`/`stringConstants` (module-values.ts,
+ * string-constants.ts). `DataSourceInfo.column` (0-based UTF-16 code units, a JS string index) is stated from the
+ * node's `startPosition.column`.
+ */
+
 import { convexDbAccess, convexReference } from "./convex-data.js";
 import { namesConvex } from "./routes/convex.js";
 import { DYNAMO_FILE_RE, dynamoAccess } from "./dynamodb.js";
@@ -58,6 +67,10 @@ function decodeEscape(raw: string): string | null {
  * (or a string) is spliced in place — `` `/api/${`clubs/${id}`}` `` becomes `` `/api/clubs/${id}` `` —
  * so the outer holes stay readable. Null when a decoded literal piece holds a newline, a backtick or
  * `${` (it could not be written back as one template).
+ *
+ * A template literal nested inside a `${}` hole (`` `/api/${`clubs/${id}`}` ``) is spliced into the outer URL
+ * (`resolveTemplateUrl`, `rebuiltTemplate`, `renderUrlExpr`), so the outer holes stay readable for the route join; a
+ * same-named decoy path is not that call's target.
  */
 function rebuiltTemplate(template: Node, depth = 0): string | null {
   if (depth > 4) return null;
@@ -871,6 +884,13 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
    * `httpResource({ url, method: "POST" })`, `httpResource(() => ({ url, method }))`, `httpResource.text(…)`:
    * the request is the URL the function (or options object) returns — a GET unless a method is stated. Only
    * where the file imports `httpResource` from `@angular/common/http`.
+   *
+   * An Angular `httpResource(() => url)` / `httpResource({ url, method })` /
+   * `httpResource.text|json|blob|arrayBuffer(…)` is an api-call at that URL (GET unless a method is stated), only in
+   * a file importing it from `@angular/common/http` (any local name: `import { httpResource as hr }`). A `method`
+   * there, in a `fetch(url, { method })` init or in a request descriptor may be a `const` the file declares
+   * (`const verb = "POST"`, `{ method: verb }`, `{ method }` — `heldLiteral`; a parameter or a `let` is never
+   * followed); the options object is not read a second time as a request descriptor.
    */
   private httpResourceCall(node: Node, fn: Node | null, sources: DataSourceInfo[]): boolean {
     if (!(this.httpResourceFile ??= this.sourceText.includes("httpResource"))) return false;

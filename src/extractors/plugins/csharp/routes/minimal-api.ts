@@ -202,6 +202,10 @@ function fluentTail(inv: Node): { guards: string[]; versions: string[] } {
 }
 
 /** Calls of a project method with a guard chained on what it returns: `app.MapClubsApi().RequireAuthorization()`. */
+/**
+ * Guards are declared where a group is used (a group method's caller), not where it is built (see
+ * minimal-api-resolver.ts).
+ */
 export function collectGroupCalls(root: Node, facts: RouteFact[]): void {
   for (const inv of root.descendantsOfType("invocation_expression")) {
     const member = memberName(inv) ?? (inv.childForFieldName("function")?.type === "identifier" ? inv.childForFieldName("function")!.text : null);

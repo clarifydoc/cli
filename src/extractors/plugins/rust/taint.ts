@@ -298,7 +298,18 @@ function buildSpec(requests: readonly string[], usesReqwest: boolean, usesAxum: 
   };
 }
 
-/** Request input reaching a sink inside an axum, actix-web or rocket handler (see `handlerTaint`). */
+/**
+ * Request input reaching a sink inside an axum, actix-web or rocket handler (see `handlerTaint`). The meta states
+ * `regexTaint` (`{ gate, taint }`): a file whose source matches `gate` is parsed once more with `tree-sitter-rust`
+ * (shipped in `dist/grammars`, off with the `taint` feature) — never a test or generated file or a tree with syntax
+ * errors. A handler is a function with an axum/actix-web/rocket extractor parameter (`Query<T>`, `Json<T>`, `Path<T>`,
+ * `Form<T>`, `web::…`; a rocket route attribute's `<name>` segments; `HttpRequest` reads), or an `async` handler's
+ * `String`/`Bytes` last parameter beside another extractor — never `HeaderMap`, never a plain helper. Only what can
+ * hold text is tainted: a struct declared in the SAME file by its text fields, `String`/`&str`/paths; never numbers or
+ * booleans, never a type from another file. `format!` interpolation including `{name}` captures (`stringReads`); a
+ * comparison is a boolean and an `if`/`match` is its arms' values (`valueParts`); `.bind(x)` and `sqlx::query!` never
+ * fire. Precision first: the reference Rust repositories give zero findings.
+ */
 export function rustTaint(tree: Tree, sourceText: string, filePath: string, facts?: TaintFacts): SecurityIssue[] {
   return handlerTaint(tree, buildSpec(requestObjects(tree.rootNode), /\breqwest\b/.test(sourceText), /\buse\s+axum\b|\baxum::/.test(sourceText)), filePath, facts);
 }

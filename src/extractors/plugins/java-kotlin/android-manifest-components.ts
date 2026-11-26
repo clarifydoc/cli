@@ -3,14 +3,15 @@ import type { DispatchResolver } from "../../dispatch/base.js";
 import { ANDROID_MANIFEST, ANDROID_MANIFEST_FUNCTION, type AndroidManifestFact } from "../shared/android-manifest.js";
 
 /**
- * Components an `AndroidManifest.xml` declares (`<activity android:name=".ui.ClubActivity">`,
- * services, receivers, providers): the platform instantiates them by name, so
+ * Components an `AndroidManifest.xml` declares (`<activity android:name=".ui.ClubActivity">`; the tags are
+ * `<activity|service|receiver|provider|application>`): the platform instantiates them by name, so
  * no code calls them. Each is an edge from the manifest to the class it names —
  * `.ui.ClubActivity` is the manifest's `package` + that path, a name with no
  * dot is directly in the package, and a manifest with no `package` (a Gradle
  * `namespace` instead) names the class by the package that ends with the path.
  * Only a class of the manifest's own module is reached (the directory above
- * its `src/`), so a namesake in another module or package stays unlinked.
+ * its `src/`), so a namesake in another module or package stays unlinked, and only when exactly one class matches.
+ * Dead-code verdicts were already right (entry base types, `configMentions`); the edge removes the "no callers" answer.
  */
 export class AndroidManifestComponentsResolver implements DispatchResolver {
   readonly id = "android-manifest";

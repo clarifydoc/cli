@@ -22,11 +22,16 @@ import type { ClassInfo, DataSourceInfo, FileAnalysis, FunctionInfo, ProjectAnal
  *     table <name> [read|write]        a database access on the line, by entity/table name
  *
  * The comment prefix is the language's plain line-comment prefix from its
- * manifest (`docComments.line`, the last, least specific entry) — core names no
+ * manifest (`manifest.docComments.line`, the last, least specific entry) — core names no
  * language. `renderCarets` prints the same labels for every fact of a file, so a
  * snapshot is also valid input for `checkCaretAssertions`.
  *
- * Pure: sources and per-file analyses come from the caller.
+ * Pure: sources and per-file analyses come from the caller. `checkCaretAssertions(project, files)` judges
+ * each assertion by line and span text; `caret-testkit.ts` (`expectCarets({path: source})`) is the vitest helper,
+ * never imported by the product; `clarifydoc lint <dir> --carets [file]` runs them from the CLI.
+ * A `call -> unresolved` assertion fails when any call in the span carries a link. In short:
+ * `call [-> <file>::<symbol> | -> unresolved]`, `route [METHOD] <path>`,
+ * `api-call [METHOD] <url> [-> METHOD <routePath>]`.
  */
 export type CaretKind = "def" | "call" | "route" | "api-call" | "table";
 

@@ -37,6 +37,48 @@ import { byOrdinal } from "./ordinal.js";
  * across a name-guess link (an AMBIGUOUS `unique-global*` / `route-scan` edge)
  * is AMBIGUOUS — a path is as sure as its weakest link, and one guessed edge
  * must not read like a chain of resolved calls.
+ *
+ * The walk is a reverse BFS per (effect, resource) from each direct DB, queue or api-call effect over the
+ * symbol links.
+ *
+ * Type-parameter tables: a read whose table is a class type parameter (`DataSourceInfo.entityTypeParameter`) is
+ * bound first. A call inside the class keeps the parameter; a link's in-memory `typeArgs` (from the receiver's
+ * written type, a subclass's closed base or a route owner) moves it to the caller's parameter or ends it at the
+ * first caller naming a type, seeding an ordinary effect at that distance. An unbound caller ends nothing.
+ *
+ * Usage gate: a walk back through a dispatch to a component's user (`SymbolLink.viaUsage`: an emit,
+ * callback-prop call or dialog close, tagged with the parent's binding site) continues only into the files
+ * binding it there. A file using the child (importing, rendering — a `dispatch:renders` `(reference)` link —,
+ * calling through a template ref, binding any event) leads out through its own bindings only, none when it binds
+ * that event nowhere. A tag spreading props or listeners into it (`dispatch:renders-open`) states no binding and
+ * keeps every one; a subclass of the child, or a file with no sign of using it, leads out through every binding.
+ * `usageGate` in `symbol-graph.ts` holds one level of context; the MCP trace walk, `clarifydoc seq` and the
+ * screen-spec export use the same gate forward. A page rendering a shared dialog never reaches another page's
+ * handler through it: the dialog's own symbol still reaches every binding (blast radius and MCP walks are
+ * context-insensitive), but its SCREEN's data flow lists only what its own code reaches. An effect reached only
+ * through a bound emit or callback is `ReachedEffect.viaBinding`, sorted after the symbol's own effects so
+ * `EFFECTS_CAP` never drops them, and left out of the screen's flows; each parent's screen keeps the effects its
+ * binding brings in. A dispatch link is no dependency: the component graph (`enrichGraphFromSymbolLinks`) and
+ * component launches leave `viaUsage` links out.
+ *
+ * Routes: a route's flows are its own symbol's reach; a route whose symbol links nowhere falls back to the
+ * function around its line only when the route is declared ON it (`declaredOn` in
+ * `api-route-symbol-links.ts`), never the function registering it. `RouteInfo.registrar` (the function whose
+ * body declares a route operation) is part of `routeIdentityKey` and of the route's symbol (`routeSymbolName`:
+ * `route:GET /items @registerClubs`); every core site naming a route's symbol goes through it, and `routeAnchor`
+ * (the call-graph symbol of a routeMap row) takes `registrar` too, so a registrar's row anchors on its own
+ * `@registrar` symbol only.
+ *
+ * Middleware reads: what a router's middleware reads at request time is the route's. A plugin lists the
+ * functions its registration names (`RouteInfo.middlewareCalls`, the route's own group only), the linker
+ * resolves them as it does a handler (a link from the route's symbol), and a flow leaving the route through one
+ * carries `viaMiddleware`. A middleware a function-mounted route inherits from its mount site is
+ * `RouteInfo.inheritedMiddleware` (names with the file each mount is written in), resolved in THAT file and
+ * re-anchored on the route's symbol. A name the file's import binds resolves through it
+ * (`resolveMiddlewareName`), never by a leaf name across the project; a dependency's callable reads what it
+ * reads whether or not its name says it checks the caller. A bootstrap's global guards (the
+ * `nest-global-guards` fact) give every API route of the sub-project the guards as middleware and auth,
+ * `inheritedMiddleware` naming the bootstrap file.
  */
 
 /** Depth cap on transitive propagation (mirrors blast-radius's depth-8 idiom). */

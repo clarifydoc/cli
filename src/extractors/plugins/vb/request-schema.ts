@@ -169,6 +169,12 @@ function simpleName(name: string): string {
   return dropDottedQualifier(name.replace(/^Global\./i, ""));
 }
 
+/**
+ * How VB.NET types and properties look on the wire under System.Text.Json / Newtonsoft, plus the attribute-text
+ * helpers the route extractor shares (`<Authorize(Roles:="Admin")>` is spelled the same on a class, method,
+ * parameter and property); `camelCase` (shared `inflection.ts`) is the JSON name .NET serializers give a property
+ * (C#, VB). Nothing there walks classes or routes — the core request-schema pass does.
+ */
 export const vbRequestSchema: RequestSchemaHooks = {
   /**
    * ASP.NET's default: a simple type binds from the query, a complex one from

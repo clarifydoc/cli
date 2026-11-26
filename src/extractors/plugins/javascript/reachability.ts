@@ -1,3 +1,18 @@
+/**
+ * Files and exports are judged. A computed load (`import(`./plugins/${n}`)`, `require("./cars/" + n)`,
+ * `path.resolve("configs", `config.${m}.ts`)`) is a path reference over its literal part (`./plugins/**`; a bare
+ * `./${n}` only that folder); a Vue `<script src>` is an import and `<template src>`/`<style src>` path references; a
+ * CI or Makefile run line is a passive entry (`ciRunEntries` → `ReachabilityInput.passiveEntries`). `bin/` beside a
+ * `package.json` with source is re-admitted (`sourceDirs` `directOnly`); folders named `…migrations`, `db/migrate`,
+ * `seeds`/`seeders`, `codegen.ts` and a code generator's `generates:` outputs are tool-loaded; a workspace subpath
+ * through a tsconfig `outDir`/`declarationDir` resolves to its source (migration-files.ts). Framework directory
+ * conventions (`pages/`) are gated on the framework id so a plain single-page app's dead page is still found. Below
+ * an `sfdx-project.json`'s `packageDirectories` an LWC `lwc/<n>/<n>.js` and an Aura
+ * `aura/<n>/<n>{Controller,Helper,Renderer}.js` are passive — the platform loads them by folder name, they anchor no
+ * project, so an SFDX repository with no other JS entry stays unjudged — while a stray file of the folder no import
+ * reaches keeps its finding.
+ */
+
 import { join } from "path";
 import type { FileAnalysis } from "../../../types/analysis.js";
 import type {

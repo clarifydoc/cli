@@ -26,6 +26,8 @@ import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level
  *   3) Best-effort parse of the EF Core Fluent API inside `OnModelCreating`
  *      (`modelBuilder.Entity<T>().HasOne(...).WithMany(...).HasForeignKey(...)`)
  *      to recover relations declared outside the entity classes.
+ *
+ * Its project pass uses the shared `repository-access` helper for repositories over a generic base.
  */
 export class CSharpEntityExtractor extends EntityExtractor {
   readonly languages: Language[] = ["csharp"];

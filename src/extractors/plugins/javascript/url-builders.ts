@@ -22,6 +22,52 @@
  * `resolveRouterMounts` / `detectFileBasedRoutes`).
  *
  * Operates on the aggregated api-call list in memory; per-file JSON is untouched.
+ *
+ * A call whose URL is a project helper — free function or service-class method, `configService.APIUrl("x")` — gets
+ * the helper's `urlTemplate` substituted with its literal args; core's wrapper-index.ts is the import-resolved index
+ * shared with request wrappers. A helper whose body returns a different URL per branch carries
+ * `urlTemplateAlternatives` and the call `targetAlternatives`; a local the function sets once to a template, handed
+ * to a builder, is written in the call, rebuilt from its parts (escapes decoded, whitespace collapsed only inside
+ * holes). A destructured parameter's bindings are parameters (`({ id }) => …` gives `{id}`, filled from the call's
+ * object literal by key) and its annotation types them (`localTypes`), read through
+ * `Readonly`/`Partial`/`Required`/`NonNullable`/`Pick`/`Omit<X>` and a project generic `Props<T>` to X's members (see
+ * destructured-params.ts). A sync `(path) => `${BASE}${path}`` helper gets the template `${BASE}{path}` (a lowercase
+ * base only when it is a module-level string `const`). A bare call no import resolves takes the builder of the
+ * caller's own sub-project before the project-wide name.
+ *
+ * A free helper fills a bare call of its name (`club_url(id)`) or a call through a module binding of its file
+ * (`import * as url from './util/url'; url.apiPath(…)`, or a stem-named `urls.apiPath`; that module's helper only):
+ * the head must be the module itself (a namespace import, or a binding named like the module's file, or like the
+ * directory when the file is its index module — manifest `directoryIndexStems`, JS `index`) and not a named export
+ * (`import { api }`, whose `get` is no function of the module). `api.club_url(id)` and `other.club_url(id)` with no
+ * such binding keep their own URL, while a class-method helper may still match by bare name through a receiver; a
+ * free helper's `bindsModule` rule decides which module binding it is looked up through. `${this.constructor.BASE}`
+ * in an instance method is the static the class seen from declares — a subclass's own first, and a concrete base
+ * requests its own beside its subclasses; the plugin drops a TypeScript cast around `this.constructor`.
+ *
+ * `FunctionInfo.isStatic` makes `this` in a static method the class's static side: only static properties and methods
+ * are its members, and an instance field read there links nothing. A getter edited by `.replace` in a base-class
+ * method (`this.url.replace('clubs', 'kits')`) is evaluated against each subclass's own getter (`overridingClasses`
+ * reads `GETTER_EDIT_RE` names too, core's `perSubclass` reads them from `getterReads.text`), and a subclass whose
+ * URL equals the written one keeps its own row beside the ones that differ. A hole reading `this` in a plain
+ * `function` nested in a method (`DataSourceInfo.thisUnbound`: a function expression or declaration, not a method or
+ * an arrow, whose `this` the caller binds) is never typed as the enclosing class and stays a wildcard.
+ *
+ * Typed holes are expanded by core/typed-member-holes.ts, which reads a loop element over a call
+ * (`for (const c of repo.all())`, `for (const c of clubsNow())`) by the one declared `returnType` of that method or
+ * free function (this file's, or the file it is imported from); overloads and awaited results are not read except the
+ * awaited-call loop (`for (const c of await repo.all())` takes the element of the result the plugin's
+ * `asyncResultTypes` unwraps, `Promise`). A hole reading a member of a typed local (`${item.entityType}`,
+ * `item: Favorite`) is expanded the same way when the field's type is a closed set of strings (an enum whose members
+ * state string values, or a literal union written on the field or through a `TypeAliasInfo`, read through the
+ * plugin's `requestSchema.describeType`), also for an inline object type (`item: { kind: Kind }`), a nested path
+ * through declared property types (`${club.sponsor.tier}`), `this.field.kind` through the class's field types, a
+ * loop/callback element of a typed collection parameter or field (`for (const c of this.clubs)`), a receiver declared
+ * at module level (read from the file's `<setup>` unless the function rebinds the name — the plugin states such a
+ * name untyped there), a `const` array of object literals writing the member as plain strings in every element, never
+ * spread, pushed to or computed — its own closed set: `const kinds = [{ kind: 'league' }, { kind: 'cup' }]` — and a
+ * loop variable of a Vue template (`v-for="m in matches"`; each loop typed only inside the element carrying its
+ * `v-for`, a name the script declares outside it is the script's own).
  */
 
 import type { DataSourceInfo, FileAnalysis, FunctionInfo, ParamInfo } from "../../../types/analysis.js";

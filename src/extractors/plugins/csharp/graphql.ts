@@ -72,6 +72,15 @@ function attributeRoot(cls: ClassInfo): RootType | null {
   return null;
 }
 
+/**
+ * HotChocolate code-first schemas: root fields `POST /graphql/<field>`; a root class is one registered as a root
+ * type (`AddQueryType<T>()`, facts collected per file), one whose attribute says so (`[QueryType]`,
+ * `[ExtendObjectType("Query")]`, `OperationTypeNames.Mutation`, `typeof(Mutation)`), or one named
+ * Query/Mutation/Subscription in a file using HotChocolate. Each public method or property is a field named as
+ * HotChocolate names it (`Get` and `Async` dropped, camelCased) unless `[GraphQLName("x")]`; arguments are its
+ * parameters minus what the server injects (a registered type, a `DbContext`, a repository, a `CancellationToken`,
+ * the resolver context); `[Authorize]` is its guard.
+ */
 function rootRows(cls: ClassInfo, a: FileAnalysis, services: ReadonlySet<string>): void {
   const injected = (type: string | null | undefined): boolean => {
     const t = (type ?? "").replace(/\?$/, "").trim();

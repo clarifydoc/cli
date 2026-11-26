@@ -13,8 +13,13 @@ import type { ServiceConfigSpec } from "../types/language-plugin.js";
  *
  * The join is scoped, never by name alone: a read meets the keys of the
  * sub-project it sits in (a namesake key of another module is another
- * setting), a `variable` read the files in its own directory. A key only a test profile sets is read by test code only. Names and
- * locations only — a value never reaches the summary.
+ * setting), a `variable` read the files in its own directory. A key only a test profile sets (`ConfigEntry.test`)
+ * is read by test code only. Names and locations only — a value never reaches the summary.
+ *
+ * `serviceConfig.sources` states the keys config files set (`keysOnly: true`: no call origin may read it).
+ * Relaxed binding (`match-day` = `matchDay` = `match_day`, a plugin's `serviceConfig.normalizeKey`) and
+ * `envNamesFor` match a key. Rows exist only for read keys and cap at 50 consumers; a key whose `envNamesFor`
+ * names a deployed service sets joins that variable's reads (`env-vars.ts`).
  */
 export interface ConfigSet {
   languages: ReadonlySet<Language>;

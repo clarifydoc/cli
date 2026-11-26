@@ -36,6 +36,12 @@ function normalizePath(raw: string): string {
     });
 }
 
+/**
+ * Detects API call sites in VB.NET / VBA source: `_api.GetAsync(Of User)("/api/users")`,
+ * `_api.PostAsync(Of LoginResponse)("/api/auth/login", payload)`, `_http.GetAsync("https://example.com/foo")`,
+ * `Await client.PutAsync(Of T)($"/api/users/{id}", body)`; the `target` is the literal URL path so
+ * cross-repository route linking can match it against `RouteInfo.path`.
+ */
 export function extractVbDataSources(lines: string[], classes: ClassInfo[]): DataSourceInfo[] {
   return [...extractVbHttpClientCalls(lines, classes), ...extractComHttpCalls(lines), ...extractSqlStringDataSources(vbSqlLines(lines))]
     .sort((a, b) => a.line - b.line);

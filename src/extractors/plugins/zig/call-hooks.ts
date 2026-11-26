@@ -1,3 +1,8 @@
+/**
+ * Zig calls: a call is a `call_expression` (`foo(x)`, `repo.save(o)`, `std.debug.print(…)`); a builtin (`@import`,
+ * `@intCast`) is a `builtin_function` and calls nothing of the project. Zig has no closures: a function or test block
+ * nested in a container is its own scope.
+ */
 import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { calleeName } from "./syntax.js";
 

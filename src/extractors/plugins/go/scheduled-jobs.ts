@@ -6,6 +6,8 @@ import type { EntryPointInfo } from "../../../types/analysis.js";
  *  - go-co-op/gocron v1 `s.Every(1).Day().At("10:30").Do(task)`, v2
  *    `s.NewJob(gocron.DurationJob(10*time.Second), gocron.NewTask(task))`
  * The handler is the function named (an inline `func() {…}` has none).
+ *
+ * Scheduled jobs: cron/gocron registrations naming a function.
  */
 export function extractGoScheduledJobs(lines: string[]): EntryPointInfo[] {
   const text = lines.join("\n");

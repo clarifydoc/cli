@@ -72,6 +72,12 @@ function kernelLanguage(nb: Notebook): string | null {
  * A Jupyter notebook as the Python it runs: the code cells, one after the other (a blank line between
  * cells), markdown cells and outputs dropped, IPython line magics (`%x`, `!cmd`) and shell/SQL cell magics
  * blanked. Lines of the result are the concatenated text's, not the notebook JSON's.
+ *
+ * Only a Python kernel's code cells count (`language_info.name` / `kernelspec.language`; none stated = Python; R,
+ * Julia… are skipped with their reason). Every `%%` cell magic except `%%time`/`%%timeit`/`%%capture`/`%%python`/
+ * `%%prun`/`%%debug` (`%%bash`, `%%sql`, `%%writefile`…) is blanked whole. Code past 2 M characters is skipped.
+ * `PreprocessOutcome.codeOnly` makes the line count and the `minified` flag come from the joined text (an image output
+ * line would otherwise mark every notebook minified and unauthored). A notebook is a dead-code entry.
  */
 export function notebookPython(rawSource: string): PreprocessOutcome | { skip: string } {
   let nb: Notebook;

@@ -9,7 +9,8 @@ import { byOrdinal } from "./ordinal.js";
  * the project, its other DNS names, the host ports compose publishes onto it,
  * the URLs its own configuration says it listens on, and the name it registers
  * under in service discovery. A call's host
- * resolves to a project only through these.
+ * resolves to a project only through these. A loopback host resolves by port only; several projects on one
+ * name resolve to none.
  */
 export function buildServiceAddresses(
   deployment: DeploymentModel | undefined,

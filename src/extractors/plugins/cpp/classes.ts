@@ -39,7 +39,31 @@ export const CLASS_PATTERN = new RegExp(String.raw`^\s*(?:template\s*<[^>]*>\s*)
  * Owners of out-of-line definitions are only trusted when they can be told
  * from a namespace (`void app::helper() {` defines a FREE function): a class
  * declared in the file, a constructor/destructor (`X::X`, `X::~X`), or a
- * capitalized name the file does not open as a namespace.
+ * capitalized name the file does not open as a namespace. A member defined outside a lowercase class
+ * (`void garage::park() {…}`) therefore reads as a free function of namespace `garage`; the linker
+ * (`outOfLineNamespaceMember`) takes it as the member of the project class of that name when the one file defining it
+ * includes the class's header.
+ *
+ * A nested class is named by its path (`Outer::Inner`, manifest `nestedTypePaths`), the class id carrying the path so
+ * no line-range lookup is needed; free functions record `FunctionInfo.namespace`, so `league::util::to_hex()` and
+ * `using namespace` calls join across files, and a class path keeps its lowercase namespace on the call's
+ * `receiverType` (`league::Table::make()`), which core resolves against `ClassInfo.namespace`. A type written through
+ * a CamelCase namespace (`LeagueCore::Valve`) reads as a nested class path; where no class bears that path but `Valve`
+ * is declared in namespace `LeagueCore`, the member type and `declaredTypeName` mean that class, never the file's own
+ * anonymous-namespace `Valve`. A class in an anonymous namespace is `ClassInfo.fileLocal`, seen only by its own file
+ * and the files including it; a one-line `namespace { … }` (`namespace { struct Valve {…}; }`) marks its classes
+ * `fileLocal`, and a type written through a namespace (`other::Valve`) is never that class (`typeRefFor`'s
+ * `declaredInOtherNamespace`, and `fileOf(…, skipOwnLocal)` for fields).
+ *
+ * A class written on one line reads as its multi-line spelling (`struct Base { First actions; void Work() {} };`).
+ * `splitHeaderLineMembers` cuts a one-line brace class into member declarations at its top-level `;` and closing `}`
+ * (`headerLineSegments`, strings and comments blanked) before the function and property patterns read them, so a field
+ * in front of a method does not hide it; each class's members stop at its own closing `}`, and a further
+ * `class`/`struct` on the same line is its own `ClassInfo` (`pushOneLineSiblingClasses`). `adoptParsedMembers` pairs a
+ * parsed function with a class method by line AND name, and the free-function filter drops a function on a member line
+ * only when its name is a member: a free function written after every sibling one-line class stays
+ * (`functionsAfterHeaderLineClass` skips those siblings before reading the tail). The order-check input is
+ * `parsers/antlr/order-inputs/one-line-bodies.cpp`.
  */
 export function extractCppClasses(sourceLines: string[], fns: FunctionInfo[], spec: RegexLangSpec): ClassInfo[] {
   // `namespace league { struct Club { … }; }` on one line: the class pass reads the line without its wrapper.
@@ -145,7 +169,10 @@ const TRANSPARENT_WRAPPER = /^(?:::)?(?:std::)?(?:unique_ptr|shared_ptr|weak_ptr
 /**
  * Whether a type IS a template parameter, or reaches one through a transparent wrapper: judged on the type's head
  * (`const T&`, `T*`, `T::value_type`, `unique_ptr<T>`, `vector<T>`), never on a mere mention — `Fixture<T>` and
- * `Table<K, V>` are classes of the project, and a call on one is a call on that class.
+ * `Table<K, V>` are classes of the project, and a call on one is a call on that class. The element or pointee a std
+ * wrapper exposes (`unique_ptr<T>`, `vector<T>`) counts as the parameter; a wrapper name the file declares as its own
+ * class (`template<class T> struct queue`) is no std wrapper (`declaresClass`). A transparent wrapper
+ * (`transparentTypeWrappers`, a smart pointer) lets a member call pass straight through.
  */
 export function namesTemplateParameter(type: string, names: readonly string[], declaresClass?: (name: string) => boolean): boolean {
   const t = type.replace(/\b(?:const|volatile|typename|struct|class)\b/g, " ").replace(/[&*]+|\.\.\.|\[[^\]]*\]/g, " ").trim();
@@ -183,7 +210,8 @@ export function namesTemplateParameter(type: string, names: readonly string[], d
 /**
  * The `Class::Member` types a text writes through template arguments that mention a parameter
  * (`typename Ledger<M>::Row`): parameter and local types are kept without the arguments (`Ledger::Row`), so the
- * dependent ones are found here, in the text they were read from.
+ * dependent ones are found here, in the text they were read from. The class's own name with its own parameters
+ * (`Squad<K, C>::Slot` inside `Squad<K, C>::first`) is the class being defined, so its nested types are not dependent.
  */
 function dependentTypes(text: string, names: readonly string[], ownerName?: string): Set<string> {
   const found = new Set<string>();
@@ -201,7 +229,7 @@ function scopedTail(type: string): string {
   return type.replace(/\b(?:const|volatile|typename|struct|class)\b|[&*\s]/g, "").split("::").slice(-2).join("::");
 }
 
-/** The template heads a file writes: where each ends, and the type parameters it binds. */
+/** The template heads a file writes: where each ends, and the type parameters it binds. A head closes at the `>` that balances its `<`, never one inside parentheses (`template<int N = (A > B), class Player>`). */
 interface TemplateHead { line: number; endLine: number; rest: string; names: string[] }
 
 function templateHeads(lines: readonly string[]): TemplateHead[] {
@@ -243,7 +271,10 @@ function templateHeads(lines: readonly string[]): TemplateHead[] {
  * for whatever the caller passes, never for a class of the file or the project that happens to share it. A
  * parameter, local, return type or field whose type names one is left untyped, in the function the head
  * precedes and in every function and field of the class it precedes. An explicit specialization
- * (`template<> void Run<Player>(Player& x)`) binds nothing, and a name the head does not bind stays a class.
+ * (`template<> void Run<Player>(Player& x)`, `template<> void f<P>(…)`) binds nothing and is a function on both front
+ * ends, and a name the head does not bind stays a class. A type written `X<T>::Y` over a head parameter is dependent and
+ * untyped; a block-local alias inside a template argument is substituted (`using P = Player; using Q =
+ * std::unique_ptr<P>`, `substituteAliases`).
  */
 function untypeTemplateParameters(classes: readonly ClassInfo[], fns: readonly FunctionInfo[], lines: readonly string[]): void {
   const heads = templateHeads(lines);
@@ -341,7 +372,8 @@ function untypeTemplateParameters(classes: readonly ClassInfo[], fns: readonly F
  * `namespace league { struct Club { void Play() {} }; }` written on one line: the class patterns are anchored at the
  * line's start, so the line is read without its `namespace x {` openers and the `}` that close them (blanked, so
  * every column stays), and `opened` says which namespaces enclose what is left (by 0-based row; an anonymous one is
- * the empty name).
+ * the empty name). Also reads `namespace x { struct Y {…}; }`; `extractCppClasses` qualifies each class by the namespaces
+ * opened this way.
  */
 function unwrapOneLineNamespaces(source: readonly string[]): { lines: string[]; opened: Map<number, string[]> } {
   const opened = new Map<number, string[]>();

@@ -1,6 +1,9 @@
 import type { ProjectCommand, ProjectRootView } from "../../../types/language-plugin.js";
 
 /** The dotnet CLI on the solution or project at the root; `dotnet run` for a lone project. */
+/**
+ * Reads how a project is built, tested and started.
+ */
 export function dotnetProjectCommands(root: ProjectRootView): ProjectCommand[] {
   const sln = root.entries.filter((e) => /\.slnx?$/i.test(e));
   const projects = root.entries.filter((e) => /\.(?:cs|fs|vb)proj$/i.test(e));

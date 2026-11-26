@@ -8,6 +8,12 @@ import type { ProjectRouteBase } from "./config-values.js";
  * unknown (`prefixUnresolved`) keeps its tail, since the base sits in front of
  * the part nobody knows. Project-level + in-memory, after router mounts compose
  * and before the symbol linker anchors routes. Returns the rows prefixed.
+ *
+ * `stateLocalPaths`/`dropUnchangedLocalPaths` bracket the mount and base passes so a composed route carries
+ * `RouteInfo.localPath`, the path its own router wrote (omitted when equal to `path`, never set by a plugin).
+ * The route linker's added-base tier meets a call that leaves the mount out through it first — INFERRED,
+ * `base-prefix:<mount>`, only where one sub-project states that path — and search's below-base alias reads it
+ * before the conventional list.
  */
 export function applyRouteBases(analyses: FileAnalysis[], bases: ReadonlyMap<string, ProjectRouteBase[]>): number {
   if (bases.size === 0) return 0;

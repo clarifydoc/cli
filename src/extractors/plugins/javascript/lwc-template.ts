@@ -16,6 +16,13 @@ function templatePath(filePath: string): string | null {
   return m ? `${m[1]}${m[2]}.html` : null;
 }
 
+/**
+ * A Lightning Web Component's `onclick={handleSave}` links to the class method. Its `@salesforce/apex/Class.method`
+ * import — called or `@wire`d (a `<setup>` call) — links to the Apex method through the manifest's
+ * `foreignImportTarget`, the one link that crosses language families, by a type and member another language's files
+ * declare (a bare call only, one declaring file only; see apex-imports.ts, `foreignImportMember`). Below an
+ * `sfdx-project.json`'s `packageDirectories` an LWC `lwc/<n>/<n>.js` is a passive reachability entry.
+ */
 export class LwcTemplateResolver implements DispatchResolver {
   readonly id = "lwc-template";
   readonly languages: Language[] = ["javascript", "typescript", "html"];

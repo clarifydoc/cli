@@ -132,6 +132,9 @@ export function csharpArgKind(node: Node): string {
  * Each argument's kind, or null when the call passes none, none is known, or
  * an argument is named (named arguments may come in any order). A `ref` /
  * `out` / `in` argument is unknown.
+ *
+ * Overloads are chosen by argument kind (`CallInfo.argKinds`, `calls.argKindsOf` / `overloadTypeKey`), by arity
+ * only when kinds are unknown.
  */
 export function csharpArgKinds(node: Node): string[] | null {
   const args = node.childForFieldName("arguments") ?? node.children.find((c) => c.type === "argument_list");

@@ -151,6 +151,14 @@ export interface CsActionFact {
 export const CS_CONTROLLER_FACT = "cs:controller";
 
 /** C#: [HttpGet("path")] / [Route("path")] with class-level prefix merging. */
+/**
+ * ASP.NET attribute routing, the reference route extractor with `java-kotlin/routes/meta-annotations.ts`:
+ * class-level attributes are inherited by every action, an anonymous marker waives (`[AllowAnonymous]`),
+ * `[MapToApiVersion]` narrows, a binding derived from framework defaults is `inferred: true`. Decorators keep
+ * their arguments (`Authorize(Policy = nameof(X))`, `ApiVersion("2", Deprecated = true)`). Route attributes fill
+ * `RouteInfo` fields: `Authorize(Policy = …)` and `AllowAnonymous` in `middleware`/`auth`, `[ApiVersion]` in
+ * `versions`/`deprecatedVersions`.
+ */
 export function extractAspnetRoutes(root: Node, routes: RouteInfo[], facts?: RouteFact[], sourceText = ""): void {
   const scope = /^[^\S\r\n\u2028\u2029]*using\s+System\.Web\.Http\s*;/m.test(sourceText) ? { ...EMPTY_SCOPE, webApi: true } : EMPTY_SCOPE;
   walkForCsharpRoutes(root, routes, scope, facts);
@@ -306,6 +314,14 @@ function classRoutePrefix(attrs: Node[]): string | null {
 }
 
 /** Emit a RouteInfo for each HTTP-verb attribute on a method. */
+/**
+ * `Name =` on a verb attribute, or the `[Route]` beside it, is `RouteInfo.name` (what `CreatedAtRoute` /
+ * `Url.RouteUrl` / `RedirectToRoute` name); a `Name =` alone is never the path. `[controller]` / `[action]` tokens
+ * expand for the controller that serves the action — on an action inherited from a base, the subclass's token,
+ * from the raw `name` on the `cs:controller` action fact — never the declaring base's. Redirects by name:
+ * `RedirectToAction("A", "Ctl")`, `CreatedAtRoute("…")` and `toRoute` read the route's `Name`; Razor
+ * `href="@CarLinks.Url(car)"` is followed into the URL the helper builds (`urlTemplate`).
+ */
 function parseMethodRoutes(
   methodNode: Node,
   routes: RouteInfo[],

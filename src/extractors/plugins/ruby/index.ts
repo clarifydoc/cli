@@ -1922,6 +1922,13 @@ export const rubySpec: RegexLangSpec = {
     const nameStack: string[] = [];
     const currentNamePrefix = (): string => nameStack.join("");
     let nextNamePrefix = "";
+    // A route nothing names carries `RouteInfo.derivedName`, the helper Rails derives: `resources :clubs` →
+    // `clubs`/`club`/`new_club`/`edit_club`, nested `club_players`, `admin_cars` under a namespace, `news_index` when
+    // plural equals singular, `get 'standings'` → `standings`, `root`. A `scope as:` prefixes it; a route with `as:`
+    // states `name` instead. Only URL helpers read it (the server-redirect pass and `route:` navigation targets), after
+    // every stated `name`, in the caller's own sub-project first. Inside `controller :x do`, `on: :member`/`:collection`
+    // hang off the enclosing resource, `path: 'crest'` replaces a symbol route's segment and `module: :staff` puts the
+    // controller in that module.
     // Parallel to `blockStack`: what a block adds to a DERIVED route name (`club_` under `resources :clubs`,
     // a `scope as:`), or null when the block changes names in a way this reader does not follow (`concern`,
     // `shallow`) — a route inside gets no derived name then.

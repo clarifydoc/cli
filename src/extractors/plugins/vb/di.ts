@@ -304,6 +304,10 @@ const REGISTRATION_GATE_RE = /\.\s*(?:(?:Try)?Add(?:Keyed)?(?:Scoped|Transient|S
  * skipped; `AsImplementedInterfaces()` and other reflection-driven forms are
  * not decidable from the text and are skipped too. Every other registration
  * is emitted, conflicting ones included — choosing is the linker's job.
+ *
+ * Locals whose type the body states (`Dim r As New Repo()`, `Dim c = sp.GetRequiredService(Of IClock)()`) and
+ * container lookups chained straight into a call are read beside the registrations. The symbol linker joins them;
+ * nothing here decides which implementation an injection point receives.
  */
 export function extractVbDiBindings(lines: string[], _filePath: string): DiBinding[] {
   const out: DiBinding[] = [];

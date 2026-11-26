@@ -36,6 +36,12 @@ function thrownType(n: Node | null | undefined): string | null {
  * compound assignments and `++`/`--` on `this.x`, a bare member `x` the method does not declare, `this.field.x` and a
  * typed parameter or local's `p.x`; `throw new T(…)` (statement or expression). `throw;` and a thrown variable state
  * nothing. A constructor states no writes — it initializes. Local functions and lambdas keep `this` and are walked.
+ *
+ * Core's `member-effects` pass resolves types to project classes by declared types only and only within the
+ * language family; C# types found only
+ * in the writer's directory (`typesSpanFiles` without `typesBeyondDirectory`) are looked up as written; a
+ * qualified name binds by its last segment only through a qualifier the project backs (a namespace the class is
+ * declared in — `ClassInfo.namespace` — or a name the writing file imports, `using Err = …`).
  */
 export function csharpMemberEffects(
   node: Node,

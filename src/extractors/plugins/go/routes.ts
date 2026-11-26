@@ -497,6 +497,16 @@ function middlewareNames(texts: readonly string[]): { middlewareCalls?: string[]
   return names.length > 0 ? { middlewareCalls: names } : {};
 }
 
+/**
+ * Go muxers and framework registrars. A per-line rule loop first tests one alternation of the words every rule names
+ * after a `.` and skips the line otherwise. A handler-building call's argument is a value (so the factory is the
+ * handler) when it is a name the ENCLOSING function declares — parameter, receiver, local — or a package `var`, or
+ * `x.y` where `x` is such a value, `y` a struct field the file declares and no method of the file is named `y`
+ * (`handlers.List(s.db)`; `s.Ping` stays a method value); the set is per function (`valuesAt`), never file-wide.
+ * `RouteInfo.middlewareCalls` lists the functions a router's middleware registration names (`Group("/x",
+ * auth.Require(db))`, `Use(mw)`, chi `With(mw)` — the middleware of the route's own group only); the linker resolves
+ * them as it resolves a handler, and a flow whose witness leaves the route through one carries `viaMiddleware`.
+ */
 export function extractGoRoutes(lines: string[], facts?: RouteFact[], closureCalls?: ClosureCalls): RouteInfo[] {
   const routes: RouteInfo[] = [];
   // Echo's `Group.Add` writes `g.prefix + path`: a path without a leading slash is glued to the group's

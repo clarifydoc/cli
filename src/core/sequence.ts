@@ -23,6 +23,15 @@ import { inlineRouteDefinitions } from "./route-symbol.js";
  * open-headed arrow, so it reads as uncertain. With `frames` (each walked
  * function's loops and branches, `sequence-frames.ts`), a call made inside a
  * loop or a branch is drawn inside a `loop` / `alt` / `opt` frame.
+ *
+ * The links give what each call reaches; order and repeats are read off the function's source
+ * (`sequenceReading` → `SequenceOptions.sources`), since extractors keep one call row per callee and the linker
+ * one link per caller and callee. `callSitesIn` finishes a call where its parentheses close
+ * (`save(build(make()))` is make, build, save; a chain runs left to right). Every site of a name with one link is
+ * drawn; a name with several links takes the site on its own line; `await` marks the call it introduces; a link
+ * no site matches keeps its line. Frames come from the CFG (`Cfg.regions`: a `try` with its `catch`/`finally` as
+ * `critical` + `option`; `CfgNode.column`/`endColumn` split a one-line `if/else` into `alt`/`else`), by columns
+ * only for a function whose sites were read, else lines.
  */
 
 export interface SequenceOptions {

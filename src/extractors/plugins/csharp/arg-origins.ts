@@ -11,6 +11,8 @@ type Origin = CallArgOrigin["origin"];
  * (`Request.Query["q"]` → a query value, `RouteData.Values["id"]` → a route
  * parameter), a string literal. One conversion is unwrapped and named
  * (`int.Parse(id)`, `(long)id`). Reported only when one argument's origin is known.
+ *
+ * LINQ predicates (`.Where(c => c.Id == id)`) count as column filters for the same pass.
  */
 export function csharpArgOriginsOf(node: Node): CallArgOrigin[] | null {
   if (node.type !== "invocation_expression" && node.type !== "object_creation_expression") return null;

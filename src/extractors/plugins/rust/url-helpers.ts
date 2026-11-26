@@ -8,6 +8,13 @@ import { closingAt, splitRustArgs } from "./data-sources.js";
  * another file (`client.get(urls::club_url(id))`) is joined to the helper by the project pass, which fills
  * the parameters with the call's arguments. Only a function whose whole body is one `format!` with a literal
  * template holding a `/` — the same helper the reading of a request in its own file accepts.
+ *
+ * A client verb handed a URL helper the same file declares (`get(club_url(&self.base, id))`, the helper's body one
+ * `format!`) takes the helper's template with the arguments in place. A helper another file declares — a function whose
+ * whole body is one `format!` carries `FunctionInfo.urlTemplate`, parameters as `{name}` — is called through a `use` of
+ * its name (`club_url(id)`) or its module (`urls::club_url(id)`, only a module the file binds by `mod`/`use`): the
+ * target is the hole `${club_url(id)}` / `${urls.club_url(id)}`, which core's symbolic-target pass fills from the helper
+ * of the file the name stands for, never a namesake of another module.
  */
 export function addRustUrlTemplates(analysis: FileAnalysis, lines: readonly string[]): void {
   if (!analysis.functions.some((f) => f.line >= 1 && f.name !== "<setup>")) return;

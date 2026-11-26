@@ -367,7 +367,11 @@ export abstract class CPP14ParserBase extends Parser {
     return this.facts.types.has(name);
   }
 
-  /** The first pass over the tokens the parse is about to read, and the decisions it settles. */
+  /**
+   * The first pass over the tokens the parse is about to read, and the decisions it settles: the widest ones (a statement,
+   * a declaration, a member, a qualified name's scope, a definition's `(…)` followed by a body or `;`) are answered from
+   * tokens before `adaptivePredict` runs, the alternatives found by the sub-rule each reaches in the ATN, never by number.
+   */
   prepare(stream: CommonTokenStream): void {
     this.facts = readTypes(stream);
     // The template brackets and cast parentheses the first pass found, retyped for the grammar.
@@ -527,7 +531,10 @@ export abstract class CPP14ParserBase extends Parser {
   /**
    * After a specifier: another when the next token starts one and nothing after a list may start with it, the end of the
    * list when only what follows it may. A name is a specifier by the same predicate as at the list's start. 0 where a
-   * token may be either (`const`, `&&`), which prediction reads on.
+   * token may be either (`const`, `&&`), which prediction reads on. A lookahead that sees past the predicate decides
+   * some cases (`size_t i, j;` is not two types), so a name before `,`/`)`/`;` stays with prediction, as does a name
+   * before `*`, `&`, `&&` or another plain name only where the predicate accepts it. Each rule is gated by the corpus'
+   * per-file readings, byte-identical.
    */
   settleSpecifierLoop(loop: SpecifierLoop): number {
     const t = this.lt(1).type;

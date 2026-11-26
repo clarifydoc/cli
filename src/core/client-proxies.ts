@@ -26,7 +26,8 @@ type ApiCall = DataSourceInfo & { filePath: string };
  * Language-agnostic: declared types come from the classes and functions any
  * plugin reports, a simple type name is qualified through the file's imports
  * (`import a.b.PlayerApi` → `a.b.PlayerApi`), or by being the one registered
- * type of that name.
+ * type of that name. The row is `{ contract: { type, method }, baseRef: client }`, the contract an interface
+ * operation such as `a.b.PersonApi#getPerson`.
  */
 export function clientProxyCalls(
   analyses: readonly FileAnalysis[],

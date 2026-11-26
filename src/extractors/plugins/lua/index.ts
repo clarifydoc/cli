@@ -87,6 +87,7 @@ export function luaInlineBodyColumn(line: string, from: number): number {
 export const luaSpec: RegexLangSpec = {
   language: "lua",
   extensions: [".lua"],
+  // Lua is keyword-delimited: the shared walk finds block ends by indentation, as for Ruby.
   indentBased: true,
   lineCommentPrefixes: ["--"],
   // A script's own statements run when it loads (an OpenResty access-phase script is mostly top-level code).

@@ -1,3 +1,7 @@
+/**
+ * Objective-C field writes and thrown types: `self.x =`, `self.a.b =`, `obj.x =`, bare ivars, compound operators,
+ * `count++` as a statement of its own.
+ */
 import type { FunctionInfo } from "../../../types/analysis.js";
 import { BodyText, EffectsCollector, ownNames, statedTypeNames } from "../shared/member-effects-kit.js";
 import { blocksOf } from "./receivers.js";

@@ -14,6 +14,13 @@ import type { ImportIndex } from "../types/project.js";
  *
  * A member wrapper (`receiver.callee`) is judged on EVERY definition of that
  * member the receiver can be: one that does not forward the URL refuses it.
+ *
+ * Regex plugins state a call site's path argument through `RegexLangSpec.extractPathArgCalls`. A URL helper
+ * called through a module binding (`urls.club_url(id)`) is looked up in the imported module's file only where
+ * the head is the module itself — a namespace import, a binding named like the module's file, or like its
+ * directory when the file is the index module (`directoryIndexStems`) — and the module does not export it as a
+ * member; `api.club_url(id)` with no such binding keeps its own URL, while a class-method helper may match by
+ * bare name through a receiver (`configService.APIUrl(…)`).
  */
 export interface WrapperIndex {
   /** The project file an import in `file` binds `name` from, and the name that file declares; null when none resolves. */

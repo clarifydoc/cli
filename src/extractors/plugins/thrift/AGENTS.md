@@ -4,10 +4,7 @@ Reads `.thrift` with a regex front end (`RegexLangSpec`, `request-schema.ts`); a
 
 ## Rows and classes
 
-- Each service method is a row at `POST /<java namespace>.<Service>/<method>`, handled by its name and carrying `contract`.
-- `extends` is copied across files by a route resolver (`routeFacts`).
-- Structs, unions, exceptions and enums are classes; `<Service>_<method>_args` is the body class.
-- String literals are blanked before fields and methods are read: a default `"2: i32 fake"` is no field, and a lone quote never swallows the file.
+- [index.ts](index.ts) reads services, structs and the `extends` copy (rows, `contract`, `<Service>_<method>_args`, string blanking are in its comments); [request-schema.ts](request-schema.ts) maps field types to JSON Schema.
 
 ## Generated stubs
 

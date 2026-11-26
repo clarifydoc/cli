@@ -9,7 +9,11 @@ export { boundedType } from "../shared/type-parameter-bounds.js";
  * first, so a method's own letter beats the class's). A parameter or local written as that letter is
  * then typed as its bound, and `u.sail()` links like any typed receiver. An unbounded letter maps to
  * `null` — it shadows an outer bound of the same name and stays untyped. With several bounds
- * (`T extends Car & Comparable<T>`, Kotlin `where T : Boat, T : Foo`) the first one is the type.
+ * (`T extends Car & Comparable<T>`, Kotlin `where T : Boat, T : Foo`) the first one is the type — a project class
+ * listed after a library bound is missed. A bound that is another letter of the member (`where T : U`) leaves the
+ * letter untyped; the Kotlin extension receiver (`fun <T : Boat> T.dock()`) takes the bound. Not covered (open):
+ * fields and constructor properties written as the letter, and a local class or lambda inside a generic method.
+ * The letter-to-bound substitution itself is `../shared/type-parameter-bounds.ts`; core is untouched.
  */
 export function typeParameterBounds(member: Node): Map<string, string | null> {
   const bounds = new Map<string, string | null>();

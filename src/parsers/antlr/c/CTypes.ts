@@ -87,7 +87,10 @@ function tagBodies(tokens: Token[]): Uint8Array {
  * Macros that stand where no grammar rule has them go to the hidden channel, so the parser reads the code around
  * them: the macro written before a cast's parentheses (`t->data = CLUB_DATA_T (uintptr_t) 0;`), and a list macro
  * between the entries of an initializer, bare or with arguments (`ALL_ENTRIES`, `FOR_EACH_EXTRA(EMIT)`), where only
- * a comma could stand.
+ * a comma could stand. The same pass sets aside a macro in a cast's type, after an attribute, a call between a `*` and
+ * the declared function's name, a name between a type and an attribute that precedes the declared name or between a
+ * prototype's parameters and its attribute, one after `[` before a called name, and names alone before a struct
+ * body's `}` or ending a file.
  */
 function hideMacros(all: Token[]): void {
   const tokens = all.filter((t) => t.channel === Token.DEFAULT_CHANNEL && t.type !== Token.EOF);

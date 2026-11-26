@@ -10,7 +10,9 @@ import { extractApexRoutes } from "./routes.js";
  * A class, interface or enum is the class concept; inner classes are classes of their own, and each method belongs to
  * the innermost class around it. Annotations — on the line above or ahead of the declaration on its own line — are
  * decorators WITH their arguments (`AuraEnabled(cacheable=true)`, `RestResource(urlMapping='/clubs/*')`).
- * `trigger ClubTrigger on Club__c (before insert)` is a function carrying a `Trigger(Club__c; before insert)` decorator.
+ * `trigger ClubTrigger on Club__c (before insert)` is a function carrying a `Trigger(Club__c; before insert)` decorator
+ * (`trigger X on Club__c (…)` → `Trigger(Club__c; …)`). A `@RestResource(urlMapping)` class is a route source, not a structure rule. A
+ * property with a body (`public List<Club__c> clubs { get { return [SELECT …]; } }`) is a getter method of its own.
  * The text this reads is `source.ts`'s structure text: comments blanked, inline SOQL blanked, braces in strings swapped.
  */
 

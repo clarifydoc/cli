@@ -1,3 +1,9 @@
+/**
+ * Zig data sources: SQL in any string or `\\` multiline string (pg.zig `conn.query("SELECT …", .{})`, zqlite/sqlite
+ * `db.exec(…)`), one source per statement; `std.http.Client` — `client.fetch(.{ .location = .{ .url = "…" }, .method =
+ * .POST })`, and `client.open(.GET, uri, …)` / `client.request(.GET, uri, …)` with the URI parsed from a literal (`try
+ * std.Uri.parse("…")`, inline or bound in the file).
+ */
 import type { Node, Tree } from "web-tree-sitter";
 import { DataSourceExtractor } from "../../data-sources/base.js";
 import type { DataSourceInfo, Language } from "../../../types/analysis.js";

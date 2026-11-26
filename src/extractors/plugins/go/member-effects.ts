@@ -38,7 +38,13 @@ function varNames(lines: readonly string[], indented: boolean): Array<{ name: st
   return out;
 }
 
-/** The name in a Go file's package clause: the first statement after the comments (`package club_test`). */
+/**
+ * The name in a Go file's package clause: the first statement after the comments (`package club_test`).
+ *
+ * A file's `package` clause is `FileAnalysis.packageClause`; two files of one directory whose clauses differ
+ * (`package club` and the external test package `package club_test`, `sameDirectoryPackage`) share no function,
+ * binding or package variable, and a test file's binding never reaches production code.
+ */
 export function goPackageClause(lines: readonly string[]): string | null {
   let inBlock = false;
   for (const line of lines) {
@@ -68,6 +74,11 @@ export function goPackageVariableNames(lines: readonly string[]): Array<{ name: 
  * a candidate package variable (`clubCount = 0`, `cache[id] = c`, `total++`: `package`), which core accepts only where a
  * file of the package declares one. A name the function declares, takes as a parameter, receives or names in its
  * signature, and a deref (`*p = …`), state nothing. Go has no exceptions: a `panic` and a returned `error` are no throw.
+ *
+ * Go states field writes (`fieldWrites`) and no thrown types. A bare assignment is a candidate package variable
+ * (`fieldWrites[].package`), listed as `via: "package"` with `class` the package name only when exactly one file of
+ * the package declares it (`FileAnalysis.packageVariables`, `extractPackageVariables`). Resolution stays inside the
+ * writer's language family, so a thrown type never meets another language's namesake.
  */
 export function goMemberEffects(
   lines: readonly string[],

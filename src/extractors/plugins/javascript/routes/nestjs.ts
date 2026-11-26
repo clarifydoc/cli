@@ -1,3 +1,17 @@
+/**
+ * `@UseGuards(HeaderGuard)` / `AuthGuard('jwt')` on a controller or action states `RouteInfo.middlewareCalls` as
+ * `Class.canActivate`, resolved in the controller file; a `@UseGuards` on a base controller lands as
+ * `inheritedMiddleware` naming the base file. App-wide guards are `nest-global-guards` facts
+ * (`app.useGlobalGuards(new HeaderGuard())`, a NestFactory bootstrap only, or
+ * `{ provide: APP_GUARD, useClass|useExisting|useValue: … }`): every API route of that sub-project gets the guards as
+ * middleware/auth and `inheritedMiddleware` naming the registering file so each `Class.canActivate` resolves through
+ * its imports; a namesake guard the registerer does not import is not a guard. `useGlobalInterceptors` and
+ * `{ provide: APP_INTERCEPTOR, useClass: X }` are a `nest-global-interceptors` fact: middleware text on every route,
+ * and `inheritedMiddleware` for every project interceptor's `intercept` (framework types contribute middleware text
+ * only). `@Controller(RouteKey.Club)` takes its path from the one module of the sub-project whose value table has
+ * `RouteKey`; a Nest enum used as a prefix is read (test: nest-enum-prefix.test.ts).
+ */
+
 import type { Node } from "web-tree-sitter";
 import type { FileAnalysis, RouteFact, RouteInfo, RouteParamBinding, RouteParamInfo } from "../../../../types/analysis.js";
 import type { ProjectContext } from "../../../../types/project.js";

@@ -69,6 +69,14 @@ function importedFrom(lines: readonly string[], name: string): string | null {
  * body's statements count for the function holding it, as does a nested `fn`'s. A statement starting with `let`, a
  * tuple field (`self.0 = x`) and a method call that mutates (`self.items.push`) state nothing. Rust has no exceptions: a returned
  * `Err` and a `panic!` are no thrown type, so a function states none.
+ *
+ * Rust states `fieldWrites` and no thrown types. A field behind a shared cell (`self.stats.borrow_mut().goals += 1`,
+ * `club.lock().unwrap().name = n`) or a deref (`*self.count += 1`) is a write of that field (`RefCell`/`Mutex`/`RwLock`
+ * are transparent wrappers of a declared type). A `static mut` written bare is a `package` write joined within its own
+ * file; one written through its module (`crate::stats::TOTAL += 1`, `stats::TOTAL = 0` after `use crate::stats;`) or
+ * bare after `use crate::stats::TOTAL;` is a `package` write whose `receiver` is the module path, which core resolves
+ * with the language's `resolveImport` to the one file that must declare the variable (`moduleVariableHome`), never a
+ * namesake module's.
  */
 export function rustMemberEffects(lines: readonly string[], fn: FunctionInfo, statics: ReadonlySet<string>): Pick<FunctionInfo, "fieldWrites"> | null {
   const out = new EffectsCollector();

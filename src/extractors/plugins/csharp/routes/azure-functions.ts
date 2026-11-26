@@ -45,6 +45,9 @@ function argumentsOf(attr: Node): { positional: Node[]; named: Map<string, Node>
   return { positional, named };
 }
 
+/**
+ * Azure Functions HTTP triggers: isolated worker `[Function("GetKit")]` and in-process.
+ */
 export function extractAzureFunctionRoutes(root: Node, routes: RouteInfo[]): void {
   const walk = (node: Node, className: string | null): void => {
     if (node.type === "class_declaration") className = node.childForFieldName("name")?.text ?? className;

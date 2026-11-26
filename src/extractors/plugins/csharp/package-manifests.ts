@@ -38,6 +38,8 @@ function parseCsproj(text: string, declaredIn: string): DeclaredPackage[] {
  * None for a file that is no project (`Directory.Packages.props`,
  * `packages.config`), one marked `<IsPackable>false</IsPackable>`, or a test
  * project (the test SDK makes it unpackable). A `$(…)` value names nothing.
+ *
+ * A `.csproj`'s `PackageId`/`AssemblyName` is the package the project publishes (the manifest's `selfName`).
  */
 export function projectFileSelfName(text: string, file: SelfNameContext): string | null {
   const stem = /^(.+)\.(?:cs|fs|vb)proj$/i.exec(file.fileName)?.[1];
@@ -122,6 +124,11 @@ function importsParentProps(text: string): boolean {
  * file's that sets one), then the `<Using>` items of `Directory.Build.props` — beside the project file or above
  * it, and each parent it imports, outermost first — then the project's own, each `<Using Remove>` taking away
  * what came before it (so a Remove in the props and an Include in the project keeps the namespace).
+ *
+ * The result is `SubProject.implicitImports`. The SDK sets are base / Web / Worker / BlazorWebAssembly (the Blazor
+ * WebAssembly SDK adds only Configuration, DependencyInjection and Logging); props files are followed up their
+ * `GetPathOfFileAbove` chain. A conditional Remove still counts, a conditional Include does not.
+ * `<Using Include Static="true">` (`<Using Static="true">`) is a project-wide `using static` of that type.
  */
 export async function projectFileUsings(text: string, file: SelfNameContext): Promise<string[]> {
   if (!/\.(?:cs|vb)proj$/i.test(file.fileName)) return [];

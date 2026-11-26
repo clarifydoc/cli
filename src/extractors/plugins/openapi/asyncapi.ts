@@ -13,7 +13,16 @@ import { parseSpecDocument, type SpecNode } from "../../shared/spec-document.js"
  * message with an inline payload), so the request-schema pass reads them.
  *
  * 2.x speaks from the client's side: `publish` is what the application
- * RECEIVES, `subscribe` what it SENDS. 3.x says it with `action: send|receive`.
+ * RECEIVES, `subscribe` what it SENDS. 3.x says it with `action: send|receive` (`action: receive|send`).
+ *
+ * A document is recognised by an `asyncapi:` root key, checked after the OpenAPI sniff. Rows go in
+ * `FileAnalysis.busContracts` with `DataSourceInfo.fromContract`, never `dataSources`: the document is no publisher
+ * or consumer. The broker comes from `servers[].protocol` (`brokerOfProtocol`); a channel's `servers` narrows it and
+ * several protocols give a row each. The address is the channel name or 3.x `address`; a `{param}` is a hole, an
+ * MQTT hole is `+`, and the queue node's id reads every `${x}` / `{x}` hole as `*`, so the document and the code's
+ * templated destination meet on one node. `buildDataAccessGraph` marks the node `contract` (and `unimplemented`
+ * when no code row meets it) and draws no edge for the document; `element-registry.ts` carries both flags through
+ * the summary.
  */
 
 const HEAD_YAML_RE = /^asyncapi\s*:\s*["']?\d/m;

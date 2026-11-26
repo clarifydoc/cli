@@ -6,6 +6,10 @@ import { matchingParen } from "../shared/text-scan.js";
  * (`var (club, player) = Load();`): `(Club, Player)`, a named one `(Club club, Player player)` (the names are
  * dropped), `ValueTuple<Club, Player>` / `Tuple<Club, Player>`. Null for any other type: a nullable tuple, one
  * element, a class (it may declare its own `Deconstruct`, which this does not read).
+ *
+ * Both `var (club, player) = Load()` and `(var club, var player) = Load()` (also awaited through `Task`) give
+ * `fromIndex` locals, typed through the manifest's `tupleElementsOf` (a `ValueTuple<…>` return counts too); a
+ * discard or nested pattern only takes up a position.
  */
 export function csharpTupleElements(returnType: string): string[] | null {
   const text = returnType.trim();

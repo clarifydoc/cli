@@ -6,6 +6,19 @@ import { VB_DOCS } from "../../shared/doc-comment-specs.js";
  * EAGERLY (extensions, grammar location, framework rules, …). The heavy
  * body (meta.ts and everything it imports) is loaded lazily per language;
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
+ *
+ * Extensions `.vb`, `.bas`, `.cls`, `.frm`, `.vbs`; `parsing: "regex"`; `family: "dotnet"`;
+ * `caseInsensitiveNames: true` (`_repo.save` calls the declared `Save`); `typesSpanFiles: true` (`Partial Class`
+ * splits one type across files); `packageEcosystems: ["nuget"]`; `projectMarkers` `**\/*.vbproj` (kind `dotnet`,
+ * priority 30); generated files `*.Designer.vb`; `externalNamespaceRoots` `System`, `Microsoft`. Member effects:
+ * Visual Basic types found only in the writer's directory (`typesSpanFiles` without `typesBeyondDirectory`) are
+ * looked up as written.
+ *
+ * `.cls` is VB6's: the Apex plugin takes an Apex class through the manifest's `adoptsSuffixes` (`.cls`,
+ * `*.object-meta.xml`, `*.field-meta.xml`) and the meta's `adopt`, so the registry's `preprocessFile` asks the
+ * adopting plugin before the owner's `preprocess` (in the analyzer and in discovery's skip check); no plugin
+ * imports another. A VB project loads the C# plugin (its `dispatchLanguages`) so the UI-bridge resolver runs
+ * (WinForms `Handles`-style and partial-class wiring join through the language-agnostic partial-class join).
  */
 export const vbManifest: LanguagePluginManifest = {
   docComments: VB_DOCS,

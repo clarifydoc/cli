@@ -1,3 +1,50 @@
+/**
+ * Copies and seeds run through locals, parameters and `this.x` fields (a field initializer
+ * `onSave = this.save.bind(this)` rides the constructor), `a.b` members, list/map elements (`push`/`set`/literals,
+ * `for…of`/`forEach` parameters, `m[k]()`: every key is also an element, `this.items[k]` is member `items[]`,
+ * `this.a.b` is member `a.b`), factory results/returns (`<return@N>`/`<arg@N>` one-use cells),
+ * `.bind`/`.call`/`.apply`, and module `let`s written from a function (`ValueCell.module`). A name is a seed only
+ * when the file can bind it to a function (imports, function and class declarations); data-typed parameters and
+ * locals nothing binds are left out; a call on a dispatch map the existing pass owns gets no invoke; a local made by
+ * a call that wraps a function (`useCallback(() => …)`) is a function binding, not a value. The parameter of a JS
+ * function expression assigned to `this.x` — and of a callback nested in it — states no handed argument and no seed.
+ *
+ * An object literal handed as an argument, or typed by `useState<T>`/`ref<T>`/`reactive<T>`/`createContext<T>`, sits
+ * on a one-use `<arg@L#n>` cell; core joins its function members to the members of the formal's declared class or
+ * interface (`memberCell`, located from the formal's own file so a namesake interface stays apart):
+ * `toast.action?.onClick()` and `const { onClick } = substitution` reach the handlers written in literals of that
+ * type.
+ *
+ * `reactive(…)`, `shallowReactive`, `readonly`, `markRaw`, `createContext(…)` and `Object.freeze(…)` over an object
+ * or array literal hold that literal's members (`VALUE_WRAPPERS`); `useContext(Ctx)`/`inject(Ctx)` read what the
+ * named context was built with (`CONTEXT_READS`), so `state.onSave()` and
+ * `const { onPurge } = useContext(CmdContext)` reach the literal's function;
+ * `const ctx = useContext(Ctx); ctx.onPurge()` is an `invoke` of the context's own member (`contextLocals`,
+ * `held: "module"`; the alias holds in the block that declares it, and a parameter, local, loop or catch binding of
+ * the name between the call and that block ends it).
+ *
+ * A call `x.m()` on a module-level object — the file's own or one a project module (`./`, `../`, `@/`) it imports
+ * under a lower-case name — states an `invoke` marked `held: "module"` even when the function stores nothing into it;
+ * core keeps the ordinary resolution unless that same object's member is written in the caller's file or the file its
+ * import names (a namesake object of another file never counts; core's `valueFlowInvokeSites`).
+ *
+ * `[...base, run]` copies the spread array's elements (the Vue text reader follows `...base` of a declared literal
+ * array, two levels); an object member written as an object also writes the element cell, so `kit[kind].run()` reads
+ * every member of a nested literal (a `memberCalls` entry with a `column`, which adds the `kit[].run` call row only
+ * once the invoke is stated); a computed key one level below a member (`kits.club[k].run()`) reads the element of
+ * that member (`placeOf`). An arrow written in place in an array a project component's tag takes under a non-`on`
+ * prop (`<ActionBar actions={[{ run: () => award() }]} />`) is a held function `<ActionBar:actions[].run@5>` unless
+ * it returns markup (`jsxArrayHolder`), which the child's loop over its prop runs. A key held by a function written
+ * in place counts as the map's own key even when its name is a noise leaf (`actions.send()` for
+ * `{ send: () => post() }`, `dispatchMapMember(…, withInline)`), so the call is kept and links to that function; a
+ * markup handler's calls join the same way through `markupCalls`.
+ *
+ * A TanStack Query step keeps the id it is keyed by: the plugin marks the helper step a query options object
+ * contributes (`ValueStep` `helper` with `query: true`); core keeps the route-parameter origin through it only when
+ * the options' fetch hands the parameter on (`argOrigins`), so a query keyed by `id` whose `queryFn` lists everything
+ * gives no origin.
+ */
+
 import type { Node, Tree } from "web-tree-sitter";
 import type { CallInfo, ParamInfo, ValueCell, ValueFlowFact } from "../../../types/analysis.js";
 import { javascriptCallHooks } from "./call-hooks.js";

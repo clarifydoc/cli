@@ -361,7 +361,8 @@ export class AnalysisStore {
 
   /**
    * The command that writes the analysis this server reads: `analyze` puts its output in
-   * `<-o>/<project name>`, so a custom directory of another shape is only named, not passed.
+   * `<-o>/<project name>`, so a custom directory of another shape is only named, not passed:
+   * `clarifydoc analyze <root> -o <dir>`, quoted when a path has spaces.
    */
   get analyzeCommand(): string {
     const root = resolve(this.options.projectRoot);

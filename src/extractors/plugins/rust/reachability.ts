@@ -101,6 +101,11 @@ async function loadRustReachability(ctx: ReachabilityLoadContext): Promise<Reach
 /**
  * `mod name;` declarations (not inline `mod name { … }` blocks), with the
  * inline modules they sit in, plus `#[path = "…"]` overrides and `include!`.
+ *
+ * A crate is built from its root (`src/main.rs`, `src/lib.rs`, `src/bin/*.rs`, `tests/*.rs`) by following `mod x;`
+ * (nested under inline modules as `mod:outer/name`) and `#[path = "…"]`/`include!("…")` (`path:<file>`, relative to the
+ * declaring file's directory); a `.rs` file no declaration reaches is not compiled. `use` never loads a file, so it
+ * resolves to nothing here (component-graph `use` edges still count, which only adds reachability).
  */
 export function extractRustModuleRefs(lines: string[]): string[] {
   const out: string[] = [];

@@ -15,6 +15,10 @@ const BLOCK_OPEN = /^\s*import\s*\(/;
  * is given (`packages_router.CommonRoutes()`), else the path's last segment;
  * a blank import binds nothing, and a dot import puts the package's names
  * in scope (`inScope`).
+ *
+ * Imports are structural: only inside `import` declarations, aliases kept as the specifier (a per-line `"…"` pattern
+ * took every string line for an import and missed `alias "path"`). Dot imports are `ImportInfo.inScope`. A process Go
+ * starts (`exec.Command`) is an import carrying `executes: true` and shares nothing.
  */
 export function extractGoImports(lines: string[]): ImportInfo[] {
   const out: ImportInfo[] = [];

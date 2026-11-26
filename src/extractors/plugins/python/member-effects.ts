@@ -33,7 +33,8 @@ function thrownClass(n: Node | null | undefined, locals: () => ReadonlySet<strin
  * `self.x += …`, `self.a.x = …` and `p.x = …` on a typed parameter or local (`self`/`cls` is the receiver `this`);
  * `raise XError(…)` and `raise XError` (a class named by a capitalized leaf; a variable or a call result states
  * nothing, nor does a bare `raise`). `__init__` states its `self.x` writes as `init` (declarations, never writers). Nested functions and lambdas keep
- * `self` and are walked; a nested class is not.
+ * `self` and are walked; a nested class is not. A qualified name (`requests.HTTPError`) binds by its last segment only
+ * through a qualifier the project backs (a Python module path).
  */
 export function pythonMemberEffects(
   node: Node,

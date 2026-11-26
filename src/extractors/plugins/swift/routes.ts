@@ -124,6 +124,14 @@ function closureBody(lines: string[], i: number, from: number): string[] {
   return body;
 }
 
+/**
+ * Vapor routes: `app.get("users", ":id") { … }`, `app.post("api", "orders", use: OrderController.create)`,
+ * `app.on(.GET, "custom")`; path segments are comma-separated strings (`:param` is already the linker's wildcard). The
+ * verb names are generic, so a route requires the receiver to be `app`/`routes`/`router`/`group` or a tracked
+ * `grouped(…)` variable. `grouped(…)` composes a prefix like gin's `Group`, and every non-string argument is a
+ * middleware the group's routes inherit; those named authenticator / guard / auth / jwt / token / session become the
+ * route's `auth` (a scheme when the name spells a mechanism — jwt / basic / bearer / token / session — else a policy).
+ */
 export function extractVaporRoutes(lines: string[]): RouteInfo[] {
   const routes: RouteInfo[] = [];
   /** group variable → composed prefix + middleware. */

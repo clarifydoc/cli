@@ -174,6 +174,9 @@ function lambdaParamNames(lambda: Node): Set<string> {
  * Every seed and copy carries the lambda's `line:col` as `lambda`; core resolves them and drops the group above four
  * project functions, so a library name this file cannot tell apart never uses up the cap. The plugin only bounds its
  * output (16 names); a body whose calls are all on its own parameters, chains or the platform's states nothing.
+ *
+ * Held in a local, field, property, event `+=`, collection, argument, return or field initializer, it has no
+ * function of its own. A BCL call in its body is filtered by name where it can be.
  */
 function lambdaSourcesOf(lambda: Node, env: LambdaEnv): LambdaSource[] {
   const seeds = new Set<string>();
@@ -293,6 +296,24 @@ interface LocalInfo { shape: Shape; type: string | null }
 
 /**
  * The facts of one member. `fn` is the declaration, `body` its block or expression body, `params` its parameters.
+ *
+ * States `ValueFlowFact`s per member. A method group (`Action a = Save`, `new Action(this.Load)`, `Run(Save)`,
+ * `club.Count` where the destination is a delegate), a delegate in a local, parameter, field or property, `x()` /
+ * `x.Invoke()` / `x?.Invoke()`, a delegate returned by a factory (`Task<…>` unwrapped), and collections of
+ * handlers (a literal key is its own cell and `[]` too; a field collection is one cell). An element call with no
+ * call row (`handlers[key]()`) is the invoke's `handlers[]`.
+ *
+ * A name is a delegate holder by its declared type (BCL delegates and the file's own `delegate` declarations;
+ * `x()` on a declared local, parameter or own field is always a delegate call). A field, parameter or local typed
+ * by a plain name it calls (`_onSigned(c)`, `Signed?.Invoke(c)`) is an `invoke` with `ifFnType`; `delegate`
+ * declarations are `FileAnalysis.functionTypeAliases` (the `ast.functionTypeAliases` hook). Core keeps the invoke
+ * only when the nearest scope declaring that name — file, imports, own sub-project, imported sub-projects, then
+ * the projects its build references (`SubProject.references`, no import line needed) — declares a function-type
+ * alias and no class of it; a plain-typed parameter only handed on as an argument keeps its flow (it is the cell
+ * the callee's formal joins).
+ *
+ * A named argument (`Schedule(callback: F)`) is an `arg` with `name`, never mapped by position; C# keeps its
+ * argument loop (a type has no namespace in the call, so a library receiver cannot be told from a project one).
  */
 export function csharpValueFlow(
   body: Node | null,
@@ -307,6 +328,9 @@ export function csharpValueFlow(
  * The facts of a file's top-level statements (`Program.cs`: `app.Run(Handle)`, a local function handed to a
  * registrar), which core joins to the file's `<setup>`. The file's local functions are the methods a bare name may
  * be; classes and namespaces are no part of it.
+ *
+ * Top-level statements (`Program.cs`) are `moduleValueFlow` on `<setup>`, a bare name there being a method group
+ * only for a top-level local function.
  */
 export function csharpTopLevelValueFlow(root: Node): ValueFlowFact[] {
   const statements = root.namedChildren.filter((c) => c.type === "global_statement");
@@ -889,6 +913,8 @@ function flowOfStatements(
 /**
  * The delegate-valued initializers of a class's fields (`private Action _onClose = Close;`, a handler table
  * `{ ["a"] = Save }`): they run in a constructor, so they are stated as that constructor's facts.
+ *
+ * A field's delegate initializer is stated on the class's first constructor.
  */
 export function csharpFieldInitFacts(classBody: Node, ctx: ClassValueContext): ValueFlowFact[] {
   const facts: ValueFlowFact[] = [];
@@ -946,6 +972,13 @@ export function csharpFieldInitFacts(classBody: Node, ctx: ClassValueContext): V
 }
 
 /** What a class declares, for `csharpValueFlow`. */
+/**
+ * Events: `r.Saved += OnSaved` stores into the declaring class's cell and the raise inside it invokes it; the
+ * plugin lists a class's events in `ClassInfo.events` (they are no properties), so a subscription through a
+ * derived type lands in the base class's cell, and one through an interface that declares the event too reaches
+ * the implementer's raise (`fieldCell` copies the interface's cell into the declarer's, one way, never between two
+ * implementers).
+ */
 export function classValueContext(classBody: Node, delegates: ReadonlySet<string>): ClassValueContext {
   const members = new Map<string, string | null>();
   const methods = new Set<string>();

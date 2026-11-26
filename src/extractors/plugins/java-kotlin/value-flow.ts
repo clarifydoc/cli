@@ -18,6 +18,31 @@
  * parameters (Kotlin's implicit `it` too), a chain or a call no project function could be, it states nothing.
  * The lambda's body is also walked for the facts it states about the enclosing function's names (its parameters
  * shadow them).
+ *
+ * `run`/`apply`/`accept`/`get`/`call`/`test`/`compare`/`handle` and Kotlin `f()`/`f.invoke()` are invokes only on a
+ * receiver the facts know holds a function, never one built by `new` or an anonymous class. Method references seed
+ * locals, fields (initializers ride on the constructor, else the first method), `List.of`/`listOf`/`mapOf` literals
+ * and `add`/`put`/index writes (element cells `[]` / key; a field's is `this.<field>[key]`). A Kotlin named argument
+ * (`schedule(callback = ::f)`) is an `arg` with `name`; a positional one after a named one and a trailing lambda
+ * after named arguments state none.
+ *
+ * A call into a library states no `arg` fact (`isLibraryCall`, over the file's `LibraryContext` — package, imports,
+ * declared methods — carried on `ClassFlow.library` and `methodValueFlow`): a bare name the file does not declare as a
+ * method or class, brought in from the manifest's `externalModulePrefixes` or outside the file's root package (first
+ * two `package` segments) by a Java `import static` of that name, a Java `import static x.*` when no class of the file
+ * extends another (an inherited method looks the same), or a Kotlin import of that very name (never a Kotlin
+ * wildcard, since a same-package function or class needs no import); or a call on a receiver typed by such an
+ * imported class (`Javalin app`, `Javalin.create(…)`). A method the file declares itself and a call on an untyped
+ * lambda parameter are not library.
+ *
+ * A bare JDK functional-interface name (`Consumer`, `Supplier`, …; not `java.lang`'s `Runnable` or Kotlin's
+ * `Comparator`) is a function type only where the file imports it (explicitly from a library path, or by any
+ * wildcard import from a library path) or writes it qualified — `isFunctionType(text, lib)`. Parameters, locals,
+ * `for` variables, fields (a Kotlin constructor property too), returns, element collections (array,
+ * `List<Consumer>`, `forEach` parameter) and a Kotlin builder's element type (`mutableListOf<Consumer<T>>()`)
+ * state their invoke with `ifFnType` (`functionTypeVerdict`: `true`, `false`, or the bare name for core to judge;
+ * `ClassFlow.cond`/`elemCond`/`returnsCond` carry it from a declaration to the call). Core judges it
+ * (`judgePlatformFunctionType`); the plugin keeps no judging gate.
  */
 import type { Node } from "web-tree-sitter";
 import type { CallInfo, ParamInfo, ValueCell, ValueFlowFact } from "../../../types/analysis.js";

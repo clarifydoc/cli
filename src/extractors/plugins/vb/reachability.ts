@@ -5,6 +5,8 @@ import { conventionReachability } from "../shared/reachability-kit.js";
  * namespace, types are reached by name, a program starts at `Program`/`Main`
  * (`My Project`'s `Application.myapp` names the startup form), and what
  * WinForms, ASP.NET or a test runner discovers is kept alive.
+ *
+ * A declarative spec built from `reachability-kit`, with case-folded names.
  */
 export const vbReachability = conventionReachability({
   extensions: [".vb"],

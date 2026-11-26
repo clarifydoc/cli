@@ -285,6 +285,9 @@ function writtenAsType(part: string): boolean {
 /**
  * An explicit type-argument list after the callee dropped (`NewBox[int](x)` → `NewBox(x)`, `pkg.New[Club, *Player]()`),
  * only where every element is written as a type; an index expression (`handlers[k]()`, `fns[0]()`) stays as written.
+ *
+ * A local from a generic constructor written with type arguments (`NewBox[int]()`) drops the list when every element
+ * is written as a type; `handlers[k]()` stays an index call.
  */
 export function dropTypeArguments(text: string): string {
   const m = /^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\[/.exec(text);

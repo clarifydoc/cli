@@ -1,3 +1,18 @@
+/*
+ * `clarifydoc_rename_plan`: the definition and every caller of a symbol as `file:line:col` spans re-lexed from the
+ * source line, read-only. Route lines that register the symbol get their own section ("Route registrations": the span
+ * of its name on the route line, inside a string too). A route annotation on the method itself is the definition, and
+ * so is a route the analysis anchors on the method it names, whose declaration the resolver keeps as
+ * `RouteInfo.registeredAt` (`{ file, line }`); the plan lists that line's span of the name (`clubs#index`,
+ * `only: [:index]`, `action: :index`; written as a handler name, after `#` or `:`, never a path option that reads the
+ * same). It refuses when the line spells no such name: a `resources :players` without `only:` names no action, so the
+ * row is named, since renaming would drop the route; a same-named action of another controller has other rows and
+ * lines. `registrationSpan` is tested on those lines.
+ *
+ * It refuses — no partial plan — on an INFERRED/AMBIGUOUS link, a line naming the symbol other than once, a route line
+ * spelling no such name, or an override/implementation/interface member, and says which rows. A route with an inline
+ * handler (`route:<METHOD> <path>`) is refused as "a route with an inline handler", never as an unknown name.
+ */
 import { readFile } from "fs/promises";
 import { join } from "path";
 import type { McpTool } from "../protocol.js";

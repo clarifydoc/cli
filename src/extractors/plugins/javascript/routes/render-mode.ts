@@ -1,3 +1,16 @@
+/**
+ * A page states `RouteInfo.renderMode` (`ssr` | `ssg` | `isr` | `csr`, copied to `ScreenInfo.renderMode`) only from
+ * the framework's own settings: a `render-mode` route fact per file that spells one, joined to the page routes by the
+ * `render-mode` route resolver. Sources: a Next pages-router page (`getServerSideProps`/`getInitialProps` → ssr;
+ * `getStaticProps` → ssg, a `revalidate` in its result → isr; none → csr, but a page that re-exports from elsewhere
+ * without naming them says nothing), an app-router `page`/`layout` segment config (`dynamic`, a literal `revalidate`,
+ * `generateStaticParams`; the page's own key before the nearest layout's; `'use client'` is no mode), a SvelteKit
+ * `+page`/`+layout` module's literal `ssr`/`prerender` (the page's own, then each layout up to the routes folder), a
+ * `nuxt.config` `routeRules` entry or top-level `ssr: false` and a page's `defineRouteRules`. A file outside the page
+ * folders, a commented export, a non-literal value and a page the framework leaves undecided state nothing; Nuxt's
+ * `definePageMeta` has no rendering option, so it is not read.
+ */
+
 import type { FileAnalysis, RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import type { ProjectContext } from "../../../../types/project.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";

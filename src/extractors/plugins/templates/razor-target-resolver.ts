@@ -2,9 +2,8 @@ import type { FileAnalysis, Language, SymbolLink } from "../../../types/analysis
 import type { DispatchResolver } from "../../dispatch/base.js";
 
 /**
- * Razor tag helpers name their target, not a path: `asp-controller="Account"
- * asp-action="Login"` is `AccountController.Login`, and `asp-page="/Account/Login"
- * asp-page-handler="Delete"` is `OnPostDelete` (or `OnPostDeleteAsync`) of the
+ * Razor tag helpers name their target, not a path: `asp-controller="Account" asp-action="Login"` is
+ * `AccountController.Login`, and `asp-page="/Account/Login" asp-page-handler="Delete"` is `OnPostDelete` (or `OnPostDeleteAsync`) of the
  * page model in `Pages/Account/Login.cshtml.cs`. The verb picks the overload:
  * a POST form reaches the action marked `[HttpPost]` when the controller has
  * both. Links go from the view's handler symbol to that method.

@@ -1,3 +1,10 @@
+/*
+ * `clarifydoc_context_docs` and `clarifydoc_file`'s Decisions section: decision records, context documents and
+ * decision markers from `core/context-docs.ts`, reused for 30 s. A document is read only from that list. Per `file`
+ * (and `function`), the reasons comments and commit bodies state, from `core/stated-reasons.ts`, labelled as such.
+ * `decisionsOfFile` feeds `decisionsAbout` (decisions-api.ts, exported from the package index): the same facts as data
+ * for a host that is no MCP client.
+ */
 import { readFile } from "fs/promises";
 import { join } from "path";
 import type { McpTool } from "../protocol.js";

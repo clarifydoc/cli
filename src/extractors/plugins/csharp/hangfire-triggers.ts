@@ -51,6 +51,15 @@ export function csharpHangfireArgs(node: Node): string[] | null {
 
 const bare = (t: string): string => t.trim().replace(/<.*$/, "").split(".").pop()!.trim();
 
+/**
+ * Hangfire jobs run by id: `RecurringJob.TriggerJob(id)` / `IRecurringJobManager.Trigger(id)` name no method; the
+ * resolver states the arguments of the trigger and of the `AddOrUpdate` registration it names (`CallInfo.args`,
+ * through `meta.calls.argsOf`) and its dispatch resolver links the triggering function to the method the
+ * registration's lambda runs — on the one class implementing the registered interface (two or more refuse, so a
+ * decoy is never linked), or the registered class, or the registering class for a bare `() => Sweep()`. An id is a
+ * string literal or a `const` the named (else the caller's own, else the one project) class declares in
+ * `ClassInfo.fieldValues`; an unreadable id, or one two registrations give different handlers, links nothing.
+ */
 export class CSharpHangfireTriggerResolver implements DispatchResolver {
   readonly id = "hangfire-trigger";
   readonly languages: Language[] = ["csharp"];

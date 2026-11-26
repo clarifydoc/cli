@@ -13,7 +13,12 @@
  * can land on the page that explains it as well as on the code that does it.
  *
  * Built lazily on the first body query, once per analysis, in memory; files
- * over 1 MB and text past a total budget are left out (said in the result).
+ * over 1 MB and text past a total budget are left out (said in the result). Opt-in (`body=true` or `throws=`). The same
+ * call ranks functions and classes by their `doc` (the first sentence, from the per-file JSON) as a name-search tier of
+ * its own, below every name and path tier — never without `body`, since reading every per-file JSON is what it costs.
+ * When no name matches every term (a question described in words), the body hits lead and the partial name matches
+ * follow under their own heading; body hits in test files come after the code unless the query mentions tests.
+ * `signature=` reads parameters and return types from the per-file JSON of the candidates only.
  */
 
 import { splitTokens } from "./search-rank.js";

@@ -13,7 +13,8 @@ export interface IgnoreSuggestion {
  * dead-code pass found) and the vendored roots (`third_party/`, `vendored/`, libraries under `public/**` plugins)
  * that still hold analyzed files, largest first. Both come from what the analysis already found — nothing is read
  * again. A root holding no analyzed file (already ignored) is never listed; a root both generated and vendored is
- * vendored, since nothing in it states a fact about the project.
+ * vendored, since nothing in it states a fact about the project. `ignoreSuggestions(files, generatedRoots)` is
+ * printed by `analyze --verbose` and `clarifydoc_status` as `.clarifydocignore` entries (at most three roots).
  */
 export function ignoreSuggestions(files: readonly string[], generatedRoots: readonly string[] = []): IgnoreSuggestion[] {
   const posix = files.map((f) => f.replace(/\\/g, "/"));

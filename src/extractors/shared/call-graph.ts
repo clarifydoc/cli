@@ -174,6 +174,51 @@ export const NOISE_CALLS = new Set([
  *
  * Does NOT descend into nested function definitions, arrow functions, or lambdas.
  * `skip` names further subtrees the caller reads on their own; the walk leaves them out.
+ *
+ * Hook tables are read per language, never as a union over plugins: grammars share node names
+ * (`assignment_expression` is JS and Java) and a union made a file's calls depend on what its worker had loaded.
+ * The hooks, in the order the walk uses them (`CallExtractionHooks` states each field):
+ *  1. `callNodeTypes` are calls; `nestedScopeTypes` start a new scope and stop the recursion. A childless node of a
+ *     type no step reads (`READ_TYPES_BY_LANGUAGE`: scopes, call types, binding sites) is not entered when the plugin
+ *     has no `readNames` hook and no `skip`, and either no `collectExtraCalls`/`destructuredFromCall`/`heldFunction`
+ *     hook or states every node type they act on as `perNodeTypes` — a new hook that must see every node goes into
+ *     that condition. `anonymousScopeTypes` are function expressions walked on the parent's behalf unless a
+ *     declarator names them; `localDeclarationTypes` (Java `local_variable_declaration`, C#
+ *     `local_declaration_statement`) say a declarator names a value, so `Runnable r = () -> club.save();` leaves
+ *     `club.save` on the enclosing method's row.
+ *  2. `resolveCallName` names the callee (plugins compose `genericResolveCallName`); whatever it returns, a chain
+ *     written across lines is named as on one line (`compactCallName`), so the call and its `localTypes[].from`
+ *     spelling link like the one-line twin.
+ *  3. `collectExtraCalls` adds call shapes (JSX component refs, Python decorators).
+ *  4. `heldFunction` is a function expression extracted as a function of its own though no declarator names it (a
+ *     callback handed on to run later): the walk stops there and records the enclosing function handing it on
+ *     (`passed: "argument"`; module code hands it on from `<setup>`), so reach keeps the writer's calls one `passes`
+ *     hop further while an emit, a prop call or a member call lands on the callback alone. Complexity skips it
+ *     (`<…@line>`); ordinary inline arrows stay the writer's.
+ *  5. `callbackArgNodeTypes` + `bindingSites`/`bindingPatterns`: an identifier passed as an argument is a call
+ *     (`items.map(formatUser)` → `formatUser`) unless the function binds the name itself (parameter, declarator,
+ *     assignment target, loop/catch/`with` variable). The tables are grammar data (node type → field holding the
+ *     pattern; pattern type → fields to descend, `"*"` = all); bindings are collected in the same walk and the
+ *     references filtered once it ends. A declarator whose value is a function (`const onClick = () => …`) stays a
+ *     reference (without the filter about a quarter of all "calls" were variables, which the linker then bound by
+ *     name or through a file-wide factory alias: `foo(client)` → `IxClient`). `passedArguments` names the other handed-on shapes per grammar (`this.onResize`, Python
+ *     `target=worker`, Kotlin `::save`, C# method groups), `ownMember` exempts the instance's own member from the
+ *     bound-receiver skip, `destructuredFromCall` names the locals a declarator takes from a call
+ *     (`const { save } = useClubActions()`), which `classifyCalls` routes into the factory's module (array
+ *     elements bind by position and fall back to the factory). A reference carries `CallInfo.passed` (`argument`,
+ *     or `attribute`/`return`/`property` from `collectExtraCalls`), which the linker turns into
+ *     `relation: "passes"`; a name the body also invokes stays one call (a map's value excepted); `property` names
+ *     are also read at a module's top level (`extractTopLevelCalls`), and a value held under several keys is one
+ *     claim per key.
+ *  6. `boundAt` answers `boundLocally` for one call node where the function-wide set is too coarse (a dotted name:
+ *     its head); the answer is part of the dedup key, so two sites of one name stay two calls.
+ *  7. `statedMember`/`importedMapMember`: a member call whose leaf is a noise name (`map`, `send`, `filter`) is kept
+ *     when the file states the receiver is a project value (a top-level binding in scope at the call; a parameter,
+ *     local, loop or catch variable of that name is another value — `receiverReboundAt`; a local object literal
+ *     holding the called key owns the call; `CallInfo.receiverRebound` stops a rebound head taking a same-file
+ *     namesake's member), or, marked `CallInfo.mapMember`, when it reads a key off a name imported from a project
+ *     file — the linker joins a `mapMember` call only through the exporting file's dispatch map.
+ *  8. `NOISE_CALLS` drops method names no plugin should list itself (`.then`, `.map`, `console.log`).
  */
 export function extractCalls(bodyNode: Node | null, language: Language, skip?: (node: Node) => boolean): CallInfo[] {
   if (!bodyNode) return [];
@@ -622,7 +667,19 @@ export function buildImportMaps(imports: ImportInfo[]): {
 
 /**
  * Classify raw calls using import context and language plugin hooks.
- * Mutates and returns the calls array with updated `kind` and `target`.
+ * Mutates and returns the calls array with updated `kind` and `target`. Runs after extraction, in this order:
+ *  - the plugin's auto-imported globals (Vue compiler macros) → `cross-file`;
+ *  - an import specifier match, or a qualified name whose root matches an import/default/namespace → `cross-file`;
+ *  - a variable alias (`s = useStore()` then `s.x.y`, a plugin's `ast.variableAliases`) → `cross-file`;
+ *  - the plugin's `qualifiedRootCandidates` transforms (Java `userService`→`UserService`, Python snake→Pascal,
+ *    Pascal `F`-strip) → `cross-file`, INFERRED;
+ *  - a root naming one of the file's own definitions (`localSymbols`: functions, the dotted-name roots of
+ *    `requests.get`, classes) stays `internal`, before any name heuristic — `api-call`/`database` calls are skipped
+ *    by the symbol linker and the LSP enhancer, so a wrong label there is a link that can never form;
+ *  - `isApiCall`/`isDatabaseCall` → `api-call`/`database`. A `this.`/`self.` receiver is never `database` by its
+ *    method name alone (`byMethodName = false`; a known DB client root still is), a bare call (`sum(xs)`) never is,
+ *    `execute` is not an HTTP method name, and a dotted root in a plugin's list (`http.client`) matches as a
+ *    module-path prefix, not by its first segment.
  */
 export function classifyCalls(
   calls: CallInfo[],

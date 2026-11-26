@@ -62,7 +62,20 @@ export function heldFunctionsOf(tree: Tree): ReadonlyMap<number, string> {
   return memo;
 }
 
-/** The held function's name for a function node, or null when it is no held function. */
+/**
+ * The held function's name for a function node, or null when it is no held function.
+ *
+ * Extracts a function expression no declarator names as a function of its own, named for where it is held: a dialog
+ * output's `subscribe(() => …)` → `<ClubEditDialog@saved@12>`, an `on[A-Z]` option of a component the script opens →
+ * `<ConfirmBox:onConfirm@14>`, a member assigned in a function → `<toast.action@17>`, an object of a declared array →
+ * `<items[].run@3>`, a watcher/effect callback a write in the file re-runs → `<watch@21>`, `<useEffect@7>`,
+ * `<effect@15>` (see `FileAnalysis.reactiveCells`), an option callback a library object runs →
+ * `<useVueTable:onPaginationChange@21>`.
+ *
+ * The walk stops at a held function and records the enclosing function handing it on (`passed: "argument"`; module
+ * code hands it on from `<setup>`). Ordinary inline arrows (`onClick={() => save()}`, a `useEffect` nothing re-runs,
+ * `.then`) stay the writer's.
+ */
 export function heldFunction(node: Node): string | null {
   if (!FUNCTION_VALUES.has(node.type)) return null;
   return heldFunctionsOf(node.tree).get(node.id) ?? null;
@@ -111,6 +124,9 @@ function heldName(fn: Node, imported: () => ReadonlySet<string>): string | null 
  * `useFixtureList((params) => props.fetcher(params))`: an arrow handed to a hook that only calls a function the
  * component's own props hold → `<useFixtureList:arg0@34>`. The hook runs it later; the prop is bound by whoever renders
  * the component, which a link from the arrow's own function reaches once the props are joined.
+ *
+ * An arrow handed to a hook that only calls one of the component's props (`useFixtureList((p) => props.fetcher(p))`)
+ * is held as `<useFixtureList:arg0@34>`.
  */
 function hookPropCallback(fn: Node, args: Node, line: number): string | null {
   const callee = args.parent?.type === "call_expression" ? args.parent.childForFieldName("function") : null;
@@ -131,6 +147,9 @@ function hookPropCallback(fn: Node, args: Node, line: number): string | null {
  * `<Closer handleClose={() => setOpen(false)} />`: an arrow written under a prop of a component tag that no event name marks.
  * One that hands on a function the file declares (`order={(s) => orderKit(s)}`) is that function's handoff already
  * (`jsxFunctionProps`), so it stays unnamed.
+ *
+ * An arrow under a JSX prop no `on…` marks that calls no function of the file is held as `<Tag:prop@line>`; project
+ * components only, never a library's.
  */
 function jsxPropFunction(fn: Node, expression: Node, line: number): string | null {
   const attr = expression.parent;

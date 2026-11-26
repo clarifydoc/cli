@@ -20,6 +20,10 @@ const BODY_START = /^\s*(?:\([^()]*\)|[\w.*[\]]+)?\s*\{/;
  * parameters are read, so a call on one is typed by it. A literal's calls belong to the function that holds it, hence
  * these go in that function's `localTypes`. A name two literals type differently, or one literal leaves untyped, is
  * left out (which one a call sees cannot be told from here), as is a variadic or unnamed parameter.
+ *
+ * Function-literal parameters (`run := func(g *Garage) { g.Open() }`, `func(s *Store) { s.Save() }(nil)`) are soft
+ * `localTypes` of the function holding the literal; a name two literals type differently, or one a
+ * local/parameter/receiver of the function also binds, stays untyped.
  */
 export function goLiteralParams(body: readonly string[]): GoLiteralParams {
   const text = body.map((l) => blankStringLiterals(stripGoComment(l))).join("\n");

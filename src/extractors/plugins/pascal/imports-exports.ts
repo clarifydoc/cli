@@ -11,6 +11,12 @@ import type { ImportInfo, ExportInfo, Language } from "../../imports-exports/bas
  */
 const USES_IN_RE = /\b([A-Za-z_][\w.]*)\s+in\s+'([^']+)'/g;
 
+/**
+ * `uses Unit1 in 'src\Unit1.pas'`: `.dpr` files name each unit's FILE; tree-sitter-pascal ERRORs on the in-clause
+ * (the string never reaches the AST), so the paths are scanned from the source and joined to the walked imports by
+ * unit name; only names that ARE imports are rewritten, so an unrelated `for c in 'abc'` match can never invent
+ * one.
+ */
 export class PascalImportExportExtractor extends ImportExportExtractor {
   readonly languages: Language[] = ["pascal"];
 

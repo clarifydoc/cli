@@ -55,7 +55,10 @@ export const SYNTHETIC_ENTITY = "synthetic";
  * Abstract base for language-specific ORM entity extractors. Each Tier-A
  * language plugin provides one subclass (e.g. `JavaScriptEntityExtractor`)
  * that recognizes that ecosystem's entity definitions and emits entity
- * `ClassInfo`s + `EntityRelation`s.
+ * `ClassInfo`s + `EntityRelation`s. A plugin subclasses it in `plugins/<lang>/entities.ts` and wires the instance as
+ * `meta.entities`; core calls `reconcileProjectEntities` (entities/index.ts), which runs every extractor's
+ * `reconcileProject` once — a family plugin shares one instance across its member metas, so instance identity is
+ * run-once. Language-specific cross-file logic stays in the extractor; core only knows the generic hook.
  */
 export abstract class EntityExtractor {
   /** Languages this extractor handles. */

@@ -49,6 +49,12 @@ const EDGE_KIND: Record<DeployedServiceKind, "http" | "db" | "bus"> = {
 /** One `Add…(…)` or `With…(…)` link of a builder chain. */
 interface Link { method: string; generic?: string; args: string[] }
 
+/**
+ * A .NET Aspire AppHost (`DistributedApplication.CreateBuilder(args)`) is an address book — every resource it adds
+ * (`AddProject<Projects.League_Api>("api")`, `AddNpmApp`, `AddPostgres("pg").AddDatabase("leaguedb")`, `AddRedis`,
+ * `AddRabbitMQ`) under the name service discovery gives it (`https+http://api`), the project it runs, and the
+ * `.WithReference(…)` edges.
+ */
 export function extractAspireResources(sourceText: string): DeployedResourceFact[] {
   if (!/\bDistributedApplication\s*\.\s*CreateBuilder\s*\(/.test(sourceText)) return [];
   const text = blankComments(sourceText);

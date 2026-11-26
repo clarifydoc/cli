@@ -1,3 +1,12 @@
+/**
+ * Named fetch options: `fetch(url, opts)` reads `method` from a same-scope `const` object literal with no spread. A
+ * request descriptor held that way and handed to a wrapper named for a request
+ * (`const ajaxOptions = { url, method }; createAjaxRequest(ajaxOptions)`) reads as one written in place; a descriptor
+ * whose `method` is a conditional of two verbs beside a URL the same test picks (`method: id ? 'PUT' : 'POST'` with
+ * `const requestUrl = id ? `${url}/${id}` : url`) is one request per arm, verb paired with URL; a parameter, `let` or
+ * variable method stays unknown.
+ */
+
 import type { CallInfo, FileAnalysis, FunctionInfo } from "../../../types/analysis.js";
 import { escapeRegex } from "../shared/path-utils.js";
 import { lineStarts, lineOfOffset as lineNo, matchingBracket } from "../shared/text-scan.js";

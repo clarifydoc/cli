@@ -41,6 +41,10 @@ const REGISTRATIONS: Record<string, { template: number; defaults: number; named:
   MapHttpRoute: { template: 1, defaults: 2, named: ["routeTemplate"], webApi: true },
 };
 
+/**
+ * The route tables a startup file registers (`MapControllerRoute`, MVC 5 `MapRoute`, Web API 2 `MapHttpRoute`) are
+ * applied to controllers no attribute routes.
+ */
 export function extractConventionalPatterns(root: Node, sourceText: string, facts: RouteFact[]): void {
   if (!CONVENTIONAL_ROUTE_GATE.test(sourceText)) return;
   const walk = (n: Node): void => {

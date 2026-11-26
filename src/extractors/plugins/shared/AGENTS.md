@@ -1,87 +1,35 @@
-# src/extractors/plugins/shared — Regex extraction framework
+# src/extractors/plugins/shared — Regex extraction framework and helpers several plugins share
 
-Shared logic for regex-path language plugins (the ones whose manifest says `parsing: "regex"`: see [../AGENTS.md](../AGENTS.md)). Tree-sitter plugins do NOT use this — they use `../../shared/` instead.
+Shared logic for regex-path language plugins (the ones whose manifest says `parsing: "regex"`: see [../AGENTS.md](../AGENTS.md)), plus text and node helpers any plugin may use. Tree-sitter plugins use `../../shared/` for the language-agnostic part.
 
-## regex-base.ts
+## Where logic goes
 
-Defines the declarative `RegexLangSpec` contract and the generic extraction engine.
+- **Framework logic that applies to every regex language** → here; if a pattern serves several plugins but not all, it lives here behind a flag on `RegexLangSpec` that opts in.
+- **Language-specific quirks** → in the plugin or its `extractRoutes`.
+- A helper two plugins spell the same way lives here once; a plugin never imports another plugin. Before moving a copy here, compare what the body READS as well as its text: two `scanTags` with the same body read different tag regexes, so they are not the same function. A helper that is one framework's own spelling stays in its plugin with a comment saying how it differs.
 
-### RegexLangSpec
+## The regex framework
 
-```ts
-interface RegexLangSpec {
-  language: Language;
-  functionPatterns: FnPattern[];       // regex + isExported/isAsync predicates
-  classPatterns: ClsPattern[];         // regex + extends extractor
-  importPatterns: ImpPattern[];        // regex + source/specifier extractors
-  indentBased?: boolean;               // indent-delimited languages; brace languages don't
-  blockEnds?: (lines) => Map<number, number>;  // the language's own block ends (by keyword), before the indent/brace guess
-  callSourceLines?: (lines) => string[];       // the lines the call scan reads (a language blanks its heredocs and block comments here)
-  lineCommentPrefixes: string[];       // ["//"], ["#"], ["--"]
-  topLevelCalls?: boolean | RegExp;    // scripts: top-level statements → `<setup>` (a script dialect only)
-  callPatterns?: CallPattern[];        // extra call shapes; `notAfter` skips continuation lines
-  extractRoutes?: (lines, classes) => RouteInfo[];
-}
-```
+- [regex-base.ts](regex-base.ts) — the `RegexLangSpec` contract (`functionPatterns`, `classPatterns`, `importPatterns`, `indentBased`, `blockEnds`, `callSourceLines`, `lineCommentPrefixes`, `topLevelCalls`, `callPatterns`, `extractRoutes`, …; each field's doc comment says what it means — `FnPattern.keywordNames` lets a name spell a keyword) and the generic engine (`extractFunctionsWithSpec`, `extractClassesWithSpec`, `extractImportsWithSpec`, `deriveExportsFromFnClasses(fns, classes)`, `findEndLine(lines, startIdx, indentBased)`, `extractParamsFromLine(line)` for `(a, b: Type, $c)`, `extractCallsFromBody(lines, startLine, endLine, commentPrefixes)`, `CALL_NOISE`, which a call marked `PatternCallName.keepNoise` / `receiver.keepNoise` bypasses). [../../../core/regex-extractor.ts](../../../core/regex-extractor.ts) dispatches to it.
+- [brace-code.ts](brace-code.ts) — a brace language's literal forms (`BraceLexicon`) and the spec hooks built from them (`braceCodeHooks`); Go, Rust, C, C++, Scala and Swift use it. [c-family-code.ts](c-family-code.ts), [call-chains.ts](call-chains.ts), [code-lines.ts](code-lines.ts) build on it.
+- [sql-string-sources.ts](sql-string-sources.ts) — the ONE reader of SQL text (`statementAccesses`); [sql-heredoc.ts](sql-heredoc.ts) reads heredoc SQL.
+- [repository-access.ts](repository-access.ts) — the repository pattern over a generic base (`RepositoryTactics(Generic[Tactic, TacticModel])`, `self.items = repos.items`, `self.repos.clubs.league_table()`), a project pass a plugin's entity extractor calls as `attributeRepositoryAccesses(analyses, knobs)` from `reconcileProject` (C#, Python); a plugin that reads SQL handed to a call emits `joinedTableRows(sql, own, name, line)` for the extra tables.
+- [handler-taint.ts](handler-taint.ts) — request input followed through one handler to a sink; the plugin's `ast.taint` hook or a regex language's `regexTaint`. Per language: [Python](../python/AGENTS.md), [JavaScript](../javascript/AGENTS.md), [Go](../go/AGENTS.md), [Ruby](../ruby/AGENTS.md), [Rust](../rust/AGENTS.md).
+- C-family front-end helpers, used by the C and C++ readers ([C](../c/AGENTS.md), [C++](../cpp/AGENTS.md), [parsers](../../../parsers/AGENTS.md)): [preprocessor-branches.ts](preprocessor-branches.ts) `readWithBranches`, [token-calls.ts](token-calls.ts) `tokenCalls`/`defineCalls`/`leftOutCalls`, [c-family-macros.ts](c-family-macros.ts) `extractCFamilyMacros`/`macroBodyCalls` (Objective-C reads its own through `extractMacros` on its spec).
+- [shebang-scripts.ts](shebang-scripts.ts) — extension-less `#!` scripts for the reachability models' name mentions; discovery admits the same scripts through each manifest's `shebangInterpreter` and shares the bounds.
+- [inflection.ts](inflection.ts) (`singularize`/`pluralize`, `camelCase`), [declared-package.ts](declared-package.ts) (`tomlSectionValue(text, sections, key)`), [project-info-queries.ts](project-info-queries.ts) (predicates for `frameworks.ts` rules), [security-context.ts](security-context.ts) (`CREDENTIAL_CONTEXT`).
 
-A language whose blocks neither braces nor indentation delimit reliably supplies `blockEnds` (0-based start line → 1-based last line, memoized per `lines` array): Ruby's [ruby/blocks.ts](../ruby/blocks.ts) blanks non-code (heredocs, `%w[]`, `=begin`, `#{}`, regex literals) and closes `def`/`class`/`if`/`do` at their `end`, so a method-level `rescue` stays in its method and a heredoc at column 0 does not end the class. A start it does not list falls back to `findEndLine`. `FnPattern.keywordNames` lets a name spell another language's keyword (`def self.for`).
+## Text and node helpers
 
-A language whose call forms the patterns state completely sets `replacesBaseline` on one of them, and the baseline `name(` matcher is skipped (PowerShell: `Write-Output (Get-Date)` is no call of `Output`).
-
-A `CallPattern` anchored at a statement's start (VB's parenthesis-less `ProcessOrders conn`) sets `notAfter` — a regex the previous line (strings blanked, comment dropped) matches when it carries the statement on — so a continuation line (`b Then` under `If a AndAlso`) is never read as a call.
-
-### Generic extractors
-
-These consume a `RegexLangSpec` and produce standard output:
-
-- `extractFunctionsWithSpec(lines, spec)` — top-level functions
-- `extractClassesWithSpec(lines, spec)` — classes + methods + properties (runs function patterns on class body lines)
-- `extractImportsWithSpec(lines, spec)` — imports, one `importPatterns` match per line; a spec whose imports are structural sets `extractImports` instead (Go: only inside `import` declarations, aliases kept as the specifier — a per-line `"…"` pattern took every string line for an import and missed `alias "path"`)
-- `deriveExportsFromFnClasses(fns, classes)` — all public functions + classes become exports
-- `repository-access.ts` `attributeRepositoryAccesses(analyses, knobs)` — the repository pattern over a generic base (`ITrophyRepository : IBasicRepository<Trophy>`, `RepositoryTactics(Generic[Tactic, TacticModel])` — see [C#](../csharp/AGENTS.md) and [Python](../python/AGENTS.md)): walks the typed member chain across files (a member assigned a chain on a typed constructor parameter, `self.items = repos.items`, included) and puts the generic's entity-typed argument on every CRUD-shaped call, and on a call of any other method the repository type declares whose body (or a same-instance method it calls) states an access on the instance's model (`DataSourceInfo.entityAttribute`: `self.repos.clubs.league_table()` → `select(self.model)`; a subclass override naming its own model is left to its own rows) — a wrapper whose type arguments name no entity (`HttpRepo[ClubCreate, ClubOut]`) takes the entity of the repository it was built with (by a property or a method returning the construction, `self._mixins(id).create_one`; calls along a chain are typed by what they return); a plugin's entity extractor calls it from `reconcileProject` with its spelling knobs (C#, Python)
-- `inflection.ts` `singularize`/`pluralize` — the loose English inflection ORM conventions share (Crystal, Dart)
-- `declared-package.ts` `tomlSectionValue(text, sections, key)` — a manifest's own `[package]`/`[project]` name
-- C-family front-end helpers, used by the C and C++ readers ([C](../c/AGENTS.md), [C++](../cpp/AGENTS.md), [parsers](../../../parsers/AGENTS.md)): `preprocessor-branches.ts` `readWithBranches(text, cplusplus, read)` (`#if` dead blocks blanked, a file that does not parse read again with each conditional's first branch), `token-calls.ts` `tokenCalls`/`defineCalls`/`leftOutCalls` (calls read off a lexer's tokens where a parse reads no expression), `c-family-macros.ts` `extractCFamilyMacros`/`macroBodyCalls` (function-like `#define`s → `FileAnalysis.macros`; Objective-C reads its own through `extractMacros` on its spec)
-- `sql-string-sources.ts` — the ONE reader of SQL text: `statementAccesses(sql)` gives every table and routine a statement names, its own target first, then each further source as a `joined` read (JOINs, comma joins, subqueries and CTE bodies, `INSERT … SELECT`, `UPDATE … FROM` with the alias resolved, `DELETE`/`MERGE … USING`; CTE names, JPQL join paths and the engine catalogue never). `extractSqlStringDataSources(lines)` scans a file's string literals with it (regex plugins); a plugin that reads the SQL handed to a call (Python, JS/TS, Java, C#, PHP, MyBatis XML) emits its own row for the statement and `joinedTableRows(sql, own, name, line)` for the rest, or `sqlAccessRow` per access
-
-### Helpers
-
-- `findEndLine(lines, startIdx, indentBased)` — brace-depth or indent-depth end detection
-- `extractParamsFromLine(line)` — parses `(a, b: Type, $c)` — handles `$var`, type-first, name-first
-- `extractCallsFromBody(lines, startLine, endLine, commentPrefixes)` — regex-based call detection including:
-  - `obj.method(` and `$this->obj->method(` (arrow chains)
-  - `ClassName.method(` / `ClassName::method(` (static)
-  - `self.service.method(` (Python/Ruby)
-  - Plain `fn(`
-
-Calls get `kind: "internal"` by default — classification happens later in the core pipeline via `classifyCalls()`.
-
-### CALL_NOISE
-
-Shared set of method names to skip (`len`, `print`, `append`, `map`, `filter`, etc.). Per-language plugins don't need their own noise lists. A call a plugin marks `keepNoise` (`PatternCallName.keepNoise`, the recorder's `receiver.keepNoise`) bypasses it: Rust's path call through a project module (`util::format()`, not `std::`/`core::`/`alloc::`) names its function whatever the leaf.
-
-## Adding logic here vs in a plugin
-
-- **Shared framework logic** (applies to all regex languages) → here
-- **Language-specific quirks** → in the plugin or `extractRoutes`
-
-If a pattern is used by multiple plugins but not all, it probably belongs here with a flag on `RegexLangSpec` to opt in.
+- [text-scan.ts](text-scan.ts) — plain text: `lineAt`, `lineIndex`/`lineStarts`/`lineOfOffset`, `preparedLines(blank)`, `blankStringAwareComments`, `matchingBracket`, `balancedArgs`, `splitTopLevelCommas`, …. A plugin never declares its own offset → line counter or an inline `slice(0, i).split("\n")`; a loop over matches builds one `lineIndex(text)` before it. A language's comment/string spelling is an option of `blankStringAwareComments`, never a private copy.
+- [code-lines.ts](code-lines.ts) — one line of a brace language read as code (`codeOf`, `splitArgs`, `statementsOf`, …); the line-based DI readers (Dart, Scala, Swift) use it.
+- [ts-nodes.ts](ts-nodes.ts) — `namedChildren` / `descendants` for the grammar-backed readers of regex languages; [callee-names.ts](callee-names.ts) holds `idStep`.
+- [function-postprocess.ts](function-postprocess.ts) — `dropNestedFunctions`, `tidySetupCalls` for the regex script plugins.
+- Declared elsewhere: `splitGeneric` in `../../shared/type-parser.ts`, `isAuthGuard` and `middlewareGuardOf(expr, authRe, schemeRe)` in `../../shared/route-metadata.ts`, `unwrapParenthesized` in `../../shared/node-helpers.ts`.
 
 ## Conventions
 
-- **Line-by-line processing** — all pattern matching operates on one line at a time
-- **Indent-based languages** need `indentBased: true` and correct indentation — ragged inputs will produce bad end-line estimates
-- **Params/properties are best-effort** — the regex won't handle every corner case (default values with commas, generic brackets with commas). That's OK; tree-sitter is the accurate path when available.
-- [shebang-scripts.ts](shebang-scripts.ts) `findShebangScripts` reads extension-less `#!` scripts for the reachability models' name mentions. Discovery admits the same scripts as analyzed files through each manifest's `shebangInterpreter` (core/file-discovery.ts); the two share the bounds (regular files, no dotfiles or credential-looking names, first bytes before the whole file).
-
-## Text and node helpers several plugins share
-
-A helper two plugins spell the same way lives here once; a plugin never imports another plugin.
-
-- [text-scan.ts](text-scan.ts) — plain text: `lineAt` (one lookup), `lineIndex`/`lineStarts`/`lineOfOffset` (many, the index lazy; a plugin never declares its own offset → line counter or inline `slice(0, i).split("\n")`, and a loop over matches builds one `lineIndex(text)` before it), `preparedLines(blank)` (a plugin's cached comment-blanked text + line lookup), `lineEnd`, `blankCComments`, `matchingParen`, `blankStringAwareComments` (comments blanked past strings, whose contents it can empty too; a language's spelling — quote characters, strings ending at the line, `#` comments, an unclosed `/*` as text — is an option, never a private copy) and `matchingBracket` (`quotes` to skip strings, `pair` to count one pair; differential tests in `text-scan.test.ts` hold both to the copies they replaced), `balancedArgs`, `callArgsAt`, `wrapsWhole`, `splitTopLevelCommas`.
-- [code-lines.ts](code-lines.ts) — one line of a brace language read as code: `codeOf` (strings and the `//` comment blanked at the same columns), `closeOf`, `window`, `splitArgs` (raw and code copies aligned), `statementsOf`, `statementsWithLine`, `continuedBelow`. The line-based DI readers (Dart, Scala, Swift) use them.
-- [ts-nodes.ts](ts-nodes.ts) — `namedChildren` / `descendants` over a tree-sitter node, for the grammar-backed readers of regex languages; `idStep` is in [callee-names.ts](callee-names.ts).
-- [inflection.ts](inflection.ts) also holds `camelCase` (the JSON name .NET serializers give a property: C#, VB); `splitGeneric` is in `../../shared/type-parser.ts`, `isAuthGuard` in `../../shared/route-metadata.ts`, `unwrapParenthesized` in `../../shared/node-helpers.ts`.
-
-Before moving a copy here, compare what the body READS as well as its text: two `scanTags` with the same body read different tag regexes (one admits `:` in a tag name), so they are not the same function.
-- [function-postprocess.ts](function-postprocess.ts) — `dropNestedFunctions` (a function declared inside another belongs to it) and `tidySetupCalls` for the regex script plugins. `extractors/shared/route-metadata.ts` `middlewareGuardOf(expr, authRe, schemeRe)` is the shared middleware → guard rule; each framework states its two regexes. A helper that is a framework's own spelling stays in its plugin with a comment saying so (Laravel's `snake` keeps `HTTPServer` one word, unlike `inflection.ts` `underscore`).
+- **Line-by-line processing** — all pattern matching operates on one line at a time.
+- **Indent-based languages** need `indentBased: true` and correct indentation — ragged inputs give bad end-line estimates.
+- **Params and properties are best-effort** — the regex will not handle every corner (default values with commas, generic brackets with commas); tree-sitter is the accurate path when there is a grammar.
+- Calls get `kind: "internal"` by default; classification happens later in `classifyCalls()`.

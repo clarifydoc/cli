@@ -15,6 +15,10 @@ import { HUMA_AUTOPATCH_FACT, HUMA_OWNER, HUMA_SERVER_FACT, type HumaServerFact 
  * With `autopatch.AutoPatch(api)` anywhere in the project, every operation path
  * that has a GET and a PUT also answers PATCH: Huma synthesizes it as a GET,
  * a merge, then the PUT, so the row anchors on the PUT's registration.
+ *
+ * `RouteInfo.registrar` (the function whose body declares a Huma operation) is part of `routeIdentityKey` and of the
+ * route's symbol (`route:GET /items @registerClubs`, `routeSymbolName` in core/route-symbol.ts), so two registrars of
+ * one file never share a symbol, reach or data-access row.
  */
 export const humaBaseResolver: RouteResolver = {
   id: "huma-base",

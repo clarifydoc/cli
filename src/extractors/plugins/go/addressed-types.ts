@@ -52,6 +52,15 @@ const AMP_LITERAL_RE = new RegExp(`&\\s*(?:\\w+\\.)*(${IDENT})\\s*[{\\[]`, "g");
 const NEW_RE = new RegExp(`\\bnew\\s*\\(\\s*(?:\\w+\\.)*(${IDENT})`, "g");
 const AMP_VALUE_RE = new RegExp(`&\\s*(${IDENT})\\b(?!\\s*[{(])`, "g");
 
+/**
+ * Method sets follow the receiver kind. `FunctionInfo.pointerReceiver` marks `func (c *T)` (both front ends read it
+ * from the declaration line); `FileAnalysis.addressedTypes` lists types a file uses by address — `&T{…}`, `*T`
+ * outside a receiver, `new(T)`, `&x` of a local or parameter declared `T` (an `&x` it cannot type adds every value
+ * type the file names). With `structuralMatch.receiverKinds` the interface map leaves a pointer-receiver method out
+ * of the method set of a type no file addresses, so a value-only type implements nothing needing it and is never
+ * fanned out to; an embedded type always counts as addressed. Value locals and value types are read only when an `&x`
+ * of a value exists.
+ */
 export function goAddressedTypes(lines: string[]): string[] {
   const found = new Set<string>();
   const text = code(lines);

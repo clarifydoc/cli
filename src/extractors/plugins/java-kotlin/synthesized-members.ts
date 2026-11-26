@@ -26,6 +26,20 @@ import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../
  * Each is marked `synthetic` and points at the line it is generated from (the
  * field or record component, else the class). A member the class writes
  * itself (same name, same arity) is never shadowed.
+ *
+ * The generated classes are named `AutoValue_X` and `ImmutableX` after the written class `X`.
+ *
+ * Lombok `@Builder` (on a class, constructor or static method) names its builder class and methods by
+ * `builderClassName`/`builderMethodName`/`buildMethodName`, else `<Result>Builder`/`builder`/`build`; `@Singular`
+ * takes the name it states (`players` → `player` otherwise). `@AutoValue` nested in an owner is `AutoValue_Outer_Inner`
+ * (through class, record and enum owners); a Kotlin enum states a static `entries` typed `List<X>`. Immutables apply
+ * only to the qualified `@Value.Immutable` spelling, never one with `@Value.Style`; `@Value.Parameter` attributes
+ * give `of(…)`, `@Value.Default` setters are included, and the builder is `ImmutableClub_Builder` (a unique name,
+ * since a class is told apart by file and name) with `ClassInfo.nestedPath` `ImmutableClub.Builder`, the owner path
+ * a written type means it by — the Lombok builder states `Club.ClubBuilder` the same way. A generated AutoValue or
+ * Immutables class carries `ClassInfo.yieldsTo` (the written sibling it stands for) and core's `dropYieldedClasses`
+ * drops it where the same sub-project writes a class of that name. MapStruct needs nothing: the mapper interface's
+ * own methods already carry the return types a chain continues through.
  */
 
 const ANN = (name: string) => new RegExp(`^(?:lombok\\.(?:experimental\\.)?)?${name}(?:\\s*\\(|$)`);

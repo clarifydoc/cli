@@ -25,6 +25,23 @@ import { byOrdinal } from "./ordinal.js";
  * carries that field — of the receiver, and of whatever parameter the object
  * or a literal holding it is handed to. A call the linker did not resolve
  * ends the walk.
+ *
+ * Starting points: the route's own calls (`argOrigins` `route-param`/`query-param`); the handler's parameter of
+ * that name (`RouteParamInfo.variable` when named otherwise) or its own request read (hop `arg: -1`), including a
+ * field of a parameter whose declared type a binder fills (`PropertyInfo.boundFrom`); a callee the framework
+ * hands the route's parameters by name (`CallInfo.routeParamsByName`); any other function the route runs reading
+ * the request itself. Carriers: a field slot through `receiver-field`/`param-field` origins, the receiver handed
+ * on whole (`receiver`, index -1 for a call made on it), composite literals' fields (`CallArgOrigin.field`); an
+ * object handed to a generic handler that calls a method on it goes on through the call site's
+ * `interface-redirect` link; a `request-param` origin (path and query merged) matches either binding. Entities a
+ * later project pass settles are filled in after it by `fillParamColumnEntities`; an argument given by name
+ * (`CallArgOrigin.param`) lands on the callee's parameter of that name and is the only kind followed through a
+ * dispatch link; an extension method's receiver parameter is skipped; of overloads the link's target line picks
+ * one. Statements that filter: `DataSourceInfo.whereFields` (a generic repository's column parameter
+ * `whereFields[].fieldParam` takes the literal the walked call hands it) or `DataSourceInfo.whereObjects` (a
+ * filter on a whole object, less the fields written first, `except`); a struct member settles to its column
+ * through the mapper's tag, else the mapper convention (`whereFields[].fieldOf`, `whereObjects[].columns`). Six
+ * calls deep, 32 rows per route.
  */
 
 const MAX_DEPTH = 6;

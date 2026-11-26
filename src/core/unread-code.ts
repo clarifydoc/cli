@@ -9,7 +9,10 @@ const MAX_EXAMPLES = 3;
 /**
  * Code files no plugin reads, counted by extension from their paths alone (discovery already matched them by name;
  * nothing is opened). Files under a vendored root (`third_party/`, `vendored/`…) and minified or generated names
- * are left out. `paths` come sorted (discovery sorts them), so each extension's examples are its first three. Largest first, capped at 10 extensions with 3 example paths each; empty when there are none.
+ * are left out. `summarizeUnreadCode(paths)` takes `DiscoveryResult.unreadCode` (the `.clarifydocignore` already applied); the
+ * extension list is `extractors/shared/known-code-extensions.ts` minus every extension a plugin claims
+ * (`UNCLAIMED_CODE_EXTENSIONS`), and an extension that is as often data (`.cbl` reading lists, `.cue`) stays off it. Surfaces:
+ * `ProjectAnalysis.unreadCode`, the `Not read:` line of `analyze`, `clarifydoc_status`. `paths` come sorted (discovery sorts them), so each extension's examples are its first three. Largest first, capped at 10 extensions with 3 example paths each; empty when there are none.
  */
 export function summarizeUnreadCode(paths: readonly string[]): UnreadCode[] {
   const posix = paths.map((p) => p.replace(/\\/g, "/"));

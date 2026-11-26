@@ -146,6 +146,20 @@ export function handledScopedElements(analyses: FileAnalysis[], run: DispatchRun
   return resolveScoped(analyses, run).handled;
 }
 
+/**
+ * `dispatch:scoped-handler`: a template handler under a component scope links to that component's member. AngularJS
+ * `ng-click` under `ng-controller="ClubCtrl"` (or, in a partial a `templateUrl` route binds, to that controller) and
+ * Alpine `@click` under `x-data="clubForm"` read `InteractiveElementInfo.componentScope`. The module side is
+ * angularjs.ts: a class named for what the injector registers (`angular.module(…).service/factory/controller`,
+ * `this.load = function`, `$scope.save = function`, a returned object's functions; `ClassInfo.registered`, found by a
+ * type's name and never by an import's binding, so a server's `var orders = require(…)` keeps its module), its
+ * injected parameters typed by the name they are injected by (parameter name, array annotation or `$inject`) and
+ * `FileAnalysis.scopeRegistrations` (`Alpine.data("clubForm", clubForm)` followed through the import, a route's
+ * `templateUrl` + `controller`) naming the factory; an exported default factory function's returned methods are
+ * `clubForm.save`. A name two apps declare is refused unless the page's own sub-project picks one; an element the
+ * scope joins is left to the by-name `dom-binding` pass (dom-bindings.ts, dom-binding-resolver.ts). AngularJS markup
+ * also reads a slashless `href="#Garage"`. Test: alpine-handlers.test.ts.
+ */
 export class ScopedHandlerResolver implements DispatchResolver {
   readonly id = "scoped-handler";
   readonly languages: Language[] = ["javascript", "typescript", "html", "handlebars", "liquid", "velocity", "razor", "ejs", "erb", "jsp", "php", "heex"];

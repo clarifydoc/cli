@@ -9,6 +9,13 @@ const join = (root: string, rest: string): string => (root && rest ? `${root}/${
  * importing module's `vendor/`. An import no module of the repository declares
  * (the standard library, a download) is none of its packages. With no module
  * known (no go.mod in the analysis) it cannot say.
+ *
+ * A Go package is its directory (manifest `importsNameDirectories`): an import is the repository package's `go.mod`
+ * module path (or a `replace` to a local directory) plus the directory; the standard library and downloads are no
+ * directory. Else the directory whose path ends with the longest run of the import's segments (a tie is no edge),
+ * narrowed to the files declaring a name the importer uses, tests excluded. Dead code reads these edges as
+ * reachability, so a phantom fan-out hides real gaps. `directoryScope` resolves a bare call a file does not define
+ * into the caller's package directory: the one non-test sibling file declaring it.
  */
 export function goPackageDirectory(
   importingFile: string,

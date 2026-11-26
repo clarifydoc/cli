@@ -85,6 +85,102 @@ interface SymbolDef {
  * to the function/method definition it targets.
  *
  * Runs as a post-analysis pass after all files have been individually analyzed.
+ *
+ * Every link carries a `strategy` and a `relation` (`relationForStrategy`), both set at each construction
+ * site. A fallback cascade picks the target, roughly in this order:
+ * - Direct: where functions nest, a bare name is the function declared inside the caller, else the innermost
+ *   enclosing scope's, before a top-level namesake or an import of that name (another function's inner helper
+ *   only when the caller is handed it, INFERRED). Names fold case where the manifest says
+ *   `caseInsensitiveNames`/`caseInsensitiveCallables`. A call into a file that only re-exports the name follows
+ *   the re-exports to the definition, unique-or-nothing.
+ * - Bare `super`: the base class's same-named method, or its constructor from a constructor.
+ * - Inheritance: C3 order where the manifest says `multipleInheritance`; `this.foo` on the enclosing class and
+ *   its bases first; another class's member of the file only from a class it encloses, never from a free
+ *   function, unless `bareCallsHideReceivers` (the extractor reads `p->foo()` as `foo`: then an INFERRED
+ *   guess); calls on the instance itself then reach
+ *   the ONE mixed-in module, trait or interface defining it.
+ * - Declared-type resolution (`resolveThroughDeclaredType`), then `linkThroughPoint`.
+ * - Deep-qualified names never match a chain's leaf alone on a file its head's name chose; a factory-via link
+ *   names the factory FUNCTION a library-made receiver came from, never a receiver the caller constructed.
+ * - `ClassName.method`: a relative namespace falls back to the ONE declared class whose name ends that way. With
+ *   `classNamesByEvidence` the class binds only through the caller's own evidence (own file, an import naming it,
+ *   `declaredNamespace`, a fully qualified name) and the unique-global guess never re-links a refused head; with
+ *   `valuePathsNameNoType` a `receiverCut` name is refused by the guess too.
+ * - Constructor: a call naming a class lands on the constructor the class declares (`constructorNames`, never a
+ *   base's); a class without one stays the target, a JSX element stays on the class, a function named `new` is
+ *   reached only by `new X`.
+ * - Package-qualified import head; a function by its namespace-qualified name (`FileAnalysis.declaredNamespace`).
+ * - Bare call into shared scope: a used unit (`importsShareScope`: a header's declarations are defined by the
+ *   files sharing its stem, `declarationExtensions`; a `static` body never), a wildcard import's exports, the
+ *   caller's package directory (`directoryScope`: the one non-test sibling declaring it), a module named by its
+ *   DECLARED name.
+ * - Unique-global-leaf, evidenced and import-blind. Imported files come from the language's
+ *   `resolveImport`/`importedFile` rule, else the generic path rules; a barrel hands on what it imports, three
+ *   deep; a loader finding files by the constants they define adds them (`autoloadedFiles`); where imports name
+ *   packages (`importsNamePackages`) an import is the files whose `FileAnalysis.packageName` it names.
+ *   `typeNamedByReceiver` (`match_report` to `MatchReport`) is evidence too. Vetoed when the receiver's type
+ *   (typed local, parameter, field or `CallInfo.receiverType`, builtin included) names another class; on a chain
+ *   that type is what the chain resolves to, and a class head vetoes only a call on the class itself. A
+ *   receiver's name is evidence only as the segment right before the method (`club.league.markTable` is called
+ *   on `league`; `PlayerService.instance.x` on what `instance` holds). Refused (`receiverTypeRefuses`)
+ *   when a head the callable binds types the receiver through its chain to a project class that, with ancestors
+ *   and mixins, lacks the member. `CallInfo.receiverCut` (a name keeping only the receiver's last names) has no
+ *   head the caller binds, so `chainReceiverType`, `receiverTypeRefuses` and the guess's declared type leave it
+ *   alone (`receiverCutName`).
+ * - Generic type-argument, plus the route, spec, fan-out and reference producers.
+ * - Abstract dispatch (`abstractDispatchLinks`): a call landing on an abstract method (`FunctionInfo.abstract`) is re-aimed at the ONE
+ *   override below the class it dispatches on.
+ * - Extensions: an extension's receiver parameter makes its type's fields the body's, and a chain step the type
+ *   lacks goes on through the extension of that name. An extension on a builtin collection of one element
+ *   (`collectionElementOf`) takes the one such extension (`collectionExtensionLink`).
+ *
+ * `resolveThroughDeclaredType` types a receiver chain through field types AND declared return types
+ * (`a.getB().getC().m()`, `new X(…).m()`, a static member, fluent `$this`/`static`/`Self` returns, a local
+ * typed by its initializer call `localTypes[].from`). The receiver is, in order: a typed local; a parameter; a
+ * field of the ENCLOSING class (own constructor parameters, inherited fields); a typed module-level variable
+ * (`FileAnalysis.moduleBindings`: the file's own, an exported one of a unit `importsShareScope` puts in scope,
+ * or of a library an `ImportInfo.inScope` import names; a `show` list narrows it, two units typing it
+ * differently decide nothing; `typesSpanFiles` counts other parts of one type in the directory); or a member
+ * chain through declared field types, or `CallInfo.receiverType`.
+ *
+ * `linkThroughPoint` then tries a container registration (`di-binding`, `boundImplementation`); an interface
+ * with ONE implementation and no extending interface implemented, or an abstract class with ONE concrete class
+ * below it (`interface-redirect`); else the declared type's own or inherited member (`injection`); else the ONE
+ * interface method the type, or one of its `ClassInfo.extension` parts, implements. A redirected or bound call
+ * also emits a `reference` link to the interface method so the interface keeps its callers. Name-classified
+ * `database`/`api-call` calls resolve ONLY through this tier.
+ *
+ * Module-level and local typing: a module-level binding types a call where the function reads it
+ * (`moduleLocalsInScope`); a function rebinding the name lists it in `FunctionInfo.boundNames`, and `scopedName`
+ * skips the module's `<setup>` local for it. A bare name no local, parameter or field takes reads the file's
+ * `moduleBindings` (typed, or `from` an initializer call typed by its callee's declared result), then, where
+ * `directoryNamesShared` makes a directory one package, its siblings' and their functions. A local typed
+ * through an imported module (`m.Club`) takes the class that module's file declares (`moduleQualifiedType`).
+ * A local typed by its initializer call inside a function written in place (`<watch@12>`) uses the enclosing
+ * function's call, innermost first (`importedFunctionLink`). A held noise member called through a path from a
+ * typed head is restored (`restoreTypedReceiverCalls`); where includes share scope, `methodBesideClass` is scoped
+ * by the caller's include closure. A call the syntax makes (`CallInfo.syntax`) links only through the receiver's
+ * declared type or the enclosing class, never a name guess (`resolveCallToDefinitionBody`).
+ *
+ * Special reads: the per-caller-and-name dedupe keeps the highest-confidence link at the EARLIEST `sourceLine`,
+ * the target never moves. A name handed on rather than invoked (`CallInfo.passed`) links as `relation: "passes"`
+ * (`resolvePassedName`), only to a function, method, class or default export, never through a name-only guess; a
+ * factory's whole result handed on passes the factory, a name destructured from it passes what it returns under
+ * that key (`CallInfo.returnedAs`) or nothing. Reach, screens, trace and impact follow it; sequence diagrams,
+ * param-columns, param-origins and arity checks skip it. A read without parentheses (`CallInfo.read`) links by
+ * `resolveReadName` only when it resolves without guessing to a function or method (`calls` when it returns a
+ * value, `passes` when a procedure) or a construction; a field, variable or class read draws no edge.
+ * `PropertyInfo.readAccessor` answers in the symbol index with its method. Schema classes
+ * (`declaresSchemaTypes`) are no strategy's target and stay out of the symbol index.
+ *
+ * Heuristic-tier guards: same sub-project, never into test-fixture paths, the registry's `builtinMembers`
+ * stoplist, the caller's language's `untypedReceiverMembers`. A `FunctionInfo.explicitInterface` member never
+ * takes the class-qualified or bare name of a same-named member (`SymbolDef.explicitOnly`): a class-typed
+ * receiver reaches the public member, an interface-typed one `explicitImplementation`. A call through a nested
+ * type's owner path (three or more capitalized segments) resolves in `classNameMember` on the class declared
+ * inside the owner's body; with `ownerPathTypes` a written TYPE resolves by `ownerPathIn`, both through
+ * `classesAtOwnerPath`. `nestedTypePaths`/`lexicalConstants` name the class by its path in the class id and
+ * `typePaths`.
  */
 export function buildSymbolLinks(
   input: FileAnalysis[],

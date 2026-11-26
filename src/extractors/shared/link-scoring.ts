@@ -90,7 +90,8 @@ const UPDATE_METHODS = new Set([
 
 /**
  * Build a weighted link graph from all file analyses.
- * Each link has a proximity score: 1 (tight), 2 (medium), 3 (loose).
+ * Each link has a proximity score: 1 (tight: lifecycle hooks, immediate imports — `useEffect`, `onMounted`),
+ * 2 (medium: watchers, computed, store use — `watch`, `useSelector`), 3 (loose: event handlers — `onClick`).
  */
 export function buildLinkGraph(analyses: FileAnalysis[]): LinkInfo[] {
   const filePathMap = buildFilePathMap(analyses);
@@ -382,6 +383,10 @@ const resolveCache = new WeakMap<Map<string, string>, Map<string, string | null>
  *  - Bare unit: "UserModel" → matched against file basenames (Delphi, Pascal)
  *  - Dotted module: "models.user", "services.user_service" → converted to path (Python)
  *  - Package: "com.example.api.service.UserService" → last segment matched (Java/Kotlin)
+ *  - A path written with its extension (C `#include "league/club.h"`, PHP `include 'inc/header.php'`) from no
+ *    directory the importer or the root spells: the one file whose path ENDS with it, extension included
+ *    (`uniquePathEnding`) — never the `club.c` sharing the header's stem; two files spelling it alike stay unresolved
+ * External packages (prefixes contributed by plugin metas through the registry) resolve to null.
  */
 export function resolveTarget(importSource: string, sourceFile: string, filePathMap: Map<string, string>): string | null {
   let cache = resolveCache.get(filePathMap);

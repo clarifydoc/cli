@@ -25,6 +25,14 @@ import { VOID_TAGS } from "../shared/void-tags.js";
  *
  * There are no functions/classes in HTML markup (the behaviour lives in the
  * `<script src>` JS files, parsed by the JS plugin), so those patterns are empty.
+ *
+ * A `<form>` (and its submit controls) with no `action`, or `action=""`, is marked
+ * `InteractiveElementInfo.ownViewPost`: it posts to its own page. A template expression in the attribute is a URL
+ * and never marks it, and GET never does; core gives the form `POST <path>` when every route rendering the screen
+ * (`ScreenInfo.renderedBy`) is at one path, so the api-call joins the route linker like a written-out action. An
+ * element's `column` (the tag's offset) is stated only on one carrying a `request` or `ownViewPost`, and only while
+ * the masked line still starts with the given one (a removed comment shifts it). A file routing itself (an HTML
+ * page) that a route table also routes is one screen.
  */
 
 // ─── Generated API-doc detection ────────────────────────────────────────────

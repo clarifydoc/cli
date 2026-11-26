@@ -1,3 +1,11 @@
+/**
+ * Objective-C front end: message sends on property paths, constructions and other sends; a method is named by its
+ * selector's first piece, as the patterns name it. A chain is named up to eight calls deep (`CHAIN_DEPTH`) and the linker
+ * types each step through declared return types. `[[Club alloc] init…]` and `[Club new]` are constructions
+ * (`CONSTRUCTING`: `alloc`, `new`); with `constructorCalls: ["init", "new"]` the link goes to the class when it declares
+ * no `init` of its own, as a Java `new Club()` without a declared constructor does. `no-tree-sitter:objc` (feature
+ * `tree-sitter`) switches it off; a file with syntax errors keeps the regex reading (`FileAnalysis.frontEnd`).
+ */
 import type { ParsedFunctionSpan, ParsedStructure } from "../../../types/language-plugin.js";
 import type { TSNode } from "../../../parsers/parser-manager.js";
 import { recordPatternCalls, type PatternCallName } from "../shared/antlr-calls.js";

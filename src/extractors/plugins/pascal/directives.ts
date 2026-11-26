@@ -54,6 +54,16 @@ const ELSE_GROUP = /\{\$IF(?:N?DEF|OPT)?\b[^}]*\}((?:(?!\{\$)[\s\S])*?)(\{\$ELSE
  * (`inline;` is a valid routine directive whether the symbol is defined or
  * not), a one-line group's `{$ELSE}` branch and a strings-only group. Every
  * other character, line and column stays where it was. Null when the file has none.
+ *
+ * Conditional compilation, the meta's `preprocess`: a `{$IFDEF …}` group that wraps nothing but routine directives
+ * after a header (`function Size(…): Integer; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}`) cannot be placed by the
+ * grammar between a header and its body — the rest of the unit would become one parse error and its routines would
+ * be lost — so such groups are rewritten before parsing; so are a one-line `{$IFDEF X} A {$ELSE} B {$ENDIF}`
+ * inside a declaration or expression (the first branch is kept), a group holding only string literals (a unit that
+ * refuses to compile for an unsupported platform: blanked) and a group right after a routine header wrapping its
+ * `var`/`const`/`type`/`label` sections (the directives are blanked, the declarations kept). A reader that cuts
+ * text before matching (Pascal's comment stripper) states a column only when the line's text before it is
+ * unchanged.
  */
 export function pascalDirectivePreprocess(rawSource: string, relativePath: string): PreprocessOutcome | null {
   if (!/\.(?:pas|pp|dpr|dpk|lpr|inc)$/i.test(relativePath) || !rawSource.includes("{$")) return null;

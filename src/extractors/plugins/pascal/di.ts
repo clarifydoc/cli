@@ -310,6 +310,11 @@ const REGISTRATION_GATE_RE = /\bRegister(?:Type|Instance)\b/i;
  * implements, found by RTTI at run time — not decidable from the text, so it
  * is skipped; so are self registrations. Lifetime links (`AsSingleton`,
  * `AsTransient`, …) say nothing about the implementation and are ignored.
+ *
+ * Lookups (`GlobalContainer.Resolve<IRepo>`, `ServiceLocator.GetService<IClock>`) and the locals a routine declares
+ * or fills from either are read beside the registrations (`GlobalContainer.RegisterType<TSqlRepo>.Implements<IRepo>`,
+ * optionally a name). The symbol linker joins them; nothing here decides which implementation an injection point
+ * receives. Generic instantiations are `exprTpl` nodes in the tree.
  */
 export function pascalDiBindings(tree: Tree, sourceText: string, _filePath: string): DiBinding[] {
   if (!REGISTRATION_GATE_RE.test(sourceText)) return [];

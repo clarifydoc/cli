@@ -21,6 +21,8 @@ import { commonPrefixLength } from "../shared/path-utils.js";
  * resolves via its callName fallback. Joined by CLASS NAME; when several
  * classes share a name (e.g. two app versions vendored in one repo), the
  * candidate whose path shares the longest prefix with the UI file wins.
+ *
+ * The partial-class join is language-agnostic, which is why VB and XAML code-behind reach it.
  */
 export class CsharpUiBridgeResolver implements DispatchResolver {
   readonly id = "dotnet-ui";

@@ -61,6 +61,14 @@ function typedClientKey(generic: string): string | null {
   return last && /^[A-Za-z_]\w*$/.test(last) ? last : null;
 }
 
+/**
+ * `IHttpClientFactory` — typed (`AddHttpClient<InventoryClient>(c => c.BaseAddress = …)`;
+ * `AddHttpClient<IInventory, InventoryClient>` is the implementation, where the HttpClient lands) and named
+ * (`AddHttpClient("legacy", …)` reached through `factory.CreateClient("legacy")` → `name:legacy`); a class that
+ * sets its own client's base (`_http.BaseAddress = …`, `new HttpClient { BaseAddress = … }`) registers under the
+ * class name too. Only facts are reported; core's call-origin pass matches calls to them. A call through a
+ * registered client carries `baseRef: { kind: "client" }` (or `client`).
+ */
 export function extractCsharpHttpClientRegistrations(tree: Tree, sourceText: string): HttpClientRegistration[] {
   const restService = sourceText.includes("RestService.For");
   if (!sourceText.includes("BaseAddress") && !restService) return [];

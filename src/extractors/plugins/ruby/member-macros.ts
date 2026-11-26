@@ -90,7 +90,9 @@ export function addMacroMembers(lines: readonly string[], cls: ClassInfo, classe
     }
   }
   // `include Singleton`: the class answers `instance` (no return type: a subclass's `instance` is its own, and
-  // which classes extend this one is no fact of this file).
+  // which classes extend this one is no fact of this file). `returnsInstance` marks a class-level `self` return that is
+  // not the class object, so `LeagueRegistry.instance.register` reaches the subclass's own method and never types a
+  // subclass as its base.
   for (let i = cls.line; i < limit; i++) {
     if (/^\s*include\s+(?:::)?Singleton\s*$/.test(lines[i] ?? "") && (isOwn ??= ownLineTest(cls, classes))(i)) {
       add("instance", i + 1, i + 1, "Singleton", { classLevel: true, returnType: "self", returnsInstance: true });

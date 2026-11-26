@@ -175,7 +175,9 @@ function lookupType(recv: Node): { type: string; qualifier?: string } | null {
 /**
  * The narrowing the method being read is under: `x.save()` inside `x instanceof Club` / `is Club` is a call on a
  * `Club`. The call extractor holds calls apart by receiver type, so the arms of one chain — `is Club -> x.save()`,
- * `is Player -> x.save()` — stay two calls only when the hook states each type while the walk runs.
+ * `is Player -> x.save()` — stay two calls only when the hook states each type while the walk runs. A Kotlin
+ * subject-less `when { x is Club -> … }` narrows too, and a call outside every arm gets no narrowed type
+ * (`withCallNarrowing` wraps `extractCalls`, and the call hooks' `receiverTypeOf` reads it).
  */
 let activeNarrowing: ((call: CallInfo) => string | null) | null = null;
 

@@ -13,7 +13,10 @@ import { parseSpecDocument, type SpecNode } from "../../shared/spec-document.js"
  * document, a `Ref` to a DynamoDB table resource, an `${opt:stage, self:provider.stage}` by its default. A bare `${opt:stage}`, `${ssm:…}`, `!Sub` pseudo parameters
  * and a `Ref` to a parameter leave the variable out — a table is never guessed. One `lambda-env` fact
  * per scope; `handler` is null for the descriptor-wide one. The project pass (`route-anchor.ts`) puts
- * each on the code it runs.
+ * each on the code it runs. Read: literals, `${self:…}` from the same file, and `Ref` to a DynamoDB table resource
+ * (its `TableName`, else its logical id); a variable another service's descriptor sets stays unset. Sources are
+ * `provider.environment`, a function's own and SAM's `Globals.Function.Environment.Variables`; an env table name
+ * such as `${self:service}-${opt:stage, …}` resolves through the stage default, a bare `${opt:…}` does not.
  */
 export interface LambdaEnv {
   handler: string | null;

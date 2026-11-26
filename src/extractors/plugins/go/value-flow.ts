@@ -68,6 +68,20 @@ const NOT_FUNCTIONS = new Set(["true", "false", "nil", "iota", "_", "err", "ctx"
  * The facts of `roots` (a function declaration, or the function literals of a package variable, or a package-level
  * spec). `receiver` is the method receiver's name; `bound` every name the roots declare. With `moduleLevel` the
  * roots are package-level statements and every fact is a module fact.
+ *
+ * Stated by the ANTLR reading only; the regex fallback states none. Covers locals, pairs, method values, function-
+ * typed fields (an `invoke` on `c.onSave()` only where the file declares the field function-typed), `map`/slice
+ * literals and `append`, `range`, package variables and factory returns. A package variable a function writes is a
+ * `ValueCell.module` cell in that function's facts (a parameter or local may flow into it; the file's `<setup>`
+ * states the name, with a self-`copy` marking the name bound); one declared without a value (`var hooks []func()`) is
+ * bound by a module self-copy. A bare call of a name the file neither binds nor declares states an `invoke` on `{
+ * name, package: true }`; core joins the cell (`ValueCell.package`, `ValueFlowHost.sharedModuleFiles`) to the ONE
+ * sibling file whose module facts bind it, and drops it when none or several do. A sibling function of that name
+ * keeps its name-tier link, so a bare `hook()` call of such a name states no invoke, and a cell flagged `package` is
+ * left to the name tiers by `valueFlowInvokeSites`. A name written or read as `v`, `v[k]` or `range v` that the file
+ * neither binds nor declares is flagged `ValueCell.package`. `m[k]` with an identifier key is read by the grammar as
+ * a type instantiation (`typeArgs` on the operand), so a single type argument is an index with an unknown key (its
+ * element member `[]`). A package variable declared in another file is not seen by the writer's own facts.
  */
 export function goValueFlow(
   roots: readonly ParserRuleContext[],

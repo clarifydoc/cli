@@ -21,7 +21,10 @@ export function kotlinFacadeClass(sourceText: string, filePath: string): string 
  * Boolean named `isOpen` (its setter `setOpen`). Only what the declaration implies — a private property has no
  * accessor, a `const val`, `lateinit var` or `@JvmField` is a static field — as members marked `synthetic`, at the
  * property's line. A script (`.kts`) has no facade class, so none. A property with a receiver or a destructuring
- * pattern states no single name.
+ * pattern states no single name. The functions are appended through the manifest's `facadeFunctions` hook (no
+ * complexity row; a function the file writes under that name stands). A NAMED companion (`companion object
+ * Factory`) is `ClassInfo.memberHolder`: Java writes `Club.Factory.build()`, which links to `Club.build`, and
+ * `Club.Companion.build()` then links nothing, since a class that names its holder is reached through that name alone.
  */
 export function kotlinFacadeFunctions(tree: Tree, filePath: string): FunctionInfo[] {
   if (filePath.endsWith(".kts")) return [];

@@ -342,6 +342,18 @@ function joinRelations(sql: string, seen: Set<string>): EntityRelation[] {
 /**
  * Build table entities + relations from one parsed `.dfm` object tree.
  * Returns empty for forms that declare no SQL — the overwhelming majority.
+ *
+ * Data model from forms, fed from the object tree `parseDfm` already built — the `.dfm` is parsed once. A
+ * Delphi/Firebird codebase keeps no schema in the repository, but the IDE persists enough into every `.dfm` to
+ * rebuild the tables the app uses. A dataset's single-table DML (INSERT column list, UPDATE SET list, single-table
+ * SELECT) names the table AND its writable columns, and its persistent `TField` children supply each column's TYPE
+ * and width (field classes ARE the column types: `integerfield`, `largeintfield`, …). Columns never come from the
+ * field list alone — a dataset's `SelectSQL` is usually a join, so its fields are a result-set shape, not a table
+ * shape (attributing them to the owning table would invent columns); a dataset whose only SQL is a multi-table
+ * SELECT contributes relations but no table. Relations come from join predicates only
+ * (`INNER JOIN TEAM T ON T.ID = TL.TEAM_ID` is `TEAM_PLAYER → TEAM` many-to-one), emitted with orm `"ci-query"`
+ * (`DFM_ORM = "dfm"` marks the entities for the cross-file merge) so `buildEntityGraph` and
+ * `synthesizeReferencedTableEntities` both pick them up.
  */
 export function extractDfmEntities(
   objects: DfmObjectNode[],

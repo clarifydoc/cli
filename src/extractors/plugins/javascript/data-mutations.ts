@@ -8,6 +8,9 @@ const SET_STATE_PATTERN = /^set[A-Z]/;
 /** Known dispatch patterns */
 const DISPATCH_NAMES = new Set(["dispatch", "emit", "send", "trigger"]);
 
+/**
+ * Param columns: filters read from `where: { … }` and `findOneBy({ … })`.
+ */
 export class JavaScriptMutationExtractor extends DataMutationExtractor {
   readonly languages: Language[] = ["typescript", "javascript"];
 

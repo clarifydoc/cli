@@ -11,7 +11,10 @@ import type { Fact } from "../../core/fact-ids.js";
  * `facts` and `diff` — as tools. Each answers from the analysis the store
  * serves (the one `loadReportSummary` reads), so a tool and its command can
  * never disagree; a command that writes files (`export --out-dir`, the
- * bundles) stays a command.
+ * bundles) stays a command. `seq` → `clarifydoc_sequence`, `diff --base` → `clarifydoc_diff`, `export` →
+ * `clarifydoc_export` (one format), `facts` → `clarifydoc_facts`; `lint` is `clarifydoc_status lint=true`, `report` is
+ * `clarifydoc_analyze report=true`, `schema` and `detect --json` are the resources `clarifydoc://analysis/schema` and
+ * `clarifydoc://project/detect`; `install`, `hook`, `lsp-update` and `ask` stay commands.
  */
 
 /** Facts listed per page. */

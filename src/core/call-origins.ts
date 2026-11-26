@@ -51,6 +51,19 @@ type Evidence = CallOrigin["evidence"][number];
  * Language-agnostic: language knowledge arrives as plugin facts
  * (`baseRef`, `httpClientRegistrations`) and through `serviceConfigFor`.
  * Mutates the aggregated rows; returns how many calls got an origin.
+ *
+ * Reference: an absolute or loopback URL, then a client registration, then the plugin's `baseRefOf` of
+ * `baseExpr`; a hole host (`http://${IP}:5000`) is read by its port only, INFERRED. Values: the caller's
+ * deployment `DeployedService.urlEnv`, then config; the code's fallback (`CallBaseRef.fallback`) only when
+ * neither states one. Host: through the address book. One project from every value is EXTRACTED; two are
+ * AMBIGUOUS, none chosen; none is `external` — except a base valued only by the code's fallback literal whose
+ * host no address, deployment or `listen` URL names and no third party owns, which keeps the unresolved base
+ * (INFERRED; a known third-party host, `CallOrigin.service`, still marks it external). A call also rebases its
+ * target and drops `baseExpr` once the base is known. Then forwarding: the project a request arrives at applies
+ * its longest matching `ProxyRule` (dev proxy, gateway), up to four hops; a rule whose target is no service here
+ * changes nothing. A key a config file says variables override (`ConfigEntry.envNames`) is kept even with no URL
+ * value, so `envNamesOf` reads the caller's names; a project registers under `ConfigEntry.serviceName` and a
+ * `service` base ref resolves through it.
  */
 export function resolveCallOrigins(input: {
   calls: ApiCall[];

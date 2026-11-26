@@ -31,6 +31,13 @@ export interface RefitCall {
 }
 
 /** The requests a Refit interface declares, one per method carrying a verb attribute. */
+/**
+ * `AddRefitClient<IClubApi>()` / `RestService.For<IClubApi>(…)` is keyed by the API interface whose
+ * verb-attributed methods are the requests (`[Get("/{id}")]`); each row's target starts with the client as an
+ * unknown base (`${IClubApi}/{id}`) which core replaces with the registration's address and which, unregistered,
+ * keeps the path from passing for a whole one. A generated proxy of an API interface sets `proxyOf` to its fully
+ * qualified name, and core turns every call on a receiver of that type into a contract call.
+ */
 export function refitInterfaceCalls(iface: Node): RefitCall[] {
   const name = iface.childForFieldName("name")?.text;
   const body = iface.childForFieldName("body");

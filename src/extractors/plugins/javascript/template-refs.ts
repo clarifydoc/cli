@@ -62,6 +62,9 @@ export function templateRefCall(name: string, inMarkup: boolean): { ref: string;
  * different children carry is left out), the tag resolves to the child's file
  * the way the emit resolver resolves it, and the child declares a function of
  * that name. One link per call site, callName as written.
+ *
+ * `<ClubForm ref="formRef">` + `formRef.value?.save()`, `this.$refs.form.submit()` and React `ref={formRef}` +
+ * `formRef.current.save()` link to the child component's method.
  */
 export class JsTemplateRefResolver implements DispatchResolver {
   readonly id = "template-ref";

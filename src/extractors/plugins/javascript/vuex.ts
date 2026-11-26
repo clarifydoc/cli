@@ -403,6 +403,25 @@ export function vuexStores(analyses: FileAnalysis[]): VuexStores | null {
     return { ctx, filePathMap, byPath, imported, registered, roots, filesOf, trees, ownerOf, preferred };
 }
 
+/**
+ * `commit(...)` is a dispatch of the mutation table with the same key (`dispatchKeyOfArgs`) on a call whose receiver
+ * is the store's (`STORE_COMMIT`: bare `commit`/`context.commit` of an action, `store.commit`, `this.$store.commit`,
+ * `clubStore.commit`; `repo.commit('x')` is any object's and never gets a key); `commit(…)` joins `mutations.<M>` as
+ * dispatch joins `actions.<A>`; `mapMutations` is read like `mapActions` (`this.SET_PAGE()` carries the key prefixed
+ * `commit:`). The resolver looks the name up under `mutations.<M>` / `mutations.[CONST]` (a section parameter beside
+ * `actions`; links named `commit:<key>`, strategy `dispatch:vuex-action`; a bare commit inside a module joins its own
+ * module first, a namespaced module by the local name, a store that is not namespaced by the whole name).
+ * `new Vuex.Store({ mutations })` and computed mutation keys are named as actions are; a name bound by both
+ * `mapActions` and `mapMutations` resolves as the action. The root store shared by the commit and state-watch joins
+ * (`vuexStores`) is a file registering `modules:` or one that builds a store (`StoreShapes.root`).
+ *
+ * A `mutations` table is built like an `actions` one: `...baseMutations` spreads,
+ * `Object.assign({}, mutations, extra)` merges and a module a project factory builds
+ * (`storeShapes.spreads.mutations`, `factoryActions(…, "mutations")`); a table that one spreads in is followed too,
+ * three tables deep (`export const crudMutations = { ...baseMutations, RESET() {} }` — `storeShapes.spreads` keeps
+ * the spreads of any object named `…Mutations` / `…Actions`; `spreadMember`, `foreignMutations`), so the commit and
+ * the state watchers reach a mutation written two tables away, and only the module whose own table takes it in.
+ */
 export class VuexDispatchResolver implements DispatchResolver {
   readonly id = "vuex-action";
   readonly languages: Language[] = ["typescript", "javascript"];
@@ -757,6 +776,16 @@ const computedRe: Record<Section, RegExp> = {
  * itself, else in the module its head is imported from — a named import, an alias, a namespace import
  * (`types.ACTIONS.FETCH_CLUBS`) — followed through re-exports. Null when the name is not a plain constant of a
  * project module; two same-named constants of other modules are never mixed up, the import chooses.
+ *
+ * Store names read from another module: the plugin reports a module's plain string constants as
+ * `FileAnalysis.stringConstants` (`export const LOAD = 'clubs/load'`, `ACTIONS.FETCH`, string enum members — no
+ * spaces, no holes, 200 a file). A `store.dispatch(ACTIONS.FETCH_CLUBS)` naming its action by a constant the file
+ * does not declare carries it as written in `CallInfo.args[0]`; a Vuex action keyed by a constant
+ * (`[ACTIONS.FETCH_CLUBS]() {…}`) is a function `actions.[ACTIONS.FETCH_CLUBS]`; the dispatch resolver reads both
+ * through the import chain (named, aliased and namespace imports, re-exports; the import picks the file, so a
+ * same-named constant elsewhere is never mixed in). A name built from an imported constant (`'clubs/' + types.FETCH`,
+ * `` `${NS}/load` ``) keeps the unknown part as a `${ref}` hole (`holeOf`; locals, parameters and `this`/`props`
+ * never become holes); the resolver fills each hole with `constantValue` and drops the call when one is unknown.
  */
 export function constantValue(file: FileAnalysis, ref: string, ctx: FactoryContext, depth = 0): string | null {
   const own = ownValue(file.stringConstants, ref);

@@ -19,6 +19,10 @@ import type { ImportInfo, ExportInfo, Language } from "../../imports-exports/bas
  *
  * PHP has no "exports" — top-level classes/functions are universally visible.
  * We surface them as ExportInfo for consistency with other languages.
+ *
+ * `use … as` renames go in `ImportInfo.aliases`. A bare call the file does not define links to the ONE included
+ * file that does (`import-file`); an include written with its extension (`include 'inc/header.php'`) resolves from
+ * the project root, then beside the importer, then by the one file whose path ends with it (`uniquePathEnding`).
  */
 export class PhpImportExportExtractor extends ImportExportExtractor {
   readonly languages: Language[] = ["php"];

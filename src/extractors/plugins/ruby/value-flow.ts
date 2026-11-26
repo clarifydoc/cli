@@ -21,6 +21,15 @@ import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level
  * lines joined into one statement; a block handed to a method (`each do |x|`, `transaction do`) or a loop's `do`
  * is no value here. `.call` on a receiver whose type is stated (`@runner = Runner.new`) is a method call the type decides,
  * never an invoke; `x[…]` runs a value only when `x` was assigned a function in the same method.
+ *
+ * A closure written as an argument (`schedule(callback: -> { on_full_time })`) stands for the project functions its body
+ * calls and reaches the callee's invoke. A keyword argument `schedule(callback: method(:f))` is an `arg` with `name`
+ * (index -1); core binds the formal whose `ParamInfo.argumentLabel ?? name` it names, and Ruby marks a positional
+ * formal `_` (`def schedule(callback = nil)`, `opts = {}`), so only a keyword formal takes a keyword argument. A `&x`
+ * block argument is an `arg` named `&` that binds the `&blk` formal (`argumentLabel` `&`) and, on `each`/`map`/…, also
+ * an `invoke`; `&:sym` states nothing. A list or map handed to a parameter passes its elements (`arg` `elements: true`;
+ * core joins the caller's `<arg>.[]` to the formal's). Constants go through `moduleValueFlow`, and a one-line `def`
+ * states its flow from the body after its signature.
  */
 
 const KEYWORDS = new Set(["if", "unless", "while", "until", "case", "when", "return", "yield", "puts", "print", "raise", "rescue", "ensure", "else", "elsif", "then", "do", "end", "def", "class", "module", "begin", "and", "or", "not", "in", "for", "break", "next", "self", "nil", "true", "false", "require", "require_relative", "include", "extend", "attr_reader", "attr_writer", "attr_accessor", "private", "public", "protected", "super", "lambda", "proc", "method"]);

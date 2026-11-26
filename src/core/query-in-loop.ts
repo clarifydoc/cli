@@ -12,6 +12,10 @@ import { controlFlowForFile } from "./control-flow-file.js";
  * call inside the body to a project function that queries itself (one hop,
  * through the symbol links). A query in the loop's own header runs once and
  * is not one. Languages with no control-flow graph are not judged.
+ *
+ * `blocking-in-async` is the sibling pattern, read from each manifest's `blockingCalls`; a manifest's
+ * `blockingOnReceiver` flags `x.Wait()` / `x.Result` in an async method only when `x`'s declared type is that
+ * type, never a project class's member. Both are ordered widest reach first by `rankPerformanceByReach`.
  */
 export async function findQueriesInLoops(input: {
   projectRoot: string;

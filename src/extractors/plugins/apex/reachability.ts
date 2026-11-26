@@ -18,7 +18,7 @@ import { conventionReachability, typeLeaf } from "../shared/reachability-kit.js"
  *             `<actionName>`) is an entry; an LWC's `@salesforce/apex` import is a symbol link
  *
  * Dynamic loading — `Type.forName('Handler_' + kind)` — keeps alive every class whose name starts with the written
- * literal; a name with no literal at all (`Type.forName(row.Handler__c)`) keeps every class that extends or implements
+ * literal (`Type.forName('Prefix_' + x)`); a name with no literal at all (`Type.forName(row.Handler__c)`) keeps every class that extends or implements
  * a type (what a loader casts to). Test code's lookups and generic type strings (`'List<' + name`) count for neither.
  */
 

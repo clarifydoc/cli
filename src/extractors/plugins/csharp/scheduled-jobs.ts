@@ -11,6 +11,8 @@ import { lineIndex } from "../shared/text-scan.js";
  *  - a hosted worker deriving `BackgroundService` (`ExecuteAsync`), with the interval its loop
  *    waits when it states one (`new PeriodicTimer(TimeSpan.FromMinutes(5))`, `Task.Delay(TimeSpan.FromHours(1))`)
  * Read off the source text; the handler is `Type.Method` when the type is stated, else the method.
+ * A same-file `const string Leaf = "…"` resolves to its literal when the file declares it once. These are the id
+ * shapes the Hangfire trigger resolver accepts too.
  */
 export function extractCsharpScheduledJobs(sourceText: string): EntryPointInfo[] {
   if (!/\bAddOrUpdate\b|\bIJob\b|\bBackgroundService\b/.test(sourceText)) return [];

@@ -28,6 +28,34 @@ import { registerLinkScoringData } from "./shared/link-scoring.js";
 import { registerExtensionFamilies } from "./plugins/shared/path-utils.js";
 import { registerGrammar } from "../parsers/parser-manager.js";
 
+// The language plugin registry: the one place core asks about a language (core never names one).
+//
+// Two tiers. The STATIC tier is every plugin's `manifest.ts` (`LanguagePluginManifest`), imported EAGERLY: extensions,
+// `family`, parsing kind, grammar location, test-file patterns, external prefixes and roots, builtin members, framework
+// rules, `activationFiles`, `projectMarkers`, `dispatchLanguages`, `docComments`, `packageManagers`/`packageEcosystems`/
+// `importPackageNames`. The module-scope constants below (`EXTENSION_TO_LANGUAGE`, `ALL_EXTERNAL_MODULE_PREFIXES`,
+// `ALL_BUILTIN_MEMBERS`, `FRAMEWORK_RULES`, `PACKAGE_MANAGERS`, `testFilePatternsFor`, `inferFileFrameworks`, …) are
+// built from them. Manifests are leaf modules (types, the plugin's `frameworks.ts` and `package-manifests.ts`, leaf
+// rules); static data a tool reads on demand — the MCP server loads no plugin until it analyzes — belongs there, never
+// on the meta, and each meta spreads its manifest so a static field has one source. Known-package tables answer by
+// ecosystem: an import is classified only by the plugins sharing a registry with the importing language
+// (`importPackageScopeOf`), a declared package by those of its own (`ecosystemPackageScopeOf`).
+//
+// The LAZY tier is each `meta.ts` (`LanguagePluginMeta`) behind the `LOADERS` thunk map of dynamic imports (one chunk per
+// plugin under tsdown's code splitting). The analyzer awaits `ensureLanguagesLoaded` after discovery with the discovered
+// languages, the `ACTIVATION_FILE_LANGUAGES` hits (go.mod → go) and the `dispatchLanguages` couplings (VB needs C#'s UI
+// bridge); `analyzeFile` self-activates per file as a safety net; vitest loads everything through `src/test-setup.ts`.
+// `pluginFor` THROWS for a registered but unloaded language. Lazy accessors: `pluginFor`, `astHooksFor`,
+// `complexityFor`, `regexSpecFor`, `securityRulesFor`, `classifyKnownPackage` (rebuilt from the loaded metas in manifest
+// order; the analyzer passes the languages it loaded as `scope`, so a process that analyzed another repository first
+// classifies this one's packages the same), `allPluginMetas`.
+//
+// The registry pushes data into the leaf modules plugin code itself imports (`shared/builtin-types.ts`,
+// `shared/call-patterns.ts`, `shared/link-scoring.ts`, `shared/call-graph.ts` hooks): those must NOT import the
+// registry — plugin code imports them and the registry imports the metas, so a static import back closes an ESM cycle
+// and TDZs plugin classes. Metas are leaf modules too: types, their own plugin code and leaf shared helpers, never
+// core or the registry. Adding a language means registering its manifest in `ALL_MANIFESTS` and its meta in `LOADERS`.
+
 // ─── Static tier: plugin manifests (eager, cheap) ─────────────────────────
 // Each plugin's manifest.ts is a leaf module carrying only pure data —
 // extensions, grammar locations, framework rules, import-resolution string

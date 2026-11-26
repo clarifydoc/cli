@@ -22,7 +22,12 @@ function assignedNames(top: Node): string[] {
   return out;
 }
 
-/** `FileAnalysis.moduleNames` for Python: the module-level assignments and the lines each owns. */
+/**
+ * `FileAnalysis.moduleNames` for Python: the module-level assignments and the lines each owns. This is what `impact`
+ * uses to charge only the importers that read an edited constant: a module imported whole (`from p import m`) counts as
+ * a reader, spelled by the module's own stem; a value derived from the name in another file (`CAP = LIMIT * 2`) hands
+ * nothing on, and a line inserted right after a name reads as an edit of it.
+ */
 export function extractPythonModuleNames(tree: Tree): ModuleNameSpan[] {
   return moduleNameSpans(tree, assignedNames);
 }

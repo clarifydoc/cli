@@ -5,6 +5,10 @@ import { conventionReachability } from "../shared/reachability-kit.js";
  * (`<Counter />`) — a name reference — and a component with `@page` is
  * routed by the framework. The code-behind partial class is C#, reached by
  * the same name.
+ *
+ * A declarative reachability spec (case-folded names), so dead code reads it with the C# model. The Blazor
+ * WebAssembly SDK's implicit global usings are only Configuration, DependencyInjection and Logging (applied by the
+ * C# plugin's `projectFileUsings`).
  */
 export const blazorReachability = conventionReachability({
   extensions: [".razor"],

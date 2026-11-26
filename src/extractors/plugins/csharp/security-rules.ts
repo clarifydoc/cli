@@ -3,6 +3,9 @@ import type { SecurityRule } from "../../../types/language-plugin.js";
 import { CREDENTIAL_CONTEXT } from "../shared/security-context.js";
 
 /** .NET sinks and configuration that weaken an application (see the JVM rules for the stance). */
+/**
+ * Includes XML DTD handling (`DtdProcessing.Parse` with `XmlResolver = null` beside it parses DTDs but is safe).
+ */
 export const CSHARP_SECURITY_RULES: readonly SecurityRule[] = [
   {
     category: "deserialization",

@@ -117,6 +117,10 @@ export interface CsharpElementFacts {
  * The bindings a C# member body makes whose type a loop, a LINQ / `ForEach` callback, a `catch` or an element
  * access states. A name bound twice to different types, or once to a type and once to something unknown, is left
  * out — a call cannot say which binding it used.
+ *
+ * Each binding is a `localTypes` entry whose `from` names what it is drawn from; JVM and .NET share the chain
+ * reader in `shared/element-chain.ts`, and `collectionElementOf` reads the element of a declared collection for a
+ * loop variable.
  */
 export function csharpElementFacts(method: Node, body: Node, params: readonly ParamInfo[], nodes: readonly Node[]): CsharpElementFacts | null {
   const table = new Map<string, ElementState>();

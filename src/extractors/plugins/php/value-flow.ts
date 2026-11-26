@@ -13,9 +13,17 @@ import { phpCallHooks } from "./call-hooks.js";
  * argument, a return) stands for the project functions its body calls, at most four, spelled as a seed is
  * (`save`, `this.save`, `Club.save`); one that runs a held value (`fn() => $onDone()`) copies that value's cell.
  * It is no function of its own: its calls already belong to the function that writes it. A call on one of its
- * parameters, a builtin and a receiver that cannot be spelled state nothing; a closure handed to a builtin that
+ * parameters, a builtin and a receiver that cannot be spelled state nothing; `run(fn() => $this->onFullTime())` states
+ * the call it makes, `$m['a']()` and `$this->$m()` are invokes only where the held value is spelled (the latter stays
+ * unlinked); a closure handed to a builtin that
  * runs it (`array_map`) is a block, not a value. A call never made through a held value (`$this->$method()`) is
  * not read.
+ *
+ * PHP 8 named arguments (`schedule(callback: $this->f(...))`) are an `arg` with `name` (index -1); core binds the
+ * formal whose `ParamInfo.argumentLabel ?? name` is that name, and an unknown name binds nothing. Top-level
+ * statements state value flow on `<setup>` (`meta.ast.moduleValueFlow`; a `return` there states nothing). A list or
+ * map handed to a parameter passes its elements (`arg` `elements: true`, set where the list's element cell is
+ * written or the argument is a parameter; core joins the caller's `<arg>.[]` to the formal's — PHP and Ruby only).
  */
 
 /** Builtins that run a callback: the written index of the callback argument. */

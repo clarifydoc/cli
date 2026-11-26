@@ -1,3 +1,9 @@
+/**
+ * Zig tests live in the source files that declare them. A project with a package manifest runs through its build (`zig
+ * build test` — a build script names which files it tests, and a filter is its own option); without one, each file by
+ * itself with a name filter, which Zig matches as a substring of the test's name (`test "ranks clubs"` → `ranks clubs`; a
+ * doctest by its declaration).
+ */
 import type { TestCommandContext, TestTarget } from "../../../types/language-plugin.js";
 
 /**

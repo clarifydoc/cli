@@ -1,3 +1,12 @@
+/**
+ * Objective-C manifest facts. `externalModulePrefixes` (`Foundation`, `UIKit`, …) and `externalNamespaceRoots` (`NS`,
+ * `UI`, `CG`, `CA`, `CF`) keep SDK names off project classes (an external import never binds a project file); package
+ * ecosystems are `swiftpm` and `cocoapods`. One type spans files (`typesSpanFiles: true`): categories and the
+ * `@implementation` file add to a class declared elsewhere. `#import "Club.h"` puts the C functions `Club.h` declares in
+ * scope (`importsShareScope`, `declarationExtensions: [".h"]`); `Club.m` holds their bodies. Test files are `*Test.m`,
+ * `*Tests.m` and the `.mm` forms (`testFilePatterns`). `.m`/`.mm` read their own function-like `#define`s as C does
+ * (`extractMacros` on the spec).
+ */
 import type { LanguagePluginManifest } from "../../../types/language-plugin.js";
 import { C_STYLE_DOCS } from "../../shared/doc-comment-specs.js";
 

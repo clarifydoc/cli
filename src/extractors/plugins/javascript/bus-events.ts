@@ -1,3 +1,12 @@
+/**
+ * BullMQ/Bull, Socket.IO events, the `phoenix` JS client (scoped by topic through core's channel-topics), the Dapr JS
+ * SDK (a publish and a subscription keyed by topic, each file gated on importing the SDK) and MQTT state queue
+ * publish/consume rows (job-events.ts, events.ts); a queue/consume row whose target is an env var name
+ * (`process.env.JOBS_URL`) is retargeted by core to the queue the deployment gives that variable. A wrapper
+ * `clientSend(event, room) { server.to(room).emit(event) }` publishes on the literal each call hands it
+ * (`DataSourceInfo.channelParameter`).
+ */
+
 import type { Node, Tree } from "web-tree-sitter";
 import type { BusEventSite, FileAnalysis, Language, SymbolLink } from "../../../types/analysis.js";
 import type { DispatchResolver } from "../../dispatch/base.js";

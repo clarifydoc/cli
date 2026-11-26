@@ -6,7 +6,8 @@ import { innermost, queryOpensAt, TRIGGER_HEAD } from "./patterns.js";
 import { queryEnd, stringEnd } from "./source.js";
 
 /**
- * Apex data access, read from the DATA text (comments blanked, strings and inline queries intact — `source.ts`):
+ * Apex data access, read from the DATA text (comments blanked, strings and inline queries intact — `source.ts`;
+ * `[SELECT … FROM Club__c]` is read here, never from the structure text):
  *
  *  - inline SOQL `[SELECT Id FROM Club__c WHERE …]` and SOSL `[FIND 'x' RETURNING Club__c(Id)]`: a read of each object
  *    the top-level query names. A relationship subquery `(SELECT Id FROM Players__r)` names a RELATIONSHIP, not an

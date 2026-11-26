@@ -236,7 +236,10 @@ export interface CppTokenFacts {
 
 /**
  * `using Ref = const REMOVE_REF_(T) *;`, `IS_COPYABLE(T)::value`: an all-caps macro called where only a type or a scope
- * goes stands for a name; its arguments go to the hidden channel, so the parser reads the name alone.
+ * goes stands for a name; its arguments go to the hidden channel, so the parser reads the name alone. In
+ * `typename BIND_(Sel, T) Name` the `typename` goes too, the macro's name being the type. A whole suppression macro
+ * standing between two member initializers with no comma (`a_(x), WARNINGS_PUSH_(4355) b_(y)`, only inside a
+ * constructor's `:` list) is hidden, and a macro whose arguments hold a `return` is a statement macro (`MacroName`).
  */
 function hideTypeMacroArguments(all: Token[]): void {
   const tokens = all.filter((t) => t.channel === Token.DEFAULT_CHANNEL && t.type !== Token.EOF);

@@ -6,7 +6,10 @@ import { kotlinArgKind } from "./arg-kinds.js";
  * Kotlin constructor delegation as constructions, the way Java's `this(…)`/`super(…)` are: the primary
  * constructor of `class Derived(x: Int) : Base(x)` runs `Base`'s, and a secondary `constructor(…) : this(…)` /
  * `: super(…)` runs the same class's or the superclass's. Each is a call named `new Club` / `new Base` that the
- * linker settles by argument kinds, so it lands on the declared constructor (or the class when none is).
+ * linker settles by argument kinds, so it lands on the declared constructor (or the class when none is). A primary
+ * `class A(…) : Base(x)` gives the primary constructor (a synthetic parameterless one when none is written) a `new Base`
+ * call; a secondary `: this(…)` / `: super(…)` gives a `new A` / `new <superclass>` call; a secondary constructor's
+ * statements are its body.
  */
 
 function argumentsOf(args: Node | null | undefined): { argCount?: number; argKinds?: string[] } {

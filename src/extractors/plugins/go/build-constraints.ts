@@ -98,6 +98,10 @@ function fileNameConstraint(relativePath: string): { written: string; value: boo
  * The constraint, as written, that leaves the file out of a Linux/amd64 build; null when that build
  * compiles it or the constraint is undecided. Only the header counts: constraint lines come before
  * the package clause, among comments and blank lines.
+ *
+ * Sets `FileAnalysis.excludedFromDefaultBuild`: a file a Linux/amd64 build leaves out (GOOS/GOARCH file suffix, a
+ * false `//go:build` or `// +build` line); a tag the target does not fix makes the line undecided and the file is
+ * kept.
  */
 export function goDefaultBuildExclusion(rawSource: string, relativePath: string): string | null {
   const byName = fileNameConstraint(relativePath);

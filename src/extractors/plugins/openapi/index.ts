@@ -40,7 +40,17 @@ import { newSpecNode, parseSpecDocument, type SpecNode } from "../../shared/spec
  *
  * The document is claimed by extension but content-sniffed in meta.preprocess,
  * so every non-spec yaml/json (package.json, k8s manifests, CI configs) is
- * skipped and never surfaces as an analyzed file.
+ * skipped and never surfaces as an analyzed file. Other formats sharing the extensions are branches of that
+ * `preprocess` (AsyncAPI), not second plugins.
+ *
+ * Rows are API-contract rows (`manifest.apiContract`): a row yields to the code row implementing it
+ * (`pairContractTwins`: same method + path, or the symbol linker's spec join), and a contract row exactly one
+ * production code route serves joins its handler by operation id only, never by a name derived from its path (a
+ * client wrapper `deleteClubs` is no implementation). A schema an API contract declares is an entity with
+ * `origin: "contract"`, listed apart in the data model and never covering a same-named table. Contract schemas and
+ * messages are `declaresSchemaTypes` classes: no linker strategy lands on them, so a bare `update` never reaches an
+ * OpenAPI fragment `update.yml`. Swagger Codegen / OpenAPI Generator classes are generated code, so their calls'
+ * links carry `sourceRole: generated`.
  */
 
 const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "head", "options", "trace"]);

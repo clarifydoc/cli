@@ -187,6 +187,10 @@ export const cppSpec: RegexLangSpec = {
   // CUDA kernel launch `vecAdd<<<grid, block>>>(a, b, n)` (or
   // `scale<float><<<…>>>(…)`): the call the baseline `name(` never sees.
   // Kernel definitions need nothing — `__global__` reads as part of the type.
+  // Read over each parsed function's lines after the grammar's own calls, never the baseline `name(`: `Club c(3);` is a
+  // declaration to the grammar and a constructor call to the linker (`RegexLangSpec.declarationCallPatterns`). Without a
+  // front end `callPatterns` carries the same pattern. An undeclared-namespace fallback (`league::Table` → bare
+  // `Table`) is deliberately not built.
   declarationCallPatterns: [DIRECT_INIT_CALL],
   callPatterns: [
     {
@@ -365,7 +369,8 @@ export const cppSpec: RegexLangSpec = {
   extractLocalTypes: (body, fn) => extractCFamilyLocalTypes(body, fn.params, cppCollectionElement, cppRangeBindings),
   // `using Ride = Car;`, `typedef struct car car_t;`: core types a receiver declared with the alias by what it names.
   extractTypeAliases: extractCFamilyTypeAliases,
-  // `#define for_each_club(c, l) …` outside a function: a call of it links to the definition.
+  // `#define for_each_club(c, l) …` outside a function: a call of it links to the definition (and, through
+  // `MacroInfo.calls`, to the calls its body makes).
   extractMacros: (lines, analysis) => extractCFamilyMacros(lines, analysis, true),
   extractStringConstants: extractCppStringConstants,
 

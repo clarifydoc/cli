@@ -4,6 +4,8 @@ import { hasDelphiDep, usesDelphiUnit } from "../shared/project-info-queries.js"
 /**
  * Delphi / Lazarus framework rules — uses-clause units and project files.
  * Family plugin: attached to `pascalMeta` only (never the .dfm resource meta).
+ *
+ * Family plugins attach rules to one member meta so the registry sees each rule once.
  */
 export const pascalFrameworkRules: readonly FrameworkRule[] = [
   {

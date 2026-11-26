@@ -1,7 +1,8 @@
 /**
  * The decisions about one file as data, for a host that is not an MCP client
  * (an editor hover): the same documents, staleness and markers the
- * clarifydoc_context_docs tool prints, from the same functions.
+ * clarifydoc_context_docs tool prints, from the same functions. `decisionsAbout(root, analysisDir, file)` is exported
+ * from the package index; a document is read only from the list it finds.
  */
 import { readFile } from "fs/promises";
 import { join } from "path";

@@ -1,3 +1,8 @@
+/**
+ * Haskell dead code (a convention spec from the shared kit): `import Data.Foo` names `Data/Foo.hs` under a source
+ * directory. Entries: `main`, `Main.hs`, `app/`, and a library's `exposed-modules` (public API — alive, but no program
+ * starts there) read from `*.cabal` / `package.yaml`.
+ */
 import { conventionReachability } from "../shared/reachability-kit.js";
 
 /**

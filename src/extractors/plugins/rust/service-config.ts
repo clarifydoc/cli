@@ -18,6 +18,13 @@ const TRANSFORMED = /\.(?:map|and_then|map_or|map_or_else|filter)\s*\(|format!/;
 const FALLBACK =
   /^\s*\.unwrap_or(?:_else\(\s*\|\s*_?\w*\s*\|\s*|\(\s*)(?:String::from\(\s*"([^"\\{}]*)"\s*\)|"([^"\\{}]*)"(?:\s*\.(?:to_string|to_owned|into)\(\s*\))?)\s*\)\s*[,)]?\s*$/;
 
+/**
+ * A client base expression that OPENS with `env::var("X")` / `std::env::var_os` is an `env` ref, without the
+ * `.unwrap_or("http://…")` fallback (a host the deployment does not name would read as "elsewhere" and drop the link an
+ * unresolved base kept). Build-time `env!`/`option_env!`, a value rewritten by `.map(…)`/`format!`, a namesake module, a
+ * method called `var`, or a read nested as an argument state nothing. The data-source reader already renders the hole
+ * (`${env::var(…)…}/fixtures`) and core splits it into `baseExpr`.
+ */
 export function rustBaseRefOf(expr: string): CallBaseRef | null {
   const m = ENV_READ.exec(expr);
   if (!m) return null;

@@ -116,7 +116,8 @@ function knownSymbolNames(summary: ProjectAnalysis): Set<string> {
 /**
  * The spelling of a symbol argument the analysis knows: as written first (our own ids use `::` for C++
  * nested types and Rust inline-module functions), else with `::`/`->` read as `.`. The argument as
- * written when neither is known, so a miss names what was asked.
+ * written when neither is known, so a miss names what was asked (`Garage::park` finds `Garage.park`). Used by
+ * `extract`, `trace`, `explain` and `rename_plan`.
  */
 export function resolveSymbolArg(summary: ProjectAnalysis, symbol: string): string {
   const spellings = symbolSpellings(symbol);
@@ -237,7 +238,28 @@ export async function rowFreshness(store: AnalysisStore, paths: Iterable<string>
  * The line every answer ends with while the analysis no longer describes the
  * source: what moved, and how to refresh. Null while it is fresh, or when
  * nothing can be compared (no manifest). Checked at most every few seconds,
- * so a burst of calls costs one stat pass.
+ * so a burst of calls costs one stat pass. `McpServerOptions.annotate` appends it to each tool's text; `clarifydoc_status`
+ * and `clarifydoc_analyze` are left alone, being about exactly that.
+ *
+ * `assessFreshness` judges files changed, removed or added since the analysis (added files come from `git ls-files`,
+ * in directories the analysis covers, written after its manifest — an extension-less one when it is a script
+ * discovery would read by its `#!` line (`shebangScriptAt`) — never one discovery refuses: the manifest's `skipped`
+ * files, a credential-looking name, a `.clarifydoc-ignore` match, or a file its plugin's `preprocess` skips, such as
+ * a `package.json`), and HEAD against the commit it was made at (`sourceRevision`, also in the manifest); then one
+ * bounded `rev-list --left-right --count` (`commitRelation`, core/source-revision.ts) says how: HEAD N commits ahead,
+ * older, diverged, or the analyzed commit gone (rebased away). `clarifydoc_status` shows it on its commit row even when
+ * HEAD moved without touching an analyzed file. An analysis a NEWER engine wrote is not stale (`engine-older`,
+ * versions compared as numbers): the banner says the server is older and wants a restart, and `clarifydoc_analyze`
+ * refuses to write the older reading over it (`EngineOlderError`). Per file, the subject of `clarifydoc_file`,
+ * `clarifydoc_blast_radius` and `clarifydoc_explain` gets a `⚠ … changed since the analysis` line under the heading and
+ * each listed dependent a `(changed since the analysis)` suffix (`AnalysisStore.changedSinceAnalysis`: a stat per path
+ * against the manifest, a hash only where the mtime moved, verdicts kept per mtime). No manifest, no note. The
+ * `post-git` hook (agents/hooks.ts) keeps it current: after a shell git command that moves the tree it starts one
+ * detached incremental `analyze`, coalesced by a lock file, with the options the analysis was made with
+ * (`Manifest.runOptions`, written by the analyzer: the output directory relative to the root, LSP on/off, git history,
+ * the `--feature` deviations, the `--spec` / `--coverage` files given as project-relative paths (one outside the root
+ * is dropped) — never a path outside the root or a secret; `refreshArgs`; the plain default for an older manifest).
+ * Codex gets it in `hooks.json` and in the `config.toml` block alike.
  */
 export function freshnessBanner(store: AnalysisStore, ttlMs = 10_000): () => Promise<string | null> {
   let at = 0;

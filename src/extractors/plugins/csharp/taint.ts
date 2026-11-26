@@ -87,6 +87,12 @@ const spec: TaintSpec = {
 };
 
 /** Request input reaching a sink inside an ASP.NET action. */
+/**
+ * An action is a method with an HTTP verb or `[Route]` attribute; parameters are bound from the request
+ * (`[FromQuery]`/`[FromRoute]`/`[FromBody]`/`[FromForm]`/`[FromHeader]`, or unannotated) except what the container
+ * injects (`[FromServices]`, services, contexts, loggers, cancellation tokens); `Request.Query[…]`,
+ * `Request.Form[…]` are request input; `$"…{name}…"` carries `name`, a literal's text does not.
+ */
 export function csharpTaint(tree: Tree, _sourceText: string, filePath: string, facts?: TaintFacts): SecurityIssue[] {
   return handlerTaint(tree, spec, filePath, facts);
 }

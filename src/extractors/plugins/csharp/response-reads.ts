@@ -21,6 +21,10 @@ function propsReadOff(text: string, local: string): string[] {
   return out;
 }
 
+/**
+ * Reads the top-level fields a caller reads off a JSON response (`GetFromJsonAsync<OrderDto>` then `order.Total`,
+ * `ReadFromJsonAsync<OrderDto>`), camelCased, a method called on the value being no field.
+ */
 export function csharpResponseReads(call: Node): string[] | undefined {
   let stmt: Node | null = call;
   while (stmt && !/_statement$|^local_declaration_statement$/.test(stmt.type)) stmt = stmt.parent;

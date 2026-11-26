@@ -1,3 +1,15 @@
+/*
+ * `clarifydoc_extract`: a function's source and its callees within a token budget — the one tool that reads source
+ * text, at the analyzed spans. A route written with an inline handler (`RouteInfo.handlerEndLine`, no `handler`) is a
+ * definition too, named `route:<METHOD> <path>`, spanning `line`..`handlerEndLine`; `inlineRouteDefinitions`
+ * (core/route-symbol.ts, over the final `routeMap`, memoized) is the one list every symbol tool reads: `extract`,
+ * `explain`'s Handler source, `trace`'s miss ("defined at …"), `search kinds=["symbol"]` and `rename_plan`.
+ *
+ * A class whose body exceeds `maxTokens` returns its member signatures — fields from the facts, each method from its
+ * declaration at its start line, cut before the body, with `[line N]` — up to the budget or 120 members and a count of
+ * the rest, plus the call that extracts one member; a class that fits is printed whole. With `package=` it reads an
+ * installed package's export through `package-api.ts`.
+ */
 import { readFile } from "fs/promises";
 import { join } from "path";
 import type { McpTool } from "../protocol.js";

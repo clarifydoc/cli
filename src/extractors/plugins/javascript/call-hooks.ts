@@ -69,6 +69,28 @@ function libraryMethodAt(value: Node): string | null {
   return members?.some((m) => m.method === method) ? value.text : null;
 }
 
+/**
+ * `collectExtraCalls` states `attribute`, `return` and `property` values (JSX attribute values, a hook's returned
+ * object or array, a dispatch map's values `const ACTIONS = { save: saveClub }` with `returnedAs: "ACTIONS.save"`) as
+ * `passed` calls the linker turns into `relation: "passes"`; a name the body also invokes stays one call (a map's
+ * value excepted). `property` names are read at module top level too (`extractTopLevelCalls`), so a module-level
+ * map's values are `<setup>`'s.
+ *
+ * `callbackArgNodeTypes` with `bindingSites`/`bindingPatterns` (grammar data of this plugin) records an identifier
+ * passed as an argument as a call (`items.map(formatUser)`) unless the function binds that name itself (parameter,
+ * declarator, assignment target, loop/catch variable). `boundAt` answers per call site (`boundLocally`) where the
+ * function-wide set is too coarse (`{ const save = cfg.save; save() }` beside a sibling `save()`), and the answer is
+ * part of the dedup key (see block-scope.ts).
+ *
+ * `statedMember`/`importedMapMember` keep a member call whose leaf is a noise name (`map`, `send`, `filter`) when the
+ * file states the receiver is a project value (`const ACTIONS = { send: sendClub }`): the top-level binding in scope
+ * at the call counts, a parameter, local, loop or catch variable of that name is another value (`receiverReboundAt`).
+ * A local object literal holding the called key owns the call (`const actions = { get() {…} }; actions.get()` links
+ * to the member in its own function; two alike link nowhere) and sets `CallInfo.receiverRebound`, so a rebound head
+ * never takes a same-file namesake object's member. A name imported from a project file is marked
+ * `CallInfo.mapMember` and joined only through the exporting file's dispatch map, so an imported array's `.map` links
+ * nothing.
+ */
 export const javascriptCallHooks: CallExtractionHooks = {
   callNodeTypes: new Set(["call_expression", "new_expression"]),
   keyOf: dispatchKeyOf,
@@ -344,6 +366,14 @@ function handedArgs(node: Node): string[] | null {
  * An object literal handed to a hook, by its members: `{onSubmit:=>save,onSuccess:close}` — a member written as an
  * arrow or method with one call is `=>callee`, one naming a function or chain is that name, a shorthand member its own
  * name. A member with none of these spellings (a literal, a spread, an arrow doing more) is left out; "" when none has one.
+ *
+ * A hook call's object-literal argument (`useForm({ onSubmit: async (d) => save(d), onSuccess: close })`) is spelled
+ * in `CallInfo.args` by member, `{onSubmit:=>save,onSuccess:close}`: each member as an argument is spelled (a name, a
+ * chain, `=>callee` for an arrow or method with one call) and members with no such spelling are left out. Core's
+ * `handedParameterLinks` reads a nested function's `config.onSubmit(…)` through it (on an untyped parameter, and on a
+ * typed one only where the sites hand such a literal); one site per screen gives that screen's own
+ * `dispatch:param-arg` link from its call into the composable (`<setup> -handleSubmit-> save`); a member a site
+ * leaves out links nothing.
  */
 function optionsArg(obj: Node, spell: (a: Node) => string): string {
   const parts: string[] = [];

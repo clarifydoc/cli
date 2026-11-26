@@ -19,6 +19,15 @@ import type { ClassInfo, FileAnalysis, ForeignBindingRule, FunctionInfo, SubProj
  * scope — to the implementing function the rule names so, and nothing else:
  * a namesake elsewhere in the project is not what the generated module calls,
  * so the guesses the linker made for those calls are dropped.
+ *
+ * A plugin's `foreignBindings(root, read, files)` reads a generator's configuration at each sub-project root
+ * into rules: the implementing files, the usually gitignored module path each is written to, how importers spell
+ * it, the naming rule and the generator's attribute. Each call through an import of such a module (a prefix, a
+ * name it brings in, or a module loaded in place as the call's `target`) links EXTRACTED, strategy
+ * `dispatch:foreign-binding`, to the public function the rule binds under that name. A rule with
+ * `decorator.classes` also binds the classes carrying the attribute (constructor, `constructorArgument`,
+ * methods); a call joins a method through a receiver the file types, the class resolving by import, namespace or
+ * the one bound module the file loads. A name two files of one module bind joins neither.
  */
 
 export const FOREIGN_BINDING_STRATEGY = "dispatch:foreign-binding" as const;

@@ -8,6 +8,15 @@ import type { FileAnalysis, SymbolLink } from "../types/analysis.js";
  * component or class declaring it (`FileAnalysis.reactiveCells`), so the join never leaves the file.
  * `callName` is what the write spells (`setClubId`, `pickedClubs`), at the write's line. A switch-off write
  * (`open.value = false`) never runs a callback that runs only when the value turns truthy.
+ *
+ * Cells are scoped `<scope line>:<name>` (plus a member path) to the declaring component or class. A write
+ * links to every callback on the same cell (a path leading into the other counts), strategy
+ * `dispatch:reactive-trigger`; a callback writing its own cell draws nothing. A trigger marked `immediate` also
+ * links from the file's `<setup>` (`callName` `immediate`); a component with no setup gets the pseudo-function
+ * through `ReactiveCells.component`. A statement a template runs is a write by the component's `<setup>` at its
+ * line. Store-state facts (`storeWatch.watchers`) and the cross-component resolvers (`dispatch:prop-flow`,
+ * `dispatch:param-type`, `dispatch:subject`, `dispatch:store-watch`, `dispatch:vuex-action`,
+ * `dispatch:vuex-state-watch`) belong to the JavaScript plugin.
  */
 export function reactiveTriggerLinks(analyses: readonly FileAnalysis[]): SymbolLink[] {
   const out: SymbolLink[] = [];

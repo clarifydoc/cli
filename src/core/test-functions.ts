@@ -3,6 +3,11 @@
  * per file into `ProjectAnalysis.testFunctions`, and the one place readers ask
  * whether a caller is test code: a test file by path, or a test declared beside
  * production code (a Rust `#[cfg(test)]` module, a Zig `test` block).
+ *
+ * A spec suite describing a type (`TestFunctionRow.subject`, `FunctionInfo.testCase.subject`) in a test file
+ * holding at least one case marks the files declaring a class of exactly that name tested (`fileTestVerdict`
+ * basis `described`: framework wiring has no written call). Exact full name only, within the spec's own
+ * sub-project, never for a file a test replaces with a double; a spec without cases never counts.
  */
 
 import { routeSymbolName } from "./route-symbol.js";

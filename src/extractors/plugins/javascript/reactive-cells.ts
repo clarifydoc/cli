@@ -1,3 +1,27 @@
+/**
+ * The plugin scopes each cell (`<scope line>:<name>` plus the member path written or read) to the component or class
+ * declaring it (`FileAnalysis.reactiveCells`); a write links the writing function to every callback on the same cell
+ * as INFERRED `dispatch:reactive-trigger` (`callName` is what the write spells: `setClubId`, `pickedClubs`; core
+ * side: core/reactive-triggers.ts).
+ *
+ * A Vue Options `watch: { page() {} }` / `'filters.league'(n) {}` / `page: { handler, immediate }` / arrays of them
+ * joins the methods writing `this.page` (cells scoped to the options object; a push into a list is a write only under
+ * `deep`). An `immediate` trigger (`{ immediate: true }`, `watchImmediate`, `watchEffect`, Options `immediate: true`)
+ * also gets a link from the file's `<setup>` (callName `immediate`; an Options component has none, so
+ * `ReactiveCells.component` has the analyzer give it the pseudo-function). A statement the template runs is a write
+ * by `<setup>` at its line (`@click="page = 2"`, `filters.league = x`, `count++`, `picked.push(c)`,
+ * `v-model="query"`; a `<script setup>` ref is read without `.value`, an Options name is `this.page`).
+ * `const { page } = toRefs(state)` / `toRef(state, 'page')` is the cell `state.page`; `toRefs(props)` /
+ * `toRef(props, 'x')` a watcher on that prop for `propFlows`. A watcher on a computed also fires on what the computed
+ * reads, through other computeds (Composition `computed(() => page.value * size.value)` or Options
+ * `computed: { total() { return this.page * this.size } }`, whose `this.X` paths it reads). Across components, a
+ * child watcher reading `props.query` is its own `<watch@N>` function and a parent function writing the ref its tag
+ * binds (`:query="passedQuery"`) links to it (`dispatch:prop-flow`). An Angular
+ * `toObservable(this.sig).pipe(switchMap(() => …)).subscribe(cb)` (in place or through a field holding it) is a
+ * trigger on the signal like an `effect`: each operator callback that makes a call, and the subscriber's, is held
+ * (`<pipe@L>`, `<subscribe@L>`) and a `this.sig.set/update` in the class links to them (signal-receivers.ts).
+ */
+
 import type { Node, Tree } from "web-tree-sitter";
 import type { ReactiveCells } from "../../../types/analysis.js";
 import { sameCell } from "../../../core/reactive-triggers.js";

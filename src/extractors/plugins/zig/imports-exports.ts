@@ -1,3 +1,8 @@
+/**
+ * Zig imports: `const db = @import("db.zig");` imports a file relative to the importing one; `@import("zap")` a package
+ * (named in `build.zig`), `@import("std")` the standard library; `const Router = @import("router.zig").Router;` binds one
+ * declaration of it. Every `pub` declaration is an export.
+ */
 import type { Node } from "web-tree-sitter";
 import { ImportExportExtractor } from "../../imports-exports/base.js";
 import type { ImportInfo, ExportInfo, Language } from "../../../types/analysis.js";

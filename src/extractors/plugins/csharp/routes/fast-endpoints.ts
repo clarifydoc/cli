@@ -58,6 +58,10 @@ function calleeName(inv: Node): string | null {
   return null;
 }
 
+/**
+ * FastEndpoints: `Endpoint<TReq, TRes>` classes; group and global prefixes no endpoint file states come from
+ * fast-endpoint-prefixes.ts.
+ */
 export function extractFastEndpoints(root: Node, routes: RouteInfo[], facts?: RouteFact[]): void {
   for (const cls of root.descendantsOfType("class_declaration")) {
     const base = cls.children.find((c) => c.type === "base_list")?.namedChildren.find((c) => c.type !== "comment");

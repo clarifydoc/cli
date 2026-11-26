@@ -27,6 +27,14 @@ function receiverText(n: Node | null | undefined, typed: ReadonlySet<string>): s
  * `x.m++` where `x` is `this`, `this.field` or a parameter/local with a declared type, and `throw new T(…)`.
  * `typed` names the parameters and locals whose type the function states; a receiver outside that set is never
  * stated (an untyped `obj.x = 1` could be any object). Pass `initializer: true` for an initializer: it states no writes.
+ *
+ * States per function what it assigns (`FunctionInfo.fieldWrites`: `member`, `receiver` as written — `this`,
+ * `this.<field>`, a parameter or local that carries a declared type, "" for a bare field — and line; never from a
+ * constructor, never from an untyped receiver, nested non-arrow functions and local classes left out) and what it
+ * throws (`FunctionInfo.throws`: the type as written with its qualifier, the `throw new T` site, `declared` for a
+ * JSDoc `@throws {T}`; a rethrown variable states nothing). A name imported as a namespace
+ * (`import * as errors from "./x"`) backs a qualified type. Core resolves within the writer's language family by
+ * declared types only, so a TypeScript `throw new Error` never meets a Go `Error` struct.
  */
 export function memberEffectsOf(
   body: Node | null,

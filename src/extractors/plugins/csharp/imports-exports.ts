@@ -14,6 +14,22 @@ export class CSharpImportExportExtractor extends ImportExportExtractor {
   }
 
   /** Parse `using System.Linq;`, `using static System.Math;`, `using Foo = Bar.Baz;` */
+  /**
+   * A file found by the name of its type (`using static Fx.Tools.Parts;` → `Parts.cs`) is the import's only when
+   * the namespace it declares is the one the source names (`importPath`, `nestedPackageLookup`): a namesake
+   * `Parts` of another namespace is never opened, and a qualified `Parts.Tune()` over classes of several
+   * namespaces takes the one the compiler's lookup (`nestedPackageFile`) decides, else no link.
+   *
+   * `extern alias`: the qualifier is the assembly, not part of the name. `using LeagueV1::Com.Example.League;`
+   * imports the namespace after `::`, and `LeagueV1::Com.Example.League.Club.Sign()` (or `LeagueV1::Ns.Club`)
+   * names the call without it (two assemblies declaring one namespace stay undistinguished).
+   *
+   * `using static`: the linker (`projectStaticScopes`) reads the project-wide statics and a `global using static`
+   * of any file as a scope every file of the sub-project has for bare calls, as a file-level `using static` is; an
+   * implicit import counts as a static only when it names a class of the project. A `using static` source is
+   * normalized (no spacing, no `global::`) and the linker names a nested static class through the classes whose
+   * lines enclose it before matching it (`League.Outer.Inner`).
+   */
   private parseUsingDirective(node: Node): ImportInfo {
     let isStatic = false;
     let source = "";

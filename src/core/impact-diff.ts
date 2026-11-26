@@ -192,6 +192,25 @@ function normalizePath(p: string): string {
  * the analysis does not know are reported as `unknownFiles`. Lists are capped
  * and `truncated` says so; counts stay exact.
  *
+ * Dependents are charged by the member that changed. With line ranges, `dependents` is cut to the files that
+ * NAME what changed (`member-dependents.ts`: call and import-by-name links into a changed function; for a type
+ * touched outside its methods, compared by `classChanges`, its blast-radius `typeUsages` kinds: a removed or
+ * re-typed member charges every user, an added member of an interface or abstract type only what implements,
+ * extends or builds it, `ClassChange.addedField` what builds the class); the importer count stays as
+ * `narrowed.importers`. Risk, tests, screens and routes read the narrowed list; `moduleOnly` edits, no line
+ * ranges, an unchanged type comparison or a type with no usage record keep every importer charged. A removed or
+ * re-typed function is `breaking` only for callers the change leaves alone (`signatureChanges` `edited`); an edit
+ * inside a re-exporting file's import block (`HunkSpans.reexports`, `ImpactDiff` `forwarded`) charges only
+ * importers of a forwarded name (`filesImportingNames`). A file handing a charged module on whole
+ * (`starForwarders`, from the `exports` `*` rows) is charged up the chain only when the change takes a name away;
+ * targets come from `ProjectAnalysis.starReexports` (`starReexportTargets` through `ImportIndex.fileForModule`,
+ * no path-word guess) and an older summary reports `StarForwarders.stale` (`STAR_REEXPORTS_STALE_NOTE`).
+ * `narrowed.members[].lost` marks a lost name. A hunk wholly inside a module-level name
+ * (`FileAnalysis.moduleNames`) is an edit of it (`symbolsInHunks` `bound`, judged before the import block);
+ * `boundReaders` charges the importers whose imports list the name, take the module whole or star-import it,
+ * following re-exports four hops deep; an importer with no per-file record stays charged, as does every importer
+ * for a hunk no name covers.
+ *
  * @param summary - A loaded `project-summary.json`
  * @param changed - Changed paths, as git or the user spells them
  * @param options - Removed paths, and a label for the base being compared

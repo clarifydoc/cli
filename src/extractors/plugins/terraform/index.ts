@@ -6,7 +6,8 @@ import { parseHcl, type HclBlock } from "../../shared/hcl.js";
  * Terraform files as facts for the module-level route pass (`routes.ts`):
  * the blocks an API Gateway route is assembled from — they are usually
  * spread over several files of one module (`api.tf`, `lambda.tf`) — each with
- * the attributes the pass reads, as written.
+ * the attributes the pass reads, as written. A `variable "x"` block is `FileAnalysis.configKeyReads` (spec
+ * `extractConfigKeyReads`), never a data source.
  */
 
 export const TERRAFORM_BLOCK = "terraform-block";

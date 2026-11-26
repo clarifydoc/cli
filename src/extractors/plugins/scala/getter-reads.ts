@@ -6,7 +6,10 @@ import type { CallInfo, FileAnalysis, FunctionInfo } from "../../../types/analys
  * marks each such def the file declares (`FunctionInfo.getter`) and records the reads that may run one as
  * `CallInfo.read: "getter"`: the linker keeps one only where it resolves, through the receiver's declared type or the
  * enclosing class and its bases, to a function marked as a getter. A `val`, a field, a parameter or a def that takes
- * a parameter list is a value, so it draws no edge. Read off the text, so both front ends state the same shapes.
+ * a parameter list is a value, so it draws no edge. Read off the text, so both front ends state the same shapes
+ * (run from `extractValueFlow`). Reads recognised: `club.total`, a bare `total` in the class or its subclass,
+ * `this.total` and `${club.total}` in an interpolated string. A receiver-chain hop through such a def takes its declared
+ * return type (`getterResult`), so `repo.find(1).rival.total` links.
  */
 export function addScalaGetterReads(lines: readonly string[], analysis: FileAnalysis): void {
   const code = codeView(lines);

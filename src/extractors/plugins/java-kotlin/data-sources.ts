@@ -670,6 +670,22 @@ const VALUE_ANNOTATION_RE = /^@(?:\w+:)?(?:[\w.]+\.)?Value(?![\w.])/;
 /** Types of Spring's core.env package that read a configuration key by name. */
 const SPRING_ENVIRONMENT_TYPES = new Set(["Environment", "ConfigurableEnvironment", "PropertyResolver", "ConfigurablePropertyResolver"]);
 
+/**
+ * Java/Kotlin data sources: SQL handed to a call (the statement's own row plus `joinedTableRows`, or `sqlAccessRow` per
+ * access), Spring Data derived queries and `@Query` placeholders, message queues and the Dapr SDK.
+ *
+ * Config reads: `@Value("${league.token}")` is a `key` read and `@ConfigurationProperties(prefix = …)` a `prefix` read
+ * (`DataSourceInfo.configRead`, `kind: "env"`, `target` the key as written, no default); a key spelled like an
+ * environment variable (`@Value("${LEAGUE_TOKEN}")`) is also an `envVars` read. `Environment.getProperty` /
+ * `getRequiredProperty` on a receiver declared `Environment`/`ConfigurableEnvironment`/`PropertyResolver` in a file
+ * importing `org.springframework.core.env` is a `configRead: key` row like `@Value`; an untyped receiver, `Properties`
+ * or a project class stays a plain read.
+ *
+ * Spring AMQP `convertAndSend("x", "y", payload)` is exchange `x` + routing key `y` (`entity`) unless the third
+ * argument is a string literal (two overloads fit: unresolved) or a post-processor. Paho/HiveMQ rows carry
+ * `topicSyntax: "mqtt"`; a topic constant read as `Type.NAME` is a row with `target: null` + `targetRef` (filled by core
+ * from the declaring class), and `new String[]{…}` / Kotlin `arrayOf` give one row per topic.
+ */
 export class JavaKotlinDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["java", "kotlin"];
 

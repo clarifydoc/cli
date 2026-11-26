@@ -48,6 +48,12 @@ function firstView(code: string): string | null {
 }
 
 
+/**
+ * The views a SwiftUI view opens, as frontend routes named by the destination view and flagged `navigation`:
+ * `WindowGroup { ContentView() }` (the root), `NavigationLink(destination:)` or trailing closure,
+ * `.navigationDestination(for:)`, `.sheet`, `TabView` tab items. A destination is the first PascalCase call in the
+ * `destination:` argument or the trailing closure; the screen builder resolves the view by name.
+ */
 export function extractSwiftUINavigation(lines: string[]): RouteInfo[] {
   const text = lines.join("\n").replace(/\/\/[^\n]*/g, (m) => " ".repeat(m.length));
   if (!/\bimport\s+SwiftUI\b/.test(text)) return [];

@@ -1,3 +1,10 @@
+/**
+ * Zig dead code: `@import("db.zig")` names a file beside the importer (a package is `@import("zap")`, never a file of
+ * this project). What is compiled is what `build.zig` hands the compiler: every `.zig` path it names
+ * (`b.path("src/main.zig")`, a module's `root_source_file`) is a root; so is a file with `pub fn main` or a C ABI `export
+ * fn`, and a package's conventional root (`src/root.zig`). `build.zig` itself is run by the toolchain; a test file by
+ * `zig build test` / `zig test`.
+ */
 import { conventionReachability } from "../shared/reachability-kit.js";
 import type { ReachabilityModel } from "../../../types/language-plugin.js";
 

@@ -70,10 +70,26 @@ export const cppManifest: LanguagePluginManifest = {
   vendoredBanners: C_FAMILY_LIBRARY_BANNERS,
   // `#include "helpers.h"` puts what the header declares in scope; `helpers.cc` holds the bodies.
   // `compile_commands.json`: per file the include directories an `#include` searches and the `-D` macros.
+  // Per translation unit the `-iquote`/`-I`/`-isystem` directories and `-D`/`-U` macros (`core/compilation-database.ts`;
+  // paths a CI wrote are matched by their longest tail). `placeIncludes` rewrites an include to the file the compiler's
+  // search order finds first, in memory only; a file compiled twice with different results, and headers, keep the
+  // generic rules. `macrosOf` (the macros every unit agrees on) goes to the parser front end and is stamped into the
+  // incremental `resolver`; `preprocessor-branches.ts` picks the live arm of `#ifdef` / `#if defined()` only for macros
+  // whose state is known.
   compilationDatabase: { files: ["compile_commands.json", "build/compile_commands.json"], parse: parseCompileCommands },
+  // A bare call the file does not define resolves to the ONE included file that does (`import-file`); where that file
+  // is a header (`declarationExtensions`) the files sharing its stem define what it declares, a `static` body never.
+  // An include's stem is no binding (`importedBinding`). An include naming a file with its extension resolves to the
+  // file of exactly that name: from the project root when written without `./`, then beside the importer, then the one
+  // file whose path ends with it (`uniquePathEnding`), then the one path suffix that matches; two files spelling it
+  // alike stay unresolved. A body file with a declaration file of its own stem beside it defines only that file's names.
   importsShareScope: true,
   declarationExtensions: [".h", ".hpp", ".hxx", ".hh", ".cuh"],
   // One type spans files here: member functions are defined out of line in a `.cpp` beside the header.
+  // A member defined out of line in another file (`methodBesideClass`) answers a class its caller's header declares only
+  // when that file's own includes do not reach a different declaration of the class; two headers declaring one class
+  // name are told apart by the caller's own declaration, then the include closure, and refused when neither decides
+  // (`pickDefinition`, `typeFileFor`).
   typesSpanFiles: true,
   // A type declared in another directory's header (reached by `#include`) answers a typed write (member effects look it up beyond the writer's directory).
   typesBeyondDirectory: true,
@@ -81,7 +97,8 @@ export const cppManifest: LanguagePluginManifest = {
   multipleInheritance: true,
   // A body that reads as a free function may be a member: `TEST_F(GarageTest, Parks) { OpenBay(3); }` is a
   // method of a fixture subclass the macro declares, and `(*it)->kick()` still loses its receiver. So a bare
-  // call may be another class's member.
+  // call may be another class's member. Inside a method a bare call is otherwise the caller's own class's member, then
+  // its bases', never another class's of the same file.
   bareCallsHideReceivers: true,
   frameworkRules: cppFrameworkRules,
   activationFiles: ["CMakeLists.txt", "conanfile.txt", "vcpkg.json"],

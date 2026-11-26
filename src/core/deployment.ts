@@ -49,6 +49,15 @@ import type { DeployRejects } from "./deploy-rejects.js";
  * first declaration that carries an image/entrypoint wins as the base record
  * and later declarations only fill gaps, so metadata-only manifests
  * (rancher-compose.yml) can't hollow out the model.
+ *
+ * Every URL of any scheme in an env value, and every bare `host:port` item (`addressesOfEnvValue`), resolves to
+ * the service of exactly that host (compose name, k8s Service alias, `.svc` first label — `clusterServiceLabel`,
+ * shared with `resolveHost`) and is judged by that service's kind: a queue gets a `bus` edge, a cache a `db`
+ * edge, else none. A bare `host:port` counts only on a port the service serves (compose `ports`/`expose`, a
+ * `containerPort` and its Services' ports `K8sManifests.servicePorts`, else `DEFAULT_SERVICE_PORTS`;
+ * `RawService.servedPorts`), whatever the key is named. A compose `build:` reads its Dockerfile's `CMD`/`ENV`
+ * (dockerfiles.ts); the build context names the project and `DeployedService.entryFile` is the source file the
+ * command starts.
  */
 
 // ─── Minimal YAML subset parser ─────────────────────────────────────────────

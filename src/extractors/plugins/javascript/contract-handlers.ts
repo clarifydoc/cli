@@ -1,3 +1,26 @@
+/**
+ * Handler objects written in a call: thrift `createServer(ClubService, {…})` and grpc-js
+ * `server.addService(X.service, {…})`. Each member is a function of its own, `createServer.<key>` /
+ * `addService.<key>` (the contract row sits on it, so its body's calls are attributed to it); a member that names a
+ * function (`getClub: someFn`, `getClub: clubs.getClub`, shorthand, `.bind(this)`) is that pseudo-function holding
+ * one `passed: "argument"` call of the name, which `resolvePassedName` resolves without guessing; a call-result value
+ * (`getClub: makeHandler()`), a spread or an accessor is no handler. A member's value is read through parentheses,
+ * `as`/`<T>`/`satisfies` assertions and `!`; `this.x.bind(this)` is the method `x` of the class the object is written
+ * in (the call names `Class.x`); an object first held in a file's one `const|let|var name = {…}` gives `<name>.<key>`
+ * functions (a member already a function of that name is not made twice); a name declared twice, or an object defined
+ * in another file, is not read.
+ *
+ * A Node client `thrift.createClient(ClubService, conn)` names its service in an argument — core/grpc-clients.ts asks
+ * the stub hook again with `createClient(ClubService)` when the bare spelling answers nothing; an awaited receiver
+ * (`(await connect()).createClient(ClubService)`) is read past. Thrift handlers the generated code does not name —
+ * Node `thrift.createServer(ClubService, handler)` — are `thrift-handler` route facts (shared/thrift-handlers.ts)
+ * joined by the `thrift-handlers` resolver with the declared service's rpcs and the one class of the handler's type:
+ * each rpc it has a method for becomes a contract row ON that method (the grpc-js `addService` shape); a handler held
+ * in a variable is read from its one literal/constructor assignment; an object-literal handler serves the rpcs it has
+ * a member for (a held one on its `<holder>.<method>` functions, a literal written in the call on rows named
+ * `createServer.<method>`); only in a file naming `thrift`.
+ */
+
 import type { Node, Tree } from "web-tree-sitter";
 
 /**

@@ -1,3 +1,10 @@
+/**
+ * A page is read only where the manifest's `pathScopedExtensions` admits it: `.md`/`.mdx` under `pages/` and, through
+ * `packageJsonMatches`, where the nearest `package.json` names a framework that routes it (Astro, vite-plugin-pages,
+ * `@next/mdx`, `@mdx-js/*`). Discovery applies the gate as `pathScopedAdmitted` and `getLanguageForFile` answers by
+ * path alone, so a README or a docs repo's `pages/` stays unread.
+ */
+
 import type { PreprocessOutcome } from "../../../types/language-plugin.js";
 
 /**

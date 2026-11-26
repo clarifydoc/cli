@@ -39,6 +39,19 @@ import type { ClassInfo, EntityRelation, FileAnalysis, FunctionInfo, Language, P
  *     is ignored.
  *   - Inherited fields from abstract base models are not merged (each class is
  *     scanned in isolation).
+ *
+ * Schemas: a model's `__table_args__ = {"schema": "league"}` prefixes its `__tablename__`.
+ * SQLModel: `class Club(SQLModel, table=True)` with `league: Optional["League"] = Relationship(…)` is an entity
+ * relation; a non-`table` SQLModel schema with the same nested shape (`league: Optional[LeagueRead] = None`) is not an
+ * entity and yields no relation.
+ * Generic repository: the entity pass types a base repository's `self.model` from the constructors of its subclasses
+ * that set it (`self.model = Club` in `__init__`, read from the assignment rows), so `filter_by(**{key: value})` in the
+ * base gets its entity; every same-named class must agree, and one storing another class or a non-entity leaves it
+ * unlinked. A column the repository takes as a parameter (`DataSourceInfo.whereFields[].fieldParam`) is the string
+ * literal the call walked through hands it (`repo.get_one(slug, "slug")`); a key no call states as a literal gives no
+ * row. Repository-pattern attribution over `Generic[…]` bases goes through the shared `attributeRepositoryAccesses`
+ * with this plugin's spelling knobs.
+ * A qualified base written `base.Club` / `models.Car` resolves through the class index, never a namesake beside it.
  */
 export class PythonEntityExtractor extends EntityExtractor {
   readonly languages: Language[] = ["python"];

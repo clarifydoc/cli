@@ -76,6 +76,13 @@ type Declared = { dir: string; cls: ClassInfo };
  * Settles each Go ORM statement's struct-condition members into columns, in place:
  * `whereFields[].fieldOf` rows get the column in `field`, `whereObjects[].columns` gets the
  * members whose column is not their name.
+ *
+ * A filter on a whole object (`DataSourceInfo.whereObjects`: xorm `Where(cond)` of a condition parameter, a bean read
+ * into — `s.Get(c)`, `club = *c; s.Get(&club)` — less the fields written first, `except`) names the field carried in
+ * it (`builder.Eq{"id": clubID}`, `&Club{ID: id}`) as the column unless a `whereFields` row of the statement already
+ * names that value's column. A struct member settles to its column first — the xorm `'club_id'` / GORM `column:` tag
+ * of the struct, found beside the statement before a same-named one elsewhere, else the mapper convention
+ * `OtherClubID` → `other_club_id` (`whereFields[].fieldOf` until the entity pass rewrites `field`).
  */
 export function mapStructFilterColumns(go: readonly FileAnalysis[]): void {
   if (!go.some((a) => a.dataSources?.some((d) => d.whereFields?.some((w) => w.fieldOf) || d.whereObjects))) return;

@@ -3,7 +3,9 @@ import type { ConfigEntry, ServiceConfigSpec } from "../../../types/language-plu
 /**
  * Terraform variable files (`terraform.tfvars`, `prod.auto.tfvars`, `prod.tfvars`): each top-level
  * `name = value` sets the `variable "name"` block of the module beside it. Names only — the value is
- * never read (these files hold credentials as often as sizes). Leaf module.
+ * never read (these files hold credentials as often as sizes). A `serviceConfig.sources` entry with `keysOnly: true`,
+ * so no call origin may read them; core joins each name to the `variable` block's `configKeyReads` in its own
+ * directory. Leaf module.
  */
 export function tfvarsKeys(text: string, path: string): ConfigEntry[] {
   // A downloaded module's own example variables are not this project's settings.

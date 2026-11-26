@@ -400,6 +400,13 @@ function operandOf(ctx: ParserRuleContext, scope: Scope, stream: readonly Token[
  * `operator+`, which the linker types through the declaration like any receiver. Only the first operator of a flat
  * chain, whose left operand is the chain's first one whatever the precedence; `a << b` is two `<` tokens. The right
  * operand's type is read the same way, to choose among free overloads.
+ *
+ * A method defined in a `.cpp` whose class a header declares names `kit + other` / `this->kit + other` as
+ * `kit.operator+` / `this.kit.operator+`, which the linker types from the class's fields (a primitive field links
+ * nothing). A free `operator+(const Club&, …)` in the same file also gets a bare `operator+` call when its first
+ * parameter's type is the operand's: the file's only free definition links on the left type alone; an overload set
+ * only when the right operand's type (typed local, parameter, field, pointee or literal kind) equals the second
+ * parameter of exactly one overload, the call then carrying both kinds as `argKinds`.
  */
 function operatorCall(ctx: BinaryExpressionContext, calls: PatternCallName[], scope: Scope, stream: readonly Token[], sites?: OperatorSite[]): void {
   const operands = ctx.pointerMemberExpression();
@@ -495,7 +502,16 @@ function elementClass(container: string): string | null {
   return element ? classNamed(element) : null;
 }
 
-/** The class an iterator over a typed container reaches: `std::vector<Club>::iterator it`, `auto it = squad.begin()`. */
+/**
+ * The class an iterator over a typed container reaches: `std::vector<Club>::iterator it`, `auto it = squad.begin()`.
+ *
+ * Also `*it` / `*owner` as an argument (`record(*it)`), `(*it).m()`, `std::next(it)->m()` and a chain from `it->`
+ * (`Boot.club().sign`); never a container of pointers. An iterator over a field only the header declares (`auto it =
+ * boots.begin()`, `cbegin`, `find`, `lower_bound`) is a `localTypes` entry `element: true` from the field name (never
+ * when the body declares a local of that name), so `it->m()` is named `it.m` and the linker types the element;
+ * `(*it)->m()` reads through a pointer or smart-pointer element (`vector<Boot*>`, `vector<unique_ptr<Boot>>`,
+ * `cppCollectionElementOf`): a value element never takes `->`, a pointer element never `.`.
+ */
 function iteratorElement(d: Declared | undefined, scope: Scope): string | null {
   const kind = iteratorKind(d, scope);
   return kind?.text ? elementClass(kind.text) : null;
@@ -531,7 +547,21 @@ function rangeKind(d: Declared, scope: Scope): { text: string | null; unresolved
   return { text: container.pointer ? null : container.text, unresolved: false };
 }
 
-/** `it->second.sign()` over an iterator of a map: the call on the value (or key) class the map's type states; over a header's field, on a name the linker types. */
+/**
+ * `it->second.sign()` over an iterator of a map: the call on the value (or key) class the map's type states; over a header's field, on a name the linker types.
+ *
+ * `it->first` / `it->second` are named `it$first.m` / `it$second.m` (key or value class of `cppMapTypes`) with
+ * synthetic `localTypes` at `fromIndex` 0/1 read through `tupleElementsOf`, only when the body uses them. A range-for
+ * over a map (`for (auto& p : clubs) p.second.m()`, `for (auto& [id, club] : clubs) club.m()`) reads the same way: a
+ * local `p` over a name the function does not declare (a field a header declares) names `p.second.m` / `p$second.m`
+ * with `localTypes` `p$second` at `fromIndex` 1; a structured binding is typed at its position from the field's (or a
+ * local map's) key and value. A range over `pair`/`tuple` elements takes the pair's members (`cppRangeBindings`; the
+ * `pairOf` hook of `extractCFamilyLocalTypes` returns one entry per position; a pointer or non-class member stays
+ * null). `auto [a, b] = f()` (`auto [a, b] = pairOf()`) is `fromIndex` entries typed by the manifest's
+ * `tupleElementsOf` (a struct return stays untyped); over a project struct (manifest `bindsStructFields`) each name
+ * takes the struct's data member at its position, the linker reading `ClassInfo.properties` in declaration order
+ * (nothing for a class with a base).
+ */
 function pairMemberCall(named: PatternCallName, scope: Scope): PatternCallName | null {
   const m = /^([A-Za-z_]\w*)\.(first|second)\.([A-Za-z_]\w*)$/.exec(named.name);
   if (!m) return null;
@@ -576,7 +606,18 @@ function enclosingClass(def: FunctionDefinitionContext): string | null {
   return null;
 }
 
-/** Every class's data members, by class name then field name: a member declaration with a declarator that is no function. */
+/**
+ * Every class's data members, by class name then field name: a member declaration with a declarator that is no function.
+ *
+ * Besides the fields, a struct holding a function pointer is a class whose properties are its fields in declaration
+ * order (`ClassInfo.fieldOrder`; only for a struct with a field that is or reads as a function pointer and that the
+ * plugin can count — nested braces, bit-fields, `a, b;` declarators, `#if`, methods and unions are refused). A
+ * tagless `typedef struct { … } name_t` is the class of its typedef name, a tagless typedef with several names the
+ * class of the first. A positional initializer (`static struct club_ops ops = { "club", 0, club_scout, club_release
+ * };`) seeds the fields it fills (`ValueCell.positional`, see c-family-value-flow.ts). Function-typed fields
+ * (`std::function<…> f;`, `R (*f)(…);`) are `PropertyInfo.callable`; a call through one is derived by core
+ * (`fieldInvokes`).
+ */
 function collectFields(root: ParseTree): Map<string, Map<string, Declared>> {
   const out = new Map<string, Map<string, Declared>>();
   const stack: ParseTree[] = [root];
@@ -958,7 +999,13 @@ function derefHead(link: PostfixExpressionContext, scope: Scope): { cls: string;
   return cls ? { cls, pointer: true } : null;
 }
 
-/** Whether a postfix chain is the argument of Qt's `SLOT(…)` macro: a signature, not a call. */
+/**
+ * Whether a postfix chain is the argument of Qt's `SLOT(…)` macro: a signature, not a call.
+ *
+ * `connect(a, SIGNAL(x()), this, SLOT(saveClub(int)))` hands the slot on as `passed: "argument"`, never a call: the
+ * macro-call form comes from the `MacroName` branch and the `SLOT(saveClub())` postfix form is kept out of the call
+ * list here.
+ */
 function inSlotMacro(ctx: PostfixExpressionContext): boolean {
   for (let up: ParserRuleContext | null = ctx.parent, depth = 0; up && depth < 40; up = up.parent, depth++) {
     if (up instanceof PostfixExpressionContext && up.LeftParen()) return up.children[0]?.getText() === "SLOT";

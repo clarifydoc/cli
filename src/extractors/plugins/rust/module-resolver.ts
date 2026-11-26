@@ -16,6 +16,18 @@ import type { ImportResolveContext } from "../../../types/language-plugin.js";
  *     the module that declares it.
  * A name the module path itself ends with (`use crate::util::is_hidden` written as
  * one path) is tried as the item of its parent module too. Leaf code.
+ *
+ * `crate::a::b` is under the importing crate's `src/` (the `lib.rs`/`main.rs` directory) as `a/b.rs` or `a/b/mod.rs`; a
+ * file under a crate's `tests/`, `benches/` or `examples/` is in a crate of its own, so `crate::` is that directory;
+ * `self::`/`super::` are beside/above; `other_crate::m` is the workspace crate whose directory is named so (`-` for
+ * `_`). A module that does not declare the name but glob-re-exports a child (`pub use chat_sql::*`) answers with that
+ * child, one re-exporting the item by name (`pub use inner::sweep;`) with the module that declares it. A name the path
+ * itself ends with is also tried as the item of its parent module. A glob (`use crate::schema::*`, a workspace
+ * crate's `x::*`) resolves through these rules, `self`/`super` globs are not followed, and `use crate::league::{Table}`
+ * finds the file declaring each name through glob re-exports. A `#[path]` module's source `./x.rs::inner` resolves
+ * `inner` below the file; a path-loaded file holds its children as a `mod.rs` does (a `mod inner;` it declares is
+ * `inner.rs` beside it, which no `foo/inner.rs` answers, so its `pub use inner::X;` re-exports are followed).
+ * `directoryIndexStems` is `mod`. Renames (`use … as`) are `ImportInfo.aliases`.
  */
 export function resolveRustImport(importingFile: string, source: string, specifier: string | undefined, ctx: ImportResolveContext, depth = 0): string | null {
   // `#[path = "export.rs"] mod export_;` is an import of that file, relative to the declaring file's directory;
@@ -98,6 +110,9 @@ function finishModulePath(dir: string, path: string[], specifier: string | undef
  * segments after the shortest prefix that names the target file (`crate::util::pitch` → `pitch` below `util.rs`),
  * joined to `name` as the plugin names a namesake function of an inline block (`pitch::helper`). Null for a path
  * that ends at the file itself.
+ *
+ * Names the function an import path's inline modules give it (`use crate::util::pitch::helper; helper()` →
+ * `pitch::helper`, never a file-level namesake), asked for a bare cross-file call and a glob import.
  */
 export function rustImportedItemName(importingFile: string, source: string, name: string, targetFile: string, ctx: ImportResolveContext): string | null {
   const segs = source.replace(/\./g, "::").split("::").filter((s) => s && s !== "*");
@@ -111,7 +126,10 @@ export function rustImportedItemName(importingFile: string, source: string, name
   return null;
 }
 
-/** The directory a `crate::`-rooted path stays in: the importing crate's own; null for any other path. */
+/**
+ * The directory a `crate::`-rooted path stays in: the importing crate's own; null for any other path. A namesake
+ * outside the crate is no answer, but a module re-exporting another crate's item, module or glob hands it over.
+ */
 export function rustImportConfinement(importingFile: string, source: string, ctx: ImportResolveContext): string | null {
   if (!source.startsWith("crate::")) return null;
   const src = crateSrcOf(importingFile, ctx);

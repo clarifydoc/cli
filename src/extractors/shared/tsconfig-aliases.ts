@@ -15,6 +15,8 @@ import { bundlerConfigsIn, readBundlerAliases } from "./bundler-aliases.js";
  *     package of that name; `${configDir}` is the directory of the config
  *     being loaded, not of the base that writes it
  *   - Per-tsconfig cache keyed by absolute path; circular extends are detected
+ *   - A solution-style config's `references` are followed too
+ *   - Never throws: a config of an unexpected shape contributes nothing
  *
  * Output: an `AliasMap`. A tsconfig `paths` entry is kept as TypeScript reads
  * it — the pattern as written (`@/*`, `~ui/*.js`, an exact `@league/sdk`) →
@@ -282,7 +284,11 @@ function configAbove(dir: string): string | undefined {
  * A tsconfig `paths` pattern is chosen as TypeScript chooses it: the pattern
  * equal to the import first, else the one with the longest prefix before its
  * `*` (whose suffix also matches); its targets are tried in order and the first
- * with a module there wins. Bundler aliases then apply in declaration order.
+ * with a module there wins. A catch-all `*` that finds nothing, or lands in `node_modules`, leaves the import
+ * alone. Bundler aliases then apply in declaration order: the literal `resolve.alias` of `vite.config.*` /
+ * `webpack.config.*` / `vue.config.*` (object or array form, an `aliases` object imported from a sibling file),
+ * kept only when it points into the project, plus the aliases a framework writes only into its generated tsconfig
+ * (Nuxt's `~`/`@`/`~~`/`@@`, SvelteKit's `$lib` and `kit.alias`; see `bundler-aliases.ts`).
  */
 export function applyAliases(
   importSource: string,

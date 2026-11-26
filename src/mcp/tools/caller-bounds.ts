@@ -8,7 +8,10 @@
  *  3. an interface or base declaration above the symbol, or a DI registration that builds it — a caller
  *     may go through that.
  *
- * (1) and the DI registrations come from one pass over the per-file JSON, kept per loaded analysis.
+ * (1) and the DI registrations come from one pass over the per-file JSON, kept per loaded analysis (up to five
+ * `file:line` examples, code before tests); screen links like `to="/x"` are skipped in (2). A failed `trace to=` names
+ * the node its forward walk got nearest to the target (in the target's file when it reached one, else the deepest)
+ * and how many of its calls did not resolve.
  */
 
 import { readFile } from "node:fs/promises";

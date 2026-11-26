@@ -33,7 +33,8 @@ function routeVerb(fn: string | null): { verb: string | null; scope: boolean } |
  *  - Dream: `Dream.router [ Dream.get "/orders/:id" handler; … ]`, nested under
  *    `Dream.scope "/admin" [middleware] [ … ]`;
  *  - Opium: `App.empty |> App.get "/orders/:id" handler |> App.run_command`.
- * A path that is another module's string (`Paths.clubs`) is `pathTemplate`
+ * A path that is another module's string (`Dream.get Paths.clubs handler`, or a nested
+ * `module Paths = struct let garages = "/api/garages" end`) is `pathTemplate`
  * `${Paths.clubs}` for `resolveRouteTemplates`. A named handler is the
  * route's handler; a `fun req -> …` is its own, and its calls are the route's.
  */

@@ -1,3 +1,12 @@
+/**
+ * Zig functions and types. `pub fn f(x: T) !R { … }` at file level is a function; `const Order = struct { … };` (or
+ * `enum`/`union`/`opaque`) is a type whose fields are properties and whose `fn`s are methods, nested types included. A
+ * file is itself a struct: one that declares fields at the top (`Order.zig` with `id: u64,`) is a type named after the
+ * file and its functions are its methods. `self` is the receiver, not a parameter. A declaration carries `pub` (or
+ * `export`, the C ABI) as an anonymous token (`syntax.ts`). A local initialised by a struct literal (`var c = Car{ .id = 1
+ * }`, `const c = &Car{ .id = 1 }`) or declared with a type (`var c: Car = .{…}`, `var c: *Car = undefined`) is typed in
+ * `FunctionInfo.localTypes`, so `c.park()` links to `Car.park` and not a namesake method on another type.
+ */
 import type { Node } from "web-tree-sitter";
 import { FunctionClassExtractor } from "../../functions-classes/base.js";
 import type { FunctionInfo, ClassInfo, Language, PropertyInfo } from "../../functions-classes/base.js";

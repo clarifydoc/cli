@@ -1,3 +1,19 @@
+/**
+ * Everything is gated on the file naming Convex. Functions are routes at `/convex/<module path>.<export>` (dots,
+ * since a colon is a path parameter; the module path from the `_generated/server` import depth, else a `convex/`
+ * segment): `convex/clubs.ts` `export const list = query(…)` → `GET /convex/clubs.list`, mutations/actions `POST`,
+ * `internal*` marked `RouteInfo.internal` and never judged uncalled; `http.route` rows as written (a same-file string
+ * constant is read for `path`/`method`). `useQuery(api.clubs.list)`, `convex.mutation` and
+ * `ctx.runMutation(internal.x.y)` become api-calls at that path; `ctx.db.*` calls are the table accesses and
+ * `defineTable` the entities (convex-data.ts).
+ *
+ * Imported builders: a module exporting `customQuery(query, …)` (from `convex-helpers/server/customFunctions`) emits
+ * a `convex-builder` fact; a functions-directory module calling an imported builder emits `convex-use`, and
+ * `convexBuilderResolver` places the route when the import graph reaches a defining file, looking the builder up by
+ * the name the defining module exports (`import { authedQuery as q }` finds `authedQuery`; `convex-use` carries
+ * `exported`).
+ */
+
 import type { Node } from "web-tree-sitter";
 import type { FileAnalysis, RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import type { ProjectContext } from "../../../../types/project.js";

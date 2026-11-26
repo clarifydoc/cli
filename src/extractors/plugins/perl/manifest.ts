@@ -15,6 +15,8 @@ export const perlManifest: LanguagePluginManifest = {
   language: "perl",
   testCommand: perlTestCommand,
   projectCommands: perlProjectCommands,
+  // `.cgi` is shared with any language: `preprocess` refuses foreign files with `{ skip }`; a `.pl` with `use v6` stays
+  // Perl's (the Raku plugin does not claim it). Extension-less scripts whose `#!` line names a Perl interpreter are Perl.
   shebangInterpreter: /^perl\d*(?:\.\d+)*$/,
   shebangInterpreterNames: ["perl"],
   family: "perl",

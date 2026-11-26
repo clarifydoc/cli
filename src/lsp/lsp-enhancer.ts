@@ -219,6 +219,17 @@ async function findQueryPosition(
  *
  * Phase A: Resolve unresolved calls via textDocument/definition
  * Phase B: Find references via textDocument/references
+ * Phase C: `textDocument/implementation` at the calls injection left on an interface member (ground truth only)
+ *
+ * LSP answers "the symbol at this exact position", so both phases re-read the source line to aim at the right token
+ * (`SourceLineCache` + `findTokenColumn`): definitions target the leaf identifier of the call (`svc.ListUsers` →
+ * `ListUsers`; at the expression's start column servers resolve the receiver and answer with its field/param/import
+ * declaration), references the symbol's name on its declaration line (column 0 is a keyword like `func`/`public`,
+ * where most servers return nothing). Out-of-project answers (stdlib/framework) are dropped by `toHostPath`, so
+ * external calls record `target: null` in the ground truth. `CLARIFYDOC_LSP_DEBUG=1` logs raw definition responses
+ * and per-query failures; individual request failures are swallowed. The links added stay `resolvedBy: "lsp"`,
+ * `strategy: "lsp-definition"` / `lsp-reference`; every query and raw answer goes to `lsp-ground-truth.json`
+ * (`LspDefinitionRecord` / `LspReferenceRecord`), keeping unresolved queries and pre-redirect targets.
  */
 export async function enhanceWithLsp(options: LspEnhancerOptions): Promise<LspEnhancementResult> {
   const startTime = Date.now();

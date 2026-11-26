@@ -1,3 +1,7 @@
+/**
+ * Zig routes: http.zig, zap, tokamak and jetzig; jetzig view functions give the method and whether the path takes the
+ * resource id.
+ */
 import type { Node, Tree } from "web-tree-sitter";
 import type { RouteInfo } from "../../../types/analysis.js";
 import type { RouteExtractor } from "../../routes/base.js";

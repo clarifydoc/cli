@@ -205,6 +205,15 @@ const ACTION_MAP: Record<string, { method: string; suffix: string }> = {
   Delete: { method: "DELETE", suffix: "/{id}" },
 };
 
+/**
+ * ASP.NET attribute routing in VB is the same attribute layer the C# extractor reads, spelled
+ * `<Route("api/users")> <ApiVersion("2")> <Authorize>`: class-level guards and versions are inherited by every
+ * action, an action's own `<Authorize>`/`<AllowAnonymous>` adds to or waives them, `<MapToApiVersion>` narrows the
+ * class's version set. A parameter binds where its `<FromX>` says; without one, a name the template declares comes
+ * from the route, a simple type from the query and a complex type from the body (Web API 2 and `[ApiController]`
+ * both bind that way for VB projects). Convention-routed `XxxController` classes without any attribute keep the
+ * Index/Get/Post/Put/Delete mapping.
+ */
 export function extractVbRoutes(lines: string[], classes: ClassInfo[], spec: RegexLangSpec): RouteInfo[] {
   const routes: RouteInfo[] = [];
 

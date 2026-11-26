@@ -4,6 +4,10 @@ import type { TestTarget } from "../../../types/language-plugin.js";
  * `cargo test -- <names>`: libtest takes several name filters after `--`, each matched anywhere in
  * a test's path. A marked test is named by its module path (`tests::finds_leader`), so a case of
  * an inline `#[cfg(test)]` module is told from a namesake elsewhere; another by its leaf name.
+ *
+ * `cargo test -- <names>`: libtest takes several name filters after `--`, matched anywhere in a test's path; a marked
+ * test is named by its module path (`tests::finds_leader`) so an inline `#[cfg(test)]` case is told from a namesake
+ * elsewhere.
  */
 export function rustTestCommand(tests: readonly TestTarget[]): string | null {
   if (!tests.length) return null;

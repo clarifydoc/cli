@@ -35,6 +35,12 @@ type ApiCall = DataSourceInfo & { filePath: string };
  *
  * Language-agnostic: it reads only the `${…}` / `{…}` hole notation every URL
  * fold renders. Mutates the aggregated rows; returns how many it rewrote.
+ *
+ * Leading holes spelling `${protocol}://${host}[:${port}]` are an absolute URL of unknown origin, the path
+ * after it the target; a literal host after the scheme hole stays that host. Values the source chooses between
+ * stay AMBIGUOUS: `DataSourceInfo.targetChoice` (and `PathArgCall.argAlternatives`) marks `targetAlternatives`
+ * that are the values one local takes, and the route linker links every route a value reaches, where a helper's
+ * `urlTemplateAlternatives` stay first-hit.
  */
 export function finalizeApiTargets(calls: ApiCall[]): number {
   let changed = 0;

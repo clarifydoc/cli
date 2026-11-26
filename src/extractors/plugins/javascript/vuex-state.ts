@@ -16,6 +16,30 @@ import { foreignMutations, localName, vuexStores, type Module } from "./vuex.js"
  * Links are INFERRED `dispatch` from the mutation function to the watcher callback (`dispatch:vuex-state-watch`),
  * `callName` the member written. A push into a list or a `Map.set` watched without `deep` runs nothing in Vue, so it stays
  * unjoined, as for every other reactive cell.
+ *
+ * `dispatch:vuex-state-watch`. A mutation's first parameter is its module's state, and `state.x = v`,
+ * `state.x.push(c)`, `state.byId.set(k, c)`, `Object.assign(state.filters, p)` and `Vue.set(state.byId, k, c)` are
+ * `storeWatch.stateWrites` (paths below the module; `deep` or a computed that uses the member reads it through), read
+ * through `store.state.clubs.list` via `useStore()` from `vuex`. A store with no `modules:` is a root
+ * (`StoreShapes.root`: the file calls `createStore({…})` / `new Vuex.Store({…})` with Vuex imported); a mutation
+ * written in a file other than its module's (a helper several modules import) belongs only to the modules whose table
+ * spreads, merges or builds from it (`foreignMutations`).
+ *
+ * State watchers (`$store.state…`, `useStore().state`, `this.$watch('$store.state…')`) join the mutations that write
+ * that state, and a component's write to store state (`store.x =`) is a store write. State watched in code:
+ * `this.$watch('$store.state.clubs.list', cb)`, `store.watch((state) => state.clubs.list, cb)` on `this.$store` /
+ * `useStore()` / a project-imported store, a Composition `mapState` bound to a store
+ * (`computed(mapped.list.bind({ $store: store }))`) watched through `watch(list, cb)` (`withVuexCalls`); a getter —
+ * `watch(() => store.getters['clubs/total'], cb)` reads `@getter:clubs/total`, resolved to the state the getter reads
+ * (`storeWatch.getterReads`, module-relative) under the module the key names. An Options computed reading
+ * `this.$store.getters.total` / `['clubs/total']` and a `...mapGetters('clubs', ['total'])` /
+ * `mapGetters({ n: 'clubs/total' })` entry read the same key; a getter that reads other getters (`getters.total`,
+ * resolved in its own module's namespace), `rootState` (absolute state paths) or `rootGetters['season/year']` reads
+ * what those read (`getterReads[].getters` / `rootPaths` / `rootGetters`, up to 24 getters deep, a cycle once). A
+ * bare key (`store.getters.standings`) names the getter of a module that is not `namespaced`, answered only when
+ * exactly one such getter of the store has it, the root store's own first. A Vue ref can stand for another cell; a
+ * project composable's computed watched in another file joins the composable functions that write it.
+ * `toSignal(…pipe(cb))` listens to an Angular subject (see subject-flows.ts).
  */
 export class VuexStateWatchResolver implements DispatchResolver {
   readonly id = "vuex-state-watch";

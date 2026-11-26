@@ -33,6 +33,15 @@ const vbInlineGuard: InlineGuard = (code) => {
   return m ? { head: m[1]!, tail: m[2]!.replace(/\s+Else\b.*$/i, "") } : null;
 };
 
+/**
+ * VB is a keyword-delimited language that goes through the shared regex scanner with a plugin `blockDelta` hook
+ * instead of brace counting. `blockDelta` says what each line opens (`If … Then` opens a block only when nothing
+ * follows its `Then`; a statement after it, `If x Then Exit Sub`, is a one-line guard), `blockClose` says what
+ * closes (`End If`, `Next`, `Loop`, `Wend`, `End While`, `End Select`, `End Try`), plus `inlineGuard`
+ * (`If c Then s`). Blocks: `If`/`End If`, `For`/`Next`, `Do`/`Loop`, `While`/`End While` (`Wend`),
+ * `Select Case`/`End Select`, `Try`/`End Try`, `With`, `Using`, `SyncLock`. Keywords are case-insensitive, so
+ * every pattern is too. The graph is marked `approximate`.
+ */
 export const VB_REGEX_CONTROL_FLOW: LanguageRegexControlFlowSpec = {
   lineComments: ["'"],
   blockComment: ["", ""],

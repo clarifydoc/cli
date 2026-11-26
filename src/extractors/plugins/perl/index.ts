@@ -132,7 +132,12 @@ export const perlSpec: RegexLangSpec = {
       },
     },
     {
-      // release(...), &release(...) — a sub of this package.
+      // release(...), &release(...) — a sub of this package. Builtins are no calls, and the generic `name(` matcher is
+      // off (`replacesBaseline`). `Pkg->m` and `Pkg::f(` are calls on the package, spelled `Pkg.m` with `receiverType`
+      // (`nestedTypePaths` keeps `League::Club` apart from `Garage::Club`); `my $x = Pkg->new` types the local (not a
+      // chained `Pkg->new->build`) and `$x->m(` needs its parentheses; `$self->m(` / `__PACKAGE__->m` resolve on the
+      // enclosing package and its `use parent` / `use base` parents (`-norequire`, lists, `qw`; the first parent is
+      // `extends`, the rest `implements`). A package-less script's statements are its `<setup>`.
       pattern: /(?=&?[A-Za-z_])(?<![\w$@%.>:])(?<!\bsub\s+)&?(?!(?:my|our|local|state|sub|qw|q|qq|qr|m|s|tr|y|return|bless|shift|pop|keys|values|each|defined|scalar|ref|exists|delete|die|warn|print|printf|push|unshift|splice|join|map|grep|sort|reverse|wantarray|length|substr|index|sprintf|lc|uc|open|close|chomp|exit|undef)\b)([A-Za-z_]\w*)\s*\(/,
       buildName: (m) => ({ name: m[1]!, leafName: m[1]! }),
       replacesBaseline: true,

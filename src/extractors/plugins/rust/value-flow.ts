@@ -74,7 +74,14 @@ const ITERATORS = new Set(["iter", "iter_mut", "into_iter", "values", "values_mu
 /** Paths that wrap a value and hand it on. */
 const WRAPPERS = new Set(["Some", "Ok", "Box.new", "Arc.new", "Rc.new", "Arc.clone", "Rc.clone", "RefCell.new", "Mutex.new", "RwLock.new", "Cell.new"]);
 
-/** The facts of one function. `implType` is the type of the impl around it; `associated` is a function taking no `self`. */
+/**
+ * The facts of one function. `implType` is the type of the impl around it; `associated` is a function taking no `self`.
+ * Read by the ANTLR reading only; the regex fallback states none. Covers `let`/tuple patterns, `Some(Box::new(f))`
+ * wrappers, fields via `self`, `push`/`vec![…]`/`for … in`, `if let Some(cb)`, paren-called fields `(self.cb)(x)`, a
+ * `Self { cb: … }` literal as the receiver's fields (stated only in a function taking no `self`), and a function's tail
+ * value. A `static` (uppercase name) a function stores into is stated at module scope (`moduleValueFlow`, with a
+ * self-`copy` marking the name bound).
+ */
 export function rustValueFlow(fn: Function_Context, hooks: RustFlowHooks, implType: string | null, associated: boolean): { facts: ValueFlowFact[]; moduleFacts: ValueFlowFact[] } {
   const body = fn.blockExpression();
   if (!body) return { facts: [], moduleFacts: [] };

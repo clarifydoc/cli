@@ -605,6 +605,13 @@ function cjsDefaultName(node: Node | null): string | null {
  * `module.exports = { build, forge: maker }` and `exports.build = build` /
  * `module.exports.build = build`. Each is a `re-export` row without a source,
  * which the linker follows through the import, as `export { build }`.
+ *
+ * `module.exports = { build, forge: maker }` and `exports.build = build` / `module.exports.build = build` over names
+ * the file binds from `require` (`const { build } = require('./thing')`, `const maker = require('./maker')`) state
+ * each as a source-less `re-export` that the linker's `forwardedDefinition` follows through the import like
+ * `export { build }`; a name the file declares itself is no barrel entry. A default import's reference row names the
+ * default export; `export { default as x } from`, sourceless re-exports and `export * as ns` lead to the definition
+ * the same way.
  */
 function cjsBarrelExports(assign: Node | null, program: Node, line: number, exports: ExportInfo[]): void {
   if (assign?.type !== "assignment_expression") return;
@@ -727,6 +734,11 @@ const LAZY_LOADER = /(?:^|\.)(?:\w*[Ll]azy\w*|loadable|\w*[Aa]sync\w*Component\w
  * The variable a dynamic import is bound to through a lazy loader —
  * `const ClubPage = lazy(() => import("./ClubPage"))`, `React.lazy(async () => { return import(…) })` —
  * or null for any other dynamic import.
+ *
+ * A module whose default export is an anonymous async wrapper of a dynamic import
+ * (`export default defineAsyncComponent(() => import('./ClubCard.vue'))`, `createAsyncComponent(…)`, `lazy(…)`,
+ * `loadable(…)`) binds the imported module under a name derived from it (`ClubCard`) and names it the default's
+ * `sourceName` (`lazyBinding`/`lazyDefaultOf`); a loader name must say lazy/loadable or `…Async…Component…`.
  */
 function lazyBinding(importCall: Node): string | null {
   let fn = importCall.parent;
@@ -800,6 +812,17 @@ function topLevelInitializer(root: Node, name: string): Node | null {
 /**
  * The factory a value is the result of: `ClubApi()` or `createApi(base)` (a bare name called), also handed to a
  * `new Proxy(…, handler)` that wraps it — "ClubApi". Null for anything else.
+ *
+ * A gateway exported as a factory's result —
+ * `const ClubApi = () => ({ closeClub() { return request(…) } }); export default new Proxy(ClubApi(), handler)`,
+ * `export default ClubApi()` or `export const gateway = ClubApi()` — states `ExportInfo.factoryOf` = `ClubApi` (a
+ * bare name called, possibly handed to `new Proxy`; this function never judges whether it is a factory). The
+ * factory's members, every one a function, become functions of their own (`ClubApi.closeClub`, `exportedFactoryNames`
+ * widening the generated-client rule of `functionObjectReturned`, one member enough), so each request belongs to its
+ * member. The linker's factory-member step (`exportedFactoryOf`, a two-segment call `Gateway.closeClub` through the
+ * default import or the named export) lands the call on that member, INFERRED `direct`; a member the literal does not
+ * state, a literal that spreads or one the plugin did not split links nothing, so a namesake member of another
+ * gateway is never reached.
  */
 function factoryResultOf(value: Node | null | undefined): string | null {
   let at = value ?? null;

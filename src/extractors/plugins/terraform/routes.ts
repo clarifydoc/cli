@@ -22,6 +22,10 @@ import { TERRAFORM_BLOCK, type TerraformBlockFact } from "./index.js";
  * the function. The blocks are joined within one module directory. A route
  * whose function's code the module does not point at (a prebuilt zip, an
  * image) stays on the `.tf` file that declares it.
+ *
+ * An `aws_lambda_function`'s `environment { variables }` (a literal, or `aws_dynamodb_table.x.name|id` of a table
+ * whose `name` is a literal) gives a code row's `envRef` its value, on the module its handler names only (no
+ * provider-wide scope); a variable-built name stays unset.
  */
 
 interface Block extends TerraformBlockFact {

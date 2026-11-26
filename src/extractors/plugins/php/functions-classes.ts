@@ -835,6 +835,18 @@ function testsNull(cond: string, name: string): boolean {
  *   `App::make()`                       — a container lookup (string ids give a qualifier)
  *   `/** @var Type $x *\/` above a statement, or `/** @var Type *\/` above `$x = …`
  * The first binding of a name wins. Skips nested closures (different scope).
+ *
+ * Aliases and rebinding: `$q = $p` is an `aliasOf` entry read in text order with blocks by enclosing statement; a
+ * parameter is the head's first write, typed by its declaration, so `$a = $c; $c = new Player();` keeps the declared
+ * type and an alias after the reassignment takes the new one; a loop around the alias follows the shared loop rule.
+ * `foreach` types its variable from a call or property chain (`from`/`element`) or a parameter or `@var` local typed
+ * `Player[]` / `array<int, Player>`. A documented formal (`@param`) holds only while the body does not assign the
+ * name again (assignment, `??=`, `foreach … as`, `list`, `&`); then the local's own initializer type applies, or
+ * nothing. A type read off one assignment is `inferred`: core drops it when another assignment of the name is a call
+ * it cannot type or one typing another class (a construction guarding a null test of the same name, or the last
+ * straight-line assignment, keeps it); `$c ? a() : b()` marks its arms with `choice`. No per-assignment entry is
+ * stated otherwise. A per-argument walk of the enclosing function (`assignmentsOf`) is one walk per function building
+ * a name table, kept per tree in a `WeakMap`.
  */
 function extractLocalTypes(
   body: Node | null,
@@ -1094,7 +1106,7 @@ const bareTrait = (written: string): string => written.trim().replace(/.*\\/, ""
 
 /**
  * The conflict clauses of `use A, B { A::stamp insteadof B; B::stamp as logStamp; stamp as protected; }`
- * onto the mixins the class's `use` recorded: `insteadof` takes the method from each trait it names
+ * onto the mixins (`ClassInfo.mixins[]`, per-mixin `excludes` and `aliases`) the class's `use` recorded: `insteadof` takes the method from each trait it names
  * as the loser, `as name` gives the class another name for a trait's method (a visibility-only
  * `as protected` adds nothing a lookup needs). Read off each clause's text — the grammar wraps a
  * comma list after `insteadof` in an ERROR node.

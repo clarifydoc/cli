@@ -26,7 +26,11 @@ import { lineIndex } from "../shared/text-scan.js";
  *     layout, mail or PDF body, is a screen named for its path under `views/`.
  *
  * Which controller method renders a view is a project-level join on the
- * keyed `load->view('x')` call (`CodeIgniterViewResolver`).
+ * keyed `load->view('x')` call (`CodeIgniterViewResolver`). An element's column is re-checked against the source's
+ * own line (`keepSourceColumns`); a reader that rewrites tags states a column only when the line's text before it is
+ * unchanged. Blade does the same, its echo bodies cut from its lines. CodeIgniter 2/3 is vendored with no manifest
+ * entry, so its framework rule matches on `meta.markerCandidates` (well-known relative paths collected into
+ * `ProjectInfo.markerFiles`).
  */
 
 /** `application/views/clubs/edit.php` → `clubs/edit`; null when the file is no PHP view. */

@@ -1,3 +1,19 @@
+/**
+ * A module-level map's values are `<setup>`'s; the linker joins `ACTIONS.save()` to that key's function and
+ * `ACTIONS[kind]()` (the call name `ACTIONS[]`) to each of the map's, INFERRED (`dispatch:object-map`). A map
+ * imported from a project module (relative or `@/`, `~`, `#`) and handed down (`:actions="clubActions"`,
+ * `actions={clubActions}`) is a `functionProps` entry carrying `mapImport` (`:actions="ACTIONS"`, `actions={ACTIONS}`
+ * give one per held function, `actions.save`; the handler imported when the file imports it:
+ * `FunctionPropBinding.handlerImport`, resolved by the prop-callback resolver; a function the callback hands on
+ * counts as its writer's calls in the duplicate detector, `withHeldCalls`). The prop-callback resolver expands it
+ * from the declaring module's `<setup>` (named re-exports and each `export *` followed, four hops), one function prop
+ * per key, the binding site staying the handing page (dispatch-map-props.ts, dispatch.ts).
+ *
+ * A prop binding whose value cannot be read is listed in `FileAnalysis.unreadPropBindings` (`:kind="row.kind"`,
+ * `kind={pick(x)}`, a JSX string literal, which `propBindings` keeps none of) and keeps the full fan-out.
+ * `dispatch(props.fetchKey)` links only the names read; an unread user's action stays unlinked.
+ */
+
 import type { Node } from "web-tree-sitter";
 import type { CallArgOrigin } from "../../../types/analysis.js";
 import { expressionOrigin } from "./arg-origins.js";
@@ -241,6 +257,28 @@ export function recordIndexOrigin(node: Node): CallArgOrigin["origin"] | null {
  * (an unreadable key, so the read reaches every entry). Null for any other shape — a case that returns anything
  * but a named call, a statement besides the `switch`, a discriminant that is no plain prop, a case that is
  * no literal, a `const` that is no IIFE.
+ *
+ * A store picked by an IIFE `switch`
+ * (`const store = (() => { switch (props.kind) { case "club": return useClubStore(); … } })()`) is stated as the
+ * record `store[]`: one `localTypes` entry per case literal with its `key` (grouped cases share their return; a
+ * `default` that returns a call has no key, so `recordChoice` cannot narrow and the read reaches every entry; a
+ * `default` that only throws holds none), and a local `store` whose `from` is `store[]` with `indexOrigin` the
+ * switch's discriminant when it is a plain prop; core's `recordCall` then narrows exactly as for a record read at a
+ * run-time key. The same `switch` in a named helper of the file (`function pickStore(kind) { switch (kind) { … } }`
+ * or `const pickStore = (kind) => …`, one plain parameter, nothing else in its body: `localFunction`, `soleSwitch`,
+ * `switchArms`) states the same record for `const store = pickStore(props.kind)`. (Written with single quotes:
+ * `(() => { switch (props.kind) { case 'club': return useClubStore() … } })()`.) Any other shape (a case returning a
+ * non-call, extra statements, a computed or non-literal case, a discriminant that is no plain prop, an IIFE with
+ * parameters, a helper another file declares or one handed anything but a plain prop) states nothing.
+ *
+ * A record of call results indexed by a prop (`stores[props.kind]`, `LocalType.key` per entry,
+ * `CallInfo.indexOrigin`/`LocalType.indexOrigin` for the index) is narrowed by `recordChoice` (record-choice.ts) to
+ * the entries the component's users bind the prop to — a literal (`kind="player"`), an imported enum member or
+ * constant (`PropBinding` origin `constant`, `:kind="Kind.Club"`; only a dotted name or an UPPER_SNAKE one), or a
+ * prop they hand on — each link kept to its binding sites (`viaUsage`). No binding naming an entry, an unreadable
+ * entry key, or a bound value of another origin (a route parameter; `PropLiterals.complete` false, so `recordChoice`
+ * returns null) keeps the full fan-out, never narrower than what one user could pick. A dispatch map imported and
+ * handed down as a prop is `FunctionPropBinding.mapImport`, expanded from the declaring module.
  */
 export function switchRecordEntries(declarator: Node): { holder: string; calls: Node[]; keys: Array<string | null>; indexOrigin: CallArgOrigin["origin"] } | null {
   if (declarator.type !== "variable_declarator") return null;

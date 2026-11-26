@@ -10,6 +10,9 @@ const PIPE_OPS = new Set(["|>", "||>", "|||>", ">=>", ">>"]);
  * app(app(f, a), b)): only the innermost names the callee, so an outer one
  * reports nothing. A function piped into or composed with (`|> save`,
  * `>=> handler`) is called too.
+ *
+ * The piping and composition operators are `|>`, `||>`, `|||>`, `>=>` and `>>`; an all-capital name on the right
+ * (`GET`) is a combinator, not a call.
  */
 export const fsharpCallHooks: CallExtractionHooks = {
   callNodeTypes: new Set(["application_expression"]),

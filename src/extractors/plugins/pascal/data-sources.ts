@@ -428,6 +428,14 @@ function blankDisplayText(lines: string[]): string[] {
   return out;
 }
 
+/**
+ * Line-scanned from the unit text (captured in `beginFile`, flushed once at the root node), receiver-gated so no
+ * AST context is needed, because substring-matching whole call text (`.open` → `Windows.OpenProcessToken`, `http`
+ * → `HttpOpenRequest`) floods desktop code with phantom "database" accesses. Raw SQL rides the shared
+ * SQL-in-strings scanner after two normalizations (`sqlScannerLines`): Pascal `'…'` literals become C-style `"…"`,
+ * and `Query1.SQL.Add('…');` builder lines lose their statement terminator so consecutive `Add` calls concatenate
+ * into one statement.
+ */
 export function extractPascalDataSources(rawLines: string[]): DataSourceInfo[] {
   const lines = stripPascalComments(rawLines);
 

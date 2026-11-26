@@ -72,6 +72,10 @@ const NOT_EXPOSED: ReadonlySet<string> = new Set(["IDisposable", "IAsyncDisposab
 /** Factory/instance helpers that construct their type argument. */
 const ACTIVATORS: ReadonlySet<string> = new Set(["CreateInstance", "GetServiceOrCreateInstance"]);
 
+/**
+ * Plugins report facts, core decides (`meta.ast.diBindings`): container registrations; `[FromKeyedServices("k")]`
+ * is an injection point's `qualifier`; `TryAdd*` is `ifAbsent`.
+ */
 export function extractCsharpDiBindings(tree: Tree, sourceText: string): DiBinding[] {
   if (!DI_GATE_RE.test(sourceText)) return [];
   const out: DiBinding[] = [];

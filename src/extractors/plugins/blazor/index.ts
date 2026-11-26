@@ -1,3 +1,10 @@
+/**
+ * A layout renders the routed page where it writes `@Body` (manifest `routerOutlet: /@Body\b/`); core hangs the
+ * routed page off that component as a `shell` node. `linksFromBase: true`: `<base href="/">` makes `href="cart"`
+ * and `Nav.NavigateTo("user/orders")` app-root paths. A screen is the sum of what makes it up: components it
+ * renders (by import, or by name — Blazor's namespace components — in its own sub-project or one it uses), its
+ * code-behind class, `codeFiles` and the `viewModel` it binds.
+ */
 import type {
   CallInfo,
   ClassInfo,
@@ -132,6 +139,12 @@ const INJECT_RE = /^\s*@inject\s+([A-Za-z_][\w.<>,? ]*?)\s+([A-Za-z_]\w*)\s*$/;
  * and nothing here declares a second one. Each method knows the services the
  * component injects (`@inject BasketState Basket` → `Basket: BasketState`), the
  * receivers its calls go through.
+ *
+ * Components, methods and `@code` C# are NOT extracted here — the code-behind owns them and re-declaring the
+ * partial class would collide. The one exception is a component whose markup states its type
+ * (`@inherits ClubPageBase`, `@implements IDisposable`): it is declared as a class named after the file, so a
+ * handler the base class declares links. `@code` blocks and `@* … *@` comments are blanked before the markup scan
+ * so C# generics (`Dictionary<String, …>`) never read as component tags.
  */
 export function extractCodeBlockFunctions(lines: string[], commentPrefixes: string[]): FunctionInfo[] {
   const blocks = codeBlocks(lines);
@@ -325,6 +338,12 @@ function pageParams(path: string, props: CodeProperty[]): RouteParamInfo[] {
   return out;
 }
 
+/**
+ * Markup extraction: `@page "/route"` is a frontend route (and so a routed screen); `{id:int}` tokens are route
+ * params, typed by the constraint, else by a same-named `[Parameter]` property; `[SupplyParameterFromQuery]`
+ * properties are query params; `@attribute [Authorize(…)]` / `[AllowAnonymous]` are the page's `auth` (read as the
+ * C# plugin reads them).
+ */
 function extractBlazorRoutes(lines: string[]): RouteInfo[] {
   const routes: RouteInfo[] = [];
   let guards: GuardAttr[] | null = null;
@@ -360,6 +379,11 @@ const COMPONENT_TAG_RE = /<([A-Z][A-Za-z0-9_]*)(?=[\s/>])/g;
 /** Razor/control tags that aren't real components. */
 const NON_COMPONENT_TAGS = new Set(["DOCTYPE"]);
 
+/**
+ * `@using X.Y` is an import (namespace dependency + framework hint: `Microsoft.AspNetCore.Components` → `blazor`).
+ * PascalCase tags (`<Button …>`) are sub-components (the composition graph); `@onclick` / `@bind` / native events
+ * are interactive elements.
+ */
 function extractBlazorSubComponents(lines: string[]): SubComponentInfo[] {
   const markup = markupOnly(lines);
   const byName = new Map<string, SubComponentInfo>();
@@ -419,6 +443,11 @@ function elementForTag(tag: string | null): InteractiveElementInfo["element"] {
 
 /** Pull a clean handler name from a directive value: a method call wins, then a
  *  bare member path; lambdas/expressions fall back to null. */
+/**
+ * Handlers: `@onclick="Save"` names a method of the component class, a partial whose code sits in
+ * `Garage.razor.cs` when the markup's own `@code` block does not declare it; the C# plugin's UI bridge joins it
+ * (INFERRED, by class name).
+ */
 function cleanHandler(raw: string): string | null {
   const val = raw.trim().replace(/^@+/, "");
   // A call on a member (`Clubs.Load()`) keeps its receiver: it names the injected service the method is on.

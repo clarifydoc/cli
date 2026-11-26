@@ -110,6 +110,12 @@ function parseIntProp(props: Map<string, string>, key: string): number | null {
   return isNaN(n) ? null : n;
 }
 
+/**
+ * `ScreenInfo` from designer code — `InitializeComponent()` (or any method that constructs controls):
+ * `Dim lblEmail As New Label With {.Text = "Email:", .Left = 20, …}`, `txtEmail = New TextBox With {…}`,
+ * `btnLogin.Text = "Login"`, `Me.Text = "Sign in"` and handler wiring
+ * `Private Sub btnLogin_Click(…) Handles btnLogin.Click`.
+ */
 export function extractWinFormsScreens(
   lines: string[],
   filePath: string,

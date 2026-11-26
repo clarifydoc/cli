@@ -1,3 +1,11 @@
+/**
+ * Reads `aura/<n>/<n>Controller|Helper|Renderer.js` as `var <n>Controller = { … }` (the parenthesised object swapped
+ * for a declaration, lines kept), turns `component.get("c.saveClub")` into a call to `aura-action:saveClub`,
+ * `component.getEvent("clubSelected")` into one to `aura-event:clubSelected`, `$A.get("e.c:leagueRefreshed")` into
+ * one to `aura-app-event:leagueRefreshed` and `helper.x` / the helper's `this.x` into `aura-helper:x`; no name tier
+ * guesses them. The joins are the markup plugin's `SfMarkupResolver`.
+ */
+
 import type { CallInfo, FileAnalysis, FunctionInfo } from "../../../types/analysis.js";
 import type { PreprocessOutcome } from "../../../types/language-plugin.js";
 import { blankStringAwareComments } from "../shared/text-scan.js";

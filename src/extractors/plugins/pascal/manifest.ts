@@ -8,6 +8,19 @@ import { PASCAL_DOCS } from "../../shared/doc-comment-specs.js";
  * EAGERLY (extensions, grammar location, framework rules, …). The heavy
  * body (meta.ts and everything it imports) is loaded lazily per language;
  * this module must stay a leaf: types, frameworks.ts, search-paths.ts and package-manifests.ts only.
+ *
+ * `caseInsensitiveNames: true` (`_repo.save` calls the declared `Save`), `importsShareScope: true`
+ * (`uses WaitForm;` puts the unit's interface routines in scope unqualified: a bare `ShowWaitForm(…)` is the one
+ * used unit that declares it), `constructorCalls: ["Create"]` (`TfrmPlayers.Create(AOwner)` runs the constructor,
+ * reported as `constructor`), `dispatchLanguages: ["dfm"]` (the DFM → handler UI bridge joins `.dfm` wirings to
+ * form methods, so discovering `.dfm` files must load this plugin's resolvers too). Project markers: `**\/*.dpr`,
+ * `**\/*.dpk`, `**\/*.dproj` (kind `delphi`, priority 10), `**\/*.lpi`, `**\/*.lpr` (kind `lazarus`, priority 20).
+ *
+ * External units: unit-scope roots (`System.`, `Vcl.`, `FMX.`, `Data.`, `Winapi.`, `FireDAC.`, …), classic RTL/VCL
+ * units in canonical casing (`SysUtils`, `Classes`, `Forms`, …), lowercase variants ONLY for names no other
+ * ecosystem would use as a bare import (prefixes aggregate globally; lowercase `classes`/`types`/`db` would shadow
+ * legitimate bare local imports in TS/JS repositories), and Indy's flat unit names (`IdHTTP`, …). Auto-import
+ * classification strips a Pascal `F` prefix (`classifyAutoImported` / `qualifiedRootCandidates`).
  */
 export const pascalManifest: LanguagePluginManifest = {
   docComments: PASCAL_DOCS,
@@ -73,6 +86,11 @@ export const pascalManifest: LanguagePluginManifest = {
   ],
 };
 
+/**
+ * The `dfm` manifest is the form-resource tier: `parsing: "custom"` + `customParse`, `designFormat: true`, not an
+ * import target; `.lfm` is Lazarus, `.fmx` FireMonkey — same object syntax, always text; only classic `.dfm` can
+ * be a binary TPF0 stream. Both manifests are family `pascal`.
+ */
 export const dfmManifest: LanguagePluginManifest = {
   language: "dfm",
   family: "pascal",

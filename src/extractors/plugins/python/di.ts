@@ -18,6 +18,24 @@ import { splitPyTypeArgs } from "./request-schema.js";
  *  - container lookups typing a local or a chained call
  *    (`injector.get(UserRepo)`, `container.repo()`).
  *
+ * A FastAPI dependency's callable reads what it reads whether or not its name says it checks the caller;
+ * `CallInfo.routeParamsByName` marks a callee the framework hands the route's parameters by name (`Depends(x)` and the
+ * dependencies it asks for in turn). Typed locals: `q = p` and `(q := p)` are `localTypes` entries with `type: ""` and
+ * `aliasOf: "p"`; a parameter-typed alias is read by the fact table (it keeps each name's latest binding and its
+ * block), a loop around it matters only when the head is bound again LATER in that loop body and the alias is then
+ * typed only if that binding states the same type, and the gate skips an alias-only body unless a parameter is
+ * annotated. A local's initializer call of a same-file function is typed by its declared return; `a() if c else b()`
+ * marks its arms with `localTypes[].choice`; Python states no per-assignment entry at all. `match` class patterns
+ * (`case Club():`, `as`, `|`) set `CallInfo.receiverType` only on calls inside the region the pattern guards. `for i,
+ * (a, b) in enumerate(pairs)` / `.items()` over `list[tuple[A, B]]` / `dict[A, B]` type the element through `rowShape`.
+ * A documented `@param` holds only while the body does not assign the name again; a module-level typed binding never
+ * types a call on a name the function rebinds (`FunctionInfo.boundNames`, `rebindingNamesOf`, `moduleLocalsInScope`:
+ * assignment, loop or `with … as` target, walrus, import, nested `def`/class, `global`/`nonlocal`, `match` capture,
+ * `del`; `scopedName` skips the module's `<setup>` local for it). A module variable a function declares `global` and
+ * assigns is a second initializer, so its `<setup>` type is dropped unless the module statement annotates it. A
+ * class-body construction (`car = Car()`) is a typed static property only when a method calls through it
+ * (`self.car.x()`), no method assigns it on the instance, and the call is no ORM column or pydantic `Field`.
+ *
  * Facts only — `core/symbol-linker.ts` decides which implementation a call
  * reaches, and refuses when the registrations disagree.
  *

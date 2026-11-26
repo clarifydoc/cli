@@ -263,7 +263,11 @@ export class JavaKotlinExtractor extends FunctionClassExtractor {
     };
   }
 
-  /** The methods the bodies of an enum's constants declare, for those names the enum has no method of. */
+  /**
+   * The methods the bodies of an enum's constants declare, for those names the enum has no method of. A constant's
+   * override of a method the enum declares (`ATTACK { void play() { coach.shout(); } }`) hands its calls to the enum's
+   * own method of that name (same parameter count; an abstract declaration is the usual host).
+   */
   private collectConstantBodies(enumBody: Node, lang: JkLang, methods: FunctionInfo[]): void {
     const have = new Set(methods.map((m) => m.name));
     const introduced = new Set<FunctionInfo>();

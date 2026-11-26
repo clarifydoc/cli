@@ -138,7 +138,23 @@ function resolveViews(analyses: FileAnalysis[]): FileAnalysis[] {
   });
 }
 
-/** A resolver that reads the analyses with their namespaced tags resolved. */
+/**
+ * A resolver that reads the analyses with their namespaced tags resolved.
+ *
+ * A JSX tag through a namespace import (`import * as UI from "./ui"` + `<UI.ConfirmDialog onConfirm={save} />`)
+ * states `SubComponentInfo.namespaceMember` (`{ source, member }`) with `importSource` null. The wrapper hands each
+ * dispatch resolver a copy of the analyses whose such tags carry the file the member lives in — the module's own
+ * export, a barrel's `export { X } from`, or `export *` when exactly one file defines it, four hops at most — so
+ * bindings, emits and the `dispatch:renders` link attach as for a named import (`SubComponentInfo.importSource` is
+ * read for a plain import). A member no export reaches stays unresolved, never a leaf-name guess; a name two files of
+ * an `export *` both define stays unresolved.
+ *
+ * The same view resolves a plain import that names a barrel (`import { ConfirmDialog } from "../ui"`,
+ * `import { Referee as W }`, `export { default as X } from "./X.vue"` — React, Vue and Svelte alike) and a dotted
+ * namespace tag (`<UI.Forms.Dialog/>`: `namespaceMember.member` dotted; a head that is a relative named import of a
+ * namespace re-exported with `export * as UI`: `namespaceMember.through`; a CommonJS `const UI = require("./ui")`
+ * head).
+ */
 export function seeingNamespaceTags<R extends DispatchResolver>(resolver: R): R {
   const wrapped = Object.create(resolver) as R;
   wrapped.resolve = (analyses: FileAnalysis[]) => resolver.resolve(withNamespaceTags(analyses));

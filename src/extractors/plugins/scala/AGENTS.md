@@ -18,14 +18,10 @@ Reads `.scala` and `.sc` scripts (`family: "jvm"`, `parsing: "regex"`) through t
 - Where imports name packages (`importsNamePackages`), an import is the files whose `FileAnalysis.packageName` it names, narrowed to those declaring the member it names; a file also sees its own and enclosing packages.
 - Test command ([test-command.ts](test-command.ts)): `sbt "testOnly *ClubSpec"` — the class a test name leads with, else the file's name; `build.sbt` gives `sbt compile` / `sbt test` project commands ([project-commands.ts](project-commands.ts)).
 
-## Linking rules
+## Linking rules and member effects
 
-- Parameterless `def` ([getter-reads.ts](getter-reads.ts), run from `extractValueFlow`, so both front ends state the same): a `def` with no parameter list (`def total: Int`, `def name = "x"`) carries `FunctionInfo.getter` and is called by a read — `club.total`, a bare `total` in the class or its subclass, `this.total`, `${club.total}` in an interpolated string — recorded as `CallInfo.read: "getter"` (the Dart mechanism). The linker links one only to a function marked `getter`, so a `val`, a field, a parameter, a local or a lambda binder of the name and a `def` taking a parameter list draw no edge. A receiver-chain hop through such a def takes its declared return type (`getterResult`), so `repo.find(1).rival.total` links.
-- `extension` blocks are `ClassInfo.extension`, a part of the type.
-
-## Member effects
-
-- `FunctionInfo.fieldWrites`/`throws` are stated ([member-effects.ts](member-effects.ts)). A `def this(…)` states no writes: it initializes. A named argument on its own line (`name = n,` inside `copy(`) is no write. `@throws[T]` is `declared`. A member the type's body declares without a type, `var visits = 0`, is stated once as an `init` declaration so core knows it. `throw LeagueError.Missing` names the enum.
+- Parameterless `def` ([getter-reads.ts](getter-reads.ts)): marked `FunctionInfo.getter` and read as `CallInfo.read: "getter"`, linked only to a getter-marked function. `extension` blocks are `ClassInfo.extension`, a part of the type.
+- [member-effects.ts](member-effects.ts) states `FunctionInfo.fieldWrites`/`throws`; an `init` declaration makes an untyped `var visits = 0` known to core, and `throw LeagueError.Missing` names the enum.
 
 ## Request schemas, security and routes
 

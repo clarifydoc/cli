@@ -169,7 +169,15 @@ function sqlText(args: Node[]): boolean {
   return !!first && first.type !== "simple_symbol" && first.type !== "hash" && first.type !== "array";
 }
 
-/** Request input reaching a sink inside a Ruby controller action or Sinatra route (see `handlerTaint`). */
+/**
+ * Request input reaching a sink inside a Ruby controller action or Sinatra route (see `handlerTaint`). The meta states
+ * it as `regexTaint` (`{ gate, taint }`, no `ast.taint` hook): a file whose source matches the gate is parsed once more
+ * with tree-sitter-ruby, never a test or generated file or a tree with syntax errors. Handlers are every method of a
+ * controller (superclass or `app/controllers/`) and `get "/x" do` blocks; keyword arguments (`where(name: params[:x])`)
+ * are dropped and a method that assigns its own `params` has none. A heredoc opening is read as the `heredoc_body` that
+ * follows its statement, so interpolation in `find_by_sql(<<~SQL)` reaches the sink, and a heredoc chained into
+ * text-keeping calls (`<<~SQL.strip`, `.squish`) is its body.
+ */
 export function rubyTaint(tree: Tree, _sourceText: string, filePath: string, facts?: TaintFacts): SecurityIssue[] {
   return handlerTaint(tree, buildSpec(filePath), filePath, facts);
 }

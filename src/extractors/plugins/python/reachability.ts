@@ -30,6 +30,10 @@ import { normalize, dirOf, readText } from "../shared/reachability-kit.js";
  *     public API and never reported — unless it is clearly a service (Django
  *     `manage.py`, a server command) or poetry's `package-mode = false`.
  *
+ * `typeUsageComplete` is true for Python: a class with no `typeUsages` record is named by nobody. A file that hands a
+ * module on whole (`from .x import *`) is a star forwarder, charged with it when a change removes a name. A notebook
+ * is an entry (`notebook (runs top to bottom)`), so the project modules it imports are alive.
+ *
  * Exports are not judged: an aliased `from x import y as z` keeps both names,
  * but attribute use through `import x` is the norm.
  */

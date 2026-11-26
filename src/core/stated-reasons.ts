@@ -13,7 +13,8 @@
  * and generated files are not read.
  *
  * Comment syntax is the language's own (`LanguagePluginManifest.docComments`);
- * core knows none of its own.
+ * core knows none of its own. The commit side reads the body paragraph stating a reason in each of a file's last
+ * 30 commits (`git log --follow`, or `-L` over one function; bots and version bumps skipped).
  */
 
 import type { DocCommentSpec } from "../types/language-plugin.js";

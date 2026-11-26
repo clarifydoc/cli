@@ -69,7 +69,10 @@ export const serverlessHandlerAnchor: RouteResolver = {
  * A table (or any name) a data source reads from an environment variable (`DataSourceInfo.envRef`) takes the
  * value the descriptor above it sets (`environment.ts`): the descriptor-wide environment for any file below it,
  * a function's own for the module its handler names, which wins. A name only a descriptor of ANOTHER directory
- * sets stays empty, and so does one two descriptors (or two functions of one module) set differently.
+ * sets stays empty, and so does one two descriptors (or two functions of one module) set differently. Core then
+ * drops every row still carrying `envRef`: a table is never guessed. A handler the descriptor routed onto anchors
+ * dead-code reachability (`resolvedBy: serverless-handler-anchor`, or `entryPoints` with framework `sam` /
+ * `serverless`).
  */
 function applyEnvironment(analyses: readonly FileAnalysis[], code: readonly FileAnalysis[], ctx: ProjectContext): void {
   const wanted = code.filter((a) => a.dataSources.some((d) => d.envRef && !d.target));

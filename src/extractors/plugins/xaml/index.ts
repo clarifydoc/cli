@@ -51,6 +51,10 @@ function stripComments(text: string): string {
 }
 
 /** Parse the file into a tag tree; returns the root element (or null). */
+/**
+ * XAML opening tags routinely span many lines (one attribute per line), unlike Qt Designer `.ui` XML, so
+ * extraction runs on a tag TOKENIZER over the whole text, not on line regexes.
+ */
 export function parseXaml(sourceText: string): { root: XamlTag | null; flat: XamlTag[] } {
   const text = stripComments(sourceText);
   const flat: XamlTag[] = [];
@@ -276,6 +280,10 @@ export function extractXamlSubComponents(lines: string[]): SubComponentInfo[] {
  * views:CatalogView}">` is a page at its route under the routes of the `<TabBar>`, `<FlyoutItem>`
  * or `<Tab>` holding it — `/Main/Catalog`, what `GoToAsync("//Main/Catalog")` opens. The view
  * class is the route's component; core finds the screen of that name.
+ *
+ * MAUI Shell: `<Shell>` is the frame its tabs and flyout pages show in (manifest `routerOutlet: /<Shell[\s>]/`), a
+ * start `shell` node in the navigation map. MAUI routes: `<ShellContent Route>` under `<TabBar Route>` in XAML,
+ * `Routing.RegisterRoute` in C#; `GoToAsync("Basket")` names an app-root path (the C# plugin's `linksFromBase`).
  */
 export function extractShellRoutes(lines: string[]): RouteInfo[] {
   const { root } = parseXaml(lines.join("\n"));
@@ -294,6 +302,13 @@ export function extractShellRoutes(lines: string[]): RouteInfo[] {
   return routes;
 }
 
+/**
+ * Each file is one window/control: `x:Class="Ns.MainWindow"` names the code-behind class, nested elements are the
+ * component tree, event attributes (`Click="ButtonCopy_Click"`) wire controls to code-behind methods. The handler
+ * lives in `<same path>.cs`, so the elements alone dead-end; the C# plugin's bridge adds the synthetic element →
+ * handler symbol links (INFERRED, joined by class name, the candidate whose path shares the longest prefix with
+ * the UI file winning).
+ */
 export const xamlSpec: RegexLangSpec = {
   language: "xaml",
   extensions: [".xaml", ".axaml"],

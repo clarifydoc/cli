@@ -18,7 +18,9 @@ import { findEndLine } from "../shared/regex-base.js";
  * statement, an expression `x = if …`, a `do`, a `{` open; `end` and `}`
  * close (a `{` spanning lines gets its `}` as its end). A `def` whose `end`
  * it finds gets that line; a file it cannot balance keeps the indentation
- * guess for whatever it could not close.
+ * guess for whatever it could not close. The code lines the call scan reads (`callSourceLines`) come from
+ * `rubyCallLinesOf` over `rubyCodeLinesOf`. A statement's block ends are read only for a `lambda do` / `-> do` line, so
+ * a file with none scans its blocks once.
  */
 
 /** 0-based index of a block's first line → 1-based line of its `end`. */
@@ -461,7 +463,12 @@ const codeMemo = new WeakMap<readonly string[], readonly string[]>();
  * as code. Computed once per file.
  */
 const callLinesMemo = new WeakMap<readonly string[], readonly string[]>();
-/** A line continuing a chain: it opens with `.name` or `&.name` (`  .where(id: 1)`). */
+/**
+ * A line continuing a chain: it opens with `.name` or `&.name` (`  .where(id: 1)`) after a line a chain can continue
+ * from (`Club` / `.where(league: id)` / `.order(:name)`). Such a line is read with the chain so far carried onto it
+ * (`Club.where(league: id)`, then `Club.where(league: id).order(:name)`), so each hop keeps its own line and receiver.
+ * A line ending in `,`, an open bracket, an operator, `do` or `end` carries nothing.
+ */
 const LEADING_DOT = /^(\s*)(&?\.)([A-Za-z_]\w*[!?]?.*)$/;
 /** A line ending where no receiver can (`,`, an open bracket or block, an operator or keyword expecting more). */
 /** A line no chain continues from: a definition, or a statement a keyword opens. */

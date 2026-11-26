@@ -55,6 +55,9 @@ function linearize(node: Node, out: Token[] = []): Token[] {
  *    read only when the file opens Saturn or Falco;
  *  - ASP.NET Core minimal APIs: `app.MapGet("/x", Func<…>(handler))`.
  * The handler is the function the route ends in, when it is named.
+ *
+ * Giraffe `%i`/`%s`/`%O` placeholders become `{int}`/`{string}`/`{guid}`. The grammar nests applications and `>=>`
+ * the other way round, so the reader linearizes the expression and splits at `>=>`.
  */
 export const fsharpRouteExtractor: RouteExtractor = {
   languages: ["fsharp"],

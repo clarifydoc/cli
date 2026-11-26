@@ -80,6 +80,12 @@ function declaredNames(fa: FileAnalysis): Set<string> {
   return names;
 }
 
+/**
+ * `lintAnalysis(project, files?)` checks one analysis against itself: dangling links and relations, `apiRouteLinks`, lines past a file's end,
+ * two routes sharing one `dedupeRoutes` key. `clarifydoc lint <outputDir>` prints the findings (exit 1), and
+ * a test gates every fixture summary under `test-output/` with a commented allow-list. A new rule must be clean
+ * on a fresh fixture set, or the extractor is what to fix.
+ */
 export function lintAnalysis(project: ProjectAnalysis, files?: ReadonlyMap<string, FileAnalysis>): LintFinding[] {
   const out: LintFinding[] = [];
   const add = (rule: LintRule, message: string, file?: string, line?: number) => {

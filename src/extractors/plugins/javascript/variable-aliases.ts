@@ -26,6 +26,12 @@ import { requiredSource } from "./imports-exports.js";
  * and name-keyed, so a name bound to DIFFERENT sources in different scopes is
  * ambiguous: it is dropped rather than guessed (unique-or-nothing, the same
  * rule the symbol linker follows).
+ *
+ * Alias flow (`const s = useStore()` then `s.x.y`, cross-file): the scan keeps a timeline of each name's declarations
+ * and `=` assignments. An alias of a head bound or assigned more than once is typed by the nearest binding before the
+ * alias (a concrete `localTypes` entry, only when that binding states a type); a binding in a nested block before it,
+ * an untyped one, a loop around the alias or a head bound by something the timeline does not see leaves it untyped.
+ * `LocalType.aliasOf` marks a name assigned from another plain name (`const q = p`).
  */
 export function extractJsVariableAliases(
   tree: { rootNode: Node },

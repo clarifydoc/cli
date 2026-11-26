@@ -1,3 +1,6 @@
+/**
+ * `build.zig.zon` is the Zig package manifest.
+ */
 import type { DeclaredPackage, PackageManagerSpec } from "../../../types/language-plugin.js";
 import { declared } from "../shared/declared-package.js";
 

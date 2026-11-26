@@ -53,7 +53,15 @@ export function phoenixChannelBindings(lines: string[]): Array<{ module: string;
   return out;
 }
 
-/** The channel events a file's channel modules handle and send, and its endpoint broadcasts. */
+/**
+ * The channel events a file's channel modules handle and send, and its endpoint broadcasts. Phoenix Channels are
+ * message channels named by event, as Socket.IO's: the JS client's `channel.push("new_goal", …)` reaches the channel's
+ * `def handle_in("new_goal", payload, socket)`, and `broadcast!(socket, "goal_scored", …)` / `push(socket, …)` reaches
+ * the client's `channel.on("goal_scored", …)`. A channel module's `handle_in("evt")` consumes `evt`; `handle_out("evt")`
+ * consumes an intercepted broadcast; `push`/`broadcast`/`broadcast_from` publish; `Endpoint.broadcast(topic, "evt", …)`
+ * publishes from anywhere. Only literal events. Core scopes events by the topic both sides join (`scopeChannelTopics`,
+ * `core/channel-topics.ts`).
+ */
 export function phoenixChannelEvents(lines: string[]): DataSourceInfo[] {
   const text = lines.join("\n");
   const channelFile = lines.some((l) => CHANNEL_MODULE_RE.test(l));

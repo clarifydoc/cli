@@ -7,6 +7,21 @@
  * a held value. A list, set, tuple or dict is one cell with its elements (`handlers.append(f)`, `for cb in
  * handlers: cb()`), a dict also keeps a literal key as its own cell (`ACTIONS["save"]`), because `self.x[…]`
  * would need two member levels, which the fact schema does not have.
+ *
+ * Also stated: `x.append(f)`, loop targets, `functools.partial(f, …)` as a seed of `f`, `return`, positional arguments
+ * by written index. `invoke` is stated for a call of a local, a parameter (not a test's or fixture's, which pytest
+ * injects), a module name its own statements bind, `self.<field>` the class assigns (never a method) and
+ * `table[k](...)`. A `global` assignment goes to `moduleValueFlow`. A keyword argument `schedule(callback=f)` is an
+ * `arg` with `name` (index -1) binding the formal of that name; a `**kwargs` formal or an unknown name binds nothing.
+ *
+ * A module-level `name = lambda …` is a function of its own. A lambda written inside a function and landing in a cell
+ * (local, `self.x`, list/dict element, positional argument, return) has no function of its own and stands for what its
+ * body calls: a seed for each project function it names (`save`, `self.save`, `Club.save`), a `copy` for a name that
+ * holds a value, nothing for a call on its own parameter, a local, or a name an import of the standard library or a
+ * known external package binds (`json.dumps`, `from time import sleep` — none counts toward the four, and an argument
+ * handed to such a call states no `arg` fact), and nothing when the project functions it calls come to more than four
+ * (counted by core over the facts sharing the lambda's id; the plugin states up to sixteen names). An `any`/untyped
+ * parameter takes what every call site passes (`dispatch:param-type`; never when the function is handed on by name).
  */
 import type { Node } from "web-tree-sitter";
 import type { ParamInfo, ValueCell, ValueFlowFact } from "../../../types/analysis.js";

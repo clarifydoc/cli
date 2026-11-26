@@ -3,6 +3,10 @@
  * `picked.push(c)`, a `v-model`'s target), by the name it starts from. The markup reader states each as a short
  * token in the parsed text (`encodeTargets`) so no handler code — a call, a URL — is left there for a text scan to read,
  * and the reactive-cell reader turns the tokens back (`decodeTargets`) into the cells they land in.
+ *
+ * A statement that writes state is left in the markup as a comment naming only the cells it writes
+ * (`withMarkupExpressions`), never the statement's text; a `v-for`/slot variable or an arrow's own parameter is not
+ * the component's cell.
  */
 
 /** A name a template statement changes, with the members below it (`null`: a computed member). */

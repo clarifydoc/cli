@@ -324,6 +324,14 @@ function honoChain(call: Node): { receiver: string | null; prefix: string } | nu
  * A chained registration on a router built in one expression: `Router().use(clubs).use("/x", players)` (and
  * `express.Router()`). Returns the variable the whole chain is declared into, `null` when it is not (an exported or
  * returned chain), or `undefined` when the call is not on such a chain.
+ *
+ * A path-less `.use(name)` on a chain rooted in `Router()` / `express.Router()` —
+ * `const api = Router().use(clubs).use(players); export default Router().use("/api", api)` — is a mount row (empty
+ * path, receiver = the variable the chain is declared into, or none for a chain exported as the module's router). A
+ * chain handed to another call is left alone, a name that is no router file adds nothing, a plain `router.use(name)`
+ * stays unread. The same-file composer gives the rows the prefix of the local mount of that variable and the project
+ * pass joins each named router file under it; surviving cross-file mount rows of a locally mounted receiver take that
+ * receiver's prefix too (test: chained-router.test.ts; shared/router-mounts.ts).
  */
 function routerChainReceiver(call: Node): string | null | undefined {
   let obj: Node | null = call.childForFieldName("function")?.childForFieldName("object") ?? null;
@@ -671,6 +679,15 @@ export function middlewareCalleeNames(nodes: readonly Node[]): string[] {
 /**
  * What one `use(…)` argument stands for: koa-compose's `compose([authenticate, rateLimit])`
  * is its middleware, one by one; anything else is itself.
+ *
+ * Express states `router.use(fn)`, `app.use(path, mw, router)` mounts and each route's own middleware arguments (plus
+ * what an earlier `router.use(…)` of its receiver names) as `RouteInfo.middlewareCalls`; a name the file imports is
+ * resolved through that import (`resolveMiddlewareName`: `const { loadClub } = require("./auth")`, a namespace),
+ * never a leaf-name guess. Koa shares the `use` pass: middleware on a receiver reaches routes on that receiver and on
+ * routers mounted with `.routes()` deeper in the chain; a `new Koa()` bootstrap that calls `callback()` /
+ * `mountRouters` records named `app.use` callables (not anonymous arrows) as a `koa-app-middleware` fact and the
+ * resolver adds them as `inheritedMiddleware` on every API route of the sub-project (Express-only bootstraps emit no
+ * fact).
  */
 export function composedMiddleware(arg: Node): Node[] {
   if (arg.type !== "call_expression") return [arg];
@@ -707,6 +724,11 @@ function routeMiddlewareNodes(nodes: readonly Node[]): Node[] {
  * Fastify's `instance.addHook('preHandler', guard)` — in any plugin function, since that is
  * where Fastify code writes it — guards the routes registered on that instance after it, inside
  * the function it sits in. Only a hook named for checking the caller counts (`guardFromMiddleware`).
+ *
+ * Fastify: `instance.addHook('preHandler'|'onRequest'|'preValidation'|'preParsing', fn)` in a plugin function does
+ * the same as Express `use` for routes registered inside it (scoped to the enclosing function);
+ * `fastify.route({ preHandler: … })` / shorthand `{ preHandler }` name hook callables on the row; core's symbol
+ * linker resolves them like Express middleware (`viaMiddleware`).
  */
 function collectFastifyHooks(
   root: Node,

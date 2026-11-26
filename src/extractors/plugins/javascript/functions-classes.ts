@@ -1,3 +1,22 @@
+/**
+ * Also reads: keyed registries (`extractKeyedRegistry`): `export const saveClub = createThunk(SAVE_CLUB)` and a
+ * `[SAVE_CLUB]: handler` entry share only the constant, so the entry becomes a function `[SAVE_CLUB]` (an inline
+ * handler's body, or a factory call's calls — `createSaveHandler(section, '/config/club')`, whose URL core's
+ * request-factory pass fills at that call) and the creator a function calling it. An entry counts in an object handed
+ * to a call (`handleThunks({ … })`) or in a table a property holds (`export default { actionHandlers: { … } }`,
+ * registered by another file) where a creator in the same file is made with that key; a computed key in an object
+ * written for a value (`headers: { [SessionHeader]: token }`) makes nothing.
+ *
+ * ES5 constructors: methods also come from `Ctor['prototype'] = { … }` and
+ * `Object.defineProperty(Ctor.prototype, "m", { value: fn })` (and `Ctor['prototype']`), including a `value`/`get`
+ * naming a function of the file; a call whose `Object` is a shadowed parameter adds none (`prototypeClasses`).
+ *
+ * A parameter's default that is a callback calling one function (`fetcher = (p) => ClubsApi.list(p)`) is
+ * `ParamInfo.defaultCallback` (`=>ClubsApi.list`): with agreeing sites it joins beside them; where they disagree a
+ * site passing fewer arguments runs the default as its own instance (a hook called with none states `CallInfo.args`
+ * `[]`, else `argCount`). `const onSearch = useDebounceFn(applySearch, 300)` is a function calling `applySearch`.
+ */
+
 import { responsesOf } from "./responses.js";
 import { exportedFactoryNames } from "./imports-exports.js";
 import { derivedLocalsOf } from "./arg-origins.js";
@@ -184,6 +203,12 @@ function finishBody(
  * Club() } }` makes `this.club` in a method, computed, watcher or hook the value of that initializer. Stated on each
  * member function as a `localTypes` entry named `this.club` with the initializer as `from`, which core types like
  * any local's initializer; a member `data()` writes as a literal, `null` or a reference states nothing.
+ *
+ * A `data()` member written as a call or construction (`settings: new Settings(…)`, its `returnedMembers` `value`
+ * entry with `from`) is stated on each other member of the component as a `localTypes` entry `this.settings`, so
+ * `this.settings.save()` links to `Settings.save` (core's `chainPoint` types a `this.x` head through such an entry
+ * wherever no class is the receiver). A literal, `null` or a bare reference states nothing; a function outside a
+ * component's options gets no entry.
  */
 function typeDataMembers(members: FunctionInfo[]): void {
   const data = members.find((f) => f.name === "data");
@@ -211,6 +236,14 @@ const REACTIVITY_PRIMITIVES: ReadonlySet<string> = new Set(["computed", "ref", "
  * and, outside the getters handed to `computed`, makes no call but reactivity primitives — so a prop it runs is run by
  * the framework when the value is read, never by a person (`FunctionInfo.reactiveGetter`). A function that also runs
  * anything else of its own keeps no mark: the same prop call there may be a handler's.
+ *
+ * Vue Options API `computed` members (their `get`, not a writable `set`) and `watch` callbacks are marked
+ * `FunctionInfo.reactiveGetter` (`computed` / `watch`): the framework runs them on a state change or read, never on a
+ * click. A Composition `computed(() => props.f())` is a call of `<setup>`; inside a named composable it marks that
+ * function `computed` when, outside the getters handed to `computed`, it makes no call but reactivity primitives
+ * (`ref`, `reactive`, `toRef`, …). A Composition `watch(…)` callback (the held `<watch@N>`) is marked `watch`. The
+ * mark stays on the function (per-file JSON), so a consumer joins a prop-callback link's `sourceFile` +
+ * `sourceSymbol` to it; a function that is both has one link of each.
  */
 function composableGetterOf(body: Node | null | undefined): "computed" | undefined {
   if (!body || !body.text.includes("computed")) return undefined;
@@ -292,6 +325,18 @@ function handedBack(decl: Node, name: string): boolean {
 /**
  * What the object a function returns holds, by key (`FunctionInfo.returnedMembers`): read from the body's own
  * statements — the declarations that say what each returned local is, and the one `return { … }` of an object literal.
+ *
+ * A factory's returned object literal becomes `FunctionInfo.returnedMembers` (kinds `function`, `object`, `value`,
+ * `inline`, `outer`, `open`): a call on the factory's result names a stated member or nothing, never the factory. An
+ * `open` member (the literal spreads a call or hands on another object's member: `signIn: backend.signIn`) leaves the
+ * call to the unstated-factory reading; inside a non-arrow method of a returned local object, `this.x` names its
+ * sibling. A `value` member written as a call or construction carries it as `from` (`clubs: useClubApi()`). A
+ * function with no declared return type states what each `return` is (`FunctionInfo.returnedFrom`: `new ClubApi()`,
+ * `useClubApi()`, a local's name); the linker types both as a local's initializer in the factory's own scope, so
+ * `const { clubs } = useLeague(); clubs.getAll()` lands on `ClubApi.getAll`. A library's object types nothing.
+ * `return await x()` states what `return x()` does; `return this` states the bare name `this` (typed as the receiver
+ * the method was called on, so `new YouthQuery().withLeague(a).limit(5).fetch()` stays on the subclass inheriting the
+ * fluent base method); `return this.sub` states nothing.
  */
 function returnedMembersOf(body: Node | null): NonNullable<FunctionInfo["returnedMembers"]> | undefined {
   if (!body) return undefined;

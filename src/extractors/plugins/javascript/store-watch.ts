@@ -475,6 +475,27 @@ function callsFunction(file: FileAnalysis, name: string): boolean {
  * Joins a watcher to the actions writing the state it reads: an INFERRED `dispatch` link from the function writing to
  * the callback (`dispatch:store-watch`), `callName` the member written. The store is the file and class the watcher's
  * factory resolves to — through the import, else the one project function of that name.
+ *
+ * `dispatch:store-watch`, INFERRED. A watcher whose source reads state a store holds —
+ * `watch(() => store.filters.league, …)`, a `storeToRefs` ref, a `computed` over either, `watchEffect`, on a factory
+ * named `use…Store` or handed to `storeToRefs` — is its own `<watch@N>` function naming the factory as written and
+ * the member path read (`filters.league`, `picked*` read through; a getter that only hands a member back reads it
+ * shallow, so a write below it runs nothing). A Pinia store file's actions write its state (option store
+ * `this.filters.league = x`, `this.picked.push(c)`, `$patch({ filters })` / `$patch((s) => …)` / `$reset`; setup
+ * store `filters.value = x` on a returned ref or reactive). A component's own write to store state — `page.value = 2`
+ * on a `storeToRefs` ref, `store.page = 2`, `store.picked.push(c)`, `store.$patch({ page })`,
+ * `useClubStore().page = 2`, the template's `page = 2` — is a `storeWatch.writes` row with `viaFactory` (`store` =
+ * the factory as written). The resolver resolves the factory to the class its binding returns (import, else the one
+ * project function of that name) and links each write to the watchers whose path it meets, keyed by store file +
+ * class, so another store's `filters` and a component's own ref run nothing.
+ *
+ * A composable's state works as a setup store's does: in a function `useX` the refs and reactive objects it declares
+ * are written by its functions (`storeWatch.writes`, `store` = the function; a ref it keeps to itself is `~name`),
+ * the computeds it returns are `storeWatch.derived` (`total` → `clubs*`), and a component reading a project
+ * composable (`const { total } = useClubs()`, imported from the project, never a library's hook) joins them by the
+ * composable's file and name. Store-state facts are `storeWatch.watchers` on the factory `$vuex` with the path from
+ * the root state; `Object.assign(state, p)` or a computed member writes `""` (any member); read keys include
+ * `watch: { '$store.state.clubs.list': … }` and `...mapState('clubs', ['list'])`.
  */
 export class JsStoreWatchResolver implements DispatchResolver {
   readonly id = "store-watch";

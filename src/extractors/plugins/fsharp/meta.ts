@@ -18,6 +18,11 @@ const FSHARP_BUILTINS: ReadonlySet<string> = new Set<string>([
 /** A GLSL shader also ends in `.fs`. */
 const GLSL_RE = /^[^\S\r\n\u2028\u2029]*#version\s+\d+|\bgl_FragColor\b|\bgl_FragCoord\b|^[^\S\r\n\u2028\u2029]*(?:uniform|varying|precision\s+\w+p)\s/m;
 
+/**
+ * `.fs` is also a GLSL fragment shader's extension: `preprocess` skips a file with `#version`,
+ * `gl_FragColor`/`gl_FragCoord` or `uniform`/`varying`/`precision` lines ("GLSL shader, not F#"). Two grammar
+ * variants, `fsharp` and `fsharp_signature` for `.fsi`, are picked per file by `keyForFile`.
+ */
 export const fsharpMeta: LanguagePluginMeta = {
   // Dead-code reachability (see reachability.ts).
   reachability: fsharpReachability,

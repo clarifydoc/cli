@@ -1,3 +1,8 @@
+/**
+ * Haskell front end: applications without parentheses are calls; a type signature and its equations are ONE function. A
+ * top-level declaration defines a function when it is an equation, or a binding without arguments. Infix operators are
+ * read by their symbol spelling (index.ts, `infix.test.ts`).
+ */
 import type { ParsedFunctionSpan, ParsedStructure } from "../../../types/language-plugin.js";
 import type { TSNode } from "../../../parsers/parser-manager.js";
 import { recordPatternCalls, type PatternCallName } from "../shared/antlr-calls.js";

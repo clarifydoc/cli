@@ -6,6 +6,19 @@
  * already identified (`active?`, `confirmed?`) never qualifies; neither does an unconditional halt.
  * An instance variable this method set from a token/credential lookup (`@kit_app = KitApp.find_by(access_token: …)`)
  * is the caller for a later presence test (`render … status: 401 if @kit_app.blank?`). When in doubt: not a guard.
+ *
+ * A filter whose method body halts this way is a guard whatever its name, unless the name says it is a switch or
+ * optional (`ensure_x_enabled!`; `namesNonCaller`). The halt is a 401/403 (`head`, `render … status:`), a `raise` of a
+ * NotAuthorized/Unauthorized/AccessDenied/Forbidden-named error or a `redirect_to`/`redirect_back`, and must be
+ * governed by the statement modifier or the directly enclosing `if`/`unless` (its `else` the opposite test; nothing
+ * deeper, no unrelated outer condition), or be an unconditional halt that follows only `return if <caller ok>` guard
+ * clauses. The tested thing is the bare caller (`current_user`, `logged_in?`, `signed_in?`, `authenticated?`, a
+ * credential-looking `session[:player_id]`/token header, `authenticate_with_http_token`, `.nil?`/`.blank?`/`.present?`
+ * of them), an ivar set from a token lookup (`find_by_token`, `from_token`), or a permission, role or ownership
+ * predicate on it (`current_user.admin?`, `can?(…)`, `policy(…).x?`, `<record>.owner == current_user`). Wrong
+ * polarity (`redirect_to … if current_user.present?`) and a blank-check on an ivar no token lookup set
+ * (`find_by(name: …)`) are no guard. The method carries the `halts-caller` decorator and `guardForFilter` takes it as
+ * the check, in the class, in a concern it includes and in an ancestor.
  */
 
 import { wrapsWhole } from "../shared/text-scan.js";

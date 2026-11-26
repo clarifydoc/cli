@@ -128,6 +128,14 @@ function enclosing(a: FileAnalysis, line: number): { symbol: string; line: numbe
   return setup ? { symbol: setup.name, line: setup.line } : null;
 }
 
+/**
+ * Registration by scan: each `AddMediatR(…RegisterServicesFromAssembly(typeof(X).Assembly))` / `AddMediator()` /
+ * MassTransit `AddConsumers…` / `new EndpointConfiguration(…)` (NServiceBus) is a `cs:assembly-scan` route fact
+ * (markers = the `typeof`/generic types named; none = the registering project). `CSharpAssemblyScanResolver` links
+ * the registering function (else `<setup>`) to the `Handle`/`Consume` of every class implementing the family's
+ * handler interface in the project that declares the marker (the registering project's namesake first; `Program`
+ * with top-level statements is the registering project; a marker nothing declares scans nothing).
+ */
 export class CSharpAssemblyScanResolver implements DispatchResolver {
   readonly id = "assembly-scan";
   readonly languages: Language[] = ["csharp"];

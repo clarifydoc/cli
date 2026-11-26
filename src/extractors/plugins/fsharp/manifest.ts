@@ -7,6 +7,13 @@ import { ML_DOCS } from "../../shared/doc-comment-specs.js";
  * EAGERLY (extensions, grammar location, framework rules, …). The heavy
  * body (meta.ts and everything it imports) is loaded lazily per language;
  * this module must stay a leaf: types, frameworks.ts and package-manifests.ts only.
+ *
+ * `importsShareScope: true` — `open Shop.Domain` puts a module or namespace's functions in scope by name, so a
+ * bare call resolves to the ONE opened file that declares it. `projectMarkers` `**\/*.fsproj` (kind `dotnet`,
+ * priority 30). Package managers: NuGet through `.fsproj` and Paket (`nuget Giraffe ~> 6.0` lines of
+ * `paket.dependencies`). Framework hints: Giraffe, Saturn, Falco, Dapper, `Npgsql.FSharp`; external prefixes
+ * `System`, `Microsoft.`, `FSharp.`, Giraffe, Saturn, Falco, Dapper, Npgsql. Test files `…Test(s).fs` and anything
+ * under `test(s)/`.
  */
 export const fsharpManifest: LanguagePluginManifest = {
   docComments: ML_DOCS,

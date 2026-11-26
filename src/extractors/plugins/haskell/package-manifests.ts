@@ -1,3 +1,7 @@
+/**
+ * Hackage: every `build-depends:` block of a `.cabal` file, continuation lines included. Standard module prefixes
+ * (`Data.`, `Control.`, `System.`, `GHC.`, `Text.`, `Network.`, `Prelude`) are external, not project modules.
+ */
 import type { DeclaredPackage, PackageManagerSpec } from "../../../types/language-plugin.js";
 import { declared } from "../shared/declared-package.js";
 

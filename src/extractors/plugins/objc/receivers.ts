@@ -1,3 +1,10 @@
+/**
+ * What the source says about an Objective-C receiver's type, facts only: method parameters (`(Club *)visitor`) and return
+ * type, a typed local (`Club *c = …`), a class's `@property Club *home` with the `_home` instance variable it synthesizes
+ * (or one declared in the braces after `@interface`); `objcType` reduces `Club *`, `__kindof Club *_Nullable`,
+ * `id<Scoring>` and `NSArray<Club *> *` to a class, and `id`, `void`, `instancetype`, a block or a function pointer to
+ * none. The linker types the message send `[self.home retire]`, named `home.retire`, from the property.
+ */
 import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import { blankStringLiterals } from "../shared/regex-base.js";
 import { stripTypeArguments } from "../shared/path-utils.js";

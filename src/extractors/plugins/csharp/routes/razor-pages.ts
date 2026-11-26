@@ -41,6 +41,10 @@ function attributesOf(decl: Node): Node[] {
   return out;
 }
 
+/**
+ * `Pages/Club.cshtml` declares `@page "/clubs/{id:int}"` and its code-behind handlers are the routes; class-level
+ * filters on the page model reach every handler.
+ */
 export function extractPageModels(root: Node, facts: RouteFact[]): void {
   for (const cls of root.descendantsOfType("class_declaration")) {
     const base = cls.children.find((c) => c.type === "base_list")?.namedChildren.find((c) => c.type !== "comment");

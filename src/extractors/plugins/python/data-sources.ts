@@ -12,6 +12,30 @@ import { DAPR_TOPIC_RE, daprRow } from "../shared/dapr-pubsub.js";
 import { HTTP_VERBS_LOWER } from "../../shared/http-verbs.js";
 import { ownValue } from "../../shared/own-value.js";
 
+/**
+ * Python data sources: SQLAlchemy/Django/Peewee/raw SQL, queues and MQTT.
+ *
+ * The SQLAlchemy reader never gives a statement builder (`select(…)`, `func.count(…)`, `sa.select(…)`) a row of its own
+ * that names no model: `select(…).filter_by(…)` takes the model its `select` names (a parameter's stays with the session
+ * call's row); a bare `func.…` yields none (core would otherwise back-fill the import's module name `sqlalchemy` as the
+ * table). On a `select(…)` chain, each `.join(Y, …)` whose first argument names a class (`Player`, `models.Player`) or a
+ * loop variable of such classes is another read of that table; a string's `"-".join(…)` and a project function named
+ * `join` never are.
+ *
+ * Loops over a constant of classes: `for model in MODELS:` / `MODELS.values()` / `.items()` over a module-level
+ * `MODELS = {…}` / tuple / list / set a module assigns exactly once is a row per class listed, as for a literal written
+ * in the loop (`for f, model in {"a": Tag, "b": Tool}.items()`, `for model in (Tag, Tool)`; a bare dict walks its keys
+ * and reads none). Classes a function adds afterward are included: a `global MODELS` reassignment to a literal,
+ * `MODELS["k"] = X`, in-place `MODELS.append(X)` / `extend` / `update` (no `global` needed), or `MODELS += […]` with
+ * `global`. A local rebind of the same name without `global` is a decoy and contributes nothing.
+ *
+ * Entity parameters: a helper whose statement queries the model one of its parameters holds
+ * (`DataSourceInfo.entityParameter`: `def model_count(model): select(func.count(model.id))`) reads, at each call that
+ * hands it an entity class (`model_count(Club)` / `model_count(model=Club)`, up to three helper levels), that entity.
+ * MQTT: paho/aiomqtt rows carry `topicSyntax: "mqtt"`; a topic from `from … import` is `target: null` + `targetRef`;
+ * `subscribe([("a", 0)])` gives one row per topic. gRPC stubs (`…_pb2_grpc.GreeterStub`) go through `grpcStubService`.
+ * `where`/`filter`/`filter_by` and Django lookups are `whereFields`.
+ */
 export class PythonDataSourceExtractor extends DataSourceExtractor {
   readonly languages: Language[] = ["python"];
 

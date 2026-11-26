@@ -34,6 +34,16 @@ import { ownValue } from "../extractors/shared/own-value.js";
  * Two different values for one name decide nothing. A value that itself holds
  * holes (`DownloadUri = ApiUri + "/dl"` → `${ApiUri}/dl`) is resolved in the
  * file that defines it, a few levels deep; what stays unknown stays a hole.
+ *
+ * A dotted `Head.member` nothing reached is filled from the ONE module of the caller's sub-project whose value
+ * table has that head (`headTable`); a head two modules declare, or only another sub-project does, fills
+ * nothing. When an import names the head, its source's last segment may match the owner's file stem
+ * case-insensitively. Lookups are family-scoped, test files never feed production code, two values decide
+ * nothing. Used for api-call URLs (`resolveSymbolicTargets`), queue targets, route paths a plugin writes as
+ * `RouteInfo.pathTemplate` (`resolveRouteTemplates`) and, by a plugin's route resolver, route prefixes. A value
+ * nothing states is never guessed: unknown leading segments leave the tail under
+ * `prefixUnresolved: "constant:…"`, any other unknown hole stays in the path, named in `pathUnresolved`, and the
+ * route never joins a call nor counts as uncalled.
  */
 export type { ModuleValueLookup };
 

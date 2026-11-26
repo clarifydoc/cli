@@ -10,6 +10,11 @@ export { boundedType } from "../shared/type-parameter-bounds.js";
  * like any typed receiver. A letter with no type constraint maps to `null`: it shadows an outer bound
  * and stays untyped. Several constraints (`where T : class, Boat, new()`) use the first one that names a
  * type — `class`, `struct`, `notnull`, `unmanaged`, `new()` and `default` name none.
+ *
+ * Core is untouched: the bound is the type the member's parameters and typed locals state. `where T : class, Boat`
+ * takes `Boat`. The plugin cannot tell a project class from a library interface, so a project class listed after a
+ * library bound is missed; `where T : U` leaves the letter untyped; fields and constructor properties written as
+ * the letter, and a local class or lambda inside a generic method, are not covered.
  */
 export function typeParameterBounds(member: Node): Map<string, string | null> {
   const bounds = new Map<string, string | null>();

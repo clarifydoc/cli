@@ -22,6 +22,13 @@ const VERBS: Record<string, string> = {
 };
 const CALL_RE = /\b(\w+)\.(\w+Async)(?:<[\w.<>,\s?\[\]]*>)?\(\s*\$?"((?:[^"\\]|\\.)*)"/g;
 
+/**
+ * HTTP calls a component makes through an injected `HttpClient` (`@inject HttpClient Http`;
+ * `await Http.PostAsync($"/api/clubs/{Name}/promote", null)`, `Http.GetFromJsonAsync<List<Club>>("api/clubs")`).
+ * Only a receiver the file declares as an `HttpClient` (an `@inject`, an `[Inject]` property or a field) counts —
+ * `Repo.GetAsync("x")` is somebody else's method; a URL that is not a literal (a variable, a concatenation) states
+ * no path and gives no row.
+ */
 export function extractBlazorDataSources(lines: string[], _classes: ClassInfo[]): DataSourceInfo[] {
   const clients = new Set<string>();
   for (const line of lines) for (const re of CLIENT_DECL_RES) {

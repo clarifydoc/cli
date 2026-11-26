@@ -40,6 +40,14 @@ import { escapeRegex } from "../extractors/plugins/shared/path-utils.js";
  *
  * Scoping to the generated subtree means app code can never be flagged, even
  * when its own entry points are reached via dynamic import.
+ *
+ * `analyzeReachability` walks from anchors: manifest and convention entries, scripts a page loads, serverless
+ * handlers a descriptor routed onto, and a file a deployment runs — a Procfile process or a compose/Dockerfile
+ * command (`DeployedService.entryFile`) — through `ReachabilityInput.deployEntries`, its reason used only where
+ * the language model gives none. Passive roots follow (tests, fixture and bench dirs, ambient `.d.ts`, generated
+ * code, tool-run files, other languages' files); a project is anchored per language model, and one no anchor
+ * reaches is skipped, not reported whole. Each unused-export row carries `confidence` and `reasons`;
+ * `analyze --min-confidence` filters by it.
  */
 
 const BARREL_RE = /(^|\/)index\.(ts|tsx|js|jsx|mjs|cjs)$/;

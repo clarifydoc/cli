@@ -524,6 +524,39 @@ export class JsComponentRenderResolver implements DispatchResolver {
  * prop as that prop. An options-API child calls it as `this.onSubmit(…)`. One link per child function calling the prop (callName
  * as written, so the report resolves `onPress={onModalClose}` through it), or
  * from `<template>` when only the markup uses it.
+ *
+ * `dispatch:prop-callback`. A callback prop's handler is, in the parent that binds it, its own function, a mixin's, a
+ * function of an imported dispatch map, the parent's own prop handed on (followed up to four components), or a
+ * function destructured from a project factory's result (`const { handleRelease } = useSquadActions()`;
+ * `onRelease={handleRelease}`): the parent's call of that name names the factory (`CallInfo.via`), its module and the
+ * member a renamed local stands for, and the link lands on the function the factory returns under that member
+ * (`returnedMembers`, kind `function`, declared inside the factory); a member returned as a value, or a factory no
+ * module the call names declares, joins nothing.
+ *
+ * A component taking `{ n, ...others }` calls the prop `table.nextPage` as `others.table.nextPage()`
+ * (`destructuredRest`, the resolver's `restOf`); a destructuring parameter named by its pattern
+ * (`{ table, onRemove: remove }`) gives the props it takes and the names it binds (`destructuredProps`,
+ * `patternBindings` in shared/destructuring.ts). A Vue `<script setup>` template's bare callback prop
+ * (`:on-confirm="saveClub"`, the child calling `props.onConfirm()`) also puts a `passed: "attribute"` call on the
+ * page's `<setup>` (`vuePassedFunctionProps`) so the page links to `saveClub` as `passes` the way JSX's
+ * `onConfirm={saveClub}` does — never a map/array member, an imported map or a script-mounted dialog
+ * (`importSource`); an Options API page's methods already are the page's, so it invents no `<setup>`; the child's
+ * prop call stays the resolver's, scoped by `viaUsage` to the page that binds it.
+ *
+ * Emits: `defineEmits`/`emits:`, read with `defineProps` into `FileAnalysis.declaredProps`/`declaredEmits`, make
+ * component-emit → parent-handler EXTRACTED when the child declares the event and refused when it declares only
+ * others; a parent's `@event` is a `listeners` entry, never a prop. A child emitting by data
+ * (`FileAnalysis.dynamicEmits`, `$emit(btn.event)`) reaches the handlers a parent states with `event: 'name'`
+ * literals (`eventLiterals`, taken from THAT child's tag — `eventLiteralsByTag`: the `event:` strings of its bindings
+ * and of the script declarations they name, three deep; only a tag with none falls back to the file's) and
+ * `<component :is="Map[k]">` fans out over the map's `componentCandidates` (dynamic-components.ts;
+ * dynamic-emits.test.ts). Targets are deduplicated (one per handler, with each binding's sites) and never capped. A
+ * callback handed to a composable whose one call is `emit` (`useDialog(x, (v) => emit('save', v))`, `onSave(v)`
+ * inside) reaches the parent's handler from the calls the component makes on the local holding the composable's
+ * result (`dialog.confirm()`), never from the composable's own function. A member destructured from a factory's
+ * result and passed on bare (`const { actions } = useData(); useCrud(actions)`) is a `localTypes` entry marked
+ * `destructured` that only the argument pass reads. Tests: callback-props.test.ts, prop-types.test.ts. A tag
+ * spreading props or listeners (`{...props}`, `v-bind="$attrs"`, `v-on="$listeners"`) is `dispatch:renders-open`.
  */
 export class JsPropCallbackResolver implements DispatchResolver {
   readonly id = "prop-callback";

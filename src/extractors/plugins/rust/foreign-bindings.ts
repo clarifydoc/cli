@@ -18,6 +18,12 @@ import { escapeRegex } from "../shared/path-utils.js";
  *     module `<dir>/<crate_name>.js`.
  *
  * Leaf code: reads only its arguments.
+ *
+ * States the generator configuration core joins: flutter_rust_bridge (`flutter_rust_bridge.yaml` beside a Flutter app's
+ * pubspec: each module of `rust_input` is written to `dart_output`, public functions in lowerCamelCase) and
+ * wasm-bindgen through wasm-pack (a `wasm-pack build <crate> --out-dir <dir>` package script: the crate's
+ * `#[wasm_bindgen]` functions and those of the project crates it links, named by `js_name`, in the module
+ * `<dir>/<crate_name>.js`).
  */
 export function rustForeignBindings(root: string, read: (path: string) => string | undefined, files: ReadonlySet<string>): ForeignBindingRule[] {
   return [...flutterRustBridge(root, read, files), ...wasmPack(root, read, files)];

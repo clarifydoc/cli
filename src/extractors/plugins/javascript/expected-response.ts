@@ -131,7 +131,13 @@ function expectedTypeOf(call: Node, style: BodyStyle): Node | null {
   return null;
 }
 
-/** Required closed members of the call's expected response type, sorted. */
+/**
+ * Required closed members of the call's expected response type, sorted.
+ *
+ * An api-call states `expectedResponseFields` when its call or typed body binding names a closed response type
+ * (`axios.get<ClubDto>`, `const body: ClubDto = await res.json()`): required same-file interface / type-alias members
+ * only; `Partial` / optional properties and index signatures require nothing.
+ */
 export function expectedResponseFieldsOf(call: Node, style: BodyStyle): string[] | undefined {
   let root: Node | null = call;
   while (root?.parent) root = root.parent;

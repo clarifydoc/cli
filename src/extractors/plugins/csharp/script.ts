@@ -16,6 +16,9 @@ const DIRECTIVE_RE = /^[ \t]*#(r|load)[ \t]+"([^"\r\n]+)"/;
  * `using X;` reads from — which is how a script's `#r "nuget: Dapper"` reaches
  * the Dapper framework hint. A `#r` of a local assembly path names no source,
  * so it is only blanked.
+ *
+ * The blanking is needed because the grammar wraps a directive (`#r "nuget: Dapper, 2.1.0"`, `#r "lib/Foo.dll"`,
+ * `#load "helpers.csx"`) in an ERROR node that can swallow the next line.
  */
 export function preprocessCsharpScript(rawSource: string, relativePath: string): PreprocessOutcome | null {
   if (!relativePath.toLowerCase().endsWith(".csx")) return null;

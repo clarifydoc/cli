@@ -1,3 +1,11 @@
+/**
+ * The C spec. A function-pointer `copy` of a parameter into a field (`peer->free_fn = fn`) states an `invoke` with
+ * `ifFnType` only for a plain typedef name that is no number, no pointer to pointers and no struct the file declares (the
+ * corpus showed most of those facts dropped otherwise); `fn` may be typed by a typedef another header declares.
+ * `typedef R Name(args)` and `typedef R (*Name)(args)` are `FileAnalysis.functionTypeAliases`, judged over the file's
+ * whole include closure. An import binds only what its path names: `#include <league/club.h>` binds the bodies of that
+ * header only, never `other/club.c`.
+ */
 import { conditionalBlocks } from "../shared/preprocessor-branches.js";
 import type { ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";

@@ -28,22 +28,18 @@ Each of `imports-exports`, `functions-classes`, `data-sources`, `data-mutations`
 
 ## The registry (registry.ts)
 
-Each plugin directory exports a `LanguagePluginMeta` from `meta.ts` (see
-[../types/language-plugin.ts](../types/language-plugin.ts)) carrying everything
-language-specific, including the domain extractor instances
-(`functionsClasses`, `importsExports`, `routes`, `dataSources`,
-`dataMutations`, `entities`, `dispatchResolvers` — family plugins share one
-instance across member metas) plus:
+[registry.ts](registry.ts) is the one place core asks about a language; its header comment states the two tiers
+(static `manifest.ts` data imported eagerly, lazy `meta.ts` bodies behind `LOADERS`), the accessors and the no-cycle
+rule. A plugin's `LanguagePluginMeta` ([../types/language-plugin.ts](../types/language-plugin.ts)) carries everything
+language-specific, including the domain extractor instances (`functionsClasses`, `importsExports`, `routes`,
+`dataSources`, `dataMutations`, `entities`, `dispatchResolvers`, `routeResolvers`; family plugins share one instance
+across member metas) and the hook bundles — `ast`, `calls`, `complexity`, `securityRules`, `regexSpec`, `customParse`,
+`preprocess`, `apiContract`, `schemaFormat`, ….
 
-- `extensions` + `parsing` ("tree-sitter" | "regex" | "custom") — drives discovery and `file-analyzer`'s parse strategy
-- `grammar` (tree-sitter wasm location + per-file variant selection), `regexSpec` (RegexLangSpec), `customParse` (dedicated parsers, e.g. Delphi forms), `preprocess` (container formats, e.g. single-file components)
-- `builtinTypes`, `externalModulePrefixes`, `externalNamespaceRoots`, `standardImport` (the language's own standard library, asked only for its files) — import/type-resolution data
-- `complexity` (branch nodes / logical ops), `securityRules` (+ `securityPreprocess`/`securityInLiteral`/`securityPostScan`/`skipSecurityScan`)
-- `frameworkImportHints`, `apiCallRoots`, `dbCallRoots`
-- `ast` hooks: `typeReferences`, `interactiveElements`, `subComponents`, `events`, `variableAliases`
-- `calls` hooks: `callNodeTypes`, scope/callback node types, name resolution, auto-imported classification
-- `apiContract` (manifest) — the language describes an API rather than implementing it (OpenAPI, GraphQL SDL, WSDL, JSight, Protocol Buffers); `isApiContractLanguage()` is how core asks
-- `schemaFormat` (manifest) — the language's classes are data shapes (SQL tables, Prisma models, a Core Data model; see each language's file), never types code constructs or calls; with `apiContract` languages they make `declaresSchemaTypes()`, which keeps those classes out of the symbol linker's indexes and type catalogs (functions — a stored procedure, a named query — stay targets)
+- `apiContract` (manifest) — the language describes an API rather than implementing it (OpenAPI, GraphQL SDL, WSDL, JSight, Protocol Buffers); `isApiContractLanguage()` is how core asks.
+- `schemaFormat` (manifest) — the language's classes are data shapes (SQL tables, Prisma models, a Core Data model), never types code constructs or calls; with `apiContract` languages they make `declaresSchemaTypes()`, which keeps those classes out of the symbol linker's indexes and type catalogs (functions — a stored procedure, a named query — stay targets).
+- Static data a tool reads on demand belongs on the manifest, never on the meta; manifests and metas are leaf modules (types, their own plugin code, leaf shared helpers — never core or the registry).
+- **Adding a language**: `plugins/<lang>/` with the domain extractors, a `manifest.ts` + `meta.ts` (meta spreads the manifest), the manifest in `ALL_MANIFESTS` and the meta in `LOADERS`; full checklist in [plugins/AGENTS.md](plugins/AGENTS.md).
 
 **Project-level passes.** Some facts only exist across files: a base controller's
 route template, a Django `include("app.urls")`, a URL helper defined in another
@@ -62,10 +58,7 @@ them; core runs every pass generically and never names a framework:
   puts in scope without an import line (Nuxt's `composables/` and `utils/`): add the `ImportInfo` the file
   would have written and classify those calls cross-file, before the import index and the linker. In memory
   only. A member of an unimported factory's result carries the factory in `CallInfo.via` for it.
-- `projectPasses` ([project-passes.ts](project-passes.ts)) — async passes that read what they need from
-  disk and add to the analyses in memory, before the import index and the linker: routes a build plugin
-  generates from a page folder (unplugin-vue-router, vite-plugin-pages), a component's `templateUrl`
-  template. Each returns a count `analyze --verbose` prints under its `label`.
+- `projectPasses` ([project-passes.ts](project-passes.ts)) — async passes that read what they need from disk and add to the analyses in memory, before the import index and the linker (routes a build plugin generates from a page folder, a component's `templateUrl` template).
 
 Two per-file and static hooks serve the same rule: `ast.fileRoutes` gives the routes a file's place states
 (file-based routing — Next.js, Nuxt, SvelteKit, Astro, Expo Router, flat routes), and the manifest's
@@ -77,55 +70,7 @@ Each receives a `ProjectContext` ([../types/project.ts](../types/project.ts)):
 the import index, a class index (`resolve`, `supertypes`, `ancestors`,
 `descendants` — import-aware, refusing ties), `resolveModule` and `fileOf`.
 
-**Two tiers.** Each plugin also has a `manifest.ts` — the STATIC tier
-(`LanguagePluginManifest`): extensions, `family`, parsing kind, grammar
-location, test-file patterns, external prefixes/roots, builtin members,
-framework import hints, `frameworks.ts` rules, `activationFiles`, `projectMarkers` (the files that mark a sub-project root: kind, priority, optional root predicate),
-`dispatchLanguages`, `docComments` (from `shared/doc-comment-specs.ts`),
-and the plugin's package managers (`packageManagers` —
-manifest parsers + how an import names a package, from `package-manifests.ts`
-— and `packageEcosystems`, the ecosystems the language imports from; `importPackageNames`, the distribution
-names an import may be listed under — a dotted `azure.storage.blob` → `azure-storage-blob`). Known-package
-tables answer by ecosystem: an import is classified only by the plugins sharing a registry with the importing
-language (`importPackageScopeOf`), a declared package by those of its own (`ecosystemPackageScopeOf`) — one ecosystem's known-package rule never classifies another's import.
-The registry imports every manifest EAGERLY and builds the module-scope
-constants from them (`EXTENSION_TO_LANGUAGE`, `STRIP_SOURCE_EXTENSION_RE`,
-`ALL_EXTERNAL_MODULE_PREFIXES`, `EXTERNAL_NAMESPACE_ROOT_RE`,
-`ALL_BUILTIN_MEMBERS`, `FRAMEWORK_RULES`, `PACKAGE_MANAGERS`,
-`testFilePatternsFor`, `inferFileFrameworks`). Manifests are leaf modules:
-types, the plugin's `frameworks.ts` and `package-manifests.ts` and leaf
-rules only. Static data a tool reads on demand (the MCP server loads no
-plugin until it analyzes) belongs here, never on the meta. Each
-meta spreads its manifest so static fields have one source of truth.
-
-The metas (LAZY tier) sit behind a static thunk map (`LOADERS`) of dynamic
-imports — tsdown's ESM code splitting emits one chunk per plugin. `await
-ensureLanguagesLoaded(langs)` (or `loadAllPlugins()`) populates `pluginFor`;
-the analyzer calls it after file discovery with the discovered languages ∪
-`ACTIVATION_FILE_LANGUAGES` hits (go.mod → go, …) ∪ dispatch couplings
-(`manifest.dispatchLanguages` — a language whose project needs another's resolvers, e.g. VB with C#'s UI bridge). `analyzeFile` self-activates per file as a safety net.
-`pluginFor` THROWS for a registered-but-unloaded language (silent undefined
-would quietly degrade extraction); vitest loads everything via
-`src/test-setup.ts`. Lazy-tier accessors: `pluginFor`, `astHooksFor`,
-`complexityFor`, `regexSpecFor`, `securityRulesFor`, `classifyKnownPackage`
-(rebuilt from loaded metas in manifest order; the analyzer passes its
-`pluginScopeOf` — the languages it loaded — so a process that analyzed another
-repository first, with more plugins loaded, classifies this one's packages the
-same), `allPluginMetas` (loaded metas, manifest order).
-
-The registry also pushes data into the leaf modules plugin code itself
-imports (`shared/builtin-types.ts`, `shared/call-patterns.ts`,
-`shared/link-scoring.ts` — these must NOT import the registry: plugin code
-imports them and the registry imports the metas, so a static import back
-would close an ESM cycle and TDZ plugin classes).
-
-**Adding a language**: create `plugins/<lang>/` with the domain extractors you
-support, a `manifest.ts` + `meta.ts` (meta spreads the manifest), and register
-BOTH in `registry.ts` — the manifest in `ALL_MANIFESTS`, the meta in `LOADERS`.
-
-**Layering rule**: metas are leaf modules — they import types, their own plugin
-code, and leaf shared helpers, never core or the registry. Core never names a
-language; it asks the registry.
+The registry is only data plumbing: the module-scope constants it builds from the manifests and the lazy accessors are listed in its header comment.
 
 ## The plugin pattern (domain extractors)
 
@@ -147,15 +92,7 @@ export function extractFunctions(tree, sourceText, language): FunctionInfo[] {
 
 ## shared/ utilities
 
-Language-agnostic helpers are described in [shared/AGENTS.md](shared/AGENTS.md); the entry points:
-
-| File | Purpose |
-|------|---------|
-| [call-graph.ts](shared/call-graph.ts) | `extractCalls(body, language)` — main function-call walker. `classifyCalls(calls, imports, lang)` — sets `kind` to `cross-file`/`internal`/`api-call`/`database`. `extractVariableAliases` — `const s = useStore()` → maps `s` to import source |
-| [call-patterns.ts](shared/call-patterns.ts) | `isApiCall(name)`, `isDatabaseCall(name)` — pattern matchers used by `classifyCalls`. Per-language root lists come from plugin metas via the registry. |
-| [link-scoring.ts](shared/link-scoring.ts) | `buildLinkGraph(analyses)` — file → file edges with proximity (1=tight, 2=medium, 3=loose). `resolveTarget(importSource, sourceFile, filePathMap)` — turns `"./foo"` or `"com.example.Foo"` into a file path. `buildFilePathMap` — index for fast resolution. External-package prefixes come from plugin metas via the registry. |
-| [builtin-types.ts](shared/builtin-types.ts) | `isBuiltinType(name, language)` — per-language deny sets come from plugin metas via the registry; exports `COMMON_PRIMITIVES` as the base for plugin sets. |
-| [tsconfig-aliases.ts](shared/tsconfig-aliases.ts) | Import aliases of the nearest config directory, rewritten into imports before call classification: tsconfig/jsconfig `paths` + `baseUrl` (`extends` — relative, array, or a package's config through `node_modules` or the workspace package of that name; `${configDir}` is the loading config's directory — and a solution-style config's `references`), a pattern chosen as TypeScript chooses it (exact, else the longest prefix before `*` whose suffix also matches; each target tried in order, the first holding a module wins; a catch-all `*` that finds nothing, or lands in `node_modules`, leaves the import alone), filled by [bundler-aliases.ts](shared/bundler-aliases.ts) — the literal `resolve.alias` of `vite.config.*` / `webpack.config.*` / `vue.config.*` (object or array form, an `aliases` object imported from a sibling file), kept only when it points into the project; and the aliases a framework writes only into its generated tsconfig — Nuxt's `~`/`@`/`~~`/`@@`, SvelteKit's `$lib` (`kit.files.lib`, else `src/lib`) and `kit.alias` entries, whose bare paths are relative to the project root (one inside `node_modules` is left out). Never throws: a config of an unexpected shape contributes nothing | Language-specific extractors live in their plugins and are wired through each meta's `ast` hooks.
+Language-agnostic helpers are mapped in [shared/AGENTS.md](shared/AGENTS.md): `classifyCalls(calls, imports, lang)` sets each call's `kind` using `isApiCall(name)`/`isDatabaseCall(name)`; `buildLinkGraph(analyses)` and `resolveTarget(importSource, sourceFile, filePathMap)` turn imports (`"./foo"`, `"com.example.Foo"`) into file edges; `isBuiltinType(name, language)` reads per-language sets the registry pushes in. Language-specific extractors live in their plugins and are wired through each meta's `ast` hooks.
 
 ## routes/
 
@@ -170,24 +107,13 @@ language family exports one:
 
 Regex-path languages extract routes inside their `plugins/<lang>/index.ts` via `RegexLangSpec.extractRoutes`.
 
-**Mount prefixes are a project-level pass, not a per-file one.** A route's real
-path often comes from a *different file* — `app.use("/api/auth", authRoutes)`
-(Express) or `include_router(auth.router, prefix="/users")` (FastAPI). A
-per-file extractor cannot see it, so it emits the mount as an api route marked
-`mount: true` (`httpMethod: null`, `handler` = the router identifier), and
-[shared/router-mounts.ts](shared/router-mounts.ts) resolves that identifier
-through the import index after per-file analysis, prefixes the target file's
-routes, merges mount-level `middleware`/`auth`, `middlewareCalls` and
-`inheritedMiddleware` onto every mounted route (`middlewareCalls` resolve in
-the mounting file), and drops the mount. It is language-agnostic — reading only
-`FileAnalysis.routes` — so a new framework joins by emitting mounts in that
-shape. The marker is required: a null-method route with an identifier handler
-is also an "any method" endpoint (Compojure `ANY`, Express `all`), and only
-`mount: true` says it is wiring. The pass runs before the symbol linker, so
-`route:<METHOD> <path>` anchors carry the composed path the route map shows. Only emit a mount when the prefix is a **literal**: an unresolvable one
-leaves a non-endpoint sitting in the route map. Getting this wrong is not
-cosmetic — `dedupeRoutes` keys on method+path, so several routers' un-prefixed
-`@router.get("")` collapse into a single endpoint.
+**Mount prefixes are a project-level pass, not a per-file one.** A route's real path often comes from a different
+file (Express `app.use("/api/auth", authRoutes)`, FastAPI `include_router(auth.router, prefix="/users")`), so the
+per-file extractor emits the mount as an api route marked `mount: true` (`httpMethod: null`, `handler` = the router
+identifier) and [shared/router-mounts.ts](shared/router-mounts.ts) composes it after per-file analysis — what it
+merges and why the marker is required are in that file's header. Emit a mount only when the prefix is a literal.
+Getting this wrong is not cosmetic: `dedupeRoutes` keys on method+path, so several routers' un-prefixed
+`@router.get("")` collapse into one endpoint.
 
 ## entities/ (ORM entities + relations)
 

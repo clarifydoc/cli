@@ -17,6 +17,12 @@ import {
 const INLINE_ATTRS = String.raw`((?:<[^<>"]*(?:"[^"]*"[^<>"]*)*>\s*)*)`;
 
 /** The attributes of an inline `<A> <B("x")>` prefix, split one per entry. */
+/**
+ * Attributes sit on their own line above the declaration (possibly several, possibly with a ` _` continuation) or
+ * inline at the start of it (`<Attr>` lists); both are read. VB statements continue across lines (`_`, or
+ * implicitly inside an open argument list), so the DI reader works on LOGICAL statements with string contents and
+ * comments blanked.
+ */
 function inlineAttributes(prefix: string): string[] {
   return [...prefix.matchAll(/<([^<>"]*(?:"[^"]*"[^<>"]*)*)>/g)].flatMap((m) => splitVbAttributes(m[1]!));
 }
@@ -371,4 +377,12 @@ function bodyless(m: FunctionInfo): void {
   delete m.requestAccess;
 }
 
+/**
+ * `.vbs` is the VB6 dialect run statement by statement (cscript/wscript): the spec sets `topLevelCalls` for `.vbs`
+ * only (a path RegExp), so calls outside every function/class become the `<setup>` pseudo-function.
+ *
+ * A `CallPattern` anchored at a statement's start — VB's parenthesis-less `ProcessOrders conn` — sets `notAfter`,
+ * a regex the previous line (strings blanked, comment dropped) matches when it carries the statement on, so a
+ * continuation line (`b Then` under `If a AndAlso`) is never read as a call.
+ */
 export const vbSpec: RegexLangSpec = vbBase;

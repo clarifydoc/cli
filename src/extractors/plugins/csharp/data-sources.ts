@@ -1,3 +1,14 @@
+/**
+ * Surfaces Entity Framework, Dapper, NHibernate, RepoDb and PetaPoco accesses and SQL strings (through the shared
+ * SQL-string reader). MQTT (`DataSourceInfo.topicSyntax: "mqtt"`, MQTTnet) and topic names held in constants: a
+ * topic argument that is a `Type.Name` constant of a project module, or a `Class.member` of this file, is a row
+ * with `target: null` + `targetRef` which core's module-value pass fills from the declaring class. Dapr pub/sub
+ * (the C# SDK, each file gated on importing it) keys a publish and a subscription by topic.
+ *
+ * Type-parameter tables: `_database.Query<TModel>` in `BasicRepository<TModel>` is
+ * `DataSourceInfo.entityTypeParameter`, bound by the link's `typeArgs` from the receiver's written type or a
+ * subclass's closed base.
+ */
 import type { Node, Tree } from "web-tree-sitter";
 import { csharpWhereFields } from "./arg-origins.js";
 import type { DataSourceInfo, Language, PathArgCall } from "../../../types/analysis.js";
@@ -51,6 +62,16 @@ const EF_WRITE_METHODS = new Set([
 ]);
 
 /** The bulk writes that run on a query: they name no set of their own, the query before them does. */
+/**
+ * A bulk write on a query ANOTHER class's method returns (`_repo.Active().ExecuteUpdateAsync(…)`, through nothing
+ * but query composition — `Where`, `AsNoTracking`, `Include`… — with the receiver a field, property or parameter
+ * of a declared class) is a write row stating `DataSourceInfo.entityProducer`
+ * (`{ type: "ClubRepository", method: "Active" }`, no entity); the entity extractor's project pass
+ * (`producedQueryEntities`) types it by that method's declared `IQueryable<Club>` (or `DbSet`, or a task of one)
+ * when every class of that name declaring the method agrees, so a same-named helper of another class, a method
+ * returning no query and a type parameter bind nothing. A bulk write (`ExecuteUpdateAsync`/`ExecuteDeleteAsync`)
+ * on a query whose producing method yields no entity is dropped rather than kept as a row with no table.
+ */
 const BULK_WRITE_METHODS = new Set(["ExecuteUpdate", "ExecuteUpdateAsync", "ExecuteDelete", "ExecuteDeleteAsync"]);
 /** Query operators that only compose a query, so the helper behind them is still what is being written. */
 const QUERY_COMPOSERS = new Set(["Where", "OrderBy", "OrderByDescending", "ThenBy", "ThenByDescending", "Include", "ThenInclude", "AsNoTracking", "AsTracking", "AsQueryable", "Take", "Skip", "IgnoreQueryFilters", "TagWith"]);
@@ -74,6 +95,14 @@ function efAccess(method: string, node: Node): { access?: "read" | "write" } {
 }
 
 /** The member `node` sits in declares a query as its result: `IQueryable<T>` and its ordered / including forms, or a task of one. */
+/**
+ * Query helpers: a method declared to return `IQueryable<T>` (ordered / including forms, `DbSet<T>`, or a task of
+ * one) is a read where it is built; a chain that STARTS at a call of one declared in the same class —
+ * `ClubsQuery(id).ExecuteDeleteAsync()`, `this.Active().ExecuteUpdateAsync(…)`,
+ * `var q = ClubsQuery(id); q.ExecuteDelete()` — is the read or write it names on the set the helper queries (read
+ * off its returned expression, else its declared `T`), at the caller (`queryHelperEntity`). A same-named helper of
+ * another class is not followed.
+ */
 function returnsQuery(node: Node): boolean {
   let member = enclosingMember(node);
   // A property's `get` accessor returns the property's type.

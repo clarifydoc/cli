@@ -1,3 +1,11 @@
+/**
+ * A `v-for` loop variable (`v-for="m in matches"`) is `FileAnalysis.templateLoops` carrying the collection's
+ * script-stated type: `const matches: Match[]`, `ref<Match[]>()` (the general form `ref<T>()`) or a top-level member
+ * of `defineProps<{…}>` such as `defineProps<{ matches: Match[] }>`, read at the script's top level only, brackets
+ * balanced (`Record<string, Club>` stays whole); an unreadable type gives none. `templateScopes` records each loop's
+ * extent, so the type applies only inside the element carrying the `v-for`.
+ */
+
 import { blankStringAwareComments } from "../shared/text-scan.js";
 import { VOID_TAGS } from "../shared/void-tags.js";
 

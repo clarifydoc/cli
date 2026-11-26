@@ -37,6 +37,13 @@ export const phpManifest: LanguagePluginManifest = {
   caseInsensitiveCallables: true,
   // `require 'lib/db.php'` puts the included file's functions in scope.
   importsShareScope: true,
+  // A class head binds only through the calling file's evidence — a class declared there, an import naming it (its
+  // alias or a namespace prefix), the file's own `declaredNamespace`, or a fully qualified name, which keeps its
+  // backslashes in the call name (`\App\Other\Garage.park`); the unique-global guess never re-links a head so
+  // refused. A `use` names the class declared in exactly that namespace (`ClassInfo.namespace`) wherever its PSR-4
+  // directory sits. A free function in a namespace says so in `declaredNamespace`, so `use function`, `\\App\\fn()` and
+  // same-namespace calls join on it; a file opening several namespaces records each class's own
+  // `ClassInfo.namespace` and each function's `FunctionInfo.namespace` (the `filesNamedByEvidence` lookup).
   classNamesByEvidence: { separator: "\\" },
   grammar: { variants: { php: { pkg: "tree-sitter-php", wasm: "tree-sitter-php.wasm" } } },
   testFilePatterns: [/(Test|TestCase)\.php$/],

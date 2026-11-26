@@ -1,3 +1,8 @@
+/**
+ * A function-local `inject()` holder and `provide(Key, useX())` + `inject(Key)` type the injected local by the same
+ * key; identifier keys resolve to the declaration, and providers that disagree give no type.
+ */
+
 import type { Node, Tree } from "web-tree-sitter";
 import { literalString } from "../../shared/node-helpers.js";
 import type { ContextValue } from "../../../types/analysis.js";

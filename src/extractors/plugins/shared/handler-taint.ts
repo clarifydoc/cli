@@ -22,7 +22,21 @@ import type { SecurityCategory, SecurityIssue, TaintFacts } from "../../../types
  * calls deep at most; a helper in another file is not followed (`entries` on
  * findings covers reachability).
  *
- * The plugin supplies the grammar's shapes and the vocabulary; this module
+ * An `open-redirect` or `ssrf` sink is one a fixed host does not reach (`HOST_CATEGORIES`); a value led by something the
+ * request does not control (`base + r.URL.Path`, `"#{root}…"`, `leadingOperand`) keeps its host; a condition that
+ * checks a request read (`sourceReads`) clears that read for the rest of the handler; a guard (`startsWith`,
+ * `safe…(`, `valid…(` on the value in an `if`) counts as a check. Precision first: every finding is an accusation.
+ *
+ * A language read by ANTLR or regex has no `ast.taint` hook: its meta states `regexTaint` (`{ gate, taint }`) and
+ * `file-analyzer.ts` parses a file whose source matches `gate` once more with the one tree-sitter grammar the
+ * manifest registers (the `taint` feature switches it off) and runs this same walk — never on a test or generated
+ * file or a tree with syntax errors (Go, Ruby, Rust). Optional spec hooks: `binds` (a call that fills a variable
+ * from the request without assigning it), `stringReads`, `valueParts` (data read by one rule in the walk: an
+ * expression whose value is less than its text — a comparison, an `if`/`match`), and `condition(ifNode)`, the one
+ * text hook for what a guard is looked for in.
+ *
+ * The plugin supplies the grammar's shapes and the vocabulary (what a handler is, the request-input regex,
+ * assignment/call shapes, sanitizers, propagators, sinks with the argument that carries the danger); this module
  * owns the algorithm.
  */
 export interface TaintSpec {

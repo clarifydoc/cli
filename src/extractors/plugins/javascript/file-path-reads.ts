@@ -1,3 +1,9 @@
+/**
+ * `meta.ast.filePathReads` states literal file paths (`fs.readFileSync` & co. on `fs`,
+ * `path.join(__dirname, …)`/`resolve` in a file using `fs`); a hole, a variable or another receiver states nothing.
+ * Core resolves them.
+ */
+
 import type { Tree } from "web-tree-sitter";
 import type { FilePathRead } from "../../../types/analysis.js";
 

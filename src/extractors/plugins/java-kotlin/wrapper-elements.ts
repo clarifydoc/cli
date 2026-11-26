@@ -3,7 +3,23 @@ import { collectionElementText } from "../../shared/collection-element.js";
 
 /**
  * Single-value and stream wrappers whose one type argument is the element an operator lambda receives
- * (`repo.findById(id).flatMap(club -> club.promote())`). Collections are the shared reader's.
+ * (`repo.findById(id).flatMap(club -> club.promote())`). Collections are the shared reader's. This is the manifest's
+ * `collectionElementOf`: a lambda handed to `map`, `flatMap`, `flatMapMany`, `concatMap`, `doOnNext`, `doOnSuccess`,
+ * `subscribe`, `thenApply`, `thenAccept`, `thenCompose`, `ifPresent` or `forEach` (Kotlin `collect`) on a call's
+ * result binds its first parameter as `localTypes[].from` + `element`. Operators that keep the element (`filter`,
+ * `peek`, `stream`… — the rules' `keeps`) are peeled off the receiver first; `map` and `flatMap` are not (their result
+ * is the lambda's), so the chain stops typed there. A project generic (`Box<Club>.map`) is no listed wrapper and types
+ * nothing; a written parameter type wins.
+ *
+ * An operator's RESULT is typed where declared types state it: `map(c -> c.league())` hands the next lambda what
+ * `Club.league()` declares, `flatMap(c -> c.promote())` the element of what that declares, also through
+ * `Club::league` (the reference's class must be the element's); Kotlin `let`/`also` hand `it` the receiver's own type.
+ * The plugin spells it as a `from` chain with the segment `@element()` (`ELEMENT_HOP`) — only a single call on the
+ * parameter is a body, and a chain whose first segment is the caller's own bare method has no hop. A name bound by
+ * several lambdas of one method is scoped per lambda: a call inside one carries `CallInfo.receiverFrom`, typed for that
+ * call alone and first (`clubs.forEach(x -> x.promote()); players.forEach(x -> x.retire());` types both `x`), while the
+ * method-wide `localTypes` entry stays for other readers. Kotlin `let { it.league() }.let { l -> … }` follows the value
+ * through `?.` and `!!`.
  */
 const JAVA_WRAPPERS: ReadonlySet<string> = new Set(["Mono", "Flux", "CompletableFuture", "CompletionStage", "Optional", "Stream"]);
 const KOTLIN_WRAPPERS: ReadonlySet<string> = new Set([...JAVA_WRAPPERS, "Deferred", "Flow"]);

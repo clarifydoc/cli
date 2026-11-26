@@ -35,6 +35,11 @@ function documentedThrows(docblock: string | null): string[] {
  * and `$p->x = …` on a typed parameter or local; `throw new T(…)` (statement or expression) and the docblock's
  * `@throws T` as `declared`. A dynamic property (`$this->$name`) and a thrown variable state nothing; a constructor
  * states no writes — it initializes. Closures keep `$this` and are walked; a nested class or function is not.
+ * A class is named through the writing file's `use`/namespace (`class-evidence.ts`, the symbol linker's own rule);
+ * `self::$x` / `static::$x` read as `this`. A type written through a namespace path is stated as
+ * `ParamInfo.typePath` / `PropertyInfo.typePath` beside the bare `type`, so a namesake class of the writer's own
+ * namespace never answers for `\App\Models\Club $c`. A static property written from outside its class
+ * (`Club::$count = 0`) is a write with `fieldWrites[].class` set to the class as written, bound like a thrown type.
  */
 export function phpMemberEffects(
   body: Node | null,

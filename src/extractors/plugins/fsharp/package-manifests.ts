@@ -11,6 +11,9 @@ function parsePaket(text: string, declaredIn: string): DeclaredPackage[] {
 }
 
 /** Paket resolves from NuGet: its packages join C#'s `nuget` ecosystem, matched there. */
+/**
+ * NuGet through `.fsproj` and Paket: `nuget Giraffe ~> 6.0` lines of `paket.dependencies`.
+ */
 export const paketPackageManager: PackageManagerSpec = {
   ecosystem: "nuget",
   manifests: [{ files: ["paket.dependencies"], parse: (text, file) => parsePaket(text, file.declaredIn) }],

@@ -74,6 +74,12 @@ function parseModel(lines: string[]): ModelEntity[] {
 
 const property = (name: string, type: string): PropertyInfo => ({ name, type, visibility: "public", isStatic: false, isReadonly: false });
 
+/**
+ * Each `<entity>` of a Core Data model is an entity class named by its `representedClassName` (the class the code
+ * uses), extending its `parentEntity`; `<attribute>`s are its columns. The spec's `schemaFormat: true` keeps these
+ * classes out of the symbol linker's indexes and type catalogs: they are data shapes, never types code constructs or
+ * calls.
+ */
 export function extractCoreDataEntities(lines: string[]): ClassInfo[] {
   const entities = parseModel(lines);
   const classOf = new Map(entities.map((e) => [e.name, e.className]));
@@ -91,6 +97,7 @@ export function extractCoreDataEntities(lines: string[]): ClassInfo[] {
   }));
 }
 
+/** Each `<relationship>` is an edge whose cardinality its own `toMany` and its inverse state. */
 export function extractCoreDataRelations(lines: string[]): EntityRelation[] {
   const entities = parseModel(lines);
   const byName = new Map(entities.map((e) => [e.name, e]));

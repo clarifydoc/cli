@@ -12,6 +12,9 @@ import { CONTROLLER_DECORATOR, EXTENSION_DECORATOR, VF_BINDING_TARGET } from "./
  * - A Visualforce page's `action="{!save}"` and the members its expressions read (`{!clubs}` → `getClubs`) are the methods of
  *   its `controller=` class and `extensions=` classes, extensions first, as the platform picks them.
  *
+ * A fired component event goes to `<aura:handler name=…>` (or the handler a rendering tag binds) and an application
+ * event to every `<aura:handler event="c:x">`.
+ *
  * A class is found by name among the project's Apex files and only when one file declares it; a method must exist on it.
  */
 

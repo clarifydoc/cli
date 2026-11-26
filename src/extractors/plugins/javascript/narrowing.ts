@@ -67,6 +67,10 @@ function terminates(stmt: Node | null | undefined): boolean {
  * `if (!(x instanceof Club))`, the statements after an early exit `if (!(x instanceof Club)) return;`, the right side of
  * `x instanceof Club && x.sign()` and the consequence of `x instanceof Club ? x.sign() : …`. Never across a function
  * boundary, and not after the name is assigned in between. The nearest narrowing wins; no union of tests is guessed.
+ *
+ * Type tests narrow per call, never the name: `CallInfo.receiverType` is set only on calls inside the region an
+ * `instanceof` guards (the true branch, the else of a negated test, the rest of the block after an early
+ * `return`/`throw` guard, `&&`, `?:`); a call outside it, a callback body or after the name is reassigned gets none.
  */
 export function instanceofNarrowedType(call: Node, name: string): { type: string } | null {
   let seen = mentionsInstanceof.get(call.tree);

@@ -9,6 +9,10 @@ import { isHttpTarget, templatePrefix } from "../shared/proxy-kit.js";
 
 const MAP_FORWARDER_RE = /\.MapForwarder\s*\(\s*@?"([^"]*)"\s*,\s*@?"([^"]+)"/g;
 
+/**
+ * YARP's in-code `app.MapForwarder("/api/v2/cars/{**catch-all}", "http://cars:8080")`: every request under the
+ * pattern's literal prefix goes to the destination, path kept; a following transform builder is not read.
+ */
 export function yarpForwarders(sourceText: string, filePath: string): ProxyRule[] {
   if (!sourceText.includes("MapForwarder")) return [];
   const out: ProxyRule[] = [];

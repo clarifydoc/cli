@@ -136,6 +136,18 @@ const TEST_OR_STORY = /(?:^|\/)(?:__tests__|__mocks__|tests?|spec|e2e|cypress)\/
  * the file's imports. A same-named subject of another service class, and a listener in the class that
  * declares the subject, are not joined (the latter is the single-class reader's, `rxjs-subjects.ts`).
  * One INFERRED link per next-site function and listening function.
+ *
+ * `dispatch:subject`, INFERRED. `FileAnalysis.subjectFlows` lists the subjects a class declares (`asObservable()`
+ * members point at theirs), each `.next` on one of its own or on a service a class holds as a constructor parameter /
+ * typed field / `inject(T)` (an alias chain through `asObservable()`, `pipe(…)`, getters, constructor assignments,
+ * another service re-exposing it — `via`), and each subscription written in place on such a service's member, whose
+ * callbacks are held functions — also one through the class's own alias of the stream,
+ * `toSignal(svc.x$.pipe(op(cb)))`, and an inline template's `x$ | async` over a member built from it (a field, getter
+ * or constructor assignment). For a component with a `templateUrl`, every stream member is a candidate
+ * (`SubjectFlows.listens[].member`) that `resolveAngularExternalTemplates` keeps only when the template pipes it
+ * through `async`. A `next` links to the listeners of the same subject of the same service class, the type resolved
+ * through each file's imports; a subscription on a framework type (`@angular/*`, `rxjs`) is never held; one in the
+ * declaring class is the single-class reader's (rxjs-subjects.ts).
  */
 export class JsSubjectResolver implements DispatchResolver {
   readonly id = "subject";

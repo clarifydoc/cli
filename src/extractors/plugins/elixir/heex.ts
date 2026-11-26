@@ -86,7 +86,18 @@ export function requestHandler(method: string, target: string): string {
   return method === "GET" ? base : `${method.toLowerCase()}_${base}`;
 }
 
-/** Read HEEx markup (`text`), reporting lines offset by `firstLine - 1`. */
+/**
+ * Read HEEx markup (`text`), reporting lines offset by `firstLine - 1`. Reads Phoenix templates and LiveView `~H"""`
+ * sigils in `.ex` files. A template is a screen: `templates/site/settings.html.heex` (Phoenix up to 1.6) or
+ * `controllers/site_html/settings.html.heex` (1.7) renders action `settings` of `SiteController` → `site#settings`
+ * (`PhoenixTemplate`); a co-located LiveView template (`live/settings_live.html.heex`) is that LiveView's markup
+ * (`LiveView`). Layout, mailer/email/mjml and `.text`/`.mjml` templates and `_partial` files are not screens; a
+ * screen's `navigatesTo` is its GET requests. `phx-click|submit|change|blur|focus|keyup|keydown="event"` (or
+ * `{JS.push("event")}`) is an interactive element whose handler is the event name. `<.link navigate|patch|href={~p"/x/#{y}"}>`,
+ * `<a href="/x">` and `<.form|form action=…>` are elements carrying `request` (`method="delete"` honoured; forms POST
+ * by default), interpolations as `:param` segments. `<.live_component module={Mod}>`, remote components `<Mod.fun>` and
+ * local function components `<.card>` are sub-components, minus Phoenix's own (`.link`, `.form`, `.input`, …).
+ */
 export function readHeex(text: string, firstLine = 1): HeexRead {
   const elements: InteractiveElementInfo[] = [];
   const subComponents: SubComponentInfo[] = [];

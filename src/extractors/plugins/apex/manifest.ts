@@ -15,7 +15,8 @@ export const apexManifest: LanguagePluginManifest = {
   parsing: "regex",
   extensions: [".trigger"],
   // `.cls` is VB6's extension and `.xml` is Spring XML's: this plugin's `adopt` reads the Apex classes and the SFDX
-  // object and field metadata among them.
+  // object and field metadata among them. The registry's `preprocessFile` asks the adopting plugin before the owner's
+  // `preprocess`, in the analyzer and in discovery's skip check; no plugin imports another.
   adoptsSuffixes: [".cls", ".object-meta.xml", ".field-meta.xml"],
   caseInsensitiveNames: true,
   testFilePatterns: [/(?:[a-z0-9]Tests?|_[Tt]ests?)\.(?:cls|trigger)$/],

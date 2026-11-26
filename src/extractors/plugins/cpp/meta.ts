@@ -40,6 +40,11 @@ export const cppMeta: LanguagePluginMeta = {
   grpcServiceOf: cppGrpcService,
   // `class Paddock { class Iterator … }` is `Paddock::Iterator` (see classes.ts).
   nestedTypePaths: true,
+  // Overloads: `conversionRanks` makes core rank exact > promotion > conversion (`argFit`'s `ranked` scale);
+  // `explicitSpecializations` has `convert<int>(x)` choose the definition whose `FunctionInfo.specializedOn` names those
+  // arguments. An argument naming a variable is `@name` (also `*name`, `this->name`); core types it from the parameters,
+  // typed locals, `auto c = Club(3)` and the class's fields, and `pickOverloads` reads a call's site from the link's own
+  // file only.
   // The parse states each call's argument count and kinds (`CallInfo.argCount`/`argKinds`); the linker chooses among
   // same-named definitions by them. No tree-sitter reading, so no call node types.
   calls: { callNodeTypes: new Set<string>(), overloadTypeKey: cppOverloadTypeKey, conversionRanks: true, explicitSpecializations: true },

@@ -14,6 +14,37 @@
  * A cell that would hold more than `MAX_TARGETS` functions is poisoned: it stands for nothing and passes that
  * on to every cell, argument and invoke it feeds, so a catch-all holder never fabricates edges. A work budget
  * bounds the whole run; past it nothing is emitted.
+ *
+ * Cells: a formal when `params` list it, a local when its facts or `localTypes` bind it, the file's module cell
+ * (`ValueCell.module`; a global written from a function is `{ name: X, module: true }`) or the exporting file's
+ * when imported; a member is the class's field (own, then bases) for `this` or a typed local, the module
+ * holder's otherwise. A project class name names its own members; a dotted name walks property types first;
+ * sibling scopes of one member declaring one local are two cells (`h@<first line of the scope>`). Seeds resolve
+ * through `resolvePassedName` (never a name guess); one held lambda's seeds and copies share a `lambda` id
+ * standing for at most four project functions. Arguments bind to formals by written index (a leading
+ * `self`/`this`/`cls` skipped) or by `name` against `ParamInfo.argumentLabel ?? name`.
+ *
+ * Every invoke site links to each function its cell holds: relation `calls`, INFERRED for 1 to 4 targets,
+ * AMBIGUOUS for 5 to 32, nothing above 32; never EXTRACTED, never production to test file, never a function
+ * written in place to itself (real recursion keeps its link). Name tiers: a call with an `invoke` fact skips them
+ * (`LinkContext.invokeSites`, `valueFlowInvokeSites`) when its cell is a parameter or a seed or copy writes it. A
+ * name only a call's result writes (`const reload = debounce(load)`, `useCallback(…)`) keeps a link into its own
+ * file only; a member nothing writes (`this.model.apply()`) and a dotted path rooted at an imported name
+ * (`kit.Bench.label()`) keep ordinary resolution; `boundLocally` counts as an invoke of its cell; `CallInfo.via`
+ * still runs the tiers.
+ *
+ * `ifFnType`: an `invoke` (or a C `copy` of a parameter into a field) may carry a type name the file cannot
+ * judge; `scopesOf` drops it unless the host says it runs a function (`ValueFlowHost.isFunctionType(file, type)`;
+ * `isCallableMember({ file, symbol, receiver, member })` for `fieldInvokes`). The linker answers
+ * (`functionTypeQuestion`) from `FileAnalysis.functionTypeAliases` and the class index through the nearest scope
+ * declaring the name: the file, its imports, the packages it imports by name, its sub-project, the sub-projects
+ * it imports, those its build references (`SubProject.references`), or a shared include closure. An alias alone
+ * is a function type, a class (alone or beside an alias) is not; names are never pooled across sub-projects. A
+ * dropped invoke neither links nor keeps the name tiers off the call. `fieldInvokes` derives an `invoke` for
+ * `x.m()` through a field a class declares callable (`PropertyInfo.callable`, names in
+ * `CallableQuestions.callableFieldNames`) when no plugin invoke is stated at the line and `callableMemberQuestion`
+ * says yes: the receiver typed by `receiverDeclaredType`, the class by `locateClass` from the caller's file, then
+ * its bases (`parentClassOf`, three hops).
  */
 import type { ClassInfo, FileAnalysis, FunctionInfo, PropertyInfo, SymbolLink, ValueCell, ValueFlowFact } from "../types/analysis.js";
 import { resolveImportSource } from "./import-index.js";

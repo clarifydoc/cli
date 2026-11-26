@@ -20,6 +20,10 @@ const ANY_WRITE_RE = /\b((?:Self\.)?(\w+))\s*\.\s*(Post|ApplyUpdates|ExecSQL|Exe
 const UI_PROPERTY_RE =
   /\.(?:Visible|Enabled|Caption|Hint|ShowHint|Color|Font|Left|Top|Width|Height|Align|Anchors|Cursor|TabOrder|TabStop|ReadOnly|ImageIndex|Glyph|ParentFont|ParentColor|BorderStyle|Style|Images|PopupMenu|Constraints|Margins|AlignWithMargins|Transparent|WordWrap|Layout|Alignment|DisplayFormat|EditMask|MaxLength|Kind|Down|Flat|Default|Cancel|ModalResult|ActivePage|ActivePageIndex|TabVisible|PageIndex|ScrollBars|ColCount|RowCount|DefaultRowHeight|ColWidths|RowHeights|Properties)(?:\.\w+)*$/i;
 
+/**
+ * Write verbs only on dataset/connection-shaped receivers (`Query1`, `tblOrders`, `cdsUsers`, `ADOConnection1`…);
+ * bare `.Delete`/`.Insert`/`.Edit` substrings would flag every `TStringList`/`TListItems` call.
+ */
 export class PascalMutationExtractor extends DataMutationExtractor {
   readonly languages: Language[] = ["pascal"];
 

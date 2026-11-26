@@ -6,7 +6,8 @@ import { lineIndex } from "../shared/text-scan.js";
  * How a PHP program is told where other services are: `config/*.php` files
  * that `return` nested arrays (Laravel's `config/services.php`), read in code
  * as `config('services.league.url')`, with `env('LEAGUE_API_URL', 'http://…')`
- * naming the variable that overrides the key. `.env` is never read.
+ * naming the variable that overrides the key (`env('X', '…')`, `config('k')`; Guzzle `base_uri` and `Http::baseUrl`
+ * too; the overriding variables ride `ConfigEntry.envNames`). `.env` is never read.
  *
  * Leaf module (the static manifest imports it): types only.
  */

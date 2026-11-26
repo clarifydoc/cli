@@ -160,7 +160,8 @@ export abstract class GoParserBase extends Parser {
    * states, and most of its prediction time, were this decision's. The scan skips bracketed groups, and stops
    * at the token that says which form it is (`:=`, `=`, `++`/`--`) or at the statement's end (an expression
    * statement); a `{` or a `<-` outside brackets is not told from a block or a unary receive, and is left to
-   * prediction, as is any full-context pass (the one that reports the errors). Call once after the parser's
+   * prediction, as is any full-context pass (the one that reports the errors). Like `GoReadLexer`, which retypes the
+   * `(` after a `make`/`new` callee, it keeps Go's simple-statement decision cheap. Call once after the parser's
    * construction: the simulator exists only then.
    */
   settleStatements(): void {
@@ -200,7 +201,7 @@ export abstract class GoParserBase extends Parser {
    * predicate refuses it) and, for `operand`, whenever it cannot open a composite literal: no `{` right after it, after
    * `pkg.Name` or after a bracketed type-argument list (`Box[Club]{}`). A `{` there is a literal wherever no block can
    * follow the expression (`bracedLiteralHere`), and else a literal or a block (`if ok {`), which prediction tells by
-   * what follows. A `[]Club{` or `map[K]V(` leading `primaryExpr` is a literal or a conversion by the token that ends
+   * what follows. A `[]T{` against `[]T(`, `[]Club{` or `map[K]V(` leading `primaryExpr` is a literal or a conversion by the token that ends
    * its type.
    */
   private operandForm(stream: CommonTokenStream, decision: number, operands: OperandDecisions, outer: ParserRuleContext | null): number {

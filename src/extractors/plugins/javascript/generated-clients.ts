@@ -1,3 +1,13 @@
+/**
+ * Generated clients become api-calls at the spec operation's method and path. RTK Query hooks (a generated
+ * `useXQuery`/`useXMutation` names its endpoint — `DataSourceInfo.endpoint` — and takes the method and URL of the
+ * slice definition it is imported from: rtk-query.ts). Kubb (`kubb.config.ts` → `FileAnalysis.generatedClients`: the
+ * spec and the output directories of one module per operation, usually gitignored; kubb.ts): a call of a function
+ * imported from there — `import { getClub } from '@/api/clients/getClub'`, a barrel, a namespace, a `useGetClub`
+ * query hook — joins the spec row and through it the code route. hey-api style SDK operations whose descriptor
+ * spreads its own parameter state `DataSourceInfo.pathValues`.
+ */
+
 import type { Node } from "web-tree-sitter";
 import type { DataSourceInfo } from "../../../types/analysis.js";
 import { stripQuotes } from "../../shared/node-helpers.js";

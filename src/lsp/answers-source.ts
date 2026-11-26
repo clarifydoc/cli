@@ -6,7 +6,11 @@ import type { DefinitionResult } from "./lsp-client.js";
  * Definition answers computed outside this process — by an editor that
  * already runs the project's language servers — for the questions
  * `planDefinitionQueries` listed (`lsp-update --emit-queries`). Lines are
- * 1-based and columns 0-based, as in the queries; paths are project-relative.
+ * 1-based and columns 0-based, as in the queries; paths are project-relative. The file shape is
+ * `{ source: "editor", servers, answers: [{ file, line, column, targets: [{ file, line }] }] }`: every location the
+ * editor got, `[]` for none; a question it did not get to is left out (skipped, not a miss). The source answers no
+ * references, so Phase B does not run, and only the Docker source writes `lsp-ground-truth.json`: an editor run is
+ * budgeted and must not overwrite a complete capture.
  */
 export interface DefinitionAnswerFile {
   /** Who answered, recorded as `lspStats.source` (`editor`). */

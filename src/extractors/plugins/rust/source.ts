@@ -12,6 +12,11 @@
  * `br##"…"##`. Other one-line strings stay: routes, URLs and SQL are read from
  * them. Comments are kept as written (the spec's comment prefixes see `//`);
  * a quote inside a comment or a character literal (`'"'`) opens nothing.
+ *
+ * Blanks every string literal that spans lines or holds a Rust item on one line (`"pub struct User { … }"`, `b"…"`,
+ * `r"…"`/`r#"…"#`/`br##"…"##`), keeping line structure and columns, so code-shaped text in a fixture never reads as
+ * functions, structs and calls. One-line strings stay (routes, URLs and SQL are read from them); a quote in a comment
+ * or a character literal (`'"'`) opens nothing; a lifetime `'a` is code (lexicon.ts).
  */
 export function blankRustCodeStrings(source: string): string {
   if (!source.includes('"') && !source.includes("quote")) return source;

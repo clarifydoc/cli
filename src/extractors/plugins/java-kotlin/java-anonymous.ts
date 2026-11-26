@@ -4,7 +4,9 @@ import type { Node } from "web-tree-sitter";
  * A Java anonymous class (`new Base() { … }`): the `object_creation_expression` that carries a `class_body`.
  * Its methods are no symbols of the enclosing class, and the walk attributes their calls to the method that
  * builds the object; what it adds is the type it is, so a bare call inside resolves on `Base`
- * (`CallInfo.withSubjects`) and `handler.run()` on a local initialized by it reaches its `run`.
+ * (`CallInfo.withSubjects`: the anonymous class, then `Base`, so the base's member is tried before the enclosing
+ * class's or a namesake's) and `handler.run()` on a local initialized by it reaches its `run` — the local is typed as
+ * a synthetic class of the file (`Runnable$5_23`: `extends` the base, synthetic call-less methods).
  */
 export function isAnonymousClassCreation(node: Node): boolean {
   return node.type === "object_creation_expression" && node.children.some((c) => c.type === "class_body");

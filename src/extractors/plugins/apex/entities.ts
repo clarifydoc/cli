@@ -14,6 +14,9 @@ import { EntityExtractor, type EntityExtractContext, type EntityExtractResult } 
  * object's entity — the object file's, or, when the project keeps only fields (a standard object it adds fields to),
  * the first fragment's. A standard object is an entity only where the project defines it or its fields.
  * Names are the API names as the metadata spells them; data rows naming one in another case are corrected to it.
+ * A subquery row (`DataSourceInfo.viaRelationship`) resolves through the lookup field declaring that
+ * `relationshipName` (`EntityRelation.inverseField`, `Players__r`) and, on a standard object, the platform's own child
+ * relationships (`Account.Contacts` → `Contact`, `Opportunity.OpportunityLineItems`); when none does it is dropped.
  */
 
 const METADATA_NS = "soap.sforce.com/2006/04/metadata";

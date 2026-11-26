@@ -140,6 +140,10 @@ export function jsxFunctionProps(tree: Tree, sourceText: string, declared: Reado
 /**
  * `actions.map((a) => <button onClick={() => a.run()} />)` over a collection a component takes (`actions`, `props.actions`,
  * `this.props.actions`): the callback's first parameter holds each element, so its `a.run()` is the prop's `actions.run`.
+ *
+ * In JSX, an array or object literal under a non-`on` prop hands its functions down as `actions.run` /
+ * `action.onClick`, and `actions.map((a) => a.run())` over a destructured or `props.` collection is the prop's
+ * `actions.run` through `FileAnalysis.propElements` (`propElementsOf`; stated only by a file that renders JSX).
  */
 export function jsxPropElements(tree: Tree, sourceText: string): NonNullable<FileAnalysis["propElements"]> {
   const out: NonNullable<FileAnalysis["propElements"]> = [];
@@ -349,6 +353,12 @@ function declaredProps(root: Node): Set<string> {
  * `<Toolbar :extra="[{ label: 'Archive', run: archive }]" />` (or a literal array the script declares, `:extra="actions"`):
  * the functions the array's objects hold under each key, handed to the child as `extra.run`, so the child's loop over its
  * prop (`v-for="x in extra"` ... `x.run()`, `ScopeEntry.fromProp`) runs them. `handsOn` accepts the file's own functions.
+ *
+ * A parent's `:extra="[{ run: archive }]"` (or a declared literal array) hands `extra.run` down, and a child loop
+ * `v-for="x in extra"` / `v-for="x in props.extra"` over a declared prop marks its scope `fromProp`
+ * (`ScopeEntry.fromProp`), so `x.run()` links to it; declared arrays' callbacks written in place are bound by held
+ * names (`<rows[].run@5>`), an array literal in the template gives one `:extra.run` element per key (`arrayArrows`).
+ * Vue only; React arrays through props are not read here (see `jsxPropElements`).
  */
 export function vueArrayFunctionProps(template: string, raw: string, script: string, handsOn: (name: string) => boolean, heldNames: readonly string[] = []): FunctionPropBinding[] {
   if (!/(?:^|\s)(?::|v-bind:)[\w-]+="/.test(template)) return [];

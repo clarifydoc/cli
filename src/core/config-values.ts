@@ -21,7 +21,8 @@ import type { ConfigEntry, ConfigSourceSpec, ProxySourceSpec, RouteBase } from "
  * treats as secrets (`.env`, `*.pem`, `secrets.json`) are never opened.
  *
  * In memory only: what reaches the summary is the resolved origin on each
- * call, and the listen URLs as service addresses.
+ * call, and the listen URLs as service addresses. The forwarding rules a plugin's `serviceConfig.proxySources`
+ * read persist as `proxyRules`. `readRouteBases` hands every entry to the plugin's `routeBaseOf`.
  */
 export interface ProjectConfigValue extends ConfigEntry {
   /** Project-relative posix path of the file stating it. */

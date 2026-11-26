@@ -20,6 +20,13 @@ import { escapeRegex } from "../shared/path-utils.js";
  *
  * `JsPropFlowResolver` joins them: the parent's write → the child's watcher (a dispatch link), and a call through a
  * prop (`props.api.load()`) → the member of the value every parent hands down.
+ *
+ * A React component's props are typed from the tags that render it (`<ClubPanel api={api} />`; `{ api }`,
+ * `{ api: client }` or `props.api` read in the component and its closures; a `useState` local states its type
+ * argument, the class it constructs or the factory it calls). Every tag must bind the prop: a tag leaving it out or
+ * spreading props leaves it untyped. A Vue prop's type comes from the value every parent binds
+ * (`const clubApi = useClubApi()`, one agreeing type), also for `props.api.load()` and the bare `api.load()` of a
+ * template on a name `defineProps` declares.
  */
 export function propFlows(tree: Tree, _sourceText: string, rawSource: string, filePath: string, functions: ReadonlyArray<{ name: string; line: number; endLine: number }>): PropFlows | null {
   const out: PropFlows = {};
@@ -509,6 +516,10 @@ const UNTYPED = new Set(["", "any", "unknown"]);
  * passes anything else (an argument no fact types, another class, no argument) gives the parameter no type; so does a
  * function the project never calls by its plain name. A callee's own `const api = …` rebinding or a nested function taking
  * the same name as its parameter leaves the call alone.
+ *
+ * `dispatch:param-type`: types an `any`/`unknown`/untyped parameter from `PropFlows.argLocals`, the call sites by
+ * plain name (`refresh(api)`), only when every site passes a local of the caller's own function typed the same, none
+ * passes anything else and the function is never handed on by name.
  */
 export class JsParamTypeResolver implements DispatchResolver {
   readonly id = "param-type";

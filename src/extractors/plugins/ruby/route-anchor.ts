@@ -261,7 +261,9 @@ function inheritedGemActions(
  * A route a devise_token_auth mount or a `devise_for` draws (`rails-devise-model` fact: the
  * model the mount names, the access the gem's action has on it) carries that access as its own — when the
  * controller serving it is the gem's, or a project class whose action calls `super` into
- * the gem. An action the project writes without `super` is its own code, read as written.
+ * the gem (a controller override that calls `super` records a call named `super`; Administrate CRUD is read by the
+ * controller's name; a `mount_devise_token_auth_for 'Model'` route carries the `rails-devise-model` fact). An action
+ * the project writes without `super` is its own code, read as written.
  * The model must be one class of the project, by exact name.
  */
 function deviseModelActions(

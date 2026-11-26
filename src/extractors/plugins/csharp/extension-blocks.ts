@@ -53,6 +53,11 @@ const HEADER_RE = /\bextension\s*(?:<[^<>(){};]*(?:<[^<>(){};]*>[^<>(){};]*)*>\s
  * Rewrite every extension block header of `source`; null when there is none.
  * A header is `extension` at member position (after `{`, `}`, `;` or an
  * attribute's `]`), its parameter list, an optional `where` clause, then `{`.
+ *
+ * The grammar reads `extension(Car car) { … }` as a constructor, so the header becomes a nested class of the same
+ * length (lines and columns after it unchanged). After extraction `restoreExtensionBlocks` moves its members onto
+ * the enclosing class, each with the block's parameter as its receiver (`isReceiver`), as
+ * `static void Wash(this Car car)` has it.
  */
 export function rewriteExtensionBlocks(source: string): { sourceText: string; blocks: ExtensionBlock[] } | null {
   if (!source.includes("extension")) return null;

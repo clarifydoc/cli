@@ -491,6 +491,9 @@ function localTypesFrom(found: Node[], scopeIds: ReadonlySet<number>, intoLambda
 /**
  * The calls a conditional initializer's arms make (`x ? Clubs() : Players()`, nested conditionals flattened), or null
  * when the initializer is no conditional or any arm is no call: a call's type must come from every arm.
+ *
+ * Conditional initializers `c ? a() : b()` mark their arms with `localTypes[].choice`; a C# local assigned on each
+ * arm (`var api; if … {…} else {…}`) is typed by its declared type.
  */
 function conditionalArmCalls(init: Node): Array<{ from: string; awaited?: true }> | null {
   const node = unwrapExpression(init);
@@ -540,6 +543,9 @@ function plainMemberRead(init: Node): string | null {
  * An initializer that is a call (awaited or not) as `localTypes[].from`:
  * `repo.FindAsync(id)` → `repo.FindAsync()`; `await x.GetAsync().ConfigureAwait(false)`
  * awaits `x.GetAsync()`.
+ *
+ * A local initialized by an awaited call (`var u = await repo.FindAsync(id)`) is stated as `localTypes[].from`
+ * with `awaited`, typed through the declared return type and the manifest's `asyncResultTypes`.
  */
 function initializerCall(init: Node): { from: string; awaited?: true } | null {
   let node = unwrapExpression(init);

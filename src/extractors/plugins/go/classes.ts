@@ -137,6 +137,9 @@ const BLOCK_TYPE_DECL_RE = /(?:^|[;{])\s*type\s+([A-Za-z_]\w*)(?:\[[^\]]*\])?\s+
  * A type the body declares itself (`func Shadow() { type Match struct{ n int }; m := Match{}; m.Play() }`) hides the
  * package type of that name: the locals it types and the constructions of it are of the block's own type, which no
  * project class stands for. They are dropped, and the locals listed as untyped so no namesake is guessed for their calls.
+ *
+ * A `type X` declared in a function body hides the package's `X` from that line on; runs after the struct-literal
+ * pass on both front ends.
  */
 export function hideShadowedTypes(lines: readonly string[], fn: FunctionInfo): void {
   const hidden = new Map<string, number>();
@@ -174,6 +177,10 @@ const BODY_TOKEN_RE = /(?<![\w.])[A-Za-z_]\w*/g;
  * NewPlayer()` in the next): Go scopes each to its block, and the function-wide reading leaves the name untyped
  * because the declarations disagree. Each call on it states the type of the declaration it sees; a call in a block
  * whose declaration states no type stays as it was.
+ *
+ * A body-only local declared in several blocks with different stated types (`s := NewClub()` in one `if`, `s :=
+ * NewPlayer()` in the next) is untyped function-wide; each call on it gets the `receiverType` of the declaration its
+ * block sees, a block stating none leaving its call as it was. The body's identifiers are indexed once.
  */
 function typeBlockLocalCalls(lines: readonly string[], fn: FunctionInfo, declared: ReadonlySet<string>, locals: ReadonlyArray<{ name: string }>, receiverName: string | undefined, constructors?: GoConstructors): void {
   let codeLines: string[] | undefined;

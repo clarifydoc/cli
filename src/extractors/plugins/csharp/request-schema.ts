@@ -87,6 +87,12 @@ function hasDecorator(decorators: readonly string[] | undefined, names: readonly
   });
 }
 
+/**
+ * `meta.requestSchema` (`unwrapNullable`, `describeType`, `serializedName`, `isSerialized`, `isRequired`): how
+ * types and properties look on the wire under System.Text.Json; the core pass does class lookup, inheritance
+ * flattening and recursion. `camelCase` (shared `inflection.ts`) is the JSON name .NET serializers give a property
+ * (C#, VB).
+ */
 export const csharpRequestSchema: RequestSchemaHooks = {
   unwrapNullable(type) {
     const t = type.trim();

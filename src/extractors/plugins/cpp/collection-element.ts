@@ -17,7 +17,11 @@ export function cppCollectionElement(type: string | null | undefined, as?: "iter
   return element?.name ?? null;
 }
 
-/** The element of a container type with what holds it: a value, or a raw / smart pointer (`vector<Boot*>`, `vector<unique_ptr<Boot>>`). */
+/**
+ * The element of a container type with what holds it: a value, or a raw / smart pointer (`vector<Boot*>`, `vector<unique_ptr<Boot>>`).
+ *
+ * The pointer flag tells `it->m()` over `vector<Club>` from `(*it)->m()` over `vector<Club*>`.
+ */
 export function cppCollectionElementOf(type: string | null | undefined): { name: string; pointer: boolean } | null {
   const text = strip(type ?? "");
   const m = /^([a-z_]+)\s*<([\s\S]+)>$/.exec(text);

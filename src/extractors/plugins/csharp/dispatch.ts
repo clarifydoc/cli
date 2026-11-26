@@ -42,6 +42,12 @@ interface HandlerDef {
   line: number;
 }
 
+/**
+ * MediatR: indexes every `IRequestHandler<T>` / `INotificationHandler<T>` / `IStreamRequestHandler<T>` by request
+ * type `T`; each callable that dispatches through a mediator (`_mediator.Send(new GetOwnersQuery(…))`) gets a
+ * synthetic `caller → Handler.Handle` link for every request type it constructs (`new T(…)`) or forwards as a
+ * parameter (`Send(command)`).
+ */
 export class CSharpMediatrResolver implements DispatchResolver {
   readonly id = "mediatr";
   readonly languages: Language[] = ["csharp"];

@@ -16,6 +16,15 @@ import { packageMatchingFor } from "../extractors/registry.js";
  * listed method (`Decoder.Decode`) is not named by a package-qualified call, so an advisory stating one that
  * nothing else reaches is `not-judged`, never `not-called`. An advisory with no function data gets no
  * verdict at all.
+ *
+ * `analyze --osv` reads the functions an advisory names (`affected[].ecosystem_specific.imports` becomes
+ * `ExternalPackage.advisories[].functions`) through the ecosystem's `PackageManagerSpec.advisoryFunctions`;
+ * other ecosystems stay package-level with no `reach`. A call `head.Symbol(…)` on a name the file imports from
+ * that exact path is a hit; no hit is `not-called`. The reach carries `calls[].from` and the shortest `path`;
+ * the symbol links are walked backwards (depth 8). Tests are skipped. A route's root is `routeHandlerKey`, shared
+ * with `computeDataFlows` (a route registered inside another function: `handlerKeyByName`, `registeredElsewhere`,
+ * which also resolves an entry point's), plus the middleware it names. The OSV fetch is injectable
+ * (`AnalyzeOptions.osvFetch`).
  */
 const MAX_DEPTH = 8;
 const MAX_CALLS = 5;

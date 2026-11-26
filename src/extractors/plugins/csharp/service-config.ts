@@ -213,6 +213,10 @@ const ocelot: ProxySourceSpec = {
   },
 };
 
+/**
+ * `appsettings*.json` and launchSettings, `IConfiguration[...]` / `_config["A:B"]` bases, `__` env overrides, the
+ * `ReverseProxy` section (YARP, forwarding rules) and `ocelot.json`.
+ */
 export const csharpServiceConfig: ServiceConfigSpec = {
   sources: [appsettings, launchSettings, azureHostJson],
   proxySources: [yarp, ocelot],

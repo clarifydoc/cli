@@ -1,3 +1,15 @@
+/**
+ * Navigation targets read: `router.push`/`window.open`/`location` with literals, concatenations (`"/x/" + id` →
+ * `/x/{}`) and interpolations, hash routes (`href="#/x"`, `$location.path`), SvelteKit `goto`, Angular
+ * `routerLink`/`[routerLink]` arrays/`navigateByUrl`/`router.navigate([...])`, any element's app-path `href` (Next.js
+ * `<Link href>`), a variable a link binds (`:to="loginRoute"`), any hyphenated component's `to="/x"` (Vuetify),
+ * `navigate(item.path)`/`goto(item.x)` over the file's item values, an item property a link binds (`:to="link.ref"` →
+ * the file's `ref:` values) and a helper object's members by their qualified function name (`Route.albums`;
+ * `paths.app.club.getHref(id)`). Vue Router `name:` and unplugin-vue-router's file-based names resolve `route:<name>`
+ * targets. Browser tests open pages by address (`page.goto`, `cy.visit`, `browser.url` →
+ * `FileAnalysis.browserNavigations`), joined to screens by core.
+ */
+
 import type { Node, Tree } from "web-tree-sitter";
 import type { BrowserNavigation } from "../../../types/analysis.js";
 

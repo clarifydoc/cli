@@ -80,6 +80,14 @@ function tableNameValue(obj: Node): Node | null {
   return null;
 }
 
+/**
+ * A DocumentClient call (`docClient.get({ TableName })`, v2) or a v3 command (`new GetCommand({ TableName })`,
+ * `…ItemCommand`) in a file naming DynamoDB / `aws-sdk` is a `database` row. `TableName` is a literal, a same-file
+ * constant, or `process.env.X` (directly, through `const T = process.env.X`, or `const { X } = process.env`; a
+ * request held in a local object is read too). An env name is `DataSourceInfo.envRef` with no target; the serverless
+ * plugin reads each descriptor's environment into `lambda-env` route facts and gives the row the value. A receiver
+ * the file builds from the DynamoDB SDK (`new AWS.DynamoDB.DocumentClient()`) is never a request receiver.
+ */
 export function dynamoAccess(node: Node, source: string): DynamoAccess | null {
   let verb: string;
   let label: string;

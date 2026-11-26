@@ -12,6 +12,12 @@ import type { ModuleSearchPathSpec } from "../../../types/language-plugin.js";
  *
  * Entries holding a macro (`$(DCC_UnitSearchPath)`, `$(TargetOS)`) are left out:
  * what they expand to is the IDE's, not the project's.
+ *
+ * Core's `applyModuleSearchPaths` consumes it: a bare import two files answer to (`uses Garage` beside
+ * `Win/Garage.pas` and `Posix/Garage.pas`) is rewritten to the file a build file names for the module (also a
+ * program's `uses X in 'path'` where the manifest's `moduleSearchPaths.pathImportsPin` says so), else the one in
+ * the project's own directory, else the first search directory holding one. Read at each sub-project root; the
+ * rewrite is in memory only, before the import index.
  */
 export const pascalSearchPaths: ModuleSearchPathSpec = {
   files: ["*.dproj", "*.lpi"],

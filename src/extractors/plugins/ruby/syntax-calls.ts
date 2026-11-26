@@ -14,7 +14,13 @@ import { rubyCodeLinesOf } from "./blocks.js";
  * `self.club.name = x`); the arguments are dropped from the name (`repo.find.+`) and the linker types each hop by its
  * declared return, so a chain it cannot type links nowhere. A setter may follow any reader path (`self.club.name = x`,
  * a column write once typed); an operator or an index only a call's result. An index chain, a literal-bound local (`total = 0`) and
- * the framework's own hashes (`params[:id]`) state nothing.
+ * the framework's own hashes (`params`, `session`, `options`) state nothing. The binary operators are
+ * `+ - * / % << >> < > <= >= == != <=> ===`. The linker resolves one through `resolveCallToDefinitionBody` as a
+ * `mapMember` call is: a namesake class behind an untyped receiver, a class with no such operator, and plain numbers,
+ * strings and hashes draw no edge. A setter written again in the same function keeps its later lines in
+ * `CallInfo.siteLines`, one field-write site each. A setter no method serves is no call: the linker hands the site
+ * (`AttributeWriteSite`) to core's `attribute-writes.ts`, which records a `FieldWriteRow` where the class or a base
+ * declares the attribute as a property. Run from `extractValueFlow`.
  */
 export function addRubySyntaxCalls(lines: readonly string[], analysis: FileAnalysis): void {
   const code = rubyCodeLinesOf(lines);

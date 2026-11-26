@@ -1,3 +1,23 @@
+/*
+ * The Streamable HTTP subset of MCP (`clarifydoc mcp --http [--port] [--host] [--token-file]`), beside the stdio
+ * transport in protocol.ts, over the one `McpServer` every request shares (the analysis is loaded once).
+ *
+ * `POST /mcp` takes a JSON-RPC message or batch and answers JSON (notifications 202, body capped at 4 MB). Sessions are
+ * a Map (id → created, last seen, `clientInfo`, open streams): issued on `initialize`, idle expiry
+ * (`CLARIFYDOC_MCP_SESSION_TTL_MS`, default 30 min; a session with an open stream is not idle), at most 64 (least
+ * recently seen evicted), `DELETE` ends one and closes its streams, an unknown or expired id is 404 so the client
+ * re-initializes. `GET /mcp` with `Accept: text/event-stream` and a session id is a server-sent event stream
+ * (keep-alive comment every 25 s; one session holds at most 4 — opening a fifth closes its oldest,
+ * `MAX_STREAMS_PER_SESSION`); a GET without that Accept is 405. `HttpHandle.broadcast` writes a notification to every
+ * open stream: `server.ts` pushes `notifications/tools/list_changed` and `resources/list_changed` when an analysis this
+ * store ran finishes (`AnalysisStore.onAnalysisChanged`) or the summary file's mtime moves (polled every 5 s: the
+ * editor or CLI re-analyzed); `listChanged` is declared only on this transport.
+ *
+ * Loopback only by default (`Host`/`Origin` must be loopback, on GET too); any other `--host` refuses to start without
+ * a token, checked as a bearer with a constant-time compare on every method. Token precedence: `--token-file` (first
+ * line; warns when group/world-readable), then `CLARIFYDOC_MCP_TOKEN`, then `--token` (stderr warning: it shows in
+ * the process list). The URL goes to stderr only.
+ */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import type { AddressInfo } from "node:net";

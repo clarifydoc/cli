@@ -7,7 +7,10 @@
  * `clarifydoc ask <tool> key=value` — keeping any arguments the hint states.
  * A mention is never dropped: a bare `clarifydoc ask health` is still an
  * actionable pointer. A listed tool is left alone, and with nothing hidden the
- * text is returned as it came.
+ * text is returned as it came. `--tools core` (`CORE_TOOLS`, `selectTools`) lists a smaller set and says so in the
+ * instructions; mentions are rewritten where text leaves the server (the server's `rewrite` option), in answers,
+ * resources, prompts, tool descriptions and the instructions alike. Keep the core set what answers point to most: a
+ * shell call costs a round trip.
  */
 
 const TOOL_MENTION = /\bclarifydoc_[a-z][a-z0-9_]*\b/g;

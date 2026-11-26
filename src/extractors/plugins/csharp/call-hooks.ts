@@ -38,6 +38,12 @@ function csharpMethodGroups(call: Node): Array<{ name: string; node: Node; ownMe
 // `global::` and an extern alias (`LeagueV1::Com.Example.League.Club.Sign()`) only anchor the namespace that follows.
 const dropGlobalAlias = (name: string | null): string | null => (name?.includes("::") ? name.replace(/\b[A-Za-z_]\w*::/g, "") : name);
 
+/**
+ * `extractCalls` does not enter a childless node whose type no step of its walk reads — 60% of a C# body's nodes
+ * (`READ_TYPES_BY_LANGUAGE`); a hook that acts on only some node types is gated on them before it reads text
+ * (Hangfire/`ToTable` arguments, `is`-pattern narrowing), and the per-call cost of the argument hooks
+ * (arg-kinds.ts, arg-origins.ts) is what is left of `extractCalls`.
+ */
 export const csharpCallHooks: CallExtractionHooks = {
   callNodeTypes: new Set(["invocation_expression", "object_creation_expression", "implicit_object_creation_expression"]),
   passedArguments: csharpMethodGroups,

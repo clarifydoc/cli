@@ -9,6 +9,13 @@
  *
  * The deviations from the defaults are part of the incremental cache's stamp (`extractorStamp` in
  * manifest.ts): a cached file analysis is reused only by a run that reads files the same way.
+ *
+ * Two features, both on by default: `antlr` and `tree-sitter`. A regex language's `meta.antlr` reader, else its
+ * `meta.treeSitter` reader, supplies its functions and calls (`readWithParser` in file-analyzer.ts, then
+ * `extractWithRegex(…, parsed)`); which languages have which front end is each plugin's own. A file the parser
+ * reads with syntax errors keeps the regex reading, and `FileAnalysis.frontEnd` says which reading a file got.
+ * `scripts/ab-features.mjs <project> --feature <name>` analyzes one tree with and without a feature and lists
+ * every disagreement.
  */
 
 /** The features this build knows: what each switches, and whether it is on unless switched off. */

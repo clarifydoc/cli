@@ -32,6 +32,12 @@ function testModules(lines: readonly string[], blockEnds: (lines: readonly strin
   return out;
 }
 
+/**
+ * Tests live beside the code: a `#[cfg(test)] mod tests` in the source file, cases carrying `#[test]` (or
+ * `#[tokio::test]`, `#[sqlx::test]`, `#[rstest]`, `#[test_case(…)]`). The file is no test file: a test attribute makes
+ * a case, any other function inside a `#[cfg(test)]` module is a helper (`testCase.kind` `helper`), never production
+ * code.
+ */
 export function markRustTests(lines: string[], fns: FunctionInfo[], blockEnds: (lines: readonly string[]) => ReadonlyMap<number, number>): FunctionInfo[] {
   const mods = lines.some((l) => CFG_TEST.test(l)) ? testModules(lines, blockEnds) : [];
   for (const fn of fns) {

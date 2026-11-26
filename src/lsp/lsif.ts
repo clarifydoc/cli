@@ -15,7 +15,7 @@ import { scipPathMapper } from "./scip.js";
  * analysis by `scipPathMapper` when the dump was built at another root.
  * `metaData.positionEncoding` (`utf-8` / `utf-16` / `utf-32`, default
  * UTF-16) is converted to the queries' UTF-16 columns from the project file
- * the same way SCIP converts a document's encoding.
+ * the same way SCIP converts a document's encoding. `lspStats.source` is `lsif`.
  */
 
 interface Position { line: number; character: number }

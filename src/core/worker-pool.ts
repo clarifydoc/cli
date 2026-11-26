@@ -10,6 +10,10 @@
  * start-up is not the file's time. Only when workers cannot run at all (the
  * first ones die before taking up any file, or none can be started again) do
  * tasks go through the in-process fallback.
+ *
+ * While a pool runs it sets V8's heap growth bound (`--heap-growing-percent=50`) unless the process was started
+ * with one, because each worker has its own heap and V8's headroom made eight workers hold several times what
+ * they used.
  */
 import { Worker } from "worker_threads";
 import os from "os";

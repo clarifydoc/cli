@@ -286,6 +286,12 @@ function recurse(node: Node, routes: RouteInfo[], radClasses: Map<string, RadCla
 }
 
 /** Route-registry adapter for this plugin (see routes/base.ts). */
+/**
+ * Delphi DataSnap REST — the server-method classes a unit declares (under `{$METHODINFO ON}`, or deriving from
+ * `TDSServerModule`), each public method an endpoint whose verb comes from its name prefix (`accept` → PUT,
+ * `update` → POST, `cancel` → DELETE, the rest GET, the prefix dropped from the path); RAD Server (EMS) endpoint
+ * methods by prefix (`GetUsers`, `PostUser`, `PutItem`, `DeleteUser`).
+ */
 export const pascalRouteExtractor: RouteExtractor = {
   languages: ["pascal"],
   extractRoutes(tree, sourceText) {

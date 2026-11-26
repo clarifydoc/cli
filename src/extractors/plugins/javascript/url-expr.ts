@@ -12,6 +12,9 @@ import { stripQuotes } from "../../shared/node-helpers.js";
  * Holes keep their source text so a project pass can still resolve them (a
  * field, an imported constant). Null for anything that is not string-shaped:
  * a call, an object, arithmetic.
+ *
+ * A template literal nested inside a `${}` hole is spliced into the outer URL (see `rebuiltTemplate` in
+ * data-sources.ts), so the outer holes stay readable for the route join.
  */
 export function renderUrlExpr(node: Node | null): string | null {
   let n = node;

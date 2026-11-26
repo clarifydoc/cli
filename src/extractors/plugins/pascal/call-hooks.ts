@@ -155,6 +155,17 @@ function readOperands(node: Node): Array<Node | null> {
   }
 }
 
+/**
+ * Reading a name without parentheses inside an expression (`CallInfo.read`: `N := ACar.Shine`,
+ * `if qry.IsEmpty then`, `N + Points`) is linked by `resolveReadName` only when it resolves without guessing to a
+ * function or method — `calls` when that returns a value, `passes` when it is a procedure
+ * (`OnClick := btnSaveClick`) — or to a construction; a field, variable or class read draws no edge, and
+ * `classifyCalls` never makes one a database or API call. A property whose getter is a method
+ * (`PropertyInfo.readAccessor`) answers in the symbol index with that method, so `ACar.Points` lands on
+ * `TCar.GetPoints`. `calls.withSubjectsOf` names the implicit receivers a bare call may run on (Delphi `with`).
+ *
+ * Control-transfer standard procedures (statement-position identifiers) are never call edges.
+ */
 export const pascalCallHooks: CallExtractionHooks = {
   // Pascal calls procedures WITHOUT parentheses (`LoadTotals;`,
   // `qrySales.Open;`) — those parse as a bare identifier/exprDot directly

@@ -19,6 +19,11 @@ import type { DispatchResolver } from "../../dispatch/base.js";
 // `.event(FolderEvent::CreateView, create_view_handler)`, possibly across lines.
 const EVENT_RE = /\.event\(\s*([A-Z]\w*Event)::([A-Z]\w*)\s*,\s*([a-z_][\w:]*)\s*,?\s*\)/g;
 
+/**
+ * A plugin registering a handler per event of its enum (`AFPlugin::new().event(FolderEvent::CreateView,
+ * create_view_handler)`): joins a generated Dart call `<Enum><Variant>` to the handler the same crate defines under
+ * that name (`AfDispatchResolver`).
+ */
 export function extractEventRegistrations(lines: string[]): Array<{ message: string; handler: string; line: number }> {
   const text = lines.join("\n");
   if (!text.includes(".event(")) return [];

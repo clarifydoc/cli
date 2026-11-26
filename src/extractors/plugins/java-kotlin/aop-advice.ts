@@ -16,7 +16,12 @@ import { splitTopLevel } from "../../shared/split-top-level.js";
  * not read (`args`, `this`, `target`, `bean`, `cflow`, a name no aspect declares, a modifier other than
  * `public`) is unknown, and an edge is drawn only when the whole expression is certainly true — never because
  * an unknown part was ignored. `..` in a type or package pattern is zero or more whole segments, matched by a
- * dynamic program over the segments (no backtracking, so a long pattern cannot blow up).
+ * dynamic program over the segments (no backtracking, so a long pattern cannot blow up). Also read: `within(@pkg.Anno *)`,
+ * an `@annotation` literal type or an advice parameter bound by name. An interface named by `execution` also reaches
+ * the project classes implementing it; test files and the aspects themselves are no join points. A pointcut's type
+ * name resolves through the aspect file's imports (`resolveSimpleName`: the alias a Kotlin `import … as` binds, never a
+ * static import's member), else its own package; each `execution(...)` atom is compiled once per run and fails on its
+ * name glob first. The advice text may be a string, `"a" + "b"`, a Java text block, `value=` or `pointcut=`.
  */
 export class AopAdviceResolver implements DispatchResolver {
   readonly id = "aop-advice";

@@ -11,6 +11,9 @@ import { argumentsOf, unwrapExpression } from "./local-types.js";
  *   - a read of a name the body awaited EARLIER (`await a;`, `await Task.WhenAll(a, b); a.Result`) — the task is
  *     complete there; a name only mentioned in an await (`await Log(a.Id)`) is no such task;
  *   - a conditional access (`task?.Result`) or any other receiver.
+ *
+ * Enabled by the manifest's `readMembers` (`Result`); the reads feed only the blocking-call rule, the property-read
+ * edge is not built.
  */
 export function csharpPropertyReads(body: Node | null): Array<{ name: string; line: number }> | undefined {
   if (!body || !fileMentionsResult(body) || !body.text.includes(".Result")) return undefined;

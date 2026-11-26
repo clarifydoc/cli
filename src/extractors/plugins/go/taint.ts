@@ -110,6 +110,16 @@ function textFields(root: Node, typeName: string, variable: string): string[] | 
   return out;
 }
 
+/**
+ * Go has no `ast.taint` hook: the meta states `regexTaint` (`{ gate, taint }`) and a file whose source matches `gate`
+ * is parsed once more with `tree-sitter-go` (shipped in `dist/grammars`, switched off by the `taint` feature) for the
+ * shared handlerTaint walk — never a test or generated file or a tree with syntax errors. The spec is built per file:
+ * source reads only on the context/request parameter names the file declares (`c.Query(…)`, `r.URL.Query()`); SQL
+ * sinks only on a receiver that names a database handle (`db`, `tx`, `conn`, `gorm`…), never `repo.Query`. `binds`: a
+ * call that fills a variable from the request without assigning it (`c.ShouldBindJSON(&req)`,
+ * `json.NewDecoder(r.Body).Decode(&req)`) makes the struct's non-numeric fields `req.Field` sources; `stringReads` is
+ * Go's own. Precision first: zero findings on the reference Go repositories is the bar.
+ */
 function buildSpec(names: readonly string[]): TaintSpec {
   const recv = names.length ? `(?:${names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})` : "(?!)";
   // Request input read from a context or request parameter, or through the router libraries' own accessors.

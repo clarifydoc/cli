@@ -31,6 +31,16 @@ const GETTER = /^([A-Za-z_$][\w$.]*(?:<[^;=()]*>)?\??)\s+get\s+([A-Za-z_$][\w$]*
 /** `get name => Type(…)` with no return type written: the type it constructs. */
 const GETTER_CONSTRUCTED = /^get\s+([A-Za-z_$][\w$]*)\s*=>\s*(?:const\s+|new\s+)?(_?[A-Z][\w$]*)\s*(?:<[^()=;]*>)?\s*\(/;
 
+/**
+ * Top-level variables typed by bare name in any function when no local, parameter or field takes the name: a variable
+ * with the type it states (`final SeasonTicket ticket = …;`, `late League league;`) or constructs (`final ticket =
+ * SeasonTicket();`, `const table = League<Club>();`). A top-level getter binds its name too (`GarageGateway get
+ * garageGateway => …`) by its declared return type, or the type its arrow body constructs (`get pit =>
+ * PitGateway(dio);`); it is also a function named as it, its block or `=>` body's calls and constructions its own. An
+ * initializer that only calls (`final ticket = SeasonTicket.load();`) states nothing. Read off column-0 lines, outside
+ * a block comment. Through a barrel and `ImportInfo.inScope` the linker also sees a library's exported variables; two
+ * used units typing one name differently decide nothing.
+ */
 export function dartModuleBindings(lines: readonly string[]): ModuleBindingInfo[] {
   const out = new Map<string, ModuleBindingInfo | null>();
   let inComment = false;

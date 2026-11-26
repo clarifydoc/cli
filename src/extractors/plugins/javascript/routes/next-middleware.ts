@@ -1,3 +1,16 @@
+/**
+ * A Next.js `middleware.ts` / `proxy.ts` is a guard only when its code checks the caller (a caller-check
+ * default-export name, a library wrapper, or a session/token read plus a redirect/401); a header-only middleware
+ * guards nothing. The file emits a `next-middleware` route fact with its `config.matcher` (none = all; an unreadable
+ * or `has`/`missing`-conditioned matcher guards nothing) and a resolver gives the matching Next routes of the same
+ * sub-project an inherited guard. The same rule applies to an Astro `src/middleware` `onRequest` (see
+ * astro-middleware.ts): a session/token cookie or auth read plus a redirect/401, a `sequence(requireAuth, …)` or
+ * `onRequest = requireLogin` whose name is a caller check; it emits an `astro-middleware` fact that gives every Astro
+ * page and endpoint of the sub-project (`src/pages/…`) an inherited `onRequest` guard, and an `onRequest` in any
+ * other file guards nothing. A filter or dependency is a guard only when its name says it checks the caller
+ * (shared/guard-words.ts).
+ */
+
 import type { FileAnalysis, RouteFact } from "../../../../types/analysis.js";
 import type { ProjectContext } from "../../../../types/project.js";
 import type { RouteResolver } from "../../../route-resolvers/base.js";

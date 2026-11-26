@@ -38,6 +38,12 @@ function filterTypeFromAttr(attr: Node): string | null {
 }
 
 /** Middleware methods a list of filter attributes names (`RouteInfo.middlewareCalls`). */
+/**
+ * `[ServiceFilter(typeof(X))]` / `[TypeFilter(typeof(X))]` on controllers and Razor `PageModel` classes land in
+ * `RouteInfo.filters` and name the filter type's pipeline entry in `middlewareCalls` — `OnAuthorizationAsync` /
+ * `OnAuthorization` when the type name says Authorization, otherwise action-filter methods (class-level filters on
+ * a page model reach every handler, see razor-pages.ts).
+ */
 export function filterMiddlewareCalls(attrs: readonly Node[]): string[] {
   const out: string[] = [];
   for (const attr of attrs) {

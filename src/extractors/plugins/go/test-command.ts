@@ -19,6 +19,11 @@ interface PackageTests {
  * test, `-run '/^(TestSave)$'`, in a command of its own — unless the file states its runner (`TestTarget.suites`,
  * from `suite.Run(t, new(ClubSuite))` in a file importing testify's `suite`): then the runner is the `-run` and the
  * methods are `-testify.m`, which selects them inside it.
+ *
+ * A testify suite (`extractTestSuites` in test-suites.ts: a file importing `suite` whose top-level `TestX` runs
+ * `suite.Run(t, new(X))`/`&X{}`; a type two runners run states none) reaches `TestTarget.suites`, so a suite's
+ * methods are selected as `-run '^TestXSuite$' -testify.m '^(TestA|TestB)$'` and the subtest filter is `-run
+ * '/^(TestA)$'` without it (`-testify.m` is a defined flag only in a binary linking testify).
  */
 export function goTestCommand(tests: readonly TestTarget[]): string | null {
   const byDir = new Map<string, PackageTests>();

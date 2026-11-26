@@ -58,7 +58,11 @@ function kotlinTarget(left: Node | null | undefined, typed: ReadonlySet<string>,
  * What a Java/Kotlin method writes to fields and throws (`FunctionInfo.fieldWrites` / `throws`): assignments and
  * `++`/`--` on `this.x`, a bare field `x` the method does not declare, `this.field.x` and a typed parameter or local's
  * `p.x`; `throw new T(…)` / Kotlin `throw T(…)`; the `throws` clause and Kotlin `@Throws(T::class)` (`declared`).
- * A constructor states no writes — it initializes.
+ * A constructor states no writes — it initializes. A write carries `member`, `receiver` as written (`this`,
+ * `this.<field>`, a parameter or local name with a declared type, "" for a bare field) and the line; an untyped
+ * receiver states nothing, and nested non-arrow functions and local classes are left out. A throw carries the type as
+ * written with its qualifier; a rethrown variable states nothing. A qualified name (`java.io.IOException`) binds by its
+ * last segment only through a qualifier the project backs (a package the class is declared in, directories on its path).
  */
 export function jvmMemberEffects(
   node: Node,

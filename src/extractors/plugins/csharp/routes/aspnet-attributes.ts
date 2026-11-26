@@ -285,6 +285,12 @@ const bare = (written: string): string => written.replace(/<.*$/, "").replace(/.
 /**
  * Evaluates attribute uses against the project's `cs:attr-def` facts. Built
  * once per resolver run; memoizes per (class, arguments).
+ *
+ * A project's own routing attributes (`[V3ApiController]` implementing `IRouteTemplateProvider`,
+ * `[RestPutById] : HttpPutAttribute`) are recorded per file as a small expression IR (`cs:attr-def` facts —
+ * constructor params + defaults, `base(…)` args, `Template`/`HttpMethods` values, consts) and evaluated at each
+ * use site through the constructor chain; a template no evaluation can state marks the rows
+ * `prefixUnresolved: "attribute:X"`, and a verb attribute with such a template routes nothing.
  */
 export class CustomAttributes {
   private readonly defs = new Map<ClassRef, CsAttrDefFact>();
