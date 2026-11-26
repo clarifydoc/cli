@@ -23,7 +23,7 @@ describe("code no plugin reads", () => {
         "ui/Player.elm": "module Player exposing (..)",
         "third_party/lib/Engine.sol": "contract Engine {}",
         "node_modules/pkg/Car.nix": "{}",
-        "garage/Car.tcl": "proc car {} {}",
+        "garage/car.nix": "{ car = 1; }",
         "ignored/Referee.sol": "contract Referee {}",
         "data/readme.txt": "{}",
         ".clarifydocignore": "ignored/\n",
@@ -35,9 +35,9 @@ describe("code no plugin reads", () => {
       const found = await discoverFiles(root);
       expect(found.files.map((f) => f.relativePath)).toEqual(["contracts/Match.ts"]);
       const unread = summarizeUnreadCode(found.unreadCode);
-      expect(unread.map((u) => `${u.extension}:${u.files}`)).toEqual([".sol:2", ".elm:1", ".tcl:1"]);
+      expect(unread.map((u) => `${u.extension}:${u.files}`)).toEqual([".sol:2", ".elm:1", ".nix:1"]);
       expect(unread[0]!.examples).toEqual(["contracts/Club.sol", "contracts/Match.sol"]);
-      expect(unreadCodeLine(unread)).toBe("4 code files no plugin reads, so they are not in the map: 2 Solidity (.sol), 1 Elm (.elm), 1 Tcl (.tcl)");
+      expect(unreadCodeLine(unread)).toBe("4 code files no plugin reads, so they are not in the map: 2 Solidity (.sol), 1 Elm (.elm), 1 Nix (.nix)");
       expect(unreadCodeLine([])).toBeNull();
     } finally {
       await rm(root, { recursive: true, force: true });

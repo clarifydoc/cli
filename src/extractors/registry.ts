@@ -126,6 +126,7 @@ import { autohotkeyManifest } from "./plugins/autohotkey/manifest.js";
 import { autoitManifest } from "./plugins/autoit/manifest.js";
 import { applescriptManifest } from "./plugins/applescript/manifest.js";
 import { nimManifest } from "./plugins/nim/manifest.js";
+import { tclManifest } from "./plugins/tcl/manifest.js";
 import { dManifest } from "./plugins/dlang/manifest.js";
 import { vManifest } from "./plugins/vlang/manifest.js";
 import { fortranManifest } from "./plugins/fortran/manifest.js";
@@ -168,6 +169,7 @@ const ALL_MANIFESTS: readonly LanguagePluginManifest[] = [
   autoitManifest,
   applescriptManifest,
   nimManifest,
+  tclManifest,
   dManifest,
   vManifest,
   fortranManifest,
@@ -260,6 +262,7 @@ const LOADERS: readonly PluginLoader[] = [
   { languages: ["autohotkey"], load: () => import("./plugins/autohotkey/meta.js").then((m) => [m.autohotkeyMeta]) },
   { languages: ["autoit"], load: () => import("./plugins/autoit/meta.js").then((m) => [m.autoitMeta]) },
   { languages: ["applescript"], load: () => import("./plugins/applescript/meta.js").then((m) => [m.applescriptMeta]) },
+  { languages: ["tcl"], load: () => import("./plugins/tcl/meta.js").then((m) => [m.tclMeta]) },
   { languages: ["nim"], load: () => import("./plugins/nim/meta.js").then((m) => [m.nimMeta]) },
   { languages: ["dlang"], load: () => import("./plugins/dlang/meta.js").then((m) => [m.dMeta]) },
   { languages: ["vlang"], load: () => import("./plugins/vlang/meta.js").then((m) => [m.vMeta]) },

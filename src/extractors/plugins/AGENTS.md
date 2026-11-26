@@ -60,6 +60,7 @@ Every folder below has an `AGENTS.md`. A folder without one keeps its facts in a
 | `sql/` | [SQL](sql/AGENTS.md) |
 | `stylesheet/` | [SCSS, Sass, Less](stylesheet/AGENTS.md) |
 | `swift/` | [Swift](swift/AGENTS.md) — `storyboard/` and `coredata/` facts are in this file |
+| `tcl/` | [Tcl](tcl/AGENTS.md) |
 | `templates/` | [Template engines](templates/AGENTS.md) |
 | `terraform/` | [Terraform](terraform/AGENTS.md) |
 | `thrift/` | [Apache Thrift](thrift/AGENTS.md) |

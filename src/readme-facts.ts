@@ -21,7 +21,7 @@ export const LANGUAGE_NAMES: Record<Language, string> = {
   storyboard: "Interface Builder storyboards", terraform: "Terraform", protobuf: "Protocol Buffers", thrift: "Apache Thrift", openapi: "OpenAPI", graphql: "GraphQL",
   wsdl: "WSDL", groovy: "Groovy, with Jenkinsfiles", powershell: "PowerShell", batch: "Windows batch", coffeescript: "CoffeeScript",
   crystal: "Crystal", raku: "Raku", racket: "Racket", scheme: "Scheme", commonlisp: "Common Lisp", haxe: "Haxe", mojo: "Mojo",
-  scss: "SCSS", sass: "Sass", less: "Less", autohotkey: "AutoHotkey", autoit: "AutoIt", applescript: "AppleScript", nim: "Nim",
+  scss: "SCSS", sass: "Sass", less: "Less", autohotkey: "AutoHotkey", autoit: "AutoIt", applescript: "AppleScript", nim: "Nim", tcl: "Tcl",
   dlang: "D", vlang: "V", apex: "Apex (Salesforce; classes arrive through `.cls`, SObjects through `*-meta.xml`)",
   sfmarkup: "Aura and Visualforce markup (Salesforce)", fortran: "Fortran", serverless: "Serverless / AWS SAM", coredata: "Core Data models",
 };
