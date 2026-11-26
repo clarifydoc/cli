@@ -113,4 +113,60 @@ static void tick(struct club *c, struct club *col) {
 `;
     expect(shape(source).errors).toBe(0);
   });
+
+  it("sets aside a macro call between a `*` and the function's name", () => {
+    const source = `static inline const char * CLUB_FORMAT_ARG(3)
+club_emit(char *out, size_t size, const char *fmt) {
+  put(out);
+}
+int tally(int a, int b) {
+  int r = a * SCALE(b);
+  return r * area(a);
+}
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["club_emit", ["put"]], ["tally", ["SCALE", "area"]]] });
+  });
+
+  it("sets aside a macro before an attribute that precedes the declared name", () => {
+    const source = `static int
+club_internal __attribute ((pure))
+name_of(int a) {
+  return look(a);
+}
+static __attribute__ ((unused)) club_row_t load_row(int a) { return fetch(a); }
+club_t __attribute__((aligned(8))) slot;
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["name_of", ["look"]], ["load_row", ["fetch"]]] });
+  });
+
+  it("sets aside a macro between a prototype's parameters and its attribute", () => {
+    const source = `static unsigned int context_at (const club_t *input, int idx,
+                                  int flags)
+     club_internal __attribute ((pure));
+int get(int a) __attribute__((pure));
+void kick(void) { go(); }
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["kick", ["go"]]] });
+  });
+
+  it("sets aside a macro qualifying an array bound", () => {
+    const source = `void fill(const int m[_Club_restrict_ CLUB_LEN (n)]) { copy(m); }
+`;
+    expect(shape(source).errors).toBe(0);
+  });
+
+  it("reads member macros before a struct's closing brace, and macros ending a file", () => {
+    const source = `struct club_s {
+  CLUB_DATA_SLOW
+  club_state_t state;
+  CLUB_DATA_FAST
+  CLUB_DATA_SLOWER
+};
+void kick(void) { go(); }
+
+CLUB_DATA_SLOW
+CLUB_DATA_FAST
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["kick", ["go"]]] });
+  });
 });

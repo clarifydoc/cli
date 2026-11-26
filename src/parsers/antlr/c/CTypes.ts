@@ -108,6 +108,7 @@ function hideMacros(all: Token[]): void {
   const hide = (from: number, to: number) => {
     for (let k = from; k <= to; k++) (tokens[k] as { channel: number }).channel = Token.HIDDEN_CHANNEL;
   };
+  const tagBody = tagBodies(tokens);
   // Initializer braces: the `{` after `=`, and the braces of its entries.
   const stack: boolean[] = [];
   for (let i = 0; i < n; i++) {
@@ -127,6 +128,40 @@ function hideMacros(all: Token[]): void {
     if (prev === CLexer.Dot || prev === CLexer.Arrow) continue;
     const called = type(i + 1) === CLexer.LeftParen && close[i + 1]! >= 0;
     const after = type(called ? close[i + 1]! + 1 : i + 1);
+    // `const char * FORMAT_ARG(3)⏎name(`: a macro call between a `*` and the declared function's name — an expression
+    // never has a name after a call.
+    if (MACRO_NAME.test(name) && called && prev === CLexer.Star && after === CLexer.Identifier && type(close[i + 1]! + 2) === CLexer.LeftParen) {
+      hide(i, close[i + 1]!);
+      continue;
+    }
+    // `static int⏎club_internal __attribute ((pure))⏎name(`: a name between a whole type and an attribute that is
+    // followed by the declared name is a macro, as is the one after it (`static __attribute__ ((unused)) club_t f(`).
+    if (type(i + 1) === CLexer.Attribute && type(i + 2) === CLexer.LeftParen && close[i + 2]! >= 0 && completeTypeBefore(i)
+      && type(close[i + 2]! + 1) === CLexer.Identifier && type(close[i + 2]! + 2) === CLexer.LeftParen) {
+      hide(i, i);
+      continue;
+    }
+    // `int f(int n) club_internal __attribute ((pure));`: a name between a prototype's parameters and its attribute.
+    if (prev === CLexer.RightParen && type(i + 1) === CLexer.Attribute && type(i + 2) === CLexer.LeftParen && close[i + 2]! >= 0
+      && (type(close[i + 2]! + 1) === CLexer.Semi || type(close[i + 2]! + 1) === CLexer.Comma) && !closesAttribute(i - 1)) {
+      hide(i, i);
+      continue;
+    }
+    // `m[_Club_restrict_ CLUB_LEN (n)]`: a macro right after `[` and before a called name qualifies the bound.
+    if ((MACRO_NAME.test(name) || name.startsWith("__") || /^_[A-Z]/.test(name)) && prev === CLexer.LeftBracket && type(i + 1) === CLexer.Identifier && type(i + 2) === CLexer.LeftParen) {
+      hide(i, i);
+      continue;
+    }
+    // `CLUB_DATA_FAST⏎CLUB_DATA_SLOWER⏎};` closing a struct body: names alone at the end stand for members.
+    if (MACRO_NAME.test(name) && tagBody[i] === 1 && !called && (prev === CLexer.LeftBrace || prev === CLexer.Semi || prev === CLexer.RightBrace)) {
+      let end = i;
+      while (type(end + 1) === CLexer.Identifier && MACRO_NAME.test(tokens[end + 1]!.text ?? "") && type(end + 2) !== CLexer.LeftParen) end++;
+      if (type(end + 1) === CLexer.RightBrace) {
+        hide(i, end);
+        i = end;
+        continue;
+      }
+    }
     if (MACRO_NAME.test(name) && stack.at(-1) === true && (prev === CLexer.LeftBrace || prev === CLexer.Comma || prev === CLexer.RightBrace)
       && (after === CLexer.Identifier || after === CLexer.LeftBrace || after === CLexer.Dot)) {
       // `{ A, B }` lists constants; a name right before the next entry, with no comma, is no entry.
@@ -158,6 +193,11 @@ function hideMacros(all: Token[]): void {
       if (typeOnly) hide(i, i);
     }
   }
+  // `};⏎CLUB_DATA_SLOW⏎CLUB_DATA_FAST⏎` ending a file: names alone with nothing after them, whatever a use in a struct
+  // made the first pass take them for, are macros.
+  let end = n - 1;
+  while (end >= 0 && type(end) === CLexer.Identifier && MACRO_NAME.test(tokens[end]!.text ?? "") && type(end - 1) !== CLexer.Dot && type(end - 1) !== CLexer.Arrow) end--;
+  if (end < n - 1 && end >= 0 && (type(end) === CLexer.Semi || type(end) === CLexer.RightBrace)) hide(end + 1, n - 1);
 }
 
 export function readTypes(stream: CommonTokenStream): CTokenFacts {
