@@ -296,4 +296,81 @@ CLUB_OFFSIDE
 `;
     expect(shape(source)).toEqual({ errors: 0, functions: [["club_sum", ["add"]]] });
   });
+
+  it("reads a run of macros before a keyword when the first was a member macro of a struct (real-repo shape)", () => {
+    const source = `struct club_state {
+  CLUB_SLOW
+  club_phase_t phase;
+};
+
+CLUB_SLOW
+CLUB_SLOWER
+CLUB_INLINE void
+club_kick(club_t *c) {
+  strike(c);
+}
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["club_kick", ["strike"]]] });
+    // the same names in a declaration stay one: the run ends at a lowercase name, no keyword follows
+    const decoy = `struct club_state {
+  CLUB_SLOW
+  club_phase_t phase;
+};
+
+CLUB_SLOW CLUB_SLOWER pace;
+void club_stop(void) { halt(); }
+`;
+    expect(shape(decoy)).toEqual({ errors: 0, functions: [["club_stop", ["halt"]]] });
+  });
+
+  it("reads bare macros around a list macro call when the names are types to the first pass (real-repo shape)", () => {
+    const source = `CLUB_TARGET
+static inline unsigned club_sum(const club_vec v) {
+  return add(v);
+}
+
+CLUB_COUNT_FN(xor, club_xor)
+CLUB_OFFSIDE
+
+CLUB_TARGET
+CLUB_COUNT_FN(and, club_and)
+CLUB_OFFSIDE
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["club_sum", ["add"]]] });
+  });
+
+  it("reads a macro between `*` and a qualifier, and a macro call before a declaration in a body (real-repo shape)", () => {
+    const source = `int club_run(club_state_t *s, int len) {
+  const club_u8 *const end = s->p + len;
+  CLUB_ALIGN(CLUB_STRIDE) club_u64 acc[8];
+  club_u64 *CLUB_RESTRICT const fast = s->acc;
+  copy(acc, fast, sizeof(acc));
+  return len;
+}
+void club_pack(club_u64 *CLUB_RESTRICT const out) { store(out); }
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["club_run", ["CLUB_ALIGN", "copy"]], ["club_pack", ["store"]]] });
+    // the same names as expressions stay expressions: a product with a macro, a call statement followed by a call
+    const decoy = `int club_scale(int a) {
+  int total = a * CLUB_FACTOR;
+  CLUB_TRACE(a)
+  launch(total);
+  CLUB_ALIGN(8);
+  return total * CLUB_FACTOR + a;
+}
+`;
+    expect(shape(decoy)).toEqual({ errors: 0, functions: [["club_scale", ["CLUB_TRACE", "launch", "CLUB_ALIGN"]]] });
+  });
+
+  it("reads a run of macros ending in a call at the end of a file, after the name stood before a type (real-repo shape)", () => {
+    const source = `CLUB_INLINE CLUB_PURE club_score_t
+club_pass(const club_u8 *CLUB_RESTRICT input, int n)
+{
+  return tally(input, n);
+}
+
+CLUB_INLINE CLUB_TARGET CLUB_TEMPLATE(fast)
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["club_pass", ["tally"]]] });
+  });
 });

@@ -51,3 +51,42 @@ int play_match(int home, int away) {
     expect(parsed.functions.map((f) => f.name)).toEqual(["sign_player"]);
   });
 });
+
+describe("a conjunction with a __cplusplus term", () => {
+  it("leaves out the guard of a C++ includer in C: `#if defined(__cplusplus) && !defined(X)` (real-repo shape)", () => {
+    const source = `#if defined (__cplusplus) && !defined(CLUB_NO_GUARD)
+extern "C" {
+#endif
+
+int club_kick(int power) { return strike(power); }
+
+#if defined (__cplusplus) && !defined(CLUB_NO_GUARD)
+} /* extern "C" */
+#endif
+`;
+    const parsed = readC(source);
+    expect(parsed.syntaxErrors).toBe(0);
+    expect(parsed.functions.map((f) => [f.name, f.calls.map((c) => c.name)])).toEqual([["club_kick", ["strike"]]]);
+  });
+
+  it("keeps a conjunction without the term, and in C++ the negated one is the dead one", () => {
+    const source = `#if defined(CLUB_STRICT) && !defined(CLUB_LOOSE)
+int club_pass(int a) { return relay(a); }
+#else
+int club_pass(int a) { return hold(a); }
+#endif
+`;
+    expect(new Set(readC(source).functions.map((f) => f.name))).toEqual(new Set(["club_pass"]));
+    const cpp = `#if !defined(__cplusplus) && defined(CLUB_PLAIN)
+extern "C" {
+#endif
+int club_run(int a) { return jog(a); }
+#if !defined(__cplusplus) && defined(CLUB_PLAIN)
+}
+#endif
+`;
+    const parsed = readCpp(cpp);
+    expect(parsed.syntaxErrors).toBe(0);
+    expect(parsed.functions.map((f) => f.name)).toEqual(["club_run"]);
+  });
+});

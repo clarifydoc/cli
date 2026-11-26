@@ -93,9 +93,13 @@ function evaluate(cond: string, macros: MacroState): boolean | undefined {
 function deadCondition(kind: string, rest: string, cplusplus: boolean): boolean {
   const cond = rest.trim();
   if (kind === "if" && (cond === "0" || /^\(\s*0\s*\)$/.test(cond))) return true;
-  const plusplus = (kind === "if" && (/^defined\s*\(?\s*__cplusplus\s*\)?$/.test(cond) || cond === "__cplusplus")) || (kind === "ifdef" && cond === "__cplusplus");
-  const notPlusplus = (kind === "if" && /^!\s*defined\s*\(?\s*__cplusplus\s*\)?$/.test(cond)) || (kind === "ifndef" && cond === "__cplusplus");
-  return cplusplus ? notPlusplus : plusplus;
+  const plusplus = (term: string) => /^defined\s*\(?\s*__cplusplus\s*\)?$/.test(term) || term === "__cplusplus";
+  const notPlusplus = (term: string) => /^!\s*defined\s*\(?\s*__cplusplus\s*\)?$/.test(term);
+  if (kind === "ifdef") return !cplusplus && cond === "__cplusplus";
+  if (kind === "ifndef") return cplusplus && cond === "__cplusplus";
+  if (kind !== "if") return false;
+  // A conjunction is dead when one of its terms is: `defined(__cplusplus) && !defined(CLUB_NO_GUARD)` in C.
+  return cond.split("&&").some((term) => (cplusplus ? notPlusplus : plusplus)(term.trim()));
 }
 
 /**

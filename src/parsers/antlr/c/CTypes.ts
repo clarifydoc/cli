@@ -147,6 +147,12 @@ function hideMacros(all: Token[]): void {
     if (prev === CLexer.Dot || prev === CLexer.Arrow) continue;
     const called = type(i + 1) === CLexer.LeftParen && close[i + 1]! >= 0;
     const after = type(called ? close[i + 1]! + 1 : i + 1);
+    // `club_u64 *CLUB_RESTRICT const acc`: a macro between a `*` and a qualifier keyword stands for part of the pointer
+    // (the grammar's pointer takes a calling convention or qualifiers, not both); no expression has a name there.
+    if (MACRO_NAME.test(name) && prev === CLexer.Star && !called && QUALIFIER_KEYWORDS.has(type(i + 1))) {
+      hide(i, i);
+      continue;
+    }
     // `const char * FORMAT_ARG(3)⏎name(`: a macro call between a `*` and the declared function's name — an expression
     // never has a name after a call.
     if (MACRO_NAME.test(name) && called && prev === CLexer.Star && after === CLexer.Identifier && type(close[i + 1]! + 2) === CLexer.LeftParen) {
@@ -273,6 +279,17 @@ export function readTypes(stream: CommonTokenStream): CTokenFacts {
         else if (type(j) === CLexer.RightParen && --depth === 0) break;
       }
       if (isId(j + 1) && AFTER_NAME.has(type(j + 2))) types.add(name);
+    }
+    // `CLUB_ALIGN(8) club_u64 acc[8];`: a name after an all-caps macro's call that starts a declaration, before the
+    // declared name, is its type — no expression has a name after a call's `)`.
+    if (prev === CLexer.RightParen && isId(i + 1) && AFTER_NAME.has(type(i + 2))) {
+      let open = i - 2;
+      for (let depth = 1; open >= 0 && depth > 0; open--) {
+        if (type(open) === CLexer.RightParen) depth++;
+        else if (type(open) === CLexer.LeftParen) depth--;
+      }
+      // `open` now sits one before the `(`: the macro's name.
+      if (isId(open) && MACRO_NAME.test(names[open]!) && boundary(open)) types.add(name);
     }
     // A run of names ending in a declared one: all but the last are types — after a type keyword or `*` too.
     let star = i - 1;
@@ -553,10 +570,14 @@ function facts(all: Token[], tokens: Token[], names: Array<string | undefined>, 
     // A bare macro may also follow another: `END_DECLS PUSH_DIAGNOSTICS`. Before `}` or a statement keyword no type
     // stands, whatever the first pass took the name for.
     // The same name read before a keyword elsewhere (`M⏎int f(`) is a type to the first pass, yet `M N⏎int g(` is two macros.
-    const beforeMacroRun = isName(i) && isMacro(names[i]!) && caps(i + 1) && SPECIFIER_KEYWORDS.has(typeOf(i + 2));
-    // And `M N(a, b)⏎M2` at file scope: a macro call run, whose name M a use before `static` made a type to the first pass.
-    const callOpen2 = tokens[i + 2];
-    const beforeMacroCall = braces[i] === 0 && isName(i) && isMacro(names[i]!) && macroNamed(i + 1) && callOpen2?.type === CLexer.LeftParen && close[callOpen2.tokenIndex]! >= 0
+    // Longer runs too (`M N P⏎int h(`): the names after the first all caps (a type to the first pass or not), then a specifier keyword.
+    let runEnd = i + 1;
+    while (macroNamed(runEnd)) runEnd++;
+    const beforeMacroRun = isName(i) && isMacro(names[i]!) && runEnd > i + 1 && SPECIFIER_KEYWORDS.has(typeOf(runEnd));
+    // And `M N(a, b)⏎M2` at file scope: a macro call run, whose name M a use before `static` made a type to the first
+    // pass (longer runs too: `M N P(a)`, the run being the names between M and the call's `(`).
+    const callOpen2 = tokens[runEnd];
+    const beforeMacroCall = braces[i] === 0 && isName(i) && isMacro(names[i]!) && runEnd > i + 1 && callOpen2?.type === CLexer.LeftParen && close[callOpen2.tokenIndex]! >= 0
       && (() => {
         const after = position.get(close[callOpen2.tokenIndex]!)! + 1;
         return after >= tokens.length || SPECIFIER_KEYWORDS.has(typeOf(after)) || macroNamed(after);
@@ -574,7 +595,7 @@ function facts(all: Token[], tokens: Token[], names: Array<string | undefined>, 
     const afterCall = callAt >= 0 && isName(callAt) && (callAt === 0 || [CLexer.Semi, CLexer.RightBrace, CLexer.RightParen].includes(typeOf(callAt - 1))
       || (retype[tokens[callAt - 1]!.tokenIndex] === CLexer.MacroName && braces[i] === 0));
     // A run of macro calls then a name alone before the next declaration (`KICKOFF⏎FN(a, b)⏎FN(c, d)⏎FULLTIME⏎int f(`).
-    const endsFile = afterCall && braces[i] === 0 && (i + 1 === tokens.length || (caps(i + 1) && typeOf(i + 2) !== CLexer.Semi) || SPECIFIER_KEYWORDS.has(next));
+    const endsFile = afterCall && braces[i] === 0 && (i + 1 === tokens.length || (macroNamed(i + 1) && typeOf(i + 2) !== CLexer.Semi) || SPECIFIER_KEYWORDS.has(next));
     if (capsHere && (i === 0 || BARE_AFTER.has(prev) || endsFile || retype[tokens[i - 1]!.tokenIndex] === CLexer.MacroName)) {
       // Before `}` only after a statement or a block's `{`: `TEST_END }` closes a body, `= { NULL }` initializes.
       const bare = STATEMENT_KEYWORDS.has(next) || SPECIFIER_KEYWORDS.has(next) || next === CLexer.LeftBrace || i + 1 === tokens.length

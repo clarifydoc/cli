@@ -99,7 +99,9 @@ gives equal trees.
   and the token-level call scan ([plugins/shared/token-calls.ts](../extractors/plugins/shared/token-calls.ts)); how
   macro bodies (`MacroInfo.calls`, `macroBodyLinks`, `SymbolLink.viaMacro`) and guarded headers (`withoutCppGuards`) are
   linked is in the [C](../extractors/plugins/c/AGENTS.md) and [C++](../extractors/plugins/cpp/AGENTS.md) files.
-  `cli/scripts/reduce-refused-c.mjs` reduces a refused file to its minimal failing form, directives kept.
+  `cli/scripts/reduce-refused-c.mjs` (logic in `scripts/lib/c-reduce.mjs`, tested in `antlr/c-reduce.test.ts`) reduces a refused
+  file to its minimal failing form: it settles the `#if` structure first (`first`/`second`/`off` keep one branch of each conditional, `asis`
+  keeps every directive), names the unit the reader first refuses, and shrinks the context before it; `c-family-errors.mjs` gives the exact token.
 - `GoReadLexer` retypes the `(` after `make`/`new`; `CParserBase.settleDecisions` is settled in the full-context pass over
   a refused file as well; Rust's `RustParserBase.settleExpressions` runs in SLL passes only.
 
