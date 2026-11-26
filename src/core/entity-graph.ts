@@ -11,6 +11,7 @@ import type {
   EntityRelation,
   TypeUsageKind,
   Confidence,
+  DeploymentModel,
 } from "../types/analysis.js";
 import { byOrdinal } from "./ordinal.js";
 import { isTestFile } from "./test-file-detector.js";
@@ -684,6 +685,36 @@ export function tableMatchKeys(name: string): string[] {
 }
 
 /**
+ * A table the deployment declares by name (`DeployedService.tables`: a CloudFormation / Serverless DynamoDB
+ * resource) is a data-model node of its own — `origin: "deployed"`, `orm` the service's family, its key schema
+ * as the columns (key attributes, partition first) — so the code that reads or writes that name matches it
+ * (`entityMatcher`) and a route or screen reaches a table the data model holds. A name an ORM entity or an
+ * earlier node already holds adds nothing. Run before `synthesizeReferencedTableEntities`, which then finds the
+ * table covered. Mutates `graph`.
+ */
+export function synthesizeDeployedTableEntities(deployment: DeploymentModel | undefined, graph: EntityGraph): void {
+  const covered = new Set<string>();
+  for (const n of graph.nodes) if (n.origin !== "contract") for (const k of nodeMatchKeys(n)) covered.add(k);
+  for (const svc of deployment?.services ?? []) {
+    for (const t of svc.tables ?? []) {
+      const keys = tableMatchKeys(t.name);
+      if (keys.some((k) => covered.has(k))) continue;
+      for (const k of keys) covered.add(k);
+      graph.nodes.push({
+        id: `${svc.composeFile}::${t.name}`,
+        name: t.name,
+        orm: svc.family ?? null,
+        kind: "entity",
+        origin: "deployed",
+        filePath: svc.composeFile,
+        columns: t.keys.map((k) => ({ name: k.name, type: k.type, isPrimaryKey: true })),
+        line: t.line,
+      });
+    }
+  }
+}
+
+/**
  * Add ER nodes for database tables that are *referenced* by data-access calls
  * but never modeled as an ORM entity — e.g. CodeIgniter/knex/raw-SQL projects
  * where `$this->db->get('orders')` names a table that has no entity class (CI
@@ -706,7 +737,7 @@ export function synthesizeReferencedTableEntities(
   // as we synthesize so a singular/plural variant never makes a second node.
   const covered = new Set<string>();
   // A schema an API contract declares is no table: a table of the same name is still its own row.
-  for (const n of graph.nodes) if (!n.origin) for (const k of nodeMatchKeys(n)) covered.add(k);
+  for (const n of graph.nodes) if (n.origin !== "contract") for (const k of nodeMatchKeys(n)) covered.add(k);
   // A table some schema script drops or renames away (the old `match_reports`, moved into one combined
   // table and dropped) is the schema's history: if the schema still had it, a script would create it.
   const removed = new Set(

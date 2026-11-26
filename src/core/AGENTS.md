@@ -145,7 +145,7 @@ One file each; the header holds the rules.
 - **Impact** ([changed-symbols.ts](changed-symbols.ts), [impact-diff.ts](impact-diff.ts), [member-dependents.ts](member-dependents.ts)): changed lines become symbols (`symbolsInHunks`, `symbolsOfChange`), then `computeImpactDiff` cuts dependents to the files that name what changed; the rules sit in `impact-diff.ts` and `member-dependents.ts`.
 - **Lint and caret assertions** — [analysis-lint.ts](analysis-lint.ts) (`lintAnalysis`; `analysis-lint.test.ts` gates every `test-output/` summary, a new rule must be clean on a fresh fixture set or fix the extractor) and [caret-assertions.ts](caret-assertions.ts) (a comment line under a source line whose `^^^` marks a span; `caret-testkit.ts` is the vitest helper, never imported by the product; `caret-fixture.test.ts` walks `CARET_FIXTURES`).
 - **Spec join and contract twins** — a contract row with exactly one production code route joins by operation id only (`spec-join`, `codeServes` in symbol-linker.ts; `pairContractTwins`); both deciders count twins by ONE rule, `codeTwinsIndex` in route-linker.ts.
-- **Graph notes** — `EntityGraphNode.origin: "contract"` (entity-graph.ts) and `queue::<broker>::<address>` nodes (data-access-graph.ts) are explained where they are built.
+- **Graph notes** — `EntityGraphNode.origin: "contract"` and `"deployed"` (a table `DeployedService.tables` declares, read by deployment-cloudformation.ts, joined by `synthesizeDeployedTableEntities`, so a data access naming it is `entityMatched`) (entity-graph.ts) and `queue::<broker>::<address>` nodes (data-access-graph.ts) are explained where they are built.
 
 ## The pipeline, step by step
 

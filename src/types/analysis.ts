@@ -189,8 +189,12 @@ export interface EntityGraphNode {
   /** Originating ORM / source, e.g. "prisma" | "typeorm" | "sql". */
   orm: string | null;
   kind: "entity" | "enum";
-  /** `"contract"` for a schema an API description declares (not a table or ORM entity). Omitted otherwise. */
-  origin?: "contract";
+  /**
+   * `"contract"` for a schema an API description declares (not a table or ORM entity); `"deployed"` for a
+   * table the deployment descriptor declares (a CloudFormation / Serverless `AWS::DynamoDB::Table`; `columns` are
+   * its key schema). Omitted otherwise.
+   */
+  origin?: "contract" | "deployed";
   filePath: string;
   columns: EntityGraphColumn[];
   line: number;
@@ -5880,6 +5884,18 @@ export interface DeployedService {
   entryFile?: string;
   /** Names of the environment variables it is given (compose, Kubernetes, Dockerfile `ENV`) — never their values. */
   envKeys?: string[];
+  /** Tables a datastore declares by name (a CloudFormation `AWS::DynamoDB::Table`): each is a data-model node. */
+  tables?: DeployedTable[];
+}
+
+/** One table a deployment descriptor declares, with the key schema it states. */
+export interface DeployedTable {
+  /** The physical name (`TableName` with the including descriptor's variables read), else the resource's logical id. */
+  name: string;
+  /** Key attributes in the order stated: `hash` (partition) then `range` (sort), with the attribute type (`S`, `N`, `B`). */
+  keys: Array<{ name: string; type: string | null; role: "hash" | "range" }>;
+  /** Line of the resource in the declaring file (the service's `composeFile`). */
+  line: number;
 }
 
 export interface DeploymentEdge {

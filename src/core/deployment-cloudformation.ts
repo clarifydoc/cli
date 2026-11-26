@@ -1,9 +1,11 @@
 import { existsSync } from "fs";
-import { join, posix, resolve } from "path";
+import { join, posix, relative, resolve } from "path";
 import { globUnignored as glob } from "./clarifydoc-ignore.js";
 import { byOrdinal } from "./ordinal.js";
 import { parseSpecDocument, type SpecNode } from "../extractors/shared/spec-document.js";
-import type { DeployedServiceKind } from "../types/analysis.js";
+import { fillServerlessVariables } from "../extractors/shared/serverless-variables.js";
+import type { DeployedServiceKind, DeployedTable } from "../types/analysis.js";
+import { insideRoot } from "./inside-root.js";
 import type { RawService } from "./deployment.js";
 import type { TerraformDeployment } from "./deployment-terraform.js";
 import { readCandidates, type DeployRejects } from "./deploy-rejects.js";
@@ -26,6 +28,12 @@ import { readCandidates, type DeployRejects } from "./deploy-rejects.js";
  * naming a resource (`DynamoDBCrudPolicy: { TableName: !Ref Table }`, `policy`).
  * Intrinsics are read in the short (`!Ref X`, `!GetAtt X.Arn`, `!Sub "${X}"`) and the long
  * (`{ "Ref": "X" }`, `Fn::GetAtt`, `Fn::Sub`) form. One template is one stack scope.
+ *
+ * A DynamoDB table also carries what the data model needs (`DeployedService.tables`): its physical name and key
+ * schema. A Serverless Framework descriptor keeps resources in a `${file(resources/table.yml)}` include (or inline
+ * under `resources:`), and the table's name is often `${self:custom.tableName}` — a hole of the INCLUDING descriptor.
+ * That include is a template found like any other; its holes are read from the descriptor that names it, the path
+ * resolved through `insideRoot`, so the name is the one the code's `TableName` ends up as.
  */
 
 const INFRA: Record<string, { kind: DeployedServiceKind; family: (props: SpecNode | undefined) => string; names: string[] }> = {
@@ -42,6 +50,43 @@ const INFRA: Record<string, { kind: DeployedServiceKind; family: (props: SpecNod
 const FUNCTIONS = new Set(["AWS::Lambda::Function", "AWS::Serverless::Function"]);
 const MODULE_EXTENSIONS = [".ts", ".js", ".mjs", ".cjs", ".py", ".rb"];
 const GATE = /AWS::(?:Lambda|Serverless|SQS|SNS|DynamoDB|RDS|ElastiCache)::/;
+
+/**
+ * The `Resources` map: top-level in a template or an include; under `resources:` in a Serverless descriptor,
+ * as a map or as a list of maps (`resources: [ { Resources: … }, ${file(…)} ]`, the include being its own file).
+ */
+function resourcesOf(root: SpecNode): SpecNode | undefined {
+  const top = root.children.get("Resources");
+  if (top) return top;
+  const inline = root.children.get("resources");
+  const maps = [inline?.children.get("Resources"), ...(inline?.items ?? []).map((i) => i.children.get("Resources"))].filter((n): n is SpecNode => !!n);
+  if (maps.length <= 1) return maps[0];
+  return { value: null, line: maps[0]!.line, children: new Map(maps.flatMap((m) => [...m.children])) };
+}
+
+/** A `TableName` holding Serverless variables, read from `variables`; undefined for a plain or unreadable one. */
+function tableNameOf(n: SpecNode | undefined, variables: SpecNode): string | undefined {
+  const v = n?.value;
+  if (!v || v.startsWith("!") || (!v.includes("${self:") && !v.includes("${opt:"))) return undefined;
+  return fillServerlessVariables(v.trim().replace(/^["']|["']$/g, ""), variables, 0) ?? undefined;
+}
+
+/** The table's key schema as stated: `KeySchema` entries typed by `AttributeDefinitions`. */
+function deployedTable(name: string, props: SpecNode | undefined, line: number): DeployedTable {
+  const types = new Map<string, string>();
+  for (const a of props?.children.get("AttributeDefinitions")?.items ?? []) {
+    const attr = lit(a.children.get("AttributeName"));
+    const type = lit(a.children.get("AttributeType"));
+    if (attr && type) types.set(attr, type);
+  }
+  const keys: DeployedTable["keys"] = [];
+  for (const k of props?.children.get("KeySchema")?.items ?? []) {
+    const attr = lit(k.children.get("AttributeName"));
+    const role = lit(k.children.get("KeyType"))?.toUpperCase();
+    if (attr && (role === "HASH" || role === "RANGE")) keys.push({ name: attr, type: types.get(attr) ?? null, role: role === "HASH" ? "hash" : "range" });
+  }
+  return { name, keys, line };
+}
 
 function engineFamily(props: SpecNode | undefined): string {
   const e = lit(props?.children.get("Engine")) ?? "";
@@ -96,20 +141,34 @@ export async function collectCloudFormation(projectRoot: string, ignore: readonl
   const logicalNames = new Map<string, string>();
   // Read in parallel batches (templates are found by content, so every YAML and JSON file is opened), judged in path order.
   const texts = await readCandidates(rejects, absRoot, "cloudformation", found);
+  // A file a Serverless descriptor includes (`${file(resources/table.yml)}`) → that descriptor's document, whose variables it uses.
+  const includer = new Map<string, SpecNode>();
+  for (const [i, rel] of found.entries()) {
+    const text = texts[i];
+    if (text === undefined || text.length > 2_000_000 || !text.includes("${file(")) continue;
+    const doc = parseSpecDocument(text.split(/\r?\n/));
+    for (const m of text.matchAll(/\$\{file\(\s*["']?([^)"'\s]+)["']?\s*\)/g)) {
+      const abs = insideRoot(absRoot, posix.join(posix.dirname(rel), m[1]!));
+      if (abs === null) continue;
+      const target = relative(absRoot, abs).split("\\").join("/");
+      if (!includer.has(target)) includer.set(target, doc);
+    }
+  }
   for (const [i, rel] of found.entries()) {
     const text = texts[i];
     if (text === undefined) continue;
     if (text.length > 2_000_000 || !GATE.test(text) || !/\bResources\b/.test(text)) {
-      rejects?.reject("cloudformation", rel);
+      // A descriptor that includes files is never remembered as nothing: its variables name the included tables on every run.
+      if (!text.includes("${file(")) rejects?.reject("cloudformation", rel);
       continue;
     }
     const root = parseSpecDocument(text.split(/\r?\n/));
-    const resources = root.children.get("Resources");
+    const resources = resourcesOf(root);
     if (!resources || resources.children.size === 0) {
-      rejects?.reject("cloudformation", rel);
+      if (!text.includes("${file(")) rejects?.reject("cloudformation", rel);
       continue;
     }
-    const services = readTemplate(absRoot, rel, root, resources, out.edges, logicalNames);
+    const services = readTemplate(absRoot, rel, root, resources, out.edges, logicalNames, includer.get(rel) ?? root);
     if (services.length === 0) continue;
     out.groups.push(services);
     out.files.push(rel);
@@ -124,6 +183,7 @@ function readTemplate(
   resources: SpecNode,
   edges: TerraformDeployment["edges"],
   logicalNames: Map<string, string>,
+  variables: SpecNode,
 ): RawService[] {
   const dir = posix.dirname(rel) === "." ? "" : posix.dirname(rel);
   const globals = root.children.get("Globals")?.children.get("Function");
@@ -149,7 +209,7 @@ function readTemplate(
   // Functions first, so a table sharing a function's name is the one renamed.
   const ordered = [...entries].sort((a, b) => Number(FUNCTIONS.has(b.type)) - Number(FUNCTIONS.has(a.type)));
   const pending: Array<{ from: string; refs: string[]; via: string; how: "env" | "event" | "policy" }> = [];
-  for (const { id, type, props } of ordered) {
+  for (const { id, r, type, props } of ordered) {
     if (FUNCTIONS.has(type)) {
       const fnName = lit(props?.children.get("FunctionName"));
       const name = named(fnName ?? id, "lambda", fnName !== undefined);
@@ -190,9 +250,11 @@ function readTemplate(
     const infra = INFRA[type];
     if (!infra) continue;
     const family = infra.family(props);
-    const physical = infra.names.map((k) => lit(props?.children.get(k))).find(Boolean);
+    // A name with Serverless variables (`${self:custom.tableName}`) is read from the descriptor that states them.
+    const physical = infra.names.map((k) => lit(props?.children.get(k)) ?? tableNameOf(props?.children.get(k), variables)).find(Boolean);
     const name = named(physical ?? id, family, physical !== undefined);
-    services.push({ name, file: rel, env: {}, dependsOn: [], ports: [], kind: infra.kind, family, ...(infra.kind === "queue" ? { destination: true } : {}) });
+    const table = family === "dynamodb" && infra.kind === "datastore" ? deployedTable(physical ?? id, props, r.line) : undefined;
+    services.push({ name, file: rel, env: {}, dependsOn: [], ports: [], kind: infra.kind, family, ...(infra.kind === "queue" ? { destination: true } : {}), ...(table ? { tables: [table] } : {}) });
     nameOf.set(id, name);
     typeOf.set(id, type);
   }

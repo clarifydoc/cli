@@ -155,7 +155,7 @@ import {
 } from "./data-flow-reach.js";
 import { buildSymbolSignatures } from "./symbol-signatures.js";
 import { vendoredMinoritySet } from "./security-scanner.js";
-import { buildEntityGraph, reconcileEntityInheritance, propagateStiRelations, linkEntityModels, synthesizeReferencedTableEntities } from "./entity-graph.js";
+import { buildEntityGraph, reconcileEntityInheritance, propagateStiRelations, linkEntityModels, synthesizeReferencedTableEntities, synthesizeDeployedTableEntities } from "./entity-graph.js";
 import { reconcileProjectEntities } from "../extractors/entities/index.js";
 import { detectMigrations } from "./migration-detector.js";
 import { linkApiCallsToRoutesDetailed, dedupeRoutes, isJoinableRoute, pairContractTwins, implementedContracts } from "./route-linker.js";
@@ -2213,6 +2213,9 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // (CodeIgniter/knex/raw-SQL — the table is a bare string in `$this->db->get('x')`).
   // Deduped against the real entities above, so ORM projects are unchanged; this
   // populates the Data Model tab and lets the DB accesses below match (green).
+  // A table the deployment declares (a CloudFormation / Serverless DynamoDB resource) is a node too, before the
+  // referenced-table pass so the name the code uses finds it covered.
+  if (deployment?.services.some((sv) => sv.tables?.length)) synthesizeDeployedTableEntities(deployment, entityGraph);
   if (hasDbAccess) synthesizeReferencedTableEntities(allAnalyses, entityGraph);
 
   progress.status("Tracing data access and queues...");

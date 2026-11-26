@@ -6,6 +6,7 @@ import { join, posix, resolve } from "path";
 import type {
   DeployedService,
   DeployedServiceKind,
+  DeployedTable,
   DeploymentEdge,
   DeploymentExternal,
   DeploymentModel,
@@ -295,6 +296,8 @@ export interface RawService {
   entryFile?: string;
   /** The project a code-declared resource runs, by name (`League_Api`) — `DeployedResourceFact.runs`. */
   runs?: string;
+  /** Tables a datastore resource declares (`DeployedService.tables`). */
+  tables?: DeployedTable[];
 }
 
 /**
@@ -869,6 +872,7 @@ export async function detectDeployment(
       for (const p of svc.ports ?? []) if (!(existing.ports ??= []).includes(p)) existing.ports.push(p);
       for (const p of svc.servedPorts ?? []) if (!(existing.servedPorts ??= []).includes(p)) existing.servedPorts.push(p);
       for (const a of svc.aliases ?? []) if (!(existing.aliases ??= []).includes(a)) existing.aliases.push(a);
+      for (const t of svc.tables ?? []) if (!(existing.tables ??= []).some((x) => x.name === t.name)) existing.tables.push(t);
     }
   }
 
@@ -988,6 +992,7 @@ export async function detectDeployment(
     };
     if (svc.docker) s.dockerfile = svc.docker.dockerfile;
     if (svc.destination) s.destination = true;
+    if (svc.tables?.length) s.tables = svc.tables;
     if (svc.env && Object.keys(svc.env).length) s.envKeys = Object.keys(svc.env).sort(byOrdinal);
     if (kind === "app") {
       // The build context is the strongest evidence of what a service runs.

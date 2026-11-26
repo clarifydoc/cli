@@ -19,6 +19,7 @@ Utilities used by multiple language plugins. If something is only used by one la
 | [router-mounts.ts](router-mounts.ts) | the project-level mount-prefix pass (see [../AGENTS.md](../AGENTS.md)) |
 | [route-paths.ts](route-paths.ts), [split-top-level.ts](split-top-level.ts), [http-verbs.ts](http-verbs.ts), [route-metadata.ts](route-metadata.ts) | the shared route-path joins, top-level splitter, the seven verbs, middleware → guard rule |
 | [value-out.ts](value-out.ts), [collection-element.ts](collection-element.ts), [awaited-type.ts](awaited-type.ts), [value-resolver.ts](value-resolver.ts) | what a hop takes out of a declared type; constant/value resolution |
+| [serverless-variables.ts](serverless-variables.ts) | `fillServerlessVariables` — a Serverless `${self:…}` / `${opt:stage, default}` text read from the document that states it (the serverless plugin's environment, core's CloudFormation table names) |
 | [spec-document.ts](spec-document.ts), [hcl.ts](hcl.ts), [source-lines.ts](source-lines.ts), [dir-listings.ts](dir-listings.ts), [known-code-extensions.ts](known-code-extensions.ts), [module-name-spans.ts](module-name-spans.ts), [message-brokers.ts](message-brokers.ts), [doc-comment-specs.ts](doc-comment-specs.ts), [complexity-defaults.ts](complexity-defaults.ts), [control-flow-defaults.ts](control-flow-defaults.ts), [confidence.ts](confidence.ts) | small leaf tables and readers, each with a header comment |
 
 ## Rules

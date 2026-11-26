@@ -202,7 +202,7 @@ export interface NormEntityGraphNode {
   ref: number;
   orm: string | null;
   /** EntityGraphNode.origin — present only on a schema an API contract declares. */
-  origin?: "contract";
+  origin?: "contract" | "deployed";
   columns: EntityGraphColumn[];
   referencingModels?: NormEntityModelRef[];
 }

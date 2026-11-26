@@ -1,5 +1,6 @@
 import type { RouteFact } from "../../../types/analysis.js";
 import { parseSpecDocument, type SpecNode } from "../../shared/spec-document.js";
+import { fillServerlessVariables as fill } from "../../shared/serverless-variables.js";
 
 /**
  * The environment a descriptor gives its functions, as literal values:
@@ -27,26 +28,6 @@ const childOf = (n: SpecNode | undefined, key: string): SpecNode | undefined => 
 const unquote = (s: string): string => s.trim().replace(/^["']|["']$/g, "");
 
 const TABLE_TYPES = new Set(["AWS::DynamoDB::Table", "AWS::DynamoDB::GlobalTable", "AWS::Serverless::SimpleTable"]);
-
-/** A `${self:a.b}` hole read from the same document; null when anything in the text is set at deploy time. */
-function fill(text: string, root: SpecNode, depth: number): string | null {
-  if (depth > 4) return null;
-  let failed = false;
-  // `${opt:stage, self:provider.stage}` is the stage a deploy passes, else the descriptor's own default. Every
-  // name of the descriptor takes the same default, so a table and the variable naming it still agree.
-  const withDefaults = text.replace(/\$\{opt:[\w.-]+\s*,\s*(self:[\w.-]+|'[^'$}]*'|"[^"$}]*")\s*\}/g, (_h, dflt: string) =>
-    dflt.startsWith("self:") ? `\${${dflt}}` : unquote(dflt));
-  const out = withDefaults.replace(/\$\{self:([\w.-]+)\}/g, (_h, path: string) => {
-    let node: SpecNode | undefined = root;
-    for (const key of path.split(".")) node = childOf(node, key);
-    // `service: { name: clubs }` is the framework's long form of `service: clubs`.
-    const v = node?.value ?? childOf(node, "name")?.value ?? null;
-    const filled = v === null ? null : fill(unquote(v), root, depth + 1);
-    if (filled === null) failed = true;
-    return filled ?? "";
-  });
-  return failed || out.includes("${") || out.length === 0 ? null : out;
-}
 
 /** A `Ref` to a table resource: its `TableName` when it states one, else the logical id (what the stack names it). */
 function tableOfRef(name: string, root: SpecNode): string | null {
