@@ -242,7 +242,43 @@ export function libraryObjectMembers(
 /** The function an option value names: one written in place (held), or a name a function can be (`applySort`). */
 function callbackName(value: Node, heldName: (fn: Node) => string | null, namesFunction: (site: Node, name: string) => boolean): string | null {
   if (FUNCTION_VALUES.has(value.type)) return heldName(value);
+  // `mutationFn: LeagueGateway.closeClub`: a member of an imported object, named as a call of it would be.
+  if (value.type === "member_expression") return importedMemberName(value);
   return (value.type === "identifier" || value.type === "shorthand_property_identifier") && namesFunction(value, value.text) ? value.text : null;
+}
+
+/** The names the file's import clauses bind (default, named, namespace), read once per tree. */
+let importedTree: Tree | null = null;
+let importedNames = new Set<string>();
+function importedLocals(tree: Tree): ReadonlySet<string> {
+  if (importedTree === tree) return importedNames;
+  importedTree = tree;
+  importedNames = new Set();
+  for (const stmt of tree.rootNode.namedChildren) {
+    if (stmt?.type !== "import_statement") continue;
+    for (const id of stmt.descendantsOfType(["identifier"])) if (id && id.parent?.type !== "import_specifier") importedNames.add(id.text);
+    for (const spec of stmt.descendantsOfType("import_specifier")) {
+      const local = spec?.childForFieldName("alias") ?? spec?.childForFieldName("name");
+      if (local) importedNames.add(local.text);
+    }
+  }
+  return importedNames;
+}
+
+/**
+ * `Gateway.closeClub`, a member of a name the file imports (never `this`, a parameter or a local of that name): the
+ * call name the linker resolves through the import, as it would the call `Gateway.closeClub()`.
+ */
+function importedMemberName(member: Node): string | null {
+  const object = member.childForFieldName("object");
+  const property = member.childForFieldName("property");
+  if (object?.type !== "identifier" || property?.type !== "property_identifier" || !importedLocals(member.tree).has(object.text)) return null;
+  for (let p = member.parent; p; p = p.parent) {
+    if (!SCOPE_FUNCTIONS.has(p.type)) continue;
+    const params = p.childForFieldName("parameters") ?? p.childForFieldName("parameter");
+    if (params && bindsName(params, object.text)) return null;
+  }
+  return `${object.text}.${property.text}`;
 }
 
 /** What an object pattern binds, by the member it reads: `{ mutate, mutateAsync: go }` → mutate←mutate, go←mutateAsync. */

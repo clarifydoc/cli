@@ -1063,6 +1063,12 @@ export interface ExportInfo {
    */
   instanceOf?: string;
   /**
+   * The factory function whose result the module exports under this name: `const gateway = new Proxy(ClubApi(), …);
+   * export default gateway` → "ClubApi". The linker reads a call through the importing binding (`gateway.closeClub()`)
+   * on the members the factory's returned object literal states, when it states them.
+   */
+  factoryOf?: string;
+  /**
    * The module's default is an anonymous function returning an entry of its
    * table by its argument (`export default page => endPoints[page]`): as
    * `FunctionInfo.returnsEntryOf`.

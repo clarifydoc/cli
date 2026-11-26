@@ -501,12 +501,15 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
           : value ? wrappedDefaultName(value) ?? lazyDefaultOf(value) ?? undefined : undefined;
         // `export default new Agents()`: the module's default is an instance of its class.
         const instanceOf = value?.type === "new_expression" ? value.childForFieldName("constructor") : null;
+        // `const gateway = new Proxy(ClubApi(), …); export default gateway`: the module's default is a factory's result.
+        const factory = value?.type === "identifier" ? factoryResultOf(topLevelInitializer(node, value.text)) : factoryResultOf(value);
         // `export default page => endPoints[page]`: an anonymous lookup into the module's table.
         const entryOf = value && !local ? defaultTableEntry(value) : null;
         exports.push({
           name: "default", kind: "default", line,
           ...(local ? { sourceName: local } : {}),
           ...(instanceOf?.type === "identifier" ? { instanceOf: instanceOf.text } : {}),
+          ...(factory ? { factoryOf: factory } : {}),
           ...(entryOf ? { returnsEntryOf: entryOf } : {}),
         });
         continue;
@@ -515,7 +518,10 @@ export class JavaScriptImportExportExtractor extends ImportExportExtractor {
       const declaration = child.childForFieldName("declaration");
       if (declaration) {
         const kind = this.getDeclarationKind(declaration);
-        for (const name of declaredNames(declaration)) exports.push({ name, kind, line });
+        const declared = declaredNames(declaration);
+        // `export const gateway = ClubApi()`: one declarator, a factory's result.
+        const factory = kind === "variable" && declared.length === 1 ? factoryResultOf(topLevelInitializer(node, declared[0]!)) : null;
+        for (const name of declared) exports.push({ name, kind, line, ...(factory ? { factoryOf: factory } : {}) });
       }
 
       // Re-exports carry the module they forward from, so a reader can follow
@@ -777,4 +783,32 @@ function defaultTableEntry(fn: Node): { table: string; param: string } | null {
   const stmts = body?.type === "statement_block" ? body.namedChildren.filter((c) => c.type !== "comment") : null;
   const value = stmts ? (stmts.length === 1 && stmts[0]!.type === "return_statement" ? stmts[0]!.namedChild(0) : null) : body;
   return value ? tableEntry(value, names) : null;
+}
+
+/** The initializer of the top-level `const`/`let`/`var` declaring `name` (an `export const` too), or null. */
+function topLevelInitializer(root: Node, name: string): Node | null {
+  for (const stmt of root.namedChildren) {
+    const decl = stmt?.type === "export_statement" ? stmt.childForFieldName("declaration") : stmt;
+    if (decl?.type !== "lexical_declaration" && decl?.type !== "variable_declaration") continue;
+    for (const d of decl.namedChildren) {
+      if (d?.type === "variable_declarator" && d.childForFieldName("name")?.text === name) return d.childForFieldName("value");
+    }
+  }
+  return null;
+}
+
+/**
+ * The factory a value is the result of: `ClubApi()` or `createApi(base)` (a bare name called), also handed to a
+ * `new Proxy(…, handler)` that wraps it — "ClubApi". Null for anything else.
+ */
+function factoryResultOf(value: Node | null | undefined): string | null {
+  let at = value ?? null;
+  while (at && (at.type === "parenthesized_expression" || at.type === "as_expression" || at.type === "satisfies_expression" || at.type === "non_null_expression")) at = at.namedChild(0);
+  if (at?.type === "new_expression" && at.childForFieldName("constructor")?.text === "Proxy") {
+    at = at.childForFieldName("arguments")?.namedChildren.find((a) => a?.type !== "comment") ?? null;
+    while (at && (at.type === "parenthesized_expression" || at.type === "as_expression" || at.type === "satisfies_expression" || at.type === "non_null_expression")) at = at.namedChild(0);
+  }
+  if (at?.type !== "call_expression") return null;
+  const callee = at.childForFieldName("function");
+  return callee?.type === "identifier" ? callee.text : null;
 }

@@ -5055,6 +5055,19 @@ function statedFactoryOf(ctx: LinkContext, symbolIndex: Map<string, Map<string, 
 }
 
 /**
+ * The factory whose result a module exports under the name a call's head is bound to (`ExportInfo.factoryOf`): the
+ * default export when the head is a default import (or the barrel's definition was the module's default), else the
+ * named export of the head's own name. Undefined when the head is no binding of that module or the export is no
+ * factory result.
+ */
+function exportedFactoryOf(ctx: LinkContext, targetFile: string, head: string, boundName: string | undefined, asDefault: boolean): string | undefined {
+  const target = (ctx.analysisAt ??= new Map(ctx.analyses.map((a) => [a.filePath, a]))).get(targetFile);
+  if (!target?.exports.some((e) => e.factoryOf)) return undefined;
+  const matches = target.exports.filter((e) => (asDefault ? e.kind === "default" : e.name === (boundName ?? head)) && e.factoryOf);
+  return matches.length === 1 ? matches[0]!.factoryOf : undefined;
+}
+
+/**
  * The nested function a call on a stated factory's result names: the member's local function (`refresh`),
  * a method of the object literal it is (`actions.refresh`), or `"factory"` for a member written in place
  * (its calls are the factory's own). Undefined where the factory returns no such function — a plain value
@@ -6224,12 +6237,17 @@ function resolveCallToDefinitionBody(
   // is already linked where it is made.
   // A factory whose returned object the source states (`returnedMembers`): the call names one of its members
   // or nothing — never the factory, never a builtin that merely shares a member's name on a plain value.
-  const statedFactory = !def && call.kind === "cross-file" && call.via && targetFile ? statedFactoryOf(ctx, symbolIndex, targetFile, call.via) : null;
+  // A receiver that is the binding of a module's exported factory result (`import Gateway from "./gateway"`, the module
+  // ends `export default new Proxy(ClubApi(), …)`) is a factory's result too: the member the call names, or nothing.
+  const exportedVia = !def && !call.via && call.kind === "cross-file" && isQualified && parts.length === 2 && targetFile ? exportedFactoryOf(ctx, targetFile, parts[0]!, boundName, boundDefault || analysis.imports.some((i) => i.source === call.target && defaultBinding(i, parts[0]!))) : undefined;
+  const statedFactory = !def && call.kind === "cross-file" && (call.via ?? exportedVia) && targetFile ? statedFactoryOf(ctx, symbolIndex, targetFile, (call.via ?? exportedVia)!) : null;
   const statedMember = statedFactory ? statedFactoryMember(statedFactory, parts, call.headMember, !isQualified ? exported ?? call.name : undefined) : undefined;
   if (statedFactory && statedMember !== "open") {
     const member = statedMember;
     if (member === "factory") {
-      return mkLink(statedFactory.file, statedFactory.def.name, statedFactory.def.line, "INFERRED", "factory-via");
+      // A member the module's exported object holds, written in the literal the factory returns: the factory's own
+      // code is that member's (INFERRED, the factory is a stand-in for the function the literal does not name).
+      return mkLink(statedFactory.file, statedFactory.def.name, statedFactory.def.line, "INFERRED", exportedVia && !call.via ? "direct" : "factory-via");
     }
     if (member) {
       const at = statedFactory.analysis.functions.filter((f) => f.name === member && f.line > statedFactory.def.line && f.endLine <= statedFactory.def.endLine);
