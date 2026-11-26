@@ -1,0 +1,55 @@
+# Swift plugin
+
+Reads `.swift` files through a regex `RegexLangSpec` with a tree-sitter front end (`meta.treeSitter`, [tree-sitter.ts](tree-sitter.ts); `parsing` stays `"regex"`, feature `tree-sitter`, off with `no-tree-sitter:swift`) supplying functions and calls; a file with syntax errors keeps the regex reading. Loading and error counting of the grammar are in [parsers/AGENTS.md](../../../parsers/AGENTS.md). This folder also holds what the **storyboard** and **coredata** plugins (see the last two sections) feed into Swift. Swift is a brace language ([code.ts](code.ts): `"""` blocks, quoted strings, `#"…"#` / `#"""…"""#` raw strings, on the shared `braceCodeHooks`).
+
+## Modules, packages and imports
+
+- A Swift module sees all its types and functions without an import, so imports are not what reaches a file: `importsNamePackages` makes an import the files whose `FileAnalysis.packageName` it names — a module is its SwiftPM target `Sources/<Target>/` (`import LeagueCore` is `Sources/LeagueCore/`, wherever its package sits) — narrowed to the files declaring the member it names; a file also sees its own and enclosing packages.
+- `directoryScope`: a bare call the file does not define resolves into the caller's package directory — the one non-test sibling file declaring it.
+- `extension` blocks are `ClassInfo.extension` — a part of the type, never its declaration. The regex reading drops an imported module from an extension head (`extension Foundation.Date`) and keeps a nesting type (`extension League.Table`) ([extension-heads test](extension-heads.test.ts)). Nested types are named by path (`nestedTypePaths`, `::` paths; [nested-types test](nested-types.test.ts)).
+- Constructors: the manifest's `constructorNames` includes `init`; a link a call naming a class makes lands on the `init` it declares, never a base's. A call `Type.init(…)` is a construction of `Type`.
+- `Package.swift` states sub-projects and packages ([package-manifests.ts](package-manifests.ts), [frameworks.ts](frameworks.ts) for server frameworks). `main.swift` runs its top-level statements as `<setup>` with their typed locals, and no other file's ([main-swift test](main-swift.test.ts)).
+- `transparentTypeWrappers` lists `Optional`: `Optional<Club>` is `Club?` written long, so `club?.save()` reaches `Club.save`.
+- Function-type aliases: a `typealias` of a function type is `FileAnalysis.functionTypeAliases` (stated through `ast.functionTypeAliases`). A value typed by a name the file cannot judge states its `invoke` with `ifFnType`; core keeps it only when the nearest scope declaring the name — the file, its imports, the packages it imports by name, its sub-project, the sub-projects it imports — declares a function-type alias and no class of it.
+
+## Locals, receivers and calls
+
+- Regex call patterns ([code.ts](code.ts) `CONSTRUCTION_CHAIN_CALL`) name a method on a fresh construction — `Club().sign(`, `try await Club(id: 7).squad(` — as `Club.sign` with `receiverType: Club`, matching the tree-sitter reader; the baseline skips the member after `).` and would otherwise leave it unlinked. The tree-sitter reader names a callee through a path by every name back to its head (`PlayerService.instance.add`), so the linker types the receiver from the head.
+- [local-flow.ts](local-flow.ts) states what a body says about a binding without declaring its type: a function's declared return (`-> Engine`), a local bound to a call (`let e = car.engine()`), a loop or closure variable over a typed collection, and a name a pattern narrows (`if let`, `guard let`, `as? Club`, `case let c as Club`). Facts only — the linker types a `from` chain through declared return types; an element or narrowed type is stated here. A `from` may be a chain (`garage.car().engine()`).
+- Element types of plain typed collections (`[Club]`, `Array<Club>`, `Set<League.Club>`, `[Club]?`) come from [collection-types.ts](collection-types.ts).
+- Aliases: `let c = club` / `var c = self.club!` state `LocalType.aliasOf` on both front ends ([di.ts](di.ts)); a name assigned again in the body gets none, and `if let`/`guard let` stay `local-flow` narrowings.
+- Tuple patterns: `let (club, player) = load()` over a declared `(Club, Player)` or labelled `(club: Club, player: Player)` return, or the annotation `let (a, b): (Club, Player) = …`, state `fromIndex` locals through the manifest's `tupleElementsOf` ([tuple-elements.ts](tuple-elements.ts); labels dropped; an optional tuple, one element or a class yields null).
+- Dependency injection ([di.ts](di.ts)): Swinject, Resolver and Factory registrations, property wrappers that inject by key, and container lookups that type a local or chained call, as facts (`DiBinding`) — the linker decides. The line-based DI readers are shared with Dart and Scala.
+- A keyword argument (`schedule(callback: f)`) is an `arg` with `name` (index -1); `ParamInfo.argumentLabel` is the external label (`callback handler: …` is `callback`, `_ x` is `_`, which no call names), so core binds the formal whose `argumentLabel ?? name` it names.
+
+## Member effects
+
+`fieldWrites` and thrown types are stated. An `init` states no writes — it initializes. A member the type's body declares without a type (`var visits = 0`) is stated once as an `init` declaration so core knows it. `throw ClubError.closed` names the enum; a signature's `throws(ClubError)` is `declared`.
+
+## Value flow ([value-flow.ts](value-flow.ts), tree-sitter reader)
+
+Tear-offs and single-call closures as seeds, locals, fields and `widget.x`-style property reads as cells, a named constructor argument as an `arg` with `name` meeting the field its constructor copies, and `x!()` / `x?.call()` / `x?()` / `table['k']!()` / `for h in list { h() }` as invokes (the reader returns `ParsedFunctionSpan.valueFlow` / `ParsedStructure.moduleValueFlow`; Swift and Dart share the shapes, see [../dart/AGENTS.md](../dart/AGENTS.md)).
+
+## Routes, data and screens
+
+- Vapor routes ([routes.ts](routes.ts)): `app.get("users", ":id") { … }`, `app.post("api", "orders", use: OrderController.create)`, `app.on(.GET, "custom")`; path segments are comma-separated strings (`:param` is already the linker's wildcard). A route requires the receiver to be `app`/`routes`/`router`/`group` or a tracked `grouped(…)` variable (the verb names are generic). `grouped(…)` composes a prefix like gin's `Group`, and every non-string argument is a middleware the group's routes inherit; those named authenticator / guard / auth / jwt / token / session become the route's `auth` (a scheme when the name spells a mechanism — jwt / basic / bearer / token / session — else a policy).
+- Request shapes: [request-schema.ts](request-schema.ts) reads types and properties as they look on the wire under `Codable` (Vapor `Content`) and what a handler body reads from its `Request`.
+- Data: [data-sources.ts](data-sources.ts) (Fluent, raw SQL strings, URLSession / Alamofire / Vapor-client HTTP, Environment reads); [entities.ts](entities.ts): SwiftData `@Model final class` (a stored property typed as another model is a relation — `[Tag]` one-to-many, `Owner?` many-to-one — `@Relationship(…)` saying so outright) and Core Data `NSManagedObject` subclasses' `@NSManaged var` properties; computed and `@Transient` properties are not stored.
+- SwiftUI ([swiftui-navigation.ts](swiftui-navigation.ts)): the views a view opens are frontend routes named by the destination view and flagged `navigation` — `WindowGroup { ContentView() }` (the root), `NavigationLink(destination:)` or trailing closure, `.navigationDestination(for:)`, `.sheet`, `TabView` tab items. A destination is the first PascalCase call in the `destination:` argument or the trailing closure; the screen builder resolves the view by name.
+- UIKit ([uikit-navigation.ts](uikit-navigation.ts)): `pushViewController(OrderViewController(), …)`, `present(…)`, `instantiateViewController(withIdentifier:) as? CartViewController` are routes named by the class (the screen-class pass makes the class a screen). A row by storyboard id (`@storyboard/Cart`) or segue (`@segue/showCart`) waits for the storyboard resolver, which names the class or drops the row.
+- Client bases: Swift states none yet (runtime-chosen or hosted-service endpoints).
+
+## Tests, tooling, reachability
+
+- `testCommand` and `projectCommands` ([test-command.ts](test-command.ts), [project-commands.ts](project-commands.ts)): `swift test --filter '^Target\.Class/method$'`. SwiftPM `.testTarget(name:, path:)` in `Package.swift` (directory made project-relative, default-path targets left out) is `FileAnalysis.testTargets` (`extractTestTargets`) → `ProjectAnalysis.testTargets` and `TestCommandContext.testTargets`: the target owning a file is the deepest declared directory above it ([test-targets.ts](test-targets.ts)).
+- `blockingCalls`: `Thread.sleep`, `sleep`/`usleep`, `FileManager.default.…` inside an `isAsync` function.
+- Dead code ([reachability.ts](reachability.ts)): a module's types and functions are reached by name (an `extension Foo` file is reached whenever `Foo` is). Entries: `@main`/`main.swift`, Vapor's app wiring, UIKit/AppKit classes a storyboard instantiates by class name (storyboards and xibs are scanned too), commands and migrations. A Swift `public` declaration of a published package is its API and not judged.
+- Control flow is the approximate regex tier (`meta.regexControlFlow`).
+
+## Storyboard (`../storyboard/`, a section of Swift)
+
+An Interface Builder storyboard (`*.storyboard`, regex spec, no security scan, layout not code) states its scenes — each view controller with its `customClass` and the `storyboardIdentifier` code instantiates it by — and the segues inside each (on the controller or on a button) as one `routeFact` ([../shared/storyboard.ts](../shared/storyboard.ts)). The Swift route resolver `ios-storyboard-navigation` ([storyboard-navigation.ts](storyboard-navigation.ts), languages `swift` + `storyboard`) joins each segue as an edge from the scene's class to the destination's class — through a navigation or tab bar controller to the controllers it shows (their `relationship` segues), since a plain container has no class of its own. The edge is a navigation row in the file declaring the class, at the class. A row by segue identifier (`performSegue(withIdentifier:)`) or storyboard id names the class it reaches; an id no storyboard has, or two give different classes, names nothing and the row goes.
+
+## Core Data (`../coredata/`, a section of Swift)
+
+A Core Data model is the XML file `contents` inside `<Model>.xcdatamodel/` (itself inside `.xcdatamodeld/` when versioned): claimed by the name `contents` (`namedFiles`; `preprocess` refuses any other file of that name). Each `<entity>` is an entity class named by its `representedClassName` (the class the code uses), extending its `parentEntity`; `<attribute>`s are columns; each `<relationship>` an edge whose cardinality its own `toMany` and its inverse state. `schemaFormat: true`: its classes are data shapes — never types code constructs or calls — and stay out of the symbol linker's indexes and type catalogs.

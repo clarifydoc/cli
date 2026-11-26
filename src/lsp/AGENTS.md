@@ -49,7 +49,7 @@ Docker containers are tagged `clarifydoc-lsp-<lang>`. Images are cached between 
 
 ## Supported languages
 
-See [lsp-configs.ts](lsp-configs.ts). Currently: TypeScript (tsserver), Python (Pyright), Java (jdtls), .NET C#/VB (Roslyn `Microsoft.CodeAnalysis.LanguageServer` — `misterkiem/roslyn-plusvb` fork that patches VB libs into the upstream server; single container serves both `.cs` and `.vb`), Kotlin (kotlin-language-server), Go (gopls), Rust (rust-analyzer), Ruby (Solargraph), PHP (Intelephense), Pascal/Delphi (`genericptr/pascal-language-server` — FPC-based `pasls`, built from source against Lazarus trunk CodeTools; handles `.pas/.pp/.dpr/.dpk/.lpr/.inc` in Delphi mode, but RTL-only: Delphi-exclusive namespaces like `VCL.*`/`FMX.*` won't fully resolve).
+See [lsp-configs.ts](lsp-configs.ts): one config per server — TypeScript (tsserver), Python (Pyright), Ruby (Solargraph), plus servers whose setup is stated in their plugin's file: [Java and Kotlin](../extractors/plugins/java-kotlin/AGENTS.md) (jdtls, kotlin-language-server), [C# and VB](../extractors/plugins/vb/AGENTS.md) (one Roslyn container for `.cs` and `.vb`), [Go](../extractors/plugins/go/AGENTS.md) (gopls), [Rust](../extractors/plugins/rust/AGENTS.md) (rust-analyzer), [PHP](../extractors/plugins/php/AGENTS.md) (Intelephense), [Pascal](../extractors/plugins/pascal/AGENTS.md) (`pasls`).
 
 Each language has a Dockerfile in `../../docker/<lang>/`. A Dockerfile that downloads a native server picks the asset by BuildKit's `TARGETARCH` (`amd64` / `arm64`, the build fails on any other) and never hard-codes an architecture, so `docker build` produces an image for the host (dotnet: `linux-x64`/`linux-arm64` Roslyn zip; rust: `x86_64`/`aarch64-unknown-linux-gnu` rust-analyzer).
 
@@ -61,7 +61,7 @@ Each language has a Dockerfile in `../../docker/<lang>/`. A Dockerfile that down
    - `fileExtensions` — which files to open
    - `readOnly` — set false if server needs to write (e.g. jdtls .project, rust target/)
    - `network` — `none` by default (the container has no network); set `"bridge"` only for a server that restores packages to type-check (jdtls, Roslyn: measured offline, they lose most reference answers) and say so in `SECURITY.md`; `CLARIFYDOC_LSP_NETWORK=none|bridge` overrides every config for probing
-   - `indexDelayMs` — how long to wait after opening files before querying (5s for gopls, 10s for jdtls, 15s for rust-analyzer)
+   - `indexDelayMs` — how long to wait after opening files before querying (set per server in [lsp-configs.ts](lsp-configs.ts): 5 s for gopls, 10 s for jdtls, 15 s for rust-analyzer)
 3. Add language ID mapping in `LANGUAGE_ID_MAP` in [lsp-manager.ts](lsp-manager.ts)
 4. Add extension-to-languageId mapping in `extensionToLanguageId()` in [lsp-manager.ts](lsp-manager.ts)
 

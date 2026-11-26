@@ -1,6 +1,6 @@
 # src/extractors — Per-language extraction
 
-Everything that walks an AST or regex-scans source text to pull out structured data. Cross-file analysis is `src/core/`'s job — with one deliberate exception: a plugin may contribute a **project-level reconciliation** pass (`EntityExtractor.reconcileProject`) for a join that needs both language knowledge AND the whole file set (e.g. Rails joining `db/schema.rb` columns onto its models). Core invokes these generically — language-specific cross-file logic still belongs in the plugin, never in core.
+Everything that walks an AST or regex-scans source text to pull out structured data. Cross-file analysis is `src/core/`'s job — with one deliberate exception: a plugin may contribute a **project-level reconciliation** pass (`EntityExtractor.reconcileProject`) for a join that needs both language knowledge AND the whole file set (a schema file's columns joined onto models declared elsewhere — see [Ruby](plugins/ruby/AGENTS.md)). Core invokes these generically — language-specific cross-file logic still belongs in the plugin, never in core.
 
 **All language-, ORM-, and framework-specific code lives under `plugins/`.** Core never names a language; it asks the registry or calls a generic hook. A `.rb` path check, a pluralization rule, or a `schema.rb` parser in `src/core/` is a layering bug.
 
@@ -36,14 +36,14 @@ language-specific, including the domain extractor instances
 instance across member metas) plus:
 
 - `extensions` + `parsing` ("tree-sitter" | "regex" | "custom") — drives discovery and `file-analyzer`'s parse strategy
-- `grammar` (tree-sitter wasm location + per-file variant selection), `regexSpec` (RegexLangSpec), `customParse` (dedicated parsers like .dfm), `preprocess` (container formats like Vue SFC)
+- `grammar` (tree-sitter wasm location + per-file variant selection), `regexSpec` (RegexLangSpec), `customParse` (dedicated parsers, e.g. Delphi forms), `preprocess` (container formats, e.g. single-file components)
 - `builtinTypes`, `externalModulePrefixes`, `externalNamespaceRoots`, `standardImport` (the language's own standard library, asked only for its files) — import/type-resolution data
 - `complexity` (branch nodes / logical ops), `securityRules` (+ `securityPreprocess`/`securityInLiteral`/`securityPostScan`/`skipSecurityScan`)
 - `frameworkImportHints`, `apiCallRoots`, `dbCallRoots`
 - `ast` hooks: `typeReferences`, `interactiveElements`, `subComponents`, `events`, `variableAliases`
 - `calls` hooks: `callNodeTypes`, scope/callback node types, name resolution, auto-imported classification
-- `apiContract` (manifest) — the language describes an API rather than implementing it (OpenAPI, GraphQL SDL, WSDL, JSight); `isApiContractLanguage()` is how core asks
-- `schemaFormat` (manifest) — the language's classes are data shapes (SQL tables, Prisma models, a Core Data model), never types code constructs or calls; with `apiContract` languages they make `declaresSchemaTypes()`, which keeps those classes out of the symbol linker's indexes and type catalogs (functions — a stored procedure, a named query — stay targets)
+- `apiContract` (manifest) — the language describes an API rather than implementing it (OpenAPI, GraphQL SDL, WSDL, JSight, Protocol Buffers); `isApiContractLanguage()` is how core asks
+- `schemaFormat` (manifest) — the language's classes are data shapes (SQL tables, Prisma models, a Core Data model; see each language's file), never types code constructs or calls; with `apiContract` languages they make `declaresSchemaTypes()`, which keeps those classes out of the symbol linker's indexes and type catalogs (functions — a stored procedure, a named query — stay targets)
 
 **Project-level passes.** Some facts only exist across files: a base controller's
 route template, a Django `include("app.urls")`, a URL helper defined in another
@@ -57,7 +57,7 @@ them; core runs every pass generically and never names a framework:
   Per-file inputs no `RouteInfo` can carry go in `FileAnalysis.routeFacts`.
 - `dataSources.resolveProject` — rewrite api-call targets across the project
   (the JS URL-builder pass lives here).
-- `entities.reconcileProject`, `dispatchResolvers` — as before.
+- `entities.reconcileProject`, `dispatchResolvers` — the entity pass (below) and dispatch resolution.
 - `autoImports` ([imports-exports/auto-imports.ts](imports-exports/auto-imports.ts)) — names a framework
   puts in scope without an import line (Nuxt's `composables/` and `utils/`): add the `ImportInfo` the file
   would have written and classify those calls cross-file, before the import index and the linker. In memory
@@ -85,10 +85,9 @@ framework import hints, `frameworks.ts` rules, `activationFiles`, `projectMarker
 and the plugin's package managers (`packageManagers` —
 manifest parsers + how an import names a package, from `package-manifests.ts`
 — and `packageEcosystems`, the ecosystems the language imports from; `importPackageNames`, the distribution
-names an import may be listed under — Python's dotted `azure.storage.blob` → `azure-storage-blob`). Known-package
+names an import may be listed under — a dotted `azure.storage.blob` → `azure-storage-blob`). Known-package
 tables answer by ecosystem: an import is classified only by the plugins sharing a registry with the importing
-language (`importPackageScopeOf`), a declared package by those of its own (`ecosystemPackageScopeOf`) — a C# `Azure.`
-rule never classifies a Python import.
+language (`importPackageScopeOf`), a declared package by those of its own (`ecosystemPackageScopeOf`) — one ecosystem's known-package rule never classifies another's import.
 The registry imports every manifest EAGERLY and builds the module-scope
 constants from them (`EXTENSION_TO_LANGUAGE`, `STRIP_SOURCE_EXTENSION_RE`,
 `ALL_EXTERNAL_MODULE_PREFIXES`, `EXTERNAL_NAMESPACE_ROOT_RE`,
@@ -104,8 +103,7 @@ imports — tsdown's ESM code splitting emits one chunk per plugin. `await
 ensureLanguagesLoaded(langs)` (or `loadAllPlugins()`) populates `pluginFor`;
 the analyzer calls it after file discovery with the discovered languages ∪
 `ACTIVATION_FILE_LANGUAGES` hits (go.mod → go, …) ∪ dispatch couplings
-(`manifest.dispatchLanguages` — a vb project loads csharp so its UI-bridge
-resolver runs). `analyzeFile` self-activates per file as a safety net.
+(`manifest.dispatchLanguages` — a language whose project needs another's resolvers, e.g. VB with C#'s UI bridge). `analyzeFile` self-activates per file as a safety net.
 `pluginFor` THROWS for a registered-but-unloaded language (silent undefined
 would quietly degrade extraction); vitest loads everything via
 `src/test-setup.ts`. Lazy-tier accessors: `pluginFor`, `astHooksFor`,
@@ -149,34 +147,28 @@ export function extractFunctions(tree, sourceText, language): FunctionInfo[] {
 
 ## shared/ utilities
 
+Language-agnostic helpers are described in [shared/AGENTS.md](shared/AGENTS.md); the entry points:
+
 | File | Purpose |
 |------|---------|
 | [call-graph.ts](shared/call-graph.ts) | `extractCalls(body, language)` — main function-call walker. `classifyCalls(calls, imports, lang)` — sets `kind` to `cross-file`/`internal`/`api-call`/`database`. `extractVariableAliases` — `const s = useStore()` → maps `s` to import source |
 | [call-patterns.ts](shared/call-patterns.ts) | `isApiCall(name)`, `isDatabaseCall(name)` — pattern matchers used by `classifyCalls`. Per-language root lists come from plugin metas via the registry. |
 | [link-scoring.ts](shared/link-scoring.ts) | `buildLinkGraph(analyses)` — file → file edges with proximity (1=tight, 2=medium, 3=loose). `resolveTarget(importSource, sourceFile, filePathMap)` — turns `"./foo"` or `"com.example.Foo"` into a file path. `buildFilePathMap` — index for fast resolution. External-package prefixes come from plugin metas via the registry. |
-| [node-helpers.ts](shared/node-helpers.ts) | Tree-sitter AST utilities: `getVisibility`, `getNameFromNode`, `getCallName`, `extractJsDecorators`, `extractAnnotations`, `extractCsharpAttributes`, `extractPythonDecorators` |
 | [builtin-types.ts](shared/builtin-types.ts) | `isBuiltinType(name, language)` — per-language deny sets come from plugin metas via the registry; exports `COMMON_PRIMITIVES` as the base for plugin sets. |
-| [type-ref-helpers.ts](shared/type-ref-helpers.ts) | Shared helpers for the per-plugin `type-references.ts` walkers (`emitParsed`, `findChildByType`, `lineOf`) |
-| [tsconfig-aliases.ts](shared/tsconfig-aliases.ts) | Import aliases of the nearest config directory, rewritten into imports before call classification: tsconfig/jsconfig `paths` + `baseUrl` (`extends` — relative, array, or a package's config through `node_modules` or the workspace package of that name; `${configDir}` is the loading config's directory — and a solution-style config's `references`), a pattern chosen as TypeScript chooses it (exact, else the longest prefix before `*` whose suffix also matches; each target tried in order, the first holding a module wins; a catch-all `*` that finds nothing, or lands in `node_modules`, leaves the import alone), filled by [bundler-aliases.ts](shared/bundler-aliases.ts) — the literal `resolve.alias` of `vite.config.*` / `webpack.config.*` / `vue.config.*` (object or array form, an `aliases` object imported from a sibling file), kept only when it points into the project; and the aliases a framework writes only into its generated tsconfig — Nuxt's `~`/`@`/`~~`/`@@`, SvelteKit's `$lib` (`kit.files.lib`, else `src/lib`) and `kit.alias` entries, whose bare paths are relative to the project root (one inside `node_modules` is left out). Never throws: a config of an unexpected shape contributes nothing |
-
-Language-specific extractors that used to live here moved into their plugins:
-`interactive-elements.ts`, `sub-components.ts`, `events.ts` →
-`plugins/javascript/`; `python-tokenizer.ts` → `plugins/python/`;
-the per-language type-reference walkers → `plugins/<lang>/type-references.ts`.
-They're wired into the pipeline through each meta's `ast` hooks.
+| [tsconfig-aliases.ts](shared/tsconfig-aliases.ts) | Import aliases of the nearest config directory, rewritten into imports before call classification: tsconfig/jsconfig `paths` + `baseUrl` (`extends` — relative, array, or a package's config through `node_modules` or the workspace package of that name; `${configDir}` is the loading config's directory — and a solution-style config's `references`), a pattern chosen as TypeScript chooses it (exact, else the longest prefix before `*` whose suffix also matches; each target tried in order, the first holding a module wins; a catch-all `*` that finds nothing, or lands in `node_modules`, leaves the import alone), filled by [bundler-aliases.ts](shared/bundler-aliases.ts) — the literal `resolve.alias` of `vite.config.*` / `webpack.config.*` / `vue.config.*` (object or array form, an `aliases` object imported from a sibling file), kept only when it points into the project; and the aliases a framework writes only into its generated tsconfig — Nuxt's `~`/`@`/`~~`/`@@`, SvelteKit's `$lib` (`kit.files.lib`, else `src/lib`) and `kit.alias` entries, whose bare paths are relative to the project root (one inside `node_modules` is left out). Never throws: a config of an unexpected shape contributes nothing | Language-specific extractors live in their plugins and are wired through each meta's `ast` hooks.
 
 ## routes/
 
 Same registry pattern as the other domains: `routes/base.ts` defines
 `RouteExtractor` (`languages` + `extractRoutes(tree, sourceText)`), and each
 language family exports one:
-- `javascript/routes/index.ts` — runs Express, React Router, NestJS, Vue Router in order
-- `python/routes.ts` (Flask, FastAPI decorators and mounts; Django guard decorators) and `python/django/` — Django urlconfs and DRF routers are per-file `routeFacts` (urlpatterns entries, `router.register`, view-class attributes) that the `django-urlconf` route resolver joins: from `ROOT_URLCONF` through `include("mod")` / inline lists / `*router.urls`, ViewSet actions from mixins + project methods + `@action`, `path()` converters and `re_path` regexes as `{name}`; the `drf-action` dispatch resolver (`django/viewset-actions.ts`) follows a router route whose action is DRF's own (none written, or handed on with `super().<action>()`) into the hooks it calls — `get_queryset`, `get_object`, `perform_update`, … — linking the nearest project override, or the class stating `queryset`; `create`/`update` hand the request to the view's `serializer_class`, and the `drf-serializer` resolver (`django/serializer-dispatch.ts`) links a `serializer.is_valid()` / `.save()` whose class is known (a typed local, `self.get_serializer(…)`, `perform_create`/`perform_update`'s argument) to what DRF runs on it: `validate_<field>` for a field the class or its `Meta.fields` has, the fields' `validators=[…]`, `validate`, and `create` or `update` as the construction states (`CallInfo.key` `drf-serializer:create|update`); the shared rules are `django/drf.ts`
-- `csharp/routes/aspnet.ts` — plus `aspnet-resolver.ts` (base-controller `[Route]`/`[ApiController]`/`[Authorize]` inheritance, abstract base actions served by each subclass) and `aspnet-attributes.ts`: a project's own routing attributes (`[V3ApiController]` implementing `IRouteTemplateProvider`, `[RestPutById] : HttpPutAttribute`) are recorded per file as a small expression IR (`cs:attr-def` facts — constructor params + defaults, `base(…)` args, `Template`/`HttpMethods` values, consts) and evaluated at each use site through the constructor chain; a template no evaluation can state marks the rows `prefixUnresolved: "attribute:X"`, and a verb attribute with such a template routes nothing
-- `java-kotlin/routes/spring.ts`
-- `pascal/routes.ts`
+- `javascript/routes/index.ts` — runs the JS route readers in order ([JavaScript](plugins/javascript/AGENTS.md))
+- `python/routes.ts` and `python/django/` — decorator routes and mounts; Django urlconfs and DRF routers are per-file `routeFacts` that route resolvers join ([Python](plugins/python/AGENTS.md))
+- `csharp/routes/aspnet.ts` — attribute routes, base-controller inheritance and custom routing attributes ([C#](plugins/csharp/AGENTS.md))
+- `java-kotlin/routes/spring.ts` ([Java/Kotlin](plugins/java-kotlin/AGENTS.md))
+- `pascal/routes.ts` ([Pascal](plugins/pascal/AGENTS.md))
 
-Regex-path languages (Go, Ruby, PHP) extract routes inside their `plugins/<lang>/index.ts` via `RegexLangSpec.extractRoutes`.
+Regex-path languages extract routes inside their `plugins/<lang>/index.ts` via `RegexLangSpec.extractRoutes`.
 
 **Mount prefixes are a project-level pass, not a per-file one.** A route's real
 path often comes from a *different file* — `app.use("/api/auth", authRoutes)`
@@ -208,10 +200,7 @@ cosmetic — `dedupeRoutes` keys on method+path, so several routers' un-prefixed
 - **`reconcileProject(analyses)`** — optional project-level pass run once over
   the whole file set (core calls `reconcileProjectEntities`, which invokes every
   extractor's pass). Use it for a join that genuinely needs both language
-  knowledge and all files at once — e.g. the Ruby plugin parses `db/schema.rb`
-  during `extract` (stashing tables on `FileAnalysis.railsSchemaTables`) and
-  then, in `reconcileProject`, attaches those columns to the model entities that
-  live in other files. Keep the language-specific logic here in the plugin;
+  knowledge and all files at once (the Ruby plugin's schema-column join: [Ruby](plugins/ruby/AGENTS.md)). Keep the language-specific logic here in the plugin;
   core only knows the generic hook.
 
 ## Conventions
@@ -222,32 +211,4 @@ cosmetic — `dedupeRoutes` keys on method+path, so several routers' un-prefixed
 - Noise filtering (skip `console.log`, `.map`, `.filter`, etc.) is centralized in `call-graph.ts` `NOISE_CALLS`
 - Dispatch resolvers' output passes `dropProductionToTestLinks` (`dispatch/index.ts`), and so do queue links: production
   code never links into a test or story file. The linker's interface fan-out skips test doubles the same way.
-- A factory's returned object literal is stated as `FunctionInfo.returnedMembers` (kinds `function`, `object`, `value`,
-  `inline`, `outer`, `open`): a call on the factory's result names a stated member or nothing — never the factory. An
-  `open` member (the literal spreads a call, or hands on another object's member: `signIn: backend.signIn`) leaves the
-  call to the unstated-factory reading. Inside a non-arrow method of a returned local object, `this.x` names its sibling.
-  A `value` member written as a call or construction carries it as `from` (`clubs: useClubApi()`), and a function
-  declaring no return type states what each `return` is (`FunctionInfo.returnedFrom`: `new ClubApi()`, `useClubApi()`,
-  a local's name); the linker types both as it types a local's initializer, in the factory's own scope, so
-  `const { clubs } = useLeague(); clubs.getAll()` lands on `ClubApi.getAll`. A library's object types nothing.
-  `return await x()` states what `return x()` does (an async function's result types only for a caller that awaits
-  it), and `return this` states the bare name `this`: the linker types it as the receiver the method was called on
-  (`new YouthQuery().withLeague(a).limit(5).fetch()` stays on the subclass that inherits the fluent base method),
-  else the class declaring the method; `return this.sub` states nothing.
-  A returned ref or computed whose value derives from a parameter is stated as `FunctionInfo.derivedLocals` (a
-  computed lookup keyed by it, or a ref every assignment of which is a lookup or a function's result for it — a
-  `watch` callback's first parameter being the watched value; a `computed` over a TanStack Query result,
-  `query.data.value?.squad` of `useQuery(computed(() => clubQuery(toValue(clubId))))`, derives through the options
-  function); a call site reading the member (`const { club } =
-  useClub(() => props.clubId)`, `club.value.id`) states a `returned` derivation step, and `paramOrigins` follows it.
-- Emits: a child emitting by data (`FileAnalysis.dynamicEmits`, `$emit(btn.event)`) reaches the handlers a parent states
-  with `event: 'name'` literals (`eventLiterals`); `<component :is="Map[k]">` fans out over the map's
-  `componentCandidates`. Targets are deduplicated (one per handler, with the binding sites of each) and never capped:
-  every parent's binding is a link, and core's usage gate keeps a walk entering the child to its own parent's.
-  The literals are the ones on THAT child's tag (`eventLiteralsByTag`: the `event:` strings of its bindings and of the
-  script declarations they name, three deep); only a tag with none falls back to the file's. A callback handed to a
-  composable whose one call is `emit` (`useDialog(x, (v) => emit('save', v))`, `onSave(v)` inside) reaches the parent's
-  handler from the calls the component makes on the local holding that composable's result (`dialog.confirm()`), never
-  from the composable's own function. A member destructured from a factory's result and passed on bare
-  (`const { actions } = useData(); useCrud(actions)`) is a `localTypes` entry marked `destructured` that only the argument
-  pass reads. `const onSearch = useDebounceFn(applySearch, 300)` is a function calling `applySearch`.
+- Factory results and component emits are stated as facts for the linker (`FunctionInfo.returnedMembers`, `returnedFrom`, `derivedLocals`, `FileAnalysis.dynamicEmits`): the rules are in the [JavaScript](plugins/javascript/AGENTS.md) file. A call site reading the member states a `returned` derivation step, and `paramOrigins` follows it. Plugins state, core links.

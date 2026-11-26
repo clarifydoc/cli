@@ -1,6 +1,6 @@
 # src/extractors/plugins/shared — Regex extraction framework
 
-Shared logic for regex-path language plugins (Go, Rust, Ruby, PHP, Swift, Lua, Scala). Tree-sitter plugins do NOT use this — they use `../../shared/` instead.
+Shared logic for regex-path language plugins (the ones whose manifest says `parsing: "regex"`: see [../AGENTS.md](../AGENTS.md)). Tree-sitter plugins do NOT use this — they use `../../shared/` instead.
 
 ## regex-base.ts
 
@@ -14,11 +14,11 @@ interface RegexLangSpec {
   functionPatterns: FnPattern[];       // regex + isExported/isAsync predicates
   classPatterns: ClsPattern[];         // regex + extends extractor
   importPatterns: ImpPattern[];        // regex + source/specifier extractors
-  indentBased?: boolean;               // Ruby/Lua use indent; brace languages don't
-  blockEnds?: (lines) => Map<number, number>;  // the language's own block ends (Ruby: by keyword), before the indent/brace guess
-  callSourceLines?: (lines) => string[];       // the lines the call scan reads (Ruby: heredocs, %w[], =begin blanked; #{} as code)
+  indentBased?: boolean;               // indent-delimited languages; brace languages don't
+  blockEnds?: (lines) => Map<number, number>;  // the language's own block ends (by keyword), before the indent/brace guess
+  callSourceLines?: (lines) => string[];       // the lines the call scan reads (a language blanks its heredocs and block comments here)
   lineCommentPrefixes: string[];       // ["//"], ["#"], ["--"]
-  topLevelCalls?: boolean | RegExp;    // scripts: top-level statements → `<setup>` (VB: `.vbs` only)
+  topLevelCalls?: boolean | RegExp;    // scripts: top-level statements → `<setup>` (a script dialect only)
   callPatterns?: CallPattern[];        // extra call shapes; `notAfter` skips continuation lines
   extractRoutes?: (lines, classes) => RouteInfo[];
 }
@@ -38,20 +38,18 @@ These consume a `RegexLangSpec` and produce standard output:
 - `extractClassesWithSpec(lines, spec)` — classes + methods + properties (runs function patterns on class body lines)
 - `extractImportsWithSpec(lines, spec)` — imports, one `importPatterns` match per line; a spec whose imports are structural sets `extractImports` instead (Go: only inside `import` declarations, aliases kept as the specifier — a per-line `"…"` pattern took every string line for an import and missed `alias "path"`)
 - `deriveExportsFromFnClasses(fns, classes)` — all public functions + classes become exports
-- `repository-access.ts` `attributeRepositoryAccesses(analyses, knobs)` — the repository pattern over a generic base (`ITrophyRepository : IBasicRepository<Trophy>`, `RepositoryTactics(Generic[Tactic, TacticModel])`): walks the typed member chain across files (a member assigned a chain on a typed constructor parameter, `self.items = repos.items`, included) and puts the generic's entity-typed argument on every CRUD-shaped call, and on a call of any other method the repository type declares whose body (or a same-instance method it calls) states an access on the instance's model (`DataSourceInfo.entityAttribute`: `self.repos.clubs.league_table()` → `select(self.model)`; a subclass override naming its own model is left to its own rows) — a wrapper whose type arguments name no entity (`HttpRepo[ClubCreate, ClubOut]`) takes the entity of the repository it was built with (by a property or a method returning the construction, `self._mixins(id).create_one`; calls along a chain are typed by what they return); a plugin's entity extractor calls it from `reconcileProject` with its spelling knobs (C#, Python)
+- `repository-access.ts` `attributeRepositoryAccesses(analyses, knobs)` — the repository pattern over a generic base (`ITrophyRepository : IBasicRepository<Trophy>`, `RepositoryTactics(Generic[Tactic, TacticModel])` — see [C#](../csharp/AGENTS.md) and [Python](../python/AGENTS.md)): walks the typed member chain across files (a member assigned a chain on a typed constructor parameter, `self.items = repos.items`, included) and puts the generic's entity-typed argument on every CRUD-shaped call, and on a call of any other method the repository type declares whose body (or a same-instance method it calls) states an access on the instance's model (`DataSourceInfo.entityAttribute`: `self.repos.clubs.league_table()` → `select(self.model)`; a subclass override naming its own model is left to its own rows) — a wrapper whose type arguments name no entity (`HttpRepo[ClubCreate, ClubOut]`) takes the entity of the repository it was built with (by a property or a method returning the construction, `self._mixins(id).create_one`; calls along a chain are typed by what they return); a plugin's entity extractor calls it from `reconcileProject` with its spelling knobs (C#, Python)
 - `inflection.ts` `singularize`/`pluralize` — the loose English inflection ORM conventions share (Crystal, Dart)
 - `declared-package.ts` `tomlSectionValue(text, sections, key)` — a manifest's own `[package]`/`[project]` name
-- `preprocessor-branches.ts` `readWithBranches(text, cplusplus, read)` — the C-family parser front ends' reading of `#if`: dead blocks (`#if 0`, `__cplusplus` as the language says) blanked; a file that does not parse read again with each conditional's first branch, the left-out branches' calls counted, a second-branch reading's definitions added (C, C++)
-- `token-calls.ts` `tokenCalls`/`defineCalls`/`leftOutCalls` — calls read off a C-family ANTLR lexer's tokens (`TokenKinds`) where a parse reads no expression: macro arguments, a `#define` inside a function, left-out branches
-- `c-family-macros.ts` `extractCFamilyMacros`/`macroBodyCalls` — a function-like `#define` outside a function body → `FileAnalysis.macros`, each with the bare calls its body makes (`MacroInfo.calls`; none when the body stringizes or pastes with `#`/`##`, a parameter, member, scoped or declaring name never counts). The symbol linker's `macroBodyLinks` gives a call that landed on the macro (own file first, else the one definition its includes reach, `macroDefinition`) those calls as the caller's own: INFERRED links carrying `SymbolLink.viaMacro`, resolved in the caller's scope, nested macros followed four deep and never through one already on the way; Objective-C `.m`/`.mm` read their own `#define`s the same way (`extractMacros` on its spec)
+- C-family front-end helpers, used by the C and C++ readers ([C](../c/AGENTS.md), [C++](../cpp/AGENTS.md), [parsers](../../../parsers/AGENTS.md)): `preprocessor-branches.ts` `readWithBranches(text, cplusplus, read)` (`#if` dead blocks blanked, a file that does not parse read again with each conditional's first branch), `token-calls.ts` `tokenCalls`/`defineCalls`/`leftOutCalls` (calls read off a lexer's tokens where a parse reads no expression), `c-family-macros.ts` `extractCFamilyMacros`/`macroBodyCalls` (function-like `#define`s → `FileAnalysis.macros`; Objective-C reads its own through `extractMacros` on its spec)
 - `sql-string-sources.ts` — the ONE reader of SQL text: `statementAccesses(sql)` gives every table and routine a statement names, its own target first, then each further source as a `joined` read (JOINs, comma joins, subqueries and CTE bodies, `INSERT … SELECT`, `UPDATE … FROM` with the alias resolved, `DELETE`/`MERGE … USING`; CTE names, JPQL join paths and the engine catalogue never). `extractSqlStringDataSources(lines)` scans a file's string literals with it (regex plugins); a plugin that reads the SQL handed to a call (Python, JS/TS, Java, C#, PHP, MyBatis XML) emits its own row for the statement and `joinedTableRows(sql, own, name, line)` for the rest, or `sqlAccessRow` per access
 
 ### Helpers
 
 - `findEndLine(lines, startIdx, indentBased)` — brace-depth or indent-depth end detection
-- `extractParamsFromLine(line)` — parses `(a, b: Type, $c)` — handles PHP `$var`, type-first, name-first
+- `extractParamsFromLine(line)` — parses `(a, b: Type, $c)` — handles `$var`, type-first, name-first
 - `extractCallsFromBody(lines, startLine, endLine, commentPrefixes)` — regex-based call detection including:
-  - `obj.method(` and `$this->obj->method(` (PHP chains)
+  - `obj.method(` and `$this->obj->method(` (arrow chains)
   - `ClassName.method(` / `ClassName::method(` (static)
   - `self.service.method(` (Python/Ruby)
   - Plain `fn(`
@@ -65,7 +63,7 @@ Shared set of method names to skip (`len`, `print`, `append`, `map`, `filter`, e
 ## Adding logic here vs in a plugin
 
 - **Shared framework logic** (applies to all regex languages) → here
-- **Language-specific quirks** (Ruby `private` keyword handling, PHP `$this->` chains, Go directory imports) → in the plugin or `extractRoutes`
+- **Language-specific quirks** → in the plugin or `extractRoutes`
 
 If a pattern is used by multiple plugins but not all, it probably belongs here with a flag on `RegexLangSpec` to opt in.
 
@@ -74,7 +72,6 @@ If a pattern is used by multiple plugins but not all, it probably belongs here w
 - **Line-by-line processing** — all pattern matching operates on one line at a time
 - **Indent-based languages** need `indentBased: true` and correct indentation — ragged inputs will produce bad end-line estimates
 - **Params/properties are best-effort** — the regex won't handle every corner case (default values with commas, generic brackets with commas). That's OK; tree-sitter is the accurate path when available.
-
 - [shebang-scripts.ts](shebang-scripts.ts) `findShebangScripts` reads extension-less `#!` scripts for the reachability models' name mentions. Discovery admits the same scripts as analyzed files through each manifest's `shebangInterpreter` (core/file-discovery.ts); the two share the bounds (regular files, no dotfiles or credential-looking names, first bytes before the whole file).
 
 ## Text and node helpers several plugins share
