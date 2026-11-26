@@ -1,5 +1,6 @@
 /** Code-navigation tools: routes, screens, per-file facts, call traces, blast radius. */
 
+import { ownerIndex } from "../../core/owner-paths.js";
 import { routeSymbolName, inlineRouteDefinitions } from "../../core/route-symbol.js";
 import { describeDrivers, describeGates } from "../../core/refactor-pressure.js";
 import { aggregateOnlyNote, perTestSources, testsOfCoverageFunction, type TestCoverageReport } from "../../core/test-coverage.js";
@@ -916,6 +917,13 @@ function callsOfSymbol(analysis: FileAnalysis, symbol: string): CallInfo[] | und
   if (symbol.startsWith("route:")) {
     const route = analysis.routes?.find((r) => routeSymbolName(r) === symbol);
     return route?.calls;
+  }
+  // A nested or function-local declaration is named by its owner path (`Right.Builder.build`).
+  const ids = ownerIndex(analysis);
+  if (ids.nested) {
+    for (const c of analysis.classes ?? []) for (const m of c.methods ?? []) if (ids.functionSymbol(`${c.name}.${m.name}`, m.line) === symbol) return m.calls;
+    const f = analysis.functions?.find((x) => ids.functionSymbol(x.name, x.line) === symbol);
+    if (f) return f.calls;
   }
   const dot = symbol.lastIndexOf(".");
   if (dot > 0) {

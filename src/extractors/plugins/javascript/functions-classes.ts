@@ -3272,7 +3272,13 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const ns = node.type === "expression_statement" && node.namedChild(0)?.type === "internal_module" ? node.namedChild(0)! : node;
     if (ns.type === "internal_module" || ns.type === "module") {
       const body = ns.childForFieldName("body");
-      if (body) this.extractJsClasses(body, classes);
+      if (body) {
+        const first = classes.length;
+        this.extractJsClasses(body, classes);
+        // The namespace owns what it declares (`Left.Builder`); an inner namespace already stated its own part.
+        const name = ns.type === "internal_module" ? ns.childForFieldName("name")?.text : undefined;
+        if (name) for (const c of classes.slice(first)) c.owner = c.owner ? `${name}.${c.owner}` : name;
+      }
       return;
     }
     if (node.type === "class_declaration" || node.type === "abstract_class_declaration") {

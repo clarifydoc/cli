@@ -190,6 +190,7 @@ import { buildImportDirectoryResolver } from "./import-directories.js";
 import { applyAttributeRequests } from "./attribute-requests.js";
 import { demoteProjectCallDataSources } from "./project-call-data-sources.js";
 import { denormalizeFileAnalysis, denormalizeProject } from "./element-registry.js";
+import { qualifyNestedSymbols } from "./owner-paths.js";
 import { collectMockedModules, collectTestFunctions, collectTestSuites, collectTestTargets } from "./test-functions.js";
 import {
   UNUSED_IMPORTS_LIMIT,
@@ -2771,6 +2772,9 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
     console.error(`  Error writing the analysis of ${key}: ${error}`);
     delete newManifestEntries[key];
   }
+  // Last: every pass above matched a symbol to its declaration by name. From here a nested or function-local
+  // declaration is spelled by its owner path (`Left.Builder.build`), which is what the output and the report hold.
+  qualifyNestedSymbols(summary, allAnalyses);
   // Build the report payload from the in-memory (denormalized) summary BEFORE
   // writeProjectSummary, which normalizes for on-disk storage. Written so the
   // report viewer (SPA / server) can fetch it directly.

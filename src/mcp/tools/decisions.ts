@@ -5,6 +5,7 @@
  * `decisionsOfFile` feeds `decisionsAbout` (decisions-api.ts, exported from the package index): the same facts as data
  * for a host that is no MCP client.
  */
+import { ownerIndex } from "../../core/owner-paths.js";
 import { readFile } from "fs/promises";
 import { join } from "path";
 import type { McpTool } from "../protocol.js";
@@ -252,8 +253,9 @@ export function contextDocsTool(ctx: ToolContext): McpTool {
 function spansOf(analysis: FileAnalysis | null): FunctionSpan[] {
   if (!analysis) return [];
   const out: FunctionSpan[] = [];
-  for (const f of analysis.functions ?? []) if (!f.name.startsWith("<") && f.endLine >= f.line) out.push({ name: f.name, line: f.line, endLine: f.endLine });
-  for (const c of analysis.classes ?? []) for (const m of c.methods ?? []) if (m.endLine >= m.line) out.push({ name: `${c.name}.${m.name}`, line: m.line, endLine: m.endLine });
+  const ids = ownerIndex(analysis);
+  for (const f of analysis.functions ?? []) if (!f.name.startsWith("<") && f.endLine >= f.line) out.push({ name: ids.functionSymbol(f.name, f.line), line: f.line, endLine: f.endLine });
+  for (const c of analysis.classes ?? []) for (const m of c.methods ?? []) if (m.endLine >= m.line) out.push({ name: ids.functionSymbol(`${c.name}.${m.name}`, m.line), line: m.line, endLine: m.endLine });
   return out;
 }
 

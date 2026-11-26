@@ -21,6 +21,7 @@ export const rubyManifest: LanguagePluginManifest = {
   testCommand: rubyTestCommand,
   projectCommands: rubyProjectCommands,
   language: "ruby",
+  lexicalClassRanges: true,
   callPathsFromHead: true,
   family: "ruby",
   // A gem's or app's executables (`bin/club`); `bin/` is .NET build output elsewhere.

@@ -10,6 +10,7 @@
  * the rest, plus the call that extracts one member; a class that fits is printed whole. With `package=` it reads an
  * installed package's export through `package-api.ts`.
  */
+import { ownerIndex } from "../../core/owner-paths.js";
 import { readFile } from "fs/promises";
 import { join } from "path";
 import type { McpTool } from "../protocol.js";
@@ -322,16 +323,19 @@ function headOf(a: FileAnalysis, item: { decorators?: readonly string[]; doc?: s
 /** Every class a file defines, by name — a definition a name can mean, though never a callee's span. */
 function classDefinitions(a: FileAnalysis | null): Definition[] {
   if (!a) return [];
-  return (a.classes ?? []).filter((c) => c.line > 0 && c.endLine >= c.line).map((c) => ({ symbol: c.name, line: c.line, endLine: c.endLine, head: headOf(a, c), cls: c }));
+  const ids = ownerIndex(a);
+  return (a.classes ?? []).filter((c) => c.line > 0 && c.endLine >= c.line).map((c) => ({ symbol: ids.classSymbol(c.name, c.line), line: c.line, endLine: c.endLine, head: headOf(a, c), cls: c }));
 }
 
 /** Every function and method a file defines, keyed the way symbol links name them (`Class.method`). */
 function definitions(a: FileAnalysis | null): Definition[] {
   if (!a) return [];
   const out: Definition[] = [];
-  for (const fn of a.functions ?? []) out.push({ symbol: fn.name, line: fn.line, endLine: fn.endLine, head: headOf(a, fn) });
+  // A nested or function-local declaration is named by its owner path, as the links name it.
+  const ids = ownerIndex(a);
+  for (const fn of a.functions ?? []) out.push({ symbol: ids.functionSymbol(fn.name, fn.line), line: fn.line, endLine: fn.endLine, head: headOf(a, fn) });
   for (const cls of a.classes ?? []) {
-    for (const m of cls.methods ?? []) out.push({ symbol: `${cls.name}.${m.name}`, line: m.line, endLine: m.endLine, head: headOf(a, m) });
+    for (const m of cls.methods ?? []) out.push({ symbol: ids.functionSymbol(`${cls.name}.${m.name}`, m.line), line: m.line, endLine: m.endLine, head: headOf(a, m) });
   }
   return out;
 }

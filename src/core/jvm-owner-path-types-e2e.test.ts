@@ -50,11 +50,11 @@ describe("types written through their owner path, end to end", () => {
 
   it("reaches the owner's nested class from a declared local, a parameter, a return type and a construction", () => {
     const java = from("Garage.java");
-    expect(java).toContain("b.twin -> Right.java:Builder.twin");
-    expect(java).toContain("p.twin -> Left.java:Builder.twin");
-    expect(java).toContain("Right.builder().twin -> Right.java:Builder.twin");
-    expect(java).toContain("x.twin -> Left.java:Builder.twin");
-    expect(java).toContain("new Right.Builder -> Right.java:Builder");
+    expect(java).toContain("b.twin -> Right.java:Right.Builder.twin");
+    expect(java).toContain("p.twin -> Left.java:Left.Builder.twin");
+    expect(java).toContain("Right.builder().twin -> Right.java:Right.Builder.twin");
+    expect(java).toContain("x.twin -> Left.java:Left.Builder.twin");
+    expect(java).toContain("new Right.Builder -> Right.java:Right.Builder");
   });
 
   it("never reaches a namesake when the owner holds no such class", () => {
@@ -71,6 +71,6 @@ describe("types written through their owner path, end to end", () => {
   });
 
   it("reads a Kotlin type through its owner path too", () => {
-    expect(from("Garage.kt")).toContain("b.twin -> Right.java:Builder.twin");
+    expect(from("Garage.kt")).toContain("b.twin -> Right.java:Right.Builder.twin");
   });
 });

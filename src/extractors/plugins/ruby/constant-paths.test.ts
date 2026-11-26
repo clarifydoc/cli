@@ -81,30 +81,30 @@ end
   });
 
   it("links a class call on the path to the namespaced class", () => {
-    expect(linksOf(summary, "FixtureList.run", "League::Club.find")).toEqual(["app/models/league/club.rb::Club.find"]);
+    expect(linksOf(summary, "FixtureList.run", "League::Club.find")).toEqual(["app/models/league/club.rb::League.Club.find"]);
     expect(linksOf(summary, "FixtureList.run", "Club.find")).toEqual([]);
   });
 
   it("types a construction, a field and a local by the path", () => {
-    expect(linksOf(summary, "FixtureList.run", "new.tally")).toEqual(["app/models/league/club.rb::Club.tally"]);
-    expect(linksOf(summary, "FixtureList.run", "club.full_name")).toEqual(["app/models/league/club.rb::Club.full_name"]);
-    expect(linksOf(summary, "FixtureList.run", "h.assist")).toEqual(["app/models/league/helper.rb::Helper.assist"]);
-    expect(linksOf(summary, "FixtureList.run", "report.total")).toEqual(["app/models/billing/report.rb::Report.total"]);
+    expect(linksOf(summary, "FixtureList.run", "new.tally")).toEqual(["app/models/league/club.rb::League.Club.tally"]);
+    expect(linksOf(summary, "FixtureList.run", "club.full_name")).toEqual(["app/models/league/club.rb::League.Club.full_name"]);
+    expect(linksOf(summary, "FixtureList.run", "h.assist")).toEqual(["app/models/league/helper.rb::League.Helper.assist"]);
+    expect(linksOf(summary, "FixtureList.run", "report.total")).toEqual(["app/models/billing/report.rb::Billing.Report.total"]);
   });
 
   it("keeps a bang method's `!` through a typed receiver", () => {
     expect(summary.symbolLinks.filter((l) => l.sourceSymbol === "FixtureList.run" && l.callName === "new.promote!").map((l) => `${l.targetFile}::${l.targetSymbol} ${l.strategy}`))
-      .toEqual(["app/models/league/club.rb::Club.promote! injection"]);
+      .toEqual(["app/models/league/club.rb::League.Club.promote! injection"]);
   });
 
   it("never takes another class's method for one called on a project class that lacks it", () => {
-    expect(linksOf(summary, "ClubMailJob.perform", "Garage::Store.with")).toEqual(["app/models/garage/store.rb::Store.with"]);
+    expect(linksOf(summary, "ClubMailJob.perform", "Garage::Store.with")).toEqual(["app/models/garage/store.rb::Garage.Store.with"]);
     expect(linksOf(summary, "ClubMailJob.perform", "ClubMailer.with")).toEqual([]);
   });
 
   it("records a namespaced construction as a call of the class it names", () => {
-    expect(linksOf(summary, "FixtureList.run", "League::Helper.new")).toEqual(["app/models/league/helper.rb::Helper"]);
-    expect(linksOf(summary, "FixtureList.initialize", "League::Club.new")).toEqual(["app/models/league/club.rb::Club"]);
+    expect(linksOf(summary, "FixtureList.run", "League::Helper.new")).toEqual(["app/models/league/helper.rb::League.Helper"]);
+    expect(linksOf(summary, "FixtureList.initialize", "League::Club.new")).toEqual(["app/models/league/club.rb::League.Club"]);
   });
 
   it("links nothing through a path no class is declared at, whatever its last name", () => {

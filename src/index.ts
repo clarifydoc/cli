@@ -71,6 +71,8 @@ export { buildMcpServer, type McpServerConfig, type BuiltMcpServer } from "./mcp
 export { decisionsAbout, type FileDecisions } from "./mcp/decisions-api.js";
 export { WORKFLOW_PROMPTS } from "./mcp/prompts.js";
 export type { McpPrompt } from "./mcp/protocol.js";
+// The id symbol a nested or function-local declaration has (`Left.Builder.build`), for a reader joining a link's symbol to a file's facts.
+export { ownerIndex, type OwnerIndex } from "./core/owner-paths.js";
 export {
   normalizeProject,
   denormalizeProject,

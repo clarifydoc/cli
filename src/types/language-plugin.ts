@@ -1597,6 +1597,14 @@ export interface LanguagePluginManifest {
    */
   ownerPathTypes?: boolean;
   /**
+   * A class's `line`..`endLine` is the source block it is written in, so a class or function whose lines lie inside
+   * it is declared in it (`class Left { class Builder {…} }`). Core then spells the nested declaration by its owner
+   * path in `symbolLinks` and the like (`Left.Builder.build`, `core/owner-paths.ts`). Left off where a class's
+   * lines are an envelope of members written apart (Go and C++ methods declared outside the type, Rust impls,
+   * Swift extensions), for which containment says nothing.
+   */
+  lexicalClassRanges?: boolean;
+  /**
    * An extension method (`ParamInfo.isReceiver`) links only from a file that has its declaring file in
    * scope by this language's import rules: the same file, a `using` of its namespace (or `using static`
    * of its class), its own or an enclosing namespace, a project-wide import, an imported project. Needs

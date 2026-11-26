@@ -140,6 +140,7 @@ export const javaManifest: LanguagePluginManifest = {
   testCommand: jvmTestCommand,
   projectCommands: jvmProjectCommands,
   language: "java",
+  lexicalClassRanges: true,
   ownerPathTypes: true,
   callPathsFromHead: true,
   // No `await`: the value comes out of a future, a `Mono` or an `Optional` through these calls.
@@ -183,6 +184,7 @@ export const kotlinManifest: LanguagePluginManifest = {
   // `runBlocking` and `Thread.sleep` inside a `suspend` function park the coroutine's thread.
   blockingCalls: /^(?:runBlocking|Thread\.sleep)$/,
   language: "kotlin",
+  lexicalClassRanges: true,
   ownerPathTypes: true,
   callPathsFromHead: true,
   // `lazy.value` of a declared `Lazy<ClubRepo>`.

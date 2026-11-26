@@ -158,8 +158,8 @@ end
 
   it("never reaches the enclosing class's methods, nor a reader's namesake, from a nested class", () => {
     // `attr_reader :scope` is the nested class's own member; the enclosing class's `scope` is no one's here.
-    expect(linksOf(summary, "Scope.resolve", "scope")).toEqual(["app/policies/club_policy.rb::Scope.scope"]);
-    expect(linksOf(summary, "Scope.members", "roster")).toEqual([]);
+    expect(linksOf(summary, "ClubPolicy.Scope.resolve", "scope")).toEqual(["app/policies/club_policy.rb::ClubPolicy.Scope.scope"]);
+    expect(linksOf(summary, "ClubPolicy.Scope.members", "roster")).toEqual([]);
   });
 
   it("takes a prepended module's method before the class's own", () => {

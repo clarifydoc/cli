@@ -52,16 +52,16 @@ export function top() {
   afterAll(async () => done());
 
   it("constructs and calls the local class, never the imported namesake", () => {
-    expect(targets(summary, "build", "Club")).toEqual(["use.ts:Club:3"]);
-    expect(targets(summary, "build", "c.rename")).toEqual(["use.ts:Club.rename:3"]);
+    expect(targets(summary, "build", "Club")).toEqual(["use.ts:build.Club:3"]);
+    expect(targets(summary, "build", "c.rename")).toEqual(["use.ts:build.Club.rename:3"]);
   });
   it("leaves the imported class to a function that declares none", () => {
     expect(targets(summary, "plain", "Club")).toEqual(["club.ts:Club:1"]);
     expect(targets(summary, "plain", "c.rename")).toEqual(["club.ts:Club.rename:1"]);
   });
   it("links the local class inside its function and the top-level namesake outside it", () => {
-    expect(targets(summary, "local", "Table")).toEqual(["same.ts:Table:3"]);
-    expect(targets(summary, "local", "t.sort")).toEqual(["same.ts:Table.sort:3"]);
+    expect(targets(summary, "local", "Table")).toEqual(["same.ts:local.Table:3"]);
+    expect(targets(summary, "local", "t.sort")).toEqual(["same.ts:local.Table.sort:3"]);
     expect(targets(summary, "top", "Table")).toEqual(["same.ts:Table:1"]);
     expect(targets(summary, "top", "t.sort")).toEqual(["same.ts:Table.sort:1"]);
   });

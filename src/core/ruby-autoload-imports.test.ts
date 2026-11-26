@@ -90,7 +90,7 @@ describe("Ruby constants as imports", () => {
 
   it("links a unique method of a class the file names by constant", () => {
     expect(linkOf("ClubsController.refresh", "standings.refresh_table")).toBe(
-      "app/services/league/standings_service.rb StandingsService.refresh_table unique-global",
+      "app/services/league/standings_service.rb League.StandingsService.refresh_table unique-global",
     );
   });
 

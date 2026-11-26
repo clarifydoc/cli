@@ -85,12 +85,12 @@ describe("links around Struct classes and constant-holding locals", () => {
 
   it("links calls on an untyped parameter to the Struct class's endless methods", () => {
     const got = links("app/services/resolver.rb").map((l) => `${l.callName} -> ${l.targetSymbol}`).sort();
-    expect(got).toEqual(["state.fresh? -> Snapshot.fresh?", "state.stale? -> Snapshot.stale?"]);
+    expect(got).toEqual(["state.fresh? -> League::ScoreStore.Snapshot.fresh?", "state.stale? -> League::ScoreStore.Snapshot.stale?"]);
   });
 
   it("links a call inside a Struct block to the class that follows the block", () => {
     const got = links("lib/tasks/export.rake").filter((l) => l.callName === "Relation.new");
-    expect(got.map((l) => l.targetSymbol)).toEqual(["Relation"]);
+    expect(got.map((l) => l.targetSymbol)).toEqual(["Export.Relation"]);
   });
 
   it("resolves the same local inside an RSpec example, but not a block parameter", () => {

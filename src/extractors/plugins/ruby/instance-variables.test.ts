@@ -258,7 +258,7 @@ describe("Ruby instance variables typed by what assigns them", () => {
   });
 
   it("types a variable an ancestor controller's filter assigns, except: respected", () => {
-    expect(linksOf("MatchesController.update", "match.award_honours")).toEqual(["Match.award_honours"]);
+    expect(linksOf("Api.MatchesController.update", "match.award_honours")).toEqual(["Match.award_honours"]);
   });
 
   it("types a call on a memoizing reader by what the reader assigns", () => {

@@ -154,13 +154,13 @@ describe("Rails concerns: class methods reach the classes that include them", ()
   });
 
   it("reaches a concern's class method on the including class, never a decoy's", () => {
-    expect(linksOf("TableService.build", "Club.sort_on_points")).toEqual(["app/models/concerns/standings.rb::ClassMethods.sort_on_points"]);
-    expect(linksOf("TableService.build", "Club.top_ranked")).toEqual(["app/models/concerns/rankings.rb::ClassMethods.top_ranked"]);
-    expect(linksOf("Club › sorts on points", "Club.sort_on_points")).toEqual(["app/models/concerns/standings.rb::ClassMethods.sort_on_points"]);
+    expect(linksOf("TableService.build", "Club.sort_on_points")).toEqual(["app/models/concerns/standings.rb::Standings.ClassMethods.sort_on_points"]);
+    expect(linksOf("TableService.build", "Club.top_ranked")).toEqual(["app/models/concerns/rankings.rb::Rankings.ClassMethods.top_ranked"]);
+    expect(linksOf("Club › sorts on points", "Club.sort_on_points")).toEqual(["app/models/concerns/standings.rb::Standings.ClassMethods.sort_on_points"]);
   });
 
   it("reaches it from a method of the class object, never from an instance", () => {
-    expect(linksOf("Club.table", "sort_on_points")).toEqual(["app/models/concerns/standings.rb::ClassMethods.sort_on_points"]);
+    expect(linksOf("Club.table", "sort_on_points")).toEqual(["app/models/concerns/standings.rb::Standings.ClassMethods.sort_on_points"]);
     expect(linksOf("Club.promote", "sort_on_points")).toEqual([]);
   });
 
@@ -169,12 +169,12 @@ describe("Rails concerns: class methods reach the classes that include them", ()
   });
 
   it("keeps a class method's calls inside its module", () => {
-    expect(linksOf("ClassMethods.sort_on_points", "tie_breaker")).toEqual(["app/models/concerns/standings.rb::ClassMethods.tie_breaker"]);
+    expect(linksOf("Standings.ClassMethods.sort_on_points", "tie_breaker")).toEqual(["app/models/concerns/standings.rb::Standings.ClassMethods.tie_breaker"]);
   });
 
   it("calls a module's methods on the module after `extend self` or `module_function :name`", () => {
-    expect(linksOf("FixtureService.label", "League::Slugs.slug")).toEqual(["lib/league/slugs.rb::Slugs.slug"]);
-    expect(linksOf("Slugs.slug", "clean")).toEqual(["lib/league/slugs.rb::Slugs.clean"]);
+    expect(linksOf("FixtureService.label", "League::Slugs.slug")).toEqual(["lib/league/slugs.rb::League.Slugs.slug"]);
+    expect(linksOf("League.Slugs.slug", "clean")).toEqual(["lib/league/slugs.rb::League.Slugs.clean"]);
     expect(linksOf("FixtureService.label", "League::Pads.pad")).toEqual(["lib/league/pads.rb::League::Pads.pad"]);
     expect(linksOf("League::Pads.trim", "pad")).toEqual(["lib/league/pads.rb::League::Pads.pad"]);
   });

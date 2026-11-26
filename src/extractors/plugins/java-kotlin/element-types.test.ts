@@ -185,8 +185,8 @@ public class Table {
     expect(targets(summary, "Table.read", "since.major")).toEqual(["Since.major:injection"]);
   });
   it("reads the methods an enum constant's body declares, and an outer field used in an inner class", () => {
-    expect(targets(summary, "Kind.go", "pace")).toEqual(["Kind.pace:direct"]);
-    expect(targets(summary, "Row.work", "squad.sign")).toEqual(["Squad.sign:injection"]);
+    expect(targets(summary, "Table.Kind.go", "pace")).toEqual(["Table.Kind.pace:direct"]);
+    expect(targets(summary, "Table.Row.work", "squad.sign")).toEqual(["Squad.sign:injection"]);
   });
 });
 

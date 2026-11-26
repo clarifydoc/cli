@@ -83,6 +83,7 @@ export const csharpManifest: LanguagePluginManifest = {
   blockingOnReceiver: { receiverTypes: /^(?:System\.Threading\.Tasks\.)?(?:Task|ValueTask)(?:<[\s\S]*>)?$/, members: /^Wait$/, types: ["Task", "ValueTask"], readMembers: /^Result$/ },
   projectCommands: dotnetProjectCommands,
   language: "csharp",
+  lexicalClassRanges: true,
   callPathsFromHead: true,
   collectionElementOf: collectionElementText,
   // `var (club, player) = Load();` over a declared `(Club, Player)` / `(Club club, Player player)`.

@@ -2108,6 +2108,12 @@ export interface ClassInfo {
    */
   nestedPath?: string;
   /**
+   * The owner path the source nests the class in where its lines do not show it (a TypeScript `namespace Left { class Builder }`
+   * is `Left.Builder` in `symbolLinks`, `complexity` and the like): joined with `.`, outermost first. Core derives every other
+   * owner from line containment (`core/owner-paths.ts`). Omitted for a class no owner holds.
+   */
+  owner?: string;
+  /**
    * A class a framework's container builds under the name it is registered by (an AngularJS service, factory or
    * controller: `.service("orders", …)`), not one a module exports: found by a type's name (an injected parameter's, a call
    * on that name) and never by an import's binding, which a variable of the same name (`var orders = require("./orders")`)
