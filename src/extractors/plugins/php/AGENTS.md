@@ -68,3 +68,10 @@ Reads `.php` with tree-sitter (parsed through the flat tree copy, `FLAT_TREE_LAN
 - Control-flow graphs for PHP are exact (tree-sitter grammar; `clarifydoc cfg`).
 - The plugin's `index.ts` extracts routes through `RegexLangSpec.extractRoutes` (route extraction for Laravel attributes is the documented example of that hook).
 - Shared regex helpers parse a PHP parameter list (`$var`, type-first and name-first forms) and `$this->obj->method(` chains.
+
+## How core passes read it
+
+- `classNamesByEvidence`: a fully qualified class keeps its backslashes in the call name (`\\App\\Other\\Garage.park`), a namespaced free function is `\\App\\fn()`; neither is guessed by the unique-global name. A `Factory::getInstance()->m()` chain is typed through the declared return type.
+- Link spelling: `url('cars.show')` and Ziggy `route()` / `route('clubs.show')` are named-route links, resolved through `RouteInfo.name`.
+- Constructor params of a class are found by the method named `__construct`; a type read off one assignment is `localTypes[].inferred`.
+- Config: `config/*.php` with `env()` is the `serviceConfig` source.

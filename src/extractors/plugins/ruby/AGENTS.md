@@ -94,3 +94,9 @@ Reads Ruby source (Rails, Sinatra and Rack apps included) through the regex path
 - `link_to`/`button_to`/form helpers name a route helper as `route:<helper>` (`route:club_players` for `club_players_path`) in `request.target` and `ScreenInfo.navigatesTo`; the screen flow and navigation pass resolve it through `RouteInfo.name` (an `as:`) and else `RouteInfo.derivedName`, so `link_to "Squad", club_players_path(@club)` reaches the screen of that route, and a helper a rename replaced (`fixture_path` after `as: :games`) reaches nothing.
 - A Rails view's URL-less POST form posts to the action that renders it implicitly (a `submit` self-edge, the one self-edge the navigation map keeps).
 - Views are resolved by [rails-view-resolver.ts](../erb/rails-view-resolver.ts).
+
+## How core passes read it
+
+- Param columns: `params[:id]` is a `request-param` origin (path and query merged) matching either binding.
+- A thrown type written with a namespace (`Net::ReadTimeout`) binds by its last segment only through a qualifier the project backs (`qualifierBacksClass`: a module its own file declares, a directory or file stem on its path).
+- Conditional initializers (`c ? A.new : B.new`, an `if` expression) are read as `from: "A.new()"` chains marked with `localTypes[].choice`.

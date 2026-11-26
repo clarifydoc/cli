@@ -73,3 +73,9 @@ Go has no `ast.taint` hook: the meta states `regexTaint` (`{ gate, taint }`) and
 ## Layer 2 and control flow
 
 - LSP: gopls (Docker image under `docker/go/`; `indexDelayMs` 5 s). Control flow is the approximate regex tier (`meta.regexControlFlow`), marked `approximate`.
+
+## How core passes read it
+
+- Param columns: an object handed to a generic handler that calls a method on it (`DoUpdate(ctx, obj CObject, a)` → `obj.Update`) goes on through the call site's `interface-redirect` link to that type's method, its field now the receiver's.
+- A local declared by type and assigned on each arm (`var api Api; if … { api = a() } else { api = b() }`) needs no `choice`: the declared type states the receiver.
+- A field receiver typed `*http.Error` keeps its qualifier through `writtenTypeName` (`receiverTypeName` drops it); the qualifier binds a project class only where the project backs it (`qualifierBacksClass`).

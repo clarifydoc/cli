@@ -53,3 +53,7 @@ An Interface Builder storyboard (`*.storyboard`, regex spec, no security scan, l
 ## Core Data (`../coredata/`, a section of Swift)
 
 A Core Data model is the XML file `contents` inside `<Model>.xcdatamodel/` (itself inside `.xcdatamodeld/` when versioned): claimed by the name `contents` (`namedFiles`; `preprocess` refuses any other file of that name). Each `<entity>` is an entity class named by its `representedClassName` (the class the code uses), extending its `parentEntity`; `<attribute>`s are columns; each `<relationship>` an edge whose cardinality its own `toMany` and its inverse state. `schemaFormat: true`: its classes are data shapes — never types code constructs or calls — and stay out of the symbol linker's indexes and type catalogs.
+
+## How core passes read it
+
+- The impact report's test command reads SwiftPM targets from `.testTarget(path:)` through `TestCommandContext.testTargets`.

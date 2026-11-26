@@ -40,3 +40,8 @@ Reads `.dart` (Flutter and plain Dart) through a regex `RegexLangSpec` ([index.t
 ## Tooling
 
 `blockingCalls`: `sleep`, `File.…Sync`, `Process.runSync` inside an `isAsync` function (a project class's `f.readAsStringSync()` is not listed). Control flow is the approximate regex tier (`meta.regexControlFlow`).
+
+## How core passes read it
+
+- Symbol linker: a call through a static-member path (`PlayerService.instance.add()`) is called on what `instance` holds; a class head vetoes only a call on the class itself.
+- A local initialised by a bare call (`final w = topClub();`, `final x = pick();`, `await fetch()`) states `localTypes[].from` as `name()`; the linker types it by the enclosing class's own method return type, else the imported function's (`importedFunctionLink`, which also reads a bare call an import puts in scope, `ImportInfo.inScope`).

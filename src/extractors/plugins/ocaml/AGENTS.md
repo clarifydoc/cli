@@ -21,3 +21,6 @@ Reads `.ml` and `.mli` with a tree-sitter front end (`ocaml_interface` grammar f
 - `opam` files and `dune-project` name the packages.
 - The manifest's `sourceDirs` re-admits a `bin/` that holds a `dune` file: it is source, not .NET-style build output.
 
+## How core passes read it
+
+- Module values: a dotted `Head.member` whose import names the head may match the owner's file stem case-insensitively (`Paths` → `paths.ml`).

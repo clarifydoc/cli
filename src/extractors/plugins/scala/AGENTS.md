@@ -30,3 +30,7 @@ Reads `.scala` and `.sc` scripts (`family: "jvm"`, `parsing: "regex"`) through t
 ## Request schemas, security and routes
 
 - Routes ([routes.ts](routes.ts)), JAX-RS ([jaxrs.ts](jaxrs.ts)), request schemas ([request-schema.ts](request-schema.ts)) and security rules ([security-rules.ts](security-rules.ts)) are read here; a Play route names its handler `Class.method`, so the linker binds it only to that class's method (never, by name alone, to a same-named method of another class — an action the class lacks stays unresolved).
+
+## How core passes read it
+
+- The impact report's test command is `sbt testOnly`.

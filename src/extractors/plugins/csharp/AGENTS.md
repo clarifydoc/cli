@@ -106,3 +106,14 @@ Reads `.cs` and `.csx` (C# script) with tree-sitter (`tree-sitter-c-sharp`, flat
 ## Security
 
 - Security rules ([security-rules.ts](security-rules.ts)) include XML DTD handling (`DtdProcessing.Parse` with `XmlResolver = null` beside it parses DTDs but is safe).
+
+## How core passes read it
+
+- `Car.Build()` the class lacks reaches a static extension member.
+- Type-parameter tables: `_database.Query<TModel>` in `BasicRepository<TModel>` is `DataSourceInfo.entityTypeParameter`, bound by the link's `typeArgs` from the receiver's written type or a subclass's closed base.
+- Redirects by name: `RedirectToAction("A", "Ctl")`, `CreatedAtRoute("…")` and `toRoute` read the route's `Name`; Razor `href="@CarLinks.Url(car)"` is followed into the URL the helper builds (`urlTemplate`).
+- `extensionsNeedImport` (needs `importsNamePackages`) makes `extensionMethodFor` in `core/symbol-linker.ts` keep an extension method only where its declaring file is in the caller's scope (`extensionInScope`, built on `importsFile`); languages without the flag link extension functions from anywhere in the type space.
+- Route attributes fill `RouteInfo` fields: `Authorize(Policy = …)` and `AllowAnonymous` in `middleware`/`auth`, `[ApiVersion]` in `versions`/`deprecatedVersions`.
+- `blockingOnReceiver`: `Task.Wait()`, and `.Result` through `readMembers` and `FunctionInfo.propertyReads`, is flagged in an async method only when the receiver's declared type is that type, never a project class's member.
+- Package manifests: a `.csproj`'s `PackageId`/`AssemblyName` is the package the project publishes (`selfName`).
+- `var u = await repo.FindAsync(id)`: a local initialized by an awaited call is stated as `localTypes[].from` with `awaited`, typed through the declared return type and the manifest's `asyncResultTypes`.

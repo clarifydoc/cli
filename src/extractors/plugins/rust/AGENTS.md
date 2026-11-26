@@ -68,3 +68,7 @@ Reads `.rs` files through a regex `RegexLangSpec` ([index.ts](index.ts)) with an
 
 - LSP: rust-analyzer (Docker image under `docker/rust/`; the asset is picked by `TARGETARCH`, `x86_64`/`aarch64-unknown-linux-gnu`; `readOnly` false because it writes `target/`; `indexDelayMs` 15 s — it needs significant warmup; a closing connection usually means it lacks `Cargo.toml` or a writable mount). Control flow is the approximate regex tier (`meta.regexControlFlow`).
 - Symbols: tools write inline-module functions as `pitch::helper`; a lookup of `Garage::park` also finds `Garage.park` (`::` read as `.` when the written form names nothing).
+
+## How core passes read it
+
+- Field writes behind `borrow_mut()` / `lock().unwrap()` or a `*self.x` deref are writes of the field; a field receiver typed `std::io::Error` keeps its qualifier through `writtenTypeName` and binds a project class only where the project backs it (`qualifierBacksClass`). `crate` / `self` / `super` (`relativeTypeQualifiers`) name no module.

@@ -113,3 +113,12 @@ Reads `.py` and Jupyter `.ipynb` files with tree-sitter (a flat-tree language, s
 - [taint.ts](taint.ts): the `ast.taint` hook of `handlerTaint` (tree-sitter).
 - [test-command.ts](test-command.ts): pytest node ids; [project-commands.ts](project-commands.ts) reads how a project is built, tested and started. `testSetupRuns` names Django's migrations and `AppConfig.ready()` under pytest-django, which the test-reach verdict counts as tested.
 - A test's or fixture's parameter is injected by pytest and is never an `invoke` target ([pytest-fixtures.ts](pytest-fixtures.ts)).
+
+## How core passes read it
+
+- Entity parameters: `model_count(Club)` / `model_count(model=Club)` (reported as `model=Club` after the positional arguments) binds the entity a helper's `model` parameter queries (`def total(model): return model_count(model)` is a helper of that parameter too, three levels up); a loop over a literal or module-level constant of classes is a row per listed class.
+- A qualified base written `base.Club` / `models.Car` resolves through the class index, never a namesake beside the class.
+- Redirects: `url_for`/`reverse` and Django templates' `{% url 'clubs:detail' %}` link by route name.
+- Layers: `routers/api.py` mounting `routers/clubs/` is the routers folder using its parts.
+- Impact narrowing on a module-level name: a module imported whole (`from p import m`) counts as a reader, spelled by the module's own stem; a value derived from the name in another file (`CAP = LIMIT * 2`) hands nothing on, and a line inserted right after a name reads as an edit of it. A `from .x import *` forwarder is charged only when the change takes a name away.
+- A URL helper called through a module binding is looked up in the imported module's file when the head is the module itself and the module does not export it as a member (`mod urls`, `from . import urls`); `directoryIndexStems` makes a package's `__init__` stand for its directory.
