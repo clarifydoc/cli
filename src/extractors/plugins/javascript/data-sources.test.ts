@@ -557,6 +557,17 @@ describe("JS api-call trust: only a real client is believed without a URL", () =
     expect(calls).toEqual([]);
   });
 
+  it("reads a table call on a receiver imported from a project wrapper that the file never names a SDK for", async () => {
+    const ds = await dbOf(`
+      import store from "./lib/store";
+      import cache from "cache-lib";
+      export const save = (event) => store.put({ TableName: process.env.tableName, Item: event });
+      export const keep = (event) => cache.put({ TableName: process.env.tableName, Item: event });
+      export const other = (event) => store.put({ Item: event });
+      export const local = (map) => map.put({ TableName: process.env.tableName });`);
+    expect(ds.map((d) => [d.name, d.envRef, d.access])).toEqual([["DynamoDB: put", "tableName", "write"]]);
+  });
+
   it("keeps a verb on a plain client named like a DynamoDB one when the file builds it from a request library", async () => {
     const calls = await apiCallsOf(`
       const client = new HttpClient();

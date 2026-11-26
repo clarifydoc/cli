@@ -825,6 +825,18 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
   /** The file names Convex (its server module, generated API or client package). */
   private convexFile: boolean | null = null;
   private dynamoFile: boolean | null = null;
+
+  /**
+   * A table call on a receiver imported from a project module (`import db from "./lib/store"; db.put({ TableName })`):
+   * the file never names the SDK, its wrapper does. Only the receiver's origin opens the gate; the request
+   * must still state a `TableName` (`dynamoAccess`), so a namesake `put` states nothing.
+   */
+  private viaProjectWrapper(node: Node): boolean {
+    if (node.type !== "call_expression") return false;
+    const fn = node.childForFieldName("function");
+    const head = fn?.type === "member_expression" ? fn.childForFieldName("object") : null;
+    return head?.type === "identifier" && (this.imports ??= importEvidence(this.sourceText)).projectNames.has(head.text);
+  }
   /** Names the file's Kysely queries give their common table expressions. */
   private kyselyCtes: Set<string> | null = null;
   /** Names the file binds to a SQL template tag (see `sqlTagNames`), read on first need. */
@@ -1812,7 +1824,7 @@ export class JavaScriptDataSourceExtractor extends DataSourceExtractor {
     }
 
     // DynamoDB: `docClient.get({ TableName }).promise()`, `ddb.send(new GetCommand({ TableName }))`.
-    if ((type === "call_expression" || type === "new_expression") && (this.dynamoFile ??= DYNAMO_FILE_RE.test(this.sourceText))) {
+    if ((type === "call_expression" || type === "new_expression") && ((this.dynamoFile ??= DYNAMO_FILE_RE.test(this.sourceText)) || this.viaProjectWrapper(node))) {
       const ddb = dynamoAccess(node, this.sourceText);
       if (ddb) {
         sources.push(this.ds({
