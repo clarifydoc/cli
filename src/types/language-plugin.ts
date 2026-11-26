@@ -1707,6 +1707,12 @@ export interface LanguagePluginManifest {
    */
   wholeTypeNames?: boolean;
   /**
+   * Leading path segments of a written type that name no module of their own (Rust `crate`, `self`, `super`): core's
+   * member-effects lookup drops them before asking whether the project backs the qualifier of a qualified name
+   * (`crate::Club` is the project's own `Club`, `std::io::Error` no project class).
+   */
+  relativeTypeQualifiers?: readonly string[];
+  /**
    * The analysis records every way a file can name one of its types — an import by name, an annotation, a base
    * class, a construction — so a class with no `blastRadius[].typeUsages` record is named by nobody (impact then
    * narrows by member; where this is unset, a class without a record keeps every importer charged).

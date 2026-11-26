@@ -25,6 +25,15 @@ const familyOf = (language: string): string => manifestFor(language as LanguageN
 /** Does `language` look a type up beyond its directory (`typesBeyondDirectory`)? */
 const beyondDirectory = (language: string): boolean => manifestFor(language as LanguageName)?.typesBeyondDirectory === true;
 
+/** `receiverTypeName`, with the qualifier the type was written through kept (`std::io::Error`, not `Error`): core asks whether a project backs it. */
+const writtenTypeName = (raw: string | null | undefined, language: string): string | null => {
+  const simple = receiverTypeName(raw, language as LanguageName);
+  if (!simple || !raw || /[.:\\]/.test(simple)) return simple;
+  const escaped = simple.replace(/[$]/g, "\\$");
+  const written = new RegExp(`((?:[\\w$]+(?:::|\\.|\\\\))+)${escaped}(?![\\w$])`).exec(raw);
+  return written ? `${written[1]}${simple}` : simple;
+};
+
 type LanguageName = Parameters<typeof manifestFor>[0];
 
 export function joinMemberEffects(
@@ -75,6 +84,43 @@ export function joinMemberEffects(
     return locateIn(name, nearFile, project, line, from);
   };
 
+  /**
+   * Does the qualifier of `name` (`java.io` in `java.io.IOException`, `Faraday` in `Faraday::Error`) name something
+   * the project declares that holds class `c`? A qualifier that is a library's package or module (`requests`, `std::io`,
+   * `Foundation`) backs no project class of the same leaf, so a namesake is never the type meant. Backed when the
+   * qualifier is a namespace/package `c` is declared in, a directory or file stem on `c`'s path (a Java package, a
+   * Python module), a class `c`'s own file declares (a nested type, a Ruby module), or a name the writing file imports
+   * from `c`'s file or namespace (`import * as errors from "./a"`, `using Err = League.Errors`). A manifest's
+   * `relativeTypeQualifiers` (Rust `crate`, `self`, `super`) and a leading separator name no module: with nothing left
+   * the written name is the project's own.
+   */
+  const qualifierBacksClass = (from: FileAnalysis, name: string, c: ClassRef): boolean => {
+    const relative = new Set(manifestFor(from.language as LanguageName)?.relativeTypeQualifiers ?? []);
+    const segments = name.split(/::|\\|\./).filter((x) => x.length > 0);
+    segments.pop();
+    while (segments.length > 0 && relative.has(segments[0]!)) segments.shift();
+    if (segments.length === 0) return true;
+    const norm = (x: string): string => x.toLowerCase().replace(/[_-]/g, "");
+    const want = segments.map(norm);
+    const qualifier = segments.join(".").toLowerCase();
+    const home = analysisByFile.get(c.file);
+    const spaces = [c.cls.namespace, home?.packageName, home?.declaredNamespace].filter((x): x is string => !!x).map((x) => x.replace(/::|\\/g, ".").toLowerCase());
+    if (spaces.some((ns) => ns === qualifier || ns.endsWith(`.${qualifier}`))) return true;
+    const path = c.file.replace(/\.[^./]+$/, "").split("/").map(norm);
+    const at = (hay: string[], needle: string[]): boolean => needle.length > 0 && hay.some((_, i) => needle.every((n, k) => hay[i + k] === n));
+    if (at(path, want)) return true;
+    if (segments.length === 1 && home?.classes.some((k) => k !== c.cls && k.name === segments[0])) return true;
+    // A name the writing file binds by an import: its source is the file (or the namespace) holding `c`.
+    const bound = from.imports.filter((i) => i.specifiers.includes(segments[0]!) || Object.keys(i.aliases ?? {}).includes(segments[0]!));
+    return bound.some((i) => {
+      const source = i.source.replace(/^package:[^/]*\//, "").replace(/\.[^./]+$/, (m) => (/^\.(?:dart|py|js|ts|mjs|cjs|jsx|tsx|rb|php|swift|rs)$/.test(m) ? "" : m));
+      const ns = source.replace(/::|\\/g, ".").toLowerCase();
+      if (spaces.some((x) => x === ns)) return true;
+      const parts = source.split(/[/.]|::|\\/).filter((x) => x.length > 0 && x !== "..").map(norm);
+      return at(path, parts);
+    });
+  };
+
   const locateIn = (name: string, nearFile: string, project: string, line: number, from: FileAnalysis | undefined): ClassRef | null => {
     const sep = from ? manifestFor(from.language as LanguageName)?.classNamesByEvidence?.separator : undefined;
     // Only the writer's language family: a TypeScript `Error` is never a Go struct of that name.
@@ -85,7 +131,13 @@ export function joinMemberEffects(
     };
     // A language naming its types whole (`wholeTypeNames`) never falls back to the last segment.
     const whole = from ? manifestFor(from.language as LanguageName)?.wholeTypeNames === true : false;
-    let all = inFamily(byName.get(sep ? leaf(name, sep) : name)) ?? (whole ? undefined : inFamily(byName.get(leaf(name))));
+    let all = inFamily(byName.get(sep ? leaf(name, sep) : name));
+    // The last segment of a qualified name answers only through a qualifier the project backs (`qualifierBacksClass`).
+    if (!all && !whole) {
+      const byLeaf = inFamily(byName.get(leaf(name)));
+      all = sep || !from || !/[.:]/.test(name) ? byLeaf : byLeaf?.filter((c) => qualifierBacksClass(from, name, c));
+      if (all?.length === 0) return null;
+    }
     if (all && from && beyondDirectory(from.language)) all = all.filter((c) => !c.cls.extension && analysisByFile.get(c.file)?.language === from.language);
     if (!all || all.length === 0) return null;
     if (sep && from) {
@@ -166,10 +218,10 @@ export function joinMemberEffects(
     const project = a.projectId ?? "";
     const typeOfName = (name: string): string | null => {
       const param = fn.params.find((p) => p.name === name);
-      if (param) return receiverTypeName(param.type, a.language);
+      if (param) return writtenTypeName(param.type, a.language);
       const locals = (fn.localTypes ?? []).filter((l) => l.name === name);
       if (locals.length === 0 || locals.some((l) => !l.type || l.choice !== undefined || l.soft)) return null;
-      const types = new Set(locals.map((l) => receiverTypeName(l.type, a.language)));
+      const types = new Set(locals.map((l) => writtenTypeName(l.type, a.language)));
       const only = [...types];
       return only.length === 1 ? only[0] ?? null : null;
     };
@@ -192,7 +244,7 @@ export function joinMemberEffects(
         target = declaring(owner)(w.member)?.ref ?? null;
       } else if (w.receiver.startsWith("this.") && owner) {
         const field = declaring(owner)(w.receiver.slice(5));
-        const type = field?.type ? receiverTypeName(field.type, a.language) : null;
+        const type = field?.type ? writtenTypeName(field.type, a.language) : null;
         const typed = type ? locate(type, field!.ref.file, field!.ref.project, field!.ref.cls.line) : null;
         target = typed ? declaring(typed)(w.member)?.ref ?? null : null;
       } else if (w.receiver && !w.receiver.includes(".") && w.receiver !== "this") {

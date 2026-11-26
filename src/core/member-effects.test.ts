@@ -225,7 +225,7 @@ describe("member effects, end to end", () => {
       "Club.Close Overdrawn -> cs/Club.cs",
       "Club.close Overdrawn -> py/club.py",
       "Club.fail Overdrawn -> py/club.py",
-      "Division.rename errors.Overdrawn -> py/club.py",
+      "Division.rename errors.Overdrawn",
       "League.plain Error",
       "Referee.call Foul declared",
       "Referee.call Offside -> ts/doc.js",
@@ -1126,5 +1126,85 @@ describe("member effects, Elixir", () => {
       "League.Missing <- League.Club.win:13 known",
     ]);
     expect(summary.fieldWrites ?? []).toEqual([]);
+  });
+});
+
+/** A qualified name binds by its last segment only through a qualifier the project backs; a library's package never does. */
+describe("member effects, qualified type names", () => {
+  let dir: string;
+  let summary: ProjectAnalysis;
+  const write = async (rel: string, text: string): Promise<void> => {
+    await mkdir(join(dir, rel.slice(0, rel.lastIndexOf("/"))), { recursive: true });
+    await writeFile(join(dir, rel), text);
+  };
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "clarifydoc-member-effects-qualified-"));
+    await write("py/errors.py", "class ClubClosed(Exception): pass\nclass HTTPError(Exception): pass\n");
+    await write("py/club.py", [
+      "import requests",
+      "import errors as problems",
+      "def lib():",
+      "    raise requests.HTTPError('x')",
+      "def own():",
+      "    raise problems.ClubClosed()",
+      "def mine():",
+      "    raise problems.HTTPError()",
+    ].join("\n"));
+    await write("rb/errors.rb", "module League\n  class ClubClosed < StandardError; end\n  class Error < StandardError; end\nend\n");
+    await write("rb/club.rb", [
+      "class Club",
+      "  def lib; raise Faraday::Error, 'x'; end",
+      "  def own; raise League::Error; end",
+      "end",
+    ].join("\n"));
+    await write("ts/errors.ts", "export class PostponedError extends Error {}\n");
+    await write("ts/club.ts", [
+      'import * as errors from "./errors";',
+      "export function lib() { throw new vendor.PostponedError('x'); }",
+      "export function own() { throw new errors.PostponedError('y'); }",
+    ].join("\n"));
+    await write("jvm/com/example/league/IOException.java", "package com.example.league;\npublic class IOException extends Exception {}\n");
+    await write("jvm/com/example/league/Club.java", [
+      "package com.example.league;",
+      "public class Club {",
+      '  void lib() { throw new java.io.IOException("x"); }',
+      '  void own() { throw new com.example.league.IOException(); }',
+      "}",
+    ].join("\n"));
+    await write("cpp/errors.h", "namespace league { struct runtime_error {}; }\n");
+    await write("cpp/club.cpp", ['#include "errors.h"', 'void lib() { throw std::runtime_error("x"); }', "void own() { throw league::runtime_error(); }"].join("\n"));
+    await write("swift/Errors.swift", "struct URLError: Error {}\n");
+    await write("swift/Club.swift", "import Foundation\nstruct Club { func lib() throws { throw Foundation.URLError(.badURL) } }\n");
+    await write("rs/lib.rs", "pub struct Error { pub code: i32 }\npub struct Club { pub n: i32 }\n");
+    await write("rs/club.rs", "use crate::Club;\nfn set(c: &mut crate::Club, e: &mut std::io::Error) { c.n = 1; e.code = 2; }\n");
+    await write("go/club.go", "package club\ntype Error struct{ Code int }\ntype Club struct{ N int }\nfunc (c *Club) Set(e *http.Error) { e.Code = 1; c.N = 2 }\n");
+    await analyze({ projectRoot: dir, outputDir: join(dir, "out"), lsp: false, gitHistory: false, stableOutput: true });
+    summary = await loadReportSummary(join(dir, "out"));
+  }, 60_000);
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("never joins a library's qualified exception to a project class of the same last segment", () => {
+    const thrown = (summary.thrownTypes ?? []).map((t) => `${t.file}:${t.function} ${t.type}${t.classFile ? ` -> ${t.classFile}` : ""}`).sort();
+    expect(thrown).toEqual([
+      "cpp/club.cpp:lib std::runtime_error",
+      "cpp/club.cpp:own league::runtime_error -> cpp/errors.h",
+      "jvm/com/example/league/Club.java:Club.lib java.io.IOException",
+      "jvm/com/example/league/Club.java:Club.own com.example.league.IOException -> jvm/com/example/league/IOException.java",
+      "py/club.py:lib requests.HTTPError",
+      "py/club.py:mine problems.HTTPError -> py/errors.py",
+      "py/club.py:own problems.ClubClosed -> py/errors.py",
+      "rb/club.rb:Club.lib Faraday::Error",
+      "rb/club.rb:Club.own League::Error -> rb/errors.rb",
+      "swift/Club.swift:Club.lib Foundation.URLError",
+      "ts/club.ts:lib vendor.PostponedError",
+      "ts/club.ts:own errors.PostponedError -> ts/errors.ts",
+    ]);
+  });
+
+  it("types a written field receiver through its qualifier too: a library struct's field is no project struct's", () => {
+    const writes = (summary.fieldWrites ?? []).map((w) => `${w.file} ${w.class}.${w.member}`).sort();
+    expect(writes).toEqual(["go/club.go Club.N", "rs/club.rs Club.n"]);
   });
 });
