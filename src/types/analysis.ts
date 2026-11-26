@@ -1680,6 +1680,11 @@ export interface FunctionInfo {
   /** Declared as a getter (Dart `int get squadSize`): a read of its name runs it (`CallInfo.read: "getter"`). */
   getter?: true;
   /**
+   * A property accessor written as a method (TypeScript `get size()` / `set size(v)`): the pair is one property, so the
+   * two are never overloads of `size` (`core/owner-paths.ts` leaves their ids as they are). Omitted for a method.
+   */
+  accessor?: "get" | "set";
+  /**
    * A Vue Options-API member the framework runs to derive or react to state, never a person's action: a `computed` getter
    * or a `watch` callback. A call inside it runs when a value changes or is read, never on a person's action.
    */

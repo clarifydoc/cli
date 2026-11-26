@@ -58,6 +58,7 @@ export const cppManifest: LanguagePluginManifest = {
   bindsStructFields: true,
   docComments: C_STYLE_DOCS,
   language: "cpp",
+  overloadedMembers: true,
   testCommand: ctestCommand,
   projectCommands: cmakeProjectCommands,
   collectionElementOf: cppCollectionElement,

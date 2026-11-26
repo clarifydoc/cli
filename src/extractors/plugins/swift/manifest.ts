@@ -19,6 +19,7 @@ export const swiftManifest: LanguagePluginManifest = {
   // `Thread.sleep`, `sleep(…)`/`usleep(…)` and the synchronous `FileManager.default.<call>` inside an `async` function. A call on a variable (`semaphore.wait()`) and the `Data(contentsOf:)` initializers are not listed: a project method or type may carry the name.
   blockingCalls: /^(?:Thread\.sleep|u?sleep|FileManager\.default\.\w+)$/,
   language: "swift",
+  overloadedMembers: true,
   callPathsFromHead: true,
   family: "swift",
   // One module's files share their top-level scope; a directory is the closest evidence.

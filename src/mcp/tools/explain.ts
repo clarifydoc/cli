@@ -1,4 +1,5 @@
 import type { McpTool } from "../protocol.js";
+import { symbolAnswersTo } from "../../core/owner-paths.js";
 import { functionEffectsText } from "./member-effects.js";
 import type { FileSeam, ProjectAnalysis, RouteInfo } from "../../types/analysis.js";
 import { numberArg, requiredStringArg, stringArg } from "../format.js";
@@ -256,7 +257,7 @@ export function relatedRoutes(summary: ProjectAnalysis, r: Row): string | null {
  */
 function namedHome(summary: ProjectAnalysis, subject: string): string | undefined {
   const want = subject.toLowerCase();
-  const matches = (s: string) => s.toLowerCase() === want || s.toLowerCase().endsWith(`.${want}`);
+  const matches = (s: string) => symbolAnswersTo(s, want);
   const defs: Array<{ file: string; name: string }> = [];
   for (const c of summary.complexity ?? []) for (const f of c.functions) if (matches(f.functionName)) defs.push({ file: c.filePath, name: f.functionName });
   for (const n of summary.classGraph?.nodes ?? []) if (!n.isFile && !n.isExternal && matches(n.name)) defs.push({ file: n.filePath, name: n.name });

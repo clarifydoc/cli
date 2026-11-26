@@ -127,7 +127,7 @@ describe("qualifyNestedSymbols", () => {
 
   it("changes nothing in a project with no nesting", () => {
     const project = { symbolLinks: [link({ targetFile: "Other.java", targetLine: 3 })] } as unknown as ProjectAnalysis;
-    expect(qualifyNestedSymbols(project, [decoy])).toEqual({ symbolLinks: 0, complexity: 0, symbolDataAccess: 0, symbolReach: 0 });
+    expect(qualifyNestedSymbols(project, [decoy])).toMatchObject({ symbolLinks: 0, complexity: 0, symbolDataAccess: 0, symbolReach: 0 });
     expect(project.symbolLinks![0]!.targetSymbol).toBe("Builder.build");
   });
 

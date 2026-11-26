@@ -1,5 +1,6 @@
 /** Code-navigation tools: routes, screens, per-file facts, call traces, blast radius. */
 
+import { symbolAnswersTo } from "../../core/owner-paths.js";
 import { ownerIndex } from "../../core/owner-paths.js";
 import { routeSymbolName, inlineRouteDefinitions } from "../../core/route-symbol.js";
 import { describeDrivers, describeGates } from "../../core/refactor-pressure.js";
@@ -948,7 +949,7 @@ function definitionOf(summary: ProjectAnalysis, symbol: string | undefined, file
     if (file && c.filePath !== file) continue;
     for (const f of c.functions) {
       const n = f.functionName.toLowerCase();
-      if (n === want || n.endsWith(`.${want}`)) rows.push({ file: c.filePath, symbol: f.functionName, line: f.line });
+      if (symbolAnswersTo(f.functionName, want)) rows.push({ file: c.filePath, symbol: f.functionName, line: f.line });
     }
   }
   // A route written with an inline handler is a definition at its own line.
@@ -1072,7 +1073,7 @@ export function traceTool(ctx: ToolContext): McpTool {
         const defs = new Map<string, { file: string; symbol: string; line: number }>();
         for (const l of all) {
           const s = l.targetSymbol.toLowerCase();
-          if (s === want || s.endsWith(`.${want}`)) defs.set(symbolKey(l.targetFile, l.targetSymbol), { file: l.targetFile, symbol: l.targetSymbol, line: l.targetLine });
+          if (symbolAnswersTo(l.targetSymbol, want)) defs.set(symbolKey(l.targetFile, l.targetSymbol), { file: l.targetFile, symbol: l.targetSymbol, line: l.targetLine });
         }
         if (defs.size > 1) {
           // Files git tracks first; an untracked copy is said to be one.
@@ -1115,7 +1116,7 @@ export function traceTool(ctx: ToolContext): McpTool {
           [link.sourceFile, link.sourceSymbol],
           [link.targetFile, link.targetSymbol],
         ]) {
-          if (symbol && s2.toLowerCase() !== symbol.toLowerCase() && !s2.toLowerCase().endsWith(`.${symbol.toLowerCase()}`)) continue;
+          if (symbol && !symbolAnswersTo(s2, symbol.toLowerCase())) continue;
           if (file && f2 !== file) continue;
           const key = symbolKey(f2, s2);
           if (seen.has(key)) continue;
@@ -1151,7 +1152,7 @@ export function traceTool(ctx: ToolContext): McpTool {
 async function overridesReport(ctx: ToolContext, loaded: LoadedAnalysis, symbol: string, file: string | undefined, limit: number): Promise<string> {
   const { summary } = loaded;
   const want = symbol.toLowerCase();
-  const named = (s: string) => s.toLowerCase() === want || s.toLowerCase().endsWith(`.${want}`);
+  const named = (s: string) => symbolAnswersTo(s, want);
   const defs = new Map<string, { file: string; symbol: string; line: number; isClass: boolean }>();
   for (const c of summary.complexity ?? []) {
     if (file && c.filePath !== file) continue;
@@ -1223,7 +1224,7 @@ export function matchesSeed(
   if (symbol) {
     const s = symbol.toLowerCase();
     const ls = linkSymbol.toLowerCase();
-    if (ls !== s && !ls.endsWith(`.${s}`) && !(end === "target" && link.callName?.toLowerCase() === s)) return false;
+    if (!symbolAnswersTo(linkSymbol, s) && !(end === "target" && link.callName?.toLowerCase() === s)) return false;
   }
   return true;
 }
@@ -1534,7 +1535,7 @@ export async function pathReport(
       if (!q.symbol) return true;
       const want = q.symbol.toLowerCase();
       const have = s.toLowerCase();
-      return have === want || have.endsWith(`.${want}`);
+      return symbolAnswersTo(have, want);
     };
     const seeds = new Set<string>();
     const targets = new Set<string>();

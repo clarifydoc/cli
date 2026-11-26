@@ -23,6 +23,7 @@ import { VB_DOCS } from "../../shared/doc-comment-specs.js";
 export const vbManifest: LanguagePluginManifest = {
   docComments: VB_DOCS,
   language: "vb",
+  overloadedMembers: true,
   family: "dotnet",
   packageEcosystems: ["nuget"],
   parsing: "regex",

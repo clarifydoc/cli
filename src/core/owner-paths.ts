@@ -1,5 +1,5 @@
 /**
- * Owner paths: the element id of a nested or function-local symbol carries the path of what owns it, joined
+ * Owner paths and overloads: the element id of a nested or function-local symbol carries the path of what owns it, joined
  * with `.` in every language. Two nested `Builder`s of one file are `Left.Builder` / `Left.Builder.build` and
  * `Right.Builder` / `Right.Builder.build`; a type declared inside the function `migrate` is `migrate.Row`.
  * A top-level symbol keeps its name. The label (a `ClassInfo.name`, a method's own name) keeps the spelling
@@ -17,7 +17,7 @@
  */
 
 import { manifestFor } from "../extractors/registry.js";
-import type { ClassInfo, FileAnalysis, Language, ProjectAnalysis } from "../types/analysis.js";
+import type { ClassInfo, FileAnalysis, Language, ParamInfo, ProjectAnalysis } from "../types/analysis.js";
 
 interface Node {
   kind: "class" | "fn";
@@ -25,6 +25,10 @@ interface Node {
   line: number;
   endLine: number;
   cls?: ClassInfo;
+  /** The declared parameters, where the file states them. */
+  params?: ParamInfo[];
+  /** A property accessor (`FunctionInfo.accessor`, `getter`): never an overload. */
+  accessor?: boolean;
   /** Memoized id symbol. */
   q?: string;
 }
@@ -39,8 +43,11 @@ export interface OwnerIndex {
   functionContaining(name: string, line: number): string;
   /** The one id symbol every declaration of `name` has in the file; `undefined` when two differ (the name stands for both). */
   symbolNamed(name: string): string | undefined;
-  /** Whether any symbol of the file has an id other than its name. */
+  /** Whether any symbol of the file has an id other than its name (nested, function-local or overloaded). */
   readonly nested: boolean;
+  /** Overload groups of the file, and those left unsplit because two members spell the same parameter types. */
+  readonly overloadGroups: number;
+  readonly unsplitOverloadGroups: number;
 }
 
 const NONE: OwnerIndex = {
@@ -49,6 +56,8 @@ const NONE: OwnerIndex = {
   functionContaining: (n) => n,
   symbolNamed: (n) => n,
   nested: false,
+  overloadGroups: 0,
+  unsplitOverloadGroups: 0,
 };
 
 /** Strictly larger lines; a function on exactly its class's lines (a one-line record's accessor) is the class's member. */
@@ -61,9 +70,10 @@ const contains = (outer: Node, inner: Node): boolean =>
  */
 export function ownerIndex(a: FileAnalysis, lexical = !!manifestFor(a.language as Language)?.lexicalClassRanges): OwnerIndex {
   const classes = (a.classes ?? []).filter((c) => !c.synthetic && c.line > 0 && c.endLine >= c.line);
-  if (classes.length === 0) return NONE;
+  const overloading = !!manifestFor(a.language as Language)?.overloadedMembers;
+  if (classes.length === 0 && !overloading) return NONE;
   // Lines say nesting only where a class's lines are its block (`lexicalClassRanges`); a plugin's own owner holds anywhere.
-  if (!lexical && !classes.some((c) => c.owner)) return NONE;
+  if (!lexical && !overloading && !classes.some((c) => c.owner)) return NONE;
   const nodes: Node[] = classes.map((c) => ({ kind: "class", name: c.name, line: c.line, endLine: c.endLine, cls: c }));
   const seen = new Set<string>();
   const addFn = (name: string, line: number, endLine: number | undefined): void => {
@@ -77,6 +87,15 @@ export function ownerIndex(a: FileAnalysis, lexical = !!manifestFor(a.language a
   for (const c of a.complexities ?? []) addFn(c.functionName, c.line, c.endLine);
   for (const f of a.functions ?? []) addFn(f.name, f.line, f.endLine);
   for (const c of classes) for (const m of c.methods ?? []) addFn(`${c.name}.${m.name}`, m.line, m.endLine);
+  if (overloading) {
+    const declared = new Map<string, { params: ParamInfo[]; accessor: boolean }>();
+    for (const f of a.functions ?? []) declared.set(`${f.name}|${f.line}`, { params: f.params ?? [], accessor: !!f.accessor || !!f.getter });
+    for (const c of a.classes ?? []) for (const m of c.methods ?? []) declared.set(`${c.name}.${m.name}|${m.line}`, { params: m.params ?? [], accessor: !!m.accessor || !!m.getter });
+    for (const n of nodes) {
+      const d = n.kind === "fn" ? declared.get(`${n.name}|${n.line}`) : undefined;
+      if (d) { n.params = d.params; n.accessor = d.accessor; }
+    }
+  }
 
   // The innermost container of each node, by a sweep over the nodes in source order.
   nodes.sort((x, y) => x.line - y.line || y.endLine - x.endLine || (x.kind === "class" ? -1 : 1) - (y.kind === "class" ? -1 : 1));
@@ -128,6 +147,8 @@ export function ownerIndex(a: FileAnalysis, lexical = !!manifestFor(a.language a
       else fnsByName.set(n.name, [n]);
     }
   }
+  // Ids of members are final only once every class and function has its owner path.
+  const overloads = overloading ? spellOverloads(nodes) : { groups: 0, unsplit: 0 };
   // A member the file's functions do not list (a record's accessor, a generated constructor) is `Class.member` of the one class
   // of that name; two classes of the name leave it as written.
   const classesNamed = new Map<string, Node[]>();
@@ -141,6 +162,8 @@ export function ownerIndex(a: FileAnalysis, lexical = !!manifestFor(a.language a
   if (!nested) return NONE;
   return {
     nested,
+    overloadGroups: overloads.groups,
+    unsplitOverloadGroups: overloads.unsplit,
     classSymbol: (name, line) => classByKey.get(`${name}|${line}`)?.q ?? name,
     functionSymbol: (name, line) => fnByKey.get(`${name}|${line}`)?.q ?? classByKey.get(`${name}|${line}`)?.q ?? memberOfUniqueClass(name),
     symbolNamed: (name) => {
@@ -157,12 +180,72 @@ export function ownerIndex(a: FileAnalysis, lexical = !!manifestFor(a.language a
   };
 }
 
+/**
+ * A parameter list as the id writes it: each type as the source writes it, whitespace dropped, no names, an untyped
+ * parameter `_` (so `Pick(_,_)` still says two); joined with `,`.
+ */
+export function parameterTypes(params: readonly ParamInfo[]): string {
+  // Whitespace is dropped, except one space where two words would otherwise run together (`const string`, `Func(Of T,Task)`).
+  const spaced = (t: string): string => t.trim().replace(/\s+/g, (run, at: number, s: string) => (/\w/.test(s[at - 1] ?? "") && /\w/.test(s[at + run.length] ?? "") ? " " : ""));
+  return params.map((p) => spaced(p.type ?? "") || "_").join(",");
+}
+
+/**
+ * Where a name is declared at two or more lines in one scope (the same owner-qualified symbol) and none of those is a property
+ * accessor, each declaration's id carries its parameter types: `Squad.Pick(int)`. Members of a group that still spell
+ * alike (`Pick(int)` twice, an overload told apart only by a Swift label) keep the plain name.
+ */
+function spellOverloads(nodes: Node[]): { groups: number; unsplit: number } {
+  const stats = { groups: 0, unsplit: 0 };
+  const groups = new Map<string, Node[]>();
+  for (const n of nodes) {
+    if (n.kind !== "fn" || !n.params || n.accessor) continue;
+    const g = groups.get(n.q!);
+    if (g) g.push(n);
+    else groups.set(n.q!, [n]);
+  }
+  for (const [q, g] of groups) {
+    if (g.length < 2) continue;
+    stats.groups++;
+    const spelled = g.map((n) => `${q}(${parameterTypes(n.params!)})`);
+    const count = new Map<string, number>();
+    for (const t of spelled) count.set(t, (count.get(t) ?? 0) + 1);
+    let alike = false;
+    g.forEach((n, i) => {
+      if (count.get(spelled[i]!) === 1) n.q = spelled[i]!;
+      else alike = true;
+    });
+    if (alike) stats.unsplit++;
+  }
+  return stats;
+}
+
+/** The name a symbol answers to without its parameter types (`Squad.Pick(int)` → `Squad.Pick`). */
+export function bareSymbol(symbol: string): string {
+  const open = symbol.indexOf("(");
+  return open > 0 && symbol.endsWith(")") ? symbol.slice(0, open) : symbol;
+}
+
+/**
+ * Whether `symbol` answers to what a person typed (`want`, lowercased): the whole id, or a trailing run of its dotted
+ * path. Typing no parameter list names every overload (`squad.pick` finds `Squad.Pick(int)` and `Squad.Pick(string)`);
+ * typing one (`squad.pick(int)`) names the one.
+ */
+export function symbolAnswersTo(symbol: string, want: string): boolean {
+  const s = symbol.toLowerCase();
+  const hit = (c: string): boolean => c === want || c.endsWith(`.${want}`);
+  return hit(s) || (!want.includes("(") && hit(bareSymbol(s)));
+}
+
 /** What `qualifyNestedSymbols` changed, by section. */
 export interface QualifyCounts {
   symbolLinks: number;
   complexity: number;
   symbolDataAccess: number;
   symbolReach: number;
+  /** Overload groups spelled by parameter types, and groups left unsplit (two members spell alike). */
+  overloadGroups?: number;
+  unsplitOverloadGroups?: number;
 }
 
 /**
@@ -178,6 +261,8 @@ export function qualifyNestedSymbols(project: ProjectAnalysis, analyses: readonl
   for (const a of analyses) {
     const ix = ownerIndex(a);
     if (ix.nested) indexes.set(a.filePath, ix);
+    counts.overloadGroups = (counts.overloadGroups ?? 0) + ix.overloadGroups;
+    counts.unsplitOverloadGroups = (counts.unsplitOverloadGroups ?? 0) + ix.unsplitOverloadGroups;
   }
   if (indexes.size === 0) return counts;
 

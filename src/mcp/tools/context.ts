@@ -1,5 +1,6 @@
 /** Shared plumbing for the tool implementations. */
 
+import { bareSymbol } from "../../core/owner-paths.js";
 import type { ProjectAnalysis } from "../../types/analysis.js";
 import { assessFreshness, type FreshnessReport } from "../../core/manifest.js";
 import { AnalysisStore, normalizePath, resolveFilePath, type LoadedAnalysis } from "../store.js";
@@ -92,8 +93,11 @@ function knownSymbolNames(summary: ProjectAnalysis): Set<string> {
   let names = symbolNames.get(summary);
   if (names) return names;
   names = new Set<string>();
-  const add = (n: string | undefined) => {
+  const add = (n: string | undefined): void => {
     if (!n) return;
+    // An overload's id carries its parameter types (`Squad.Pick(int)`); the name alone asks for every one.
+    const bare = bareSymbol(n);
+    if (bare !== n) add(bare);
     let rest = n.toLowerCase();
     for (;;) {
       if (names!.has(rest)) return;

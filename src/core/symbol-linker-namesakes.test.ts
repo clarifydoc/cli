@@ -237,14 +237,14 @@ describe("same-name precision in the symbol linker", () => {
   it("Java: calls of one name on one line choose an overload when they all agree on it", () => {
     const at = (sym: string, call: string) => summary.symbolLinks.filter((l) => l.sourceSymbol === sym && l.callName === call).map((l) => l.targetLine);
     // `has(left, role) || has(right, role)`: both two-argument calls, so the two-argument overload.
-    expect(at("Formation.has", "has")).toEqual([8]);
+    expect(at("Formation.has(String)", "has")).toEqual([8]);
     // `of("away", "keeper", "striker")` and `of("home", "keeper")`: neither fits a boolean second parameter.
     expect(at("Formation.pair", "of")).toEqual([11]);
   });
 
   it("overloads the arguments cannot tell apart: the method is linked, said to be one of several bodies", () => {
     const link = summary.symbolLinks.find((l) => l.sourceSymbol === "Match.keep" && l.callName === "scorer.save");
-    expect(link?.targetSymbol).toBe("Scorer.save");
+    expect(link?.targetSymbol).toMatch(/^Scorer\.save\((?:Club|Player)\)$/);
     expect(link?.overloadsFit).toBe(2);
     expect(link?.confidence).not.toBe("AMBIGUOUS");
   });

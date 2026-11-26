@@ -140,6 +140,7 @@ export const typescriptManifest: LanguagePluginManifest = {
   testCommand: jsTestCommand,
   projectCommands: jsProjectCommands,
   language: "typescript",
+  overloadedMembers: true,
   lexicalClassRanges: true,
   statesModuleNames: true,
   directoryIndexStems: ["index"],

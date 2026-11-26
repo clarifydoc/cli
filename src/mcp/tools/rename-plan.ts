@@ -13,6 +13,7 @@
  * spelling no such name, or an override/implementation/interface member, and says which rows. A route with an inline
  * handler (`route:<METHOD> <path>`) is refused as "a route with an inline handler", never as an unknown name.
  */
+import { symbolAnswersTo } from "../../core/owner-paths.js";
 import { readFile } from "fs/promises";
 import { join } from "path";
 import type { McpTool } from "../protocol.js";
@@ -149,7 +150,7 @@ interface Definition {
 /** The definitions the symbol names, from the links that land on it, the hierarchy edges and the function table. */
 function definitionsOf(summary: ProjectAnalysis, symbol: string, file: string | undefined): Definition[] {
   const want = symbol.toLowerCase();
-  const named = (s: string): boolean => s.toLowerCase() === want || s.toLowerCase().endsWith(`.${want}`);
+  const named = (s: string): boolean => symbolAnswersTo(s, want);
   const defs = new Map<string, Definition>();
   const add = (f: string, s: string, line: number): void => {
     if (file && f !== file) return;

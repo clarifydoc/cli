@@ -63,6 +63,7 @@ Per-tool behaviour (rename plan refusals, extract's class signatures and inline-
   `engine-older` rule, per-file `⚠` lines and the `post-git` hook that keeps it current) while the analysis no longer
   describes the source. One stat pass per ten seconds, however many calls; `clarifydoc_status` and `clarifydoc_analyze`
   are left alone.
+- **An overload is named by its types.** A symbol's id may end in its parameter types (`Squad.Pick(int)`); every tool matches a typed argument to the one and an untyped name to all of them through `symbolAnswersTo` ([../core/owner-paths.ts](../core/owner-paths.ts)), and a name with several definitions lists them by their typed ids.
 - **Lookups forgive a spelling.** A symbol argument of `extract`, `trace`, `explain` and `rename_plan` goes through
   `resolveSymbolArg`; a file path that matches nothing offers up to three `nearFiles`. `clarifydoc_search` flags matched
   definitions in generated files (`markGenerated`) and ranks them after shipped ones at equal score, as tests rank;

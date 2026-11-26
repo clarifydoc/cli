@@ -3,6 +3,7 @@ import { readFile } from "fs/promises";
 import { join } from "path";
 import type { ClassInfo, FileAnalysis, FunctionInfo, ProjectAnalysis } from "../types/analysis.js";
 import { routeIdentityKey } from "./route-linker.js";
+import { bareSymbol } from "./owner-paths.js";
 
 /**
  * A lint of our own output: contradictions inside one `ProjectAnalysis` that no
@@ -170,7 +171,9 @@ export function lintAnalysis(project: ProjectAnalysis, files?: ReadonlyMap<strin
       // A named value another file imports and calls: `export const createRouter = …`, a generated hook.
       // Never a function/class export: those must be defined, and the check below is what catches a stale one.
       const isExport = (fa.exports ?? []).some((e) => e.name === symbol && e.kind !== "function" && e.kind !== "class");
-      if (!isCallee && !isExport && !declared.has(symbol) && !declared.has(leafOf(symbol))) {
+      // An overloaded declaration's id carries its parameter types (`Drill.init(UUID?,String)`): the file declares its bare name.
+      const bare = bareSymbol(symbol);
+      if (!isCallee && !isExport && !declared.has(symbol) && !declared.has(leafOf(symbol)) && !declared.has(bare) && !declared.has(leafOf(bare))) {
         add("symbol-link-symbol-missing", `${what}: ${side} ${symbol} is no function or class of ${file}`, file, line);
       }
     }

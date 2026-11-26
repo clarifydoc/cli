@@ -1605,6 +1605,13 @@ export interface LanguagePluginManifest {
    */
   lexicalClassRanges?: boolean;
   /**
+   * The language declares several functions or methods of one name in one scope, told apart by their parameter lists
+   * (overloading). Core then spells the id of each overload with its parameter types as written
+   * (`Squad.Pick(int,string)`, `core/owner-paths.ts`); a name declared once keeps its name. Left off where a second
+   * declaration of a name is something else — a Python property's setter, an Elixir clause, a redefinition.
+   */
+  overloadedMembers?: boolean;
+  /**
    * An extension method (`ParamInfo.isReceiver`) links only from a file that has its declaring file in
    * scope by this language's import rules: the same file, a `using` of its namespace (or `using static`
    * of its class), its own or an enclosing namespace, a project-wide import, an imported project. Needs

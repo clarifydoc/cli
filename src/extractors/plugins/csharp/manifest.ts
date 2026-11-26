@@ -83,6 +83,7 @@ export const csharpManifest: LanguagePluginManifest = {
   blockingOnReceiver: { receiverTypes: /^(?:System\.Threading\.Tasks\.)?(?:Task|ValueTask)(?:<[\s\S]*>)?$/, members: /^Wait$/, types: ["Task", "ValueTask"], readMembers: /^Result$/ },
   projectCommands: dotnetProjectCommands,
   language: "csharp",
+  overloadedMembers: true,
   lexicalClassRanges: true,
   callPathsFromHead: true,
   collectionElementOf: collectionElementText,

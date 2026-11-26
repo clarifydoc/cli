@@ -140,6 +140,7 @@ export const javaManifest: LanguagePluginManifest = {
   testCommand: jvmTestCommand,
   projectCommands: jvmProjectCommands,
   language: "java",
+  overloadedMembers: true,
   lexicalClassRanges: true,
   ownerPathTypes: true,
   callPathsFromHead: true,
@@ -184,6 +185,7 @@ export const kotlinManifest: LanguagePluginManifest = {
   // `runBlocking` and `Thread.sleep` inside a `suspend` function park the coroutine's thread.
   blockingCalls: /^(?:runBlocking|Thread\.sleep)$/,
   language: "kotlin",
+  overloadedMembers: true,
   lexicalClassRanges: true,
   ownerPathTypes: true,
   callPathsFromHead: true,

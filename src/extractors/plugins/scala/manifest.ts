@@ -14,6 +14,7 @@ import { notSbtMetaBuild } from "./project-markers.js";
 export const scalaManifest: LanguagePluginManifest = {
   docComments: C_STYLE_DOCS,
   language: "scala",
+  overloadedMembers: true,
   testCommand: scalaTestCommand,
   projectCommands: scalaProjectCommands,
   callPathsFromHead: true,

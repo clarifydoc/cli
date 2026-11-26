@@ -5,6 +5,7 @@
  * `decisionsOfFile` feeds `decisionsAbout` (decisions-api.ts, exported from the package index): the same facts as data
  * for a host that is no MCP client.
  */
+import { symbolAnswersTo } from "../../core/owner-paths.js";
 import { ownerIndex } from "../../core/owner-paths.js";
 import { readFile } from "fs/promises";
 import { join } from "path";
@@ -263,7 +264,7 @@ function spansOf(analysis: FileAnalysis | null): FunctionSpan[] {
 function mustResolveFunction(analysis: FileAnalysis | null, file: string, name: string): FunctionSpan {
   const spans = spansOf(analysis);
   const exact = spans.filter((s) => s.name === name);
-  const leaf = exact.length ? exact : spans.filter((s) => s.name.endsWith(`.${name}`));
+  const leaf = exact.length ? exact : spans.filter((s) => symbolAnswersTo(s.name, name.toLowerCase()));
   if (leaf.length === 1) return leaf[0]!;
   const names = (leaf.length ? leaf : spans).map((s) => `${s.name} (${s.line})`);
   throw new Error(

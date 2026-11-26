@@ -228,6 +228,13 @@ function composableLocals(fn: Node, members: FunctionInfo["returnedMembers"]): F
   return derivedLocalsOf(fn, locals);
 }
 
+/** `get size() {…}` → "get", `set size(v) {…}` → "set": the keyword a class or object method is declared with. */
+function accessorOf(member: Node): "get" | "set" | undefined {
+  if (member.type !== "method_definition") return undefined;
+  const kw = member.children.find((c) => c.type === "get" || c.type === "set")?.type;
+  return kw === "get" || kw === "set" ? kw : undefined;
+}
+
 /** Vue reactivity primitives that only build a cell; a function making no other call outside its getters derives values. */
 const REACTIVITY_PRIMITIVES: ReadonlySet<string> = new Set(["computed", "ref", "shallowRef", "reactive", "shallowReactive", "readonly", "shallowReadonly", "toRef", "toRefs", "toValue", "unref", "markRaw"]);
 
@@ -2806,6 +2813,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
     const derivedLocals = composableLocals(node, returnedMembers);
     const getter = composableGetterOf(body);
     const effects = withJsDocThrows(memberEffectsOf(body, params, typedLocalNames(localTypes)), doc, node.startPosition.row + 1);
+    const accessor = accessorOf(node);
     return {
       name,
       params,
@@ -2816,6 +2824,7 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       calls,
       line: node.startPosition.row + 1,
       endLine: node.endPosition.row + 1,
+      ...(accessor ? { accessor } : {}),
       ...(localTypes ? { localTypes } : {}),
       ...(valueFlow ? { valueFlow } : {}),
       ...(effects ?? {}),
@@ -3455,6 +3464,8 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
             line: member.startPosition.row + 1,
             endLine: member.endPosition.row + 1,
             ...(member.children.some((c) => c.type === "static") ? { isStatic: true as const } : {}),
+            // `get size() {…}` / `set size(v) {…}` is one property, never two overloads (`FunctionInfo.accessor`).
+            ...(accessorOf(member) ? { accessor: accessorOf(member)! } : {}),
             ...(localTypes ? { localTypes } : {}),
             ...(valueFlow ? { valueFlow } : {}),
             ...(effects ?? {}),

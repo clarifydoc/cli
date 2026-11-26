@@ -10,6 +10,7 @@
  * the rest, plus the call that extracts one member; a class that fits is printed whole. With `package=` it reads an
  * installed package's export through `package-api.ts`.
  */
+import { symbolAnswersTo } from "../../core/owner-paths.js";
 import { ownerIndex } from "../../core/owner-paths.js";
 import { readFile } from "fs/promises";
 import { join } from "path";
@@ -109,7 +110,7 @@ export function extractTool(ctx: ToolContext): McpTool {
       // Files that may define it: the one named, else every file a link
       // places a symbol of that name in.
       const want = symbol.toLowerCase();
-      const named = (s: string) => s.toLowerCase() === want || s.toLowerCase().endsWith(`.${want}`);
+      const named = (s: string) => symbolAnswersTo(s, want);
       const files = new Set<string>();
       if (file) files.add(file);
       else {
