@@ -1702,6 +1702,11 @@ export interface LanguagePluginManifest {
    */
   typesBeyondDirectory?: boolean;
   /**
+   * A type name a fact states is the type's whole name (an Elixir module, `File.Error`): core's member-effects lookup
+   * matches it whole, never by its last segment.
+   */
+  wholeTypeNames?: boolean;
+  /**
    * The analysis records every way a file can name one of its types — an import by name, an annotation, a base
    * class, a construction — so a class with no `blastRadius[].typeUsages` record is named by nobody (impact then
    * narrows by member; where this is unset, a class without a record keeps every importer charged).

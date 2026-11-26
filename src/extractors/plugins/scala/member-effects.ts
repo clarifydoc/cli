@@ -1,6 +1,5 @@
 import type { ClassInfo, FunctionInfo } from "../../../types/analysis.js";
-import { blankStringLiterals } from "../shared/regex-base.js";
-import { EffectsCollector } from "../shared/member-effects-kit.js";
+import { BodyText, EffectsCollector, addBindingNames, membersAtOwnDepth, ownNames, statedTypeNames } from "../shared/member-effects-kit.js";
 
 const OP = String.raw`(?:<<|>>>?|[-+*/%&|^])?`;
 /** A statement that starts with an lvalue: the start of the line, after `;`, `{` or `=>`, or after Scala 3's `then`/`else`/`do`. */
@@ -26,20 +25,8 @@ const LOCAL_RES = [
 const MEMBER_RE = /^\s*(?:@[\w.]+(?:\([^)]*\)|\[[^\]]*\])?\s+)*(?:(?:private|protected)(?:\[\w+\])?\s+|(?:override|final|lazy|implicit|sealed)\s+)*(?:val|var)\s+([A-Za-z_]\w*)/;
 const KEYWORDS = new Set(["this", "super", "return", "throw", "new", "case", "val", "var", "def", "if", "else", "then", "do", "while", "match", "yield", "type", "import", "_"]);
 
-/** A function's own local names, parameters included. */
-function localNames(fn: FunctionInfo, codeAt: (ln: number) => string, last: number): Set<string> {
-  const own = new Set<string>(fn.params.map((p) => p.name));
-  for (let ln = fn.line; ln <= last; ln++) {
-    const code = codeAt(ln);
-    for (const re of LOCAL_RES) {
-      for (const m of code.matchAll(re)) for (const part of m[1]!.split(",")) {
-        const name = part.trim().replace(/^(?:val|var)\s+/, "").replace(/\s*:.*$/, "");
-        if (/^[A-Za-z_]\w*$/.test(name) && !KEYWORDS.has(name)) own.add(name);
-      }
-    }
-  }
-  return own;
-}
+/** The names a body line binds (a `val`/`var` prefix and a `: Type` dropped). */
+const readLocals = (code: string, add: (name: string) => void): void => addBindingNames(code, LOCAL_RES, /^(?:val|var)\s+|\s*:.*$/g, KEYWORDS, add);
 
 /**
  * The members a type's body declares at its own depth (`var points = 0`, `private val repo: Repo`), outside its methods
@@ -47,16 +34,9 @@ function localNames(fn: FunctionInfo, codeAt: (ln: number) => string, last: numb
  * ones are none).
  */
 export function scalaDeclaredMembers(lines: readonly string[], cls: ClassInfo, all: readonly ClassInfo[]): Map<string, number> {
-  const out = new Map<string, number>();
+  const out = membersAtOwnDepth(lines, cls, all, MEMBER_RE);
   // A declared property core knows already (line 0: no declaration to state).
   for (const p of cls.properties) out.set(p.name, 0);
-  const inside = (ln: number, spans: readonly { line: number; endLine: number }[]) => spans.some((s) => ln >= s.line && ln <= s.endLine);
-  const inner = all.filter((c) => c !== cls && c.line > cls.line && c.endLine <= cls.endLine);
-  for (let ln = cls.line + 1; ln < Math.min(cls.endLine, lines.length + 1); ln++) {
-    if (inside(ln, cls.methods) || inside(ln, inner)) continue;
-    const m = MEMBER_RE.exec(lines[ln - 1] ?? "");
-    if (m && !out.has(m[1]!)) out.set(m[1]!, ln);
-  }
   return out;
 }
 
@@ -88,30 +68,24 @@ export function scalaMemberEffects(
 ): Pick<FunctionInfo, "fieldWrites" | "throws"> | null {
   const out = new EffectsCollector();
   const isCtor = owner !== null && (fn.name === "this" || fn.name === owner);
-  const typed = new Set<string>();
-  for (const p of fn.params) if (p.type) typed.add(p.name);
-  for (const l of fn.localTypes ?? []) if (l.type && !l.soft && l.choice === undefined) typed.add(l.name);
-  const last = Math.min(fn.endLine, lines.length);
-  const codeAt = (ln: number) => blankStringLiterals(lines[ln - 1] ?? "", ["//"]);
+  const typed = statedTypeNames(fn);
+  const body = new BodyText(lines, fn, ["//"]);
   // Annotations on the lines above the `def` (and on its own line).
   for (let ln = fn.line; ln >= Math.max(1, fn.line - 6); ln--) {
-    const code = codeAt(ln);
+    const code = body.code(ln);
     if (ln < fn.line && !/^\s*@/.test(code)) break;
     for (const m of code.matchAll(DECLARED_RE)) out.addThrow((m[1] ?? m[2])!, ln, true);
   }
-  const own = members ? localNames(fn, codeAt, last) : null;
-  const declared = new Set<string>();
-  const declare = (member: string): void => {
-    const at = members?.get(member);
-    if (at === undefined || declared.has(member)) return;
-    declared.add(member);
-    if (at === 0) return;
-    out.addWrite("this", member, at, true);
-  };
-  for (let ln = fn.line; ln <= last; ln++) {
-    const code = codeAt(ln);
-    if (code.includes("throw")) for (const m of code.matchAll(THROW_RE)) out.addThrow(m[1]!, ln);
-    if (isCtor || !code.includes("=")) continue;
+  const own = members ? ownNames(body, readLocals) : null;
+  const declare = (member: string): void => out.declareOnce(member, members?.get(member));
+  for (let ln = fn.line; ln <= body.last; ln++) {
+    const raw = body.raw(ln);
+    const throws = raw.includes("throw");
+    const writes = !isCtor && raw.includes("=");
+    if (!throws && !writes) continue;
+    const code = body.code(ln);
+    if (throws) for (const m of code.matchAll(THROW_RE)) out.addThrow(m[1]!, ln);
+    if (!writes) continue;
     for (const m of code.matchAll(THIS_RE)) {
       declare(m[1]!);
       out.addWrite("this", m[1]!, ln);
@@ -121,8 +95,8 @@ export function scalaMemberEffects(
     if (!members || !own) continue;
     for (const m of code.matchAll(BARE_RE)) {
       const name = m[1]!;
-      if (own.has(name) || KEYWORDS.has(name) || !members.has(name)) continue;
-      if (/^\s*$/.test(code.slice(0, m.index)) && namedArgumentLine(codeAt, ln, fn.line)) continue;
+      if (KEYWORDS.has(name) || !members.has(name) || own().has(name)) continue;
+      if (/^\s*$/.test(code.slice(0, m.index)) && namedArgumentLine((n) => body.code(n), ln, fn.line)) continue;
       declare(name);
       out.addWrite("", name, ln);
     }

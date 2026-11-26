@@ -326,7 +326,7 @@ export const swiftSpec: RegexLangSpec = {
     for (const cls of classes) for (const m of cls.methods) addMemberFlowLocals(lines, cls.properties, m);
     // Writes and throws of a method, with the members its type's body declares (an extension's are the type's, elsewhere).
     for (const cls of classes) {
-      const members = isSwiftExtension(lines, cls) ? null : swiftDeclaredMembers(lines, cls, classes);
+      const members = cls.extension ? null : swiftDeclaredMembers(lines, cls, classes);
       for (const m of cls.methods) applyEffects(m, swiftMemberEffects(lines, m, { members }));
     }
     return classes;

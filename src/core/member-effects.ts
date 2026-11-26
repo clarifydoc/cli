@@ -83,7 +83,9 @@ export function joinMemberEffects(
       const kept = family === null ? list : list?.filter((c) => familyOf(analysisByFile.get(c.file)?.language ?? "") === family);
       return kept && kept.length > 0 ? kept : undefined;
     };
-    let all = inFamily(byName.get(sep ? leaf(name, sep) : name)) ?? inFamily(byName.get(leaf(name)));
+    // A language naming its types whole (`wholeTypeNames`) never falls back to the last segment.
+    const whole = from ? manifestFor(from.language as LanguageName)?.wholeTypeNames === true : false;
+    let all = inFamily(byName.get(sep ? leaf(name, sep) : name)) ?? (whole ? undefined : inFamily(byName.get(leaf(name))));
     if (all && from && beyondDirectory(from.language)) all = all.filter((c) => !c.cls.extension && analysisByFile.get(c.file)?.language === from.language);
     if (!all || all.length === 0) return null;
     if (sep && from) {
@@ -202,8 +204,7 @@ export function joinMemberEffects(
       fieldWrites.push({ class: target.cls.name, classFile: target.file, member: w.member, function: symbol, file: a.filePath, line: w.line, via });
     }
     for (const t of fn.throws ?? []) {
-      // A name stated whole (`exact`) is the class of exactly that name, never one sharing its last segment.
-      const known = t.exact && !byName.has(t.type) ? null : locate(t.type, a.filePath, project, t.line);
+      const known = locate(t.type, a.filePath, project, t.line);
       thrownTypes.push({ type: t.type, function: symbol, file: a.filePath, line: t.line, ...(t.declared ? { declared: true as const } : {}), ...(known ? { classFile: known.file } : {}) });
     }
   };

@@ -18,9 +18,9 @@ export function elixirAliases(lines: readonly string[], imports: readonly Import
 /**
  * The exception modules an Elixir function raises (`FunctionInfo.throws`): the module after `raise`/`reraise`, a
  * struct literal's included, its first segment read through the file's `alias` lines (`raise ClubClosed` under
- * `alias League.ClubClosed` is `League.ClubClosed`, the name core indexes the module by), stated `exact`: a module's
- * name is whole, so core never matches it by its last segment. Elixir data is immutable, so
- * no field writes are stated.
+ * `alias League.ClubClosed` is `League.ClubClosed`, the name core indexes the module by; the manifest's
+ * `wholeTypeNames` keeps core from matching it by its last segment). Elixir data is immutable, so no field writes are
+ * stated.
  */
 export function elixirMemberEffects(lines: readonly string[], fn: FunctionInfo, aliases: ReadonlyMap<string, string>): Pick<FunctionInfo, "fieldWrites" | "throws"> | null {
   const out = new EffectsCollector();
@@ -33,8 +33,7 @@ export function elixirMemberEffects(lines: readonly string[], fn: FunctionInfo, 
       const written = m[1]!;
       const head = written.split(".")[0]!;
       const full = aliases.get(head);
-      // A module name is whole: `File.Error` is never a project module named `Error`.
-      out.addThrow(full ? full + written.slice(head.length) : written, ln, undefined, true);
+      out.addThrow(full ? full + written.slice(head.length) : written, ln);
     }
   }
   return out.result();

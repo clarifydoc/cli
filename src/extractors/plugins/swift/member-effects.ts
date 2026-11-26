@@ -1,6 +1,5 @@
 import type { ClassInfo, FunctionInfo } from "../../../types/analysis.js";
-import { blankStringLiterals } from "../shared/regex-base.js";
-import { EffectsCollector } from "../shared/member-effects-kit.js";
+import { BodyText, EffectsCollector, addBindingNames, membersAtOwnDepth, ownNames, statedTypeNames } from "../shared/member-effects-kit.js";
 
 const OP = String.raw`(?:<<|>>|&[-+*]|[-+*/%&|^])?`;
 /** A statement that starts with an lvalue: the start of the line, after `;` or `{`, or after a closure's `in`. */
@@ -29,36 +28,15 @@ const MEMBER_RE = /^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:(?:private|public|internal|f
 const EXTENSION_RE = /^\s*(?:(?:public|package|internal|private|fileprivate)\s+)?extension\b/;
 const KEYWORDS = new Set(["self", "super", "return", "throw", "try", "await", "else", "case", "let", "var", "in", "is", "as", "if", "guard", "while", "switch", "where", "default"]);
 
-/** A function's own local names, parameters included. */
-function localNames(lines: readonly string[], fn: FunctionInfo, codeAt: (ln: number) => string): Set<string> {
-  const own = new Set<string>(fn.params.map((p) => p.name));
-  const last = Math.min(fn.endLine, lines.length);
-  for (let ln = fn.line; ln <= last; ln++) {
-    const code = codeAt(ln);
-    for (const re of LOCAL_RES) {
-      for (const m of code.matchAll(re)) for (const n of m[1]!.split(",")) {
-        const name = n.trim().replace(/^(?:let|var)\s+/, "");
-        if (/^[A-Za-z_]\w*$/.test(name) && !KEYWORDS.has(name)) own.add(name);
-      }
-    }
-  }
-  return own;
-}
+/** The names a body line binds. */
+const readLocals = (code: string, add: (name: string) => void): void => addBindingNames(code, LOCAL_RES, /^(?:let|var)\s+/, KEYWORDS, add);
 
 /**
  * The members a type's body declares at its own depth (`var points = 0`, `private let repo: Repo`), outside its
  * methods and the types nested in it, with the line of each — the untyped ones are no `ClassInfo.properties` entry.
  */
 export function swiftDeclaredMembers(lines: readonly string[], cls: ClassInfo, nested: readonly ClassInfo[]): Map<string, number> {
-  const out = new Map<string, number>();
-  const inside = (ln: number, spans: readonly { line: number; endLine: number }[]) => spans.some((s) => ln >= s.line && ln <= s.endLine);
-  const inner = nested.filter((c) => c !== cls && c.line > cls.line && c.endLine <= cls.endLine);
-  for (let ln = cls.line + 1; ln < Math.min(cls.endLine, lines.length + 1); ln++) {
-    if (inside(ln, cls.methods) || inside(ln, inner)) continue;
-    const m = MEMBER_RE.exec(lines[ln - 1] ?? "");
-    if (m && !out.has(m[1]!)) out.set(m[1]!, ln);
-  }
-  return out;
+  return membersAtOwnDepth(lines, cls, nested, MEMBER_RE);
 }
 
 /** Whether `cls` is an `extension` of a type declared elsewhere (its stored members are the type's, not its own). */
@@ -82,25 +60,20 @@ export function swiftMemberEffects(
 ): Pick<FunctionInfo, "fieldWrites" | "throws"> | null {
   const out = new EffectsCollector();
   const isInit = method !== null && /^init[?!]?$/.test(fn.name);
-  const typed = new Set<string>();
-  for (const p of fn.params) if (p.type) typed.add(p.name);
-  for (const l of fn.localTypes ?? []) if (l.type && !l.soft && l.choice === undefined) typed.add(l.name);
-  const last = Math.min(fn.endLine, lines.length);
-  const codeAt = (ln: number) => blankStringLiterals(lines[ln - 1] ?? "", ["//"]);
-  const signature = TYPED_THROWS_RE.exec(codeAt(fn.line));
+  const typed = statedTypeNames(fn);
+  const body = new BodyText(lines, fn, ["//"]);
+  const signature = TYPED_THROWS_RE.exec(body.code(fn.line));
   if (signature) out.addThrow(signature[1]!, fn.line, true);
-  const own = method ? localNames(lines, fn, codeAt) : null;
-  const declared = new Set<string>();
-  const declare = (member: string): void => {
-    const at = method?.members?.get(member);
-    if (at === undefined || declared.has(member)) return;
-    declared.add(member);
-    out.addWrite("this", member, at, true);
-  };
-  for (let ln = fn.line; ln <= last; ln++) {
-    const code = codeAt(ln);
-    if (code.includes("throw")) for (const m of code.matchAll(THROW_RE)) out.addThrow(thrownType(m[1]!, m[2] !== undefined), ln);
-    if (isInit || !code.includes("=")) continue;
+  const own = method ? ownNames(body, readLocals) : null;
+  const declare = (member: string): void => out.declareOnce(member, method?.members?.get(member));
+  for (let ln = fn.line; ln <= body.last; ln++) {
+    const raw = body.raw(ln);
+    const throws = raw.includes("throw");
+    const writes = !isInit && raw.includes("=");
+    if (!throws && !writes) continue;
+    const code = body.code(ln);
+    if (throws) for (const m of code.matchAll(THROW_RE)) out.addThrow(thrownType(m[1]!, m[2] !== undefined), ln);
+    if (!writes) continue;
     for (const m of code.matchAll(SELF_RE)) {
       declare(m[1]!);
       out.addWrite("this", m[1]!, ln);
@@ -110,8 +83,7 @@ export function swiftMemberEffects(
     if (!method || !own) continue;
     for (const m of code.matchAll(BARE_RE)) {
       const name = m[1]!;
-      if (own.has(name) || KEYWORDS.has(name)) continue;
-      if (method.members && !method.members.has(name)) continue;
+      if (KEYWORDS.has(name) || (method.members && !method.members.has(name)) || own().has(name)) continue;
       declare(name);
       out.addWrite("", name, ln);
     }

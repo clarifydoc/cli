@@ -575,7 +575,7 @@ export const elixirSpec: RegexLangSpec = {
   /** Ecto `schema` fields → properties; action-head pattern keys → `requestAccess`. */
   postProcessClasses: (lines, classes) => {
     const channel = isChannelModule(lines);
-    const aliases = elixirAliases(lines, extractElixirImports(lines));
+    const aliases = lines.some((l) => l.includes("raise")) ? elixirAliases(lines, extractElixirImports(lines)) : new Map<string, string>();
     for (const cls of classes) {
       attachEctoSchema(lines, cls);
       attachPatternKeys(lines, cls.methods);

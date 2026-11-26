@@ -1,6 +1,5 @@
 import type { FunctionInfo } from "../../../types/analysis.js";
-import { blankStringLiterals } from "../shared/regex-base.js";
-import { EffectsCollector } from "../shared/member-effects-kit.js";
+import { BodyText, EffectsCollector, ownNames, statedTypeNames } from "../shared/member-effects-kit.js";
 
 const OP = String.raw`(?:<<|>>|[-+*/%&|^])?`;
 /** A statement that starts with an lvalue: the start of the line, after `;`, `{`, `}` or `)` (`if (c) x = 1;`), or after `else`/`do`. */
@@ -21,15 +20,10 @@ const LOCAL_RE = new RegExp(String.raw`(?:^|[;{(,])\s*(?:(?:const|static|constex
 const NOT_TYPES = new Set(["return", "delete", "throw", "case", "goto", "else", "new", "co_return", "co_yield", "co_await", "sizeof", "using", "typedef", "namespace", "operator", "template", "typename", "public", "private", "protected"]);
 const KEYWORDS = new Set(["this", "return", "throw", "delete", "new", "case", "default", "if", "while", "for", "switch", "else", "do", "goto", "break", "continue", "sizeof", "co_return", "co_yield", "co_await"]);
 
-/** A function's own local names, parameters included. */
-function localNames(fn: FunctionInfo, codeAt: (ln: number) => string, last: number): Set<string> {
-  const own = new Set<string>(fn.params.map((p) => p.name));
-  for (let ln = fn.line; ln <= last; ln++) {
-    const code = codeAt(ln);
-    for (const m of code.matchAll(LOCAL_RE)) if (!NOT_TYPES.has(m[1]!) && !KEYWORDS.has(m[2]!)) own.add(m[2]!);
-  }
-  return own;
-}
+/** The locals a body line declares. */
+const readLocals = (code: string, add: (name: string) => void): void => {
+  for (const m of code.matchAll(LOCAL_RE)) if (!NOT_TYPES.has(m[1]!) && !KEYWORDS.has(m[2]!)) add(m[2]!);
+};
 
 /**
  * What a C++ function assigns (`FunctionInfo.fieldWrites`) and the types it throws (`throws`): a member of `this`
@@ -41,31 +35,34 @@ function localNames(fn: FunctionInfo, codeAt: (ln: number) => string, last: numb
  */
 export function cppMemberEffects(lines: readonly string[], fn: FunctionInfo, method: boolean, isConstructor: boolean): Pick<FunctionInfo, "fieldWrites" | "throws"> | null {
   const out = new EffectsCollector();
-  const typed = new Set<string>();
-  for (const p of fn.params) if (p.type) typed.add(p.name);
-  for (const l of fn.localTypes ?? []) if (l.type && !l.soft && l.choice === undefined) typed.add(l.name);
-  const last = Math.min(fn.endLine, lines.length);
-  const codeAt = (ln: number) => blankStringLiterals(lines[ln - 1] ?? "", ["//"]);
-  const own = method && !isConstructor ? localNames(fn, codeAt, last) : null;
-  for (let ln = fn.line; ln <= last; ln++) {
-    const code = codeAt(ln);
-    if (code.includes("throw")) for (const m of code.matchAll(THROW_RE)) out.addThrow(m[1]!, ln);
-    if (isConstructor || (!code.includes("=") && !code.includes("++") && !code.includes("--"))) continue;
-    for (const m of code.matchAll(THIS_RE)) out.addWrite("this", m[1]!, ln);
-    for (const m of code.matchAll(THIS_FIELD_RE)) out.addWrite(`this.${m[1]}`, m[2]!, ln);
-    for (const m of code.matchAll(NAMED_RE)) if (m[1] !== "this" && typed.has(m[1]!)) out.addWrite(m[1]!, m[2]!, ln);
-    if (own) for (const m of code.matchAll(BARE_RE)) if (!own.has(m[1]!) && !KEYWORDS.has(m[1]!)) out.addWrite("", m[1]!, ln);
-    if (code.includes("++") || code.includes("--")) {
-      for (const m of code.matchAll(STEP_RE)) {
-        if (!m[1] === !m[4]) continue; // exactly one of a prefix or a postfix step
-        const via = m[2]?.replace(/\s+/g, "");
-        const member = m[3]!;
-        if (via === "this->") out.addWrite("this", member, ln);
-        else if (via) {
-          const recv = via.replace(/(?:\.|->)$/, "");
-          if (recv !== "this" && typed.has(recv)) out.addWrite(recv, member, ln);
-        } else if (own && !own.has(member) && !KEYWORDS.has(member)) out.addWrite("", member, ln);
-      }
+  const typed = statedTypeNames(fn);
+  const body = new BodyText(lines, fn, ["//"]);
+  const own = method && !isConstructor ? ownNames(body, readLocals) : null;
+  const bare = (name: string): boolean => own !== null && !KEYWORDS.has(name) && !own().has(name);
+  for (let ln = fn.line; ln <= body.last; ln++) {
+    const raw = body.raw(ln);
+    const throws = raw.includes("throw");
+    const steps = !isConstructor && (raw.includes("++") || raw.includes("--"));
+    const writes = !isConstructor && raw.includes("=");
+    if (!throws && !steps && !writes) continue;
+    const code = body.code(ln);
+    if (throws) for (const m of code.matchAll(THROW_RE)) out.addThrow(m[1]!, ln);
+    if (writes) {
+      for (const m of code.matchAll(THIS_RE)) out.addWrite("this", m[1]!, ln);
+      for (const m of code.matchAll(THIS_FIELD_RE)) out.addWrite(`this.${m[1]}`, m[2]!, ln);
+      for (const m of code.matchAll(NAMED_RE)) if (m[1] !== "this" && typed.has(m[1]!)) out.addWrite(m[1]!, m[2]!, ln);
+      for (const m of code.matchAll(BARE_RE)) if (bare(m[1]!)) out.addWrite("", m[1]!, ln);
+    }
+    if (!steps) continue;
+    for (const m of code.matchAll(STEP_RE)) {
+      if (!m[1] === !m[4]) continue; // exactly one of a prefix or a postfix step
+      const via = m[2]?.replace(/\s+/g, "");
+      const member = m[3]!;
+      if (via === "this->") out.addWrite("this", member, ln);
+      else if (via) {
+        const recv = via.replace(/(?:\.|->)$/, "");
+        if (recv !== "this" && typed.has(recv)) out.addWrite(recv, member, ln);
+      } else if (bare(member)) out.addWrite("", member, ln);
     }
   }
   return out.result();

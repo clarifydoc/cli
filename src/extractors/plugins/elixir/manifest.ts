@@ -22,6 +22,8 @@ export const elixirManifest: LanguagePluginManifest = {
   // Read by the `tree-sitter:elixir` front end only (meta.treeSitter).
   grammar: { variants: { elixir: { pkg: "tree-sitter-elixir", wasm: "tree-sitter-elixir.wasm" } } },
   extensions: [".ex", ".exs"],
+  // A module is named whole (`File.Error`, an alias expanded): never a project module sharing its last segment.
+  wholeTypeNames: true,
   testFilePatterns: [/_test\.exs$/],
   testSubjectAffixes: { suffixes: ["_test"] },
   externalModulePrefixes: ["Enum", "Map", "List", "String", "Kernel", "IO", "File", "Path", "Logger", "GenServer", "Supervisor", "Application", "Process", "Agent", "Task", "Stream", "Ecto", "Phoenix", "Plug", "Jason"],

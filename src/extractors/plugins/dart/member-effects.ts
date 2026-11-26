@@ -1,6 +1,5 @@
 import type { FunctionInfo } from "../../../types/analysis.js";
-import { blankStringLiterals } from "../shared/regex-base.js";
-import { EffectsCollector } from "../shared/member-effects-kit.js";
+import { BodyText, EffectsCollector, ownNames, statedTypeNames } from "../shared/member-effects-kit.js";
 
 const OP = String.raw`(?:\?\?|<<|>>>?|~\/|[-+*/%&|^])?`;
 /** A statement that starts with an lvalue: the start of the line, after `;`, `{`, `}` or `=>`. */
@@ -18,6 +17,11 @@ const THROW_RE = /\bthrow\s+(?:const\s+|new\s+)?([A-Z][\w$]*)(?:\.[A-Za-z_$][\w$
 const LOCAL_RE = /\b(?:var|final|const|late|[A-Za-z_$][\w$]*(?:<[^>()]*>)?\??)\s+([a-z_$][\w$]*)\s*(?:=(?!=)|;|\bin\b)/g;
 const KEYWORDS = new Set(["return", "throw", "await", "yield", "else", "case", "new", "const", "final", "var", "late", "is", "as", "in"]);
 
+/** The locals a body line declares. */
+const readLocals = (code: string, add: (name: string) => void): void => {
+  for (const m of code.matchAll(LOCAL_RE)) if (!KEYWORDS.has(m[1]!)) add(m[1]!);
+};
+
 /**
  * What a Dart function assigns (`FunctionInfo.fieldWrites`) and the exception types it throws (`throws`): a field of
  * `this` (`this.score = s`, `this.score += 1`, `this.score++`), of a field's object (`this.stats.goals = 0` →
@@ -27,31 +31,29 @@ const KEYWORDS = new Set(["return", "throw", "await", "yield", "else", "case", "
  */
 export function dartMemberEffects(lines: readonly string[], fn: FunctionInfo, fields: ReadonlySet<string> | null, isConstructor: boolean): Pick<FunctionInfo, "fieldWrites" | "throws"> | null {
   const out = new EffectsCollector();
-  const typed = new Set<string>();
-  for (const p of fn.params) if (p.type) typed.add(p.name);
-  for (const l of fn.localTypes ?? []) if (l.type && !l.soft && l.choice === undefined) typed.add(l.name);
-  const own = new Set<string>(fn.params.map((p) => p.name));
-  const last = Math.min(fn.endLine, lines.length);
-  const codeAt = (ln: number) => blankStringLiterals(lines[ln - 1] ?? "", ["//"]);
-  if (fields && !isConstructor) {
-    for (let ln = fn.line; ln <= last; ln++) for (const m of codeAt(ln).matchAll(LOCAL_RE)) if (!KEYWORDS.has(m[1]!)) own.add(m[1]!);
-  }
-  for (let ln = fn.line; ln <= last; ln++) {
-    const code = codeAt(ln);
-    if (code.includes("throw")) for (const m of code.matchAll(THROW_RE)) out.addThrow(m[1]!, ln);
-    if (isConstructor || (!code.includes("=") && !code.includes("++") && !code.includes("--"))) continue;
-    for (const m of code.matchAll(THIS_RE)) out.addWrite("this", m[1]!, ln);
-    for (const m of code.matchAll(THIS_FIELD_RE)) out.addWrite(`this.${m[1]}`, m[2]!, ln);
-    for (const m of code.matchAll(NAMED_RE)) if (typed.has(m[1]!) && m[1] !== "this") out.addWrite(m[1]!, m[2]!, ln);
-    if (fields) {
-      for (const m of code.matchAll(BARE_RE)) if (fields.has(m[1]!) && !own.has(m[1]!)) out.addWrite("", m[1]!, ln);
-      if (code.includes("++") || code.includes("--")) {
-        for (const m of code.matchAll(STEP_RE)) {
-          if (!/(?:\+\+|--)/.test(m[0])) continue;
-          if (m[1]) out.addWrite("this", m[2]!, ln);
-          else if (fields.has(m[2]!) && !own.has(m[2]!)) out.addWrite("", m[2]!, ln);
-        }
-      }
+  const typed = statedTypeNames(fn);
+  const body = new BodyText(lines, fn, ["//"]);
+  const own = ownNames(body, readLocals);
+  const bareField = (name: string): boolean => fields !== null && fields.has(name) && !own().has(name);
+  for (let ln = fn.line; ln <= body.last; ln++) {
+    const raw = body.raw(ln);
+    const throws = raw.includes("throw");
+    const steps = !isConstructor && (raw.includes("++") || raw.includes("--"));
+    const writes = !isConstructor && raw.includes("=");
+    if (!throws && !steps && !writes) continue;
+    const code = body.code(ln);
+    if (throws) for (const m of code.matchAll(THROW_RE)) out.addThrow(m[1]!, ln);
+    if (writes) {
+      for (const m of code.matchAll(THIS_RE)) out.addWrite("this", m[1]!, ln);
+      for (const m of code.matchAll(THIS_FIELD_RE)) out.addWrite(`this.${m[1]}`, m[2]!, ln);
+      for (const m of code.matchAll(NAMED_RE)) if (typed.has(m[1]!) && m[1] !== "this") out.addWrite(m[1]!, m[2]!, ln);
+      if (fields) for (const m of code.matchAll(BARE_RE)) if (bareField(m[1]!)) out.addWrite("", m[1]!, ln);
+    }
+    if (!steps || !fields) continue;
+    for (const m of code.matchAll(STEP_RE)) {
+      if (!m[0].includes("++") && !m[0].includes("--")) continue;
+      if (m[1]) out.addWrite("this", m[2]!, ln);
+      else if (bareField(m[2]!)) out.addWrite("", m[2]!, ln);
     }
   }
   return out.result();
