@@ -3,6 +3,7 @@ import { normalizeRoutePath } from "./route-linker.js";
 import type { ApiRouteLink, FileAnalysis, SymbolDataAccess, SymbolLink } from "../types/analysis.js";
 import { queueHoleKey } from "./data-access-graph.js";
 import { keyOf } from "./symbol-graph.js";
+import { requiresServiceTie } from "../extractors/registry.js";
 
 /**
  * Synthesize cross-tier symbol links from the api↔route join, so the Call
@@ -174,6 +175,8 @@ export function routeHandlerKey(
 export function synthesizeApiRouteSymbolLinks(
   links: ApiRouteLink[],
   analyses: FileAnalysis[],
+  /** The symbol links so far: a service-tied contract row (gRPC) goes on to the handler its spec join found. */
+  symbolLinks: readonly SymbolLink[] = [],
 ): SymbolLink[] {
   if (links.length === 0) return [];
 
@@ -208,6 +211,15 @@ export function synthesizeApiRouteSymbolLinks(
     const candidates = globalByName.get(name) ?? [];
     // Unique-or-nothing: a name defined in several files is not guessable.
     return candidates.length === 1 ? candidates[0]! : null;
+  };
+
+  let specJoins: Map<string, SymbolLink> | null = null;
+  const specJoinOf = (file: string, routeSymbol: string): SymbolLink | undefined => {
+    if (!specJoins) {
+      specJoins = new Map();
+      for (const l of symbolLinks) if (l.strategy === "spec-join") specJoins.set(`${l.sourceFile}\0${l.sourceSymbol}`, l);
+    }
+    return specJoins.get(`${file}\0${routeSymbol}`);
   };
 
   // A base-class method's request resolved for one subclass is that
@@ -278,7 +290,18 @@ export function synthesizeApiRouteSymbolLinks(
       const route = routeRow();
       if (route) tgt = { symbol: routeSymbolName(route), line: route.line, endLine: route.line };
     }
-    if (!tgt && link.handler) {
+    // A service-tied contract's rpc is served by the class tied to its service — the one its spec join found —
+    // never by a function that merely bears the rpc's name; without a join the trace ends on the route's symbol.
+    const tied = requiresServiceTie(fileOf.get(link.target)?.language ?? "");
+    if (!tgt && tied) {
+      const route = routeRow();
+      const join = route && specJoinOf(link.target, routeSymbolName(route));
+      if (join) {
+        tgt = { symbol: join.targetSymbol, line: join.targetLine, endLine: join.targetLine };
+        targetFile = join.targetFile;
+      }
+    }
+    if (!tgt && link.handler && !tied) {
       const local = byName(spansFor(link.target), link.handler);
       if (local.length >= 1) {
         tgt = local[0]!; // same-file: first match (duplicates within a file are rare)

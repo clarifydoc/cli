@@ -1759,7 +1759,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Appended after enrichGraphFromSymbolLinks ran, so the component dependency
   // graph is untouched; blast radius (below) does include them — a handler's
   // blast genuinely covers the screens that call it.
-  const apiSymbolLinks = synthesizeApiRouteSymbolLinks(apiRouteLinks, allAnalyses);
+  const apiSymbolLinks = synthesizeApiRouteSymbolLinks(apiRouteLinks, allAnalyses, symbolLinks);
   // The receiver class a call into a mixin ran on, for its own-receiver accesses — before `viaType` is dropped below.
   const mixinReceivers = allAnalyses.some((a) => a.dataSources?.some((d) => d.mixinSelf)) ? captureMixinReceivers(symbolLinks) : null;
   const inheritedLinks = moveInheritedCallsToSubclasses(symbolLinks, apiSymbolLinks, allAnalyses);

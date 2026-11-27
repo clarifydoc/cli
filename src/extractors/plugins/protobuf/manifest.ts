@@ -6,5 +6,6 @@ export const protobufManifest: LanguagePluginManifest = {
   parsing: "regex",
   extensions: [".proto"],
   apiContract: true,
+  handlerByServiceTie: true,
   importTarget: false,
 };

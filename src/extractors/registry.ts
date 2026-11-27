@@ -495,6 +495,15 @@ const API_CONTRACT_LANGUAGES: ReadonlySet<string> = new Set(
   ALL_MANIFESTS.filter((m) => m.apiContract).map((m) => m.language),
 );
 
+/** Languages whose contract rows are served only by a class tied to the service (`LanguagePluginManifest.handlerByServiceTie`). */
+const SERVICE_TIE_LANGUAGES: ReadonlySet<string> = new Set(
+  ALL_MANIFESTS.filter((m) => m.handlerByServiceTie).map((m) => m.language),
+);
+
+export function requiresServiceTie(language: string): boolean {
+  return SERVICE_TIE_LANGUAGES.has(language);
+}
+
 export function isApiContractLanguage(language: string): boolean {
   return API_CONTRACT_LANGUAGES.has(language);
 }

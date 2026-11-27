@@ -35,7 +35,7 @@ import { isTestFile } from "./test-file-detector.js";
 import type { CallableMemberQuestion, CallableQuestions, FunctionTypeQuestion } from "./value-flow.js";
 import { callSiteKey, hasValueFlowFacts, solveValueFlow, valueFlowInvokeSites } from "./value-flow.js";
 import { getLanguageForFile } from "../parsers/language-map.js";
-import { ALL_BUILTIN_MEMBERS, BUILTIN_MEMBERS_BY_LANGUAGE, declaresSchemaTypes, importsNameDirectories, isApiContractLanguage, manifestFor, packageEcosystemsFor, packageMatchingFor, pluginFor, testFilePatternsFor } from "../extractors/registry.js";
+import { ALL_BUILTIN_MEMBERS, BUILTIN_MEMBERS_BY_LANGUAGE, declaresSchemaTypes, importsNameDirectories, isApiContractLanguage, manifestFor, requiresServiceTie, packageEcosystemsFor, packageMatchingFor, pluginFor, testFilePatternsFor } from "../extractors/registry.js";
 import { buildImportDirectoryResolver, packageRootLookup, packageRootsOf, type ImportDirectoryResolver } from "./import-directories.js";
 import { SELF_HEADS, bareSupertypeName, declaredSupertypes, isConstructor, sameTypeSpace } from "./typed-receivers.js";
 import { byOrdinal, byOrdinalKey } from "./ordinal.js";
@@ -553,7 +553,7 @@ export function buildSymbolLinks(
       // (`pairContractTwins`) says so — so a name derived from the path (a client's `deleteClubs`) is not tried;
       // the operation's own id still is.
       if (route.kind === "api" && isSpecFile) {
-        const specLink = specRouteHandlerLink(route, sourceFile, sourceSymbol, ctx, isSpecJoinExcluded, codeTwinFile(route));
+        const specLink = specRouteHandlerLink(route, sourceFile, sourceSymbol, ctx, isSpecJoinExcluded, codeTwinFile(route), requiresServiceTie(analysis.language));
         if (specLink) links.push(specLink);
       }
 
@@ -1621,6 +1621,8 @@ function specRouteHandlerLink(
    * function, and a function found by that id alone must be in that file (a client's `register` is not it).
    */
   codeTwin: string | null = null,
+  /** The contract's rows are served only by a class tied to the service: no join by the operation's name alone. */
+  serviceTied = false,
 ): SymbolLink | null {
   const segment = route.path.split("/").filter((s) => s && !/[{:}]/.test(s)).pop();
   const words = segment ? segment.split(/[-_]/).filter(Boolean) : [];
@@ -1692,6 +1694,8 @@ function specRouteHandlerLink(
     const def = ctx.symbolIndex.get(pick[0]!.file)?.get(pick[0]!.symbol);
     if (def) return link(cand, pick[0]!.file, def);
   }
+  // A class tied to the service is the only handler: a namesake method or function is not one.
+  if (serviceTied && contractType) return null;
   // A spec generated from the code (NestJS, Swashbuckle and springdoc name an
   // operation after its handler): the one code route of the same verb whose
   // handler has the operation's name serves it.

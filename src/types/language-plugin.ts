@@ -2294,6 +2294,13 @@ export interface LanguagePluginManifest {
    */
   apiContract?: boolean;
   /**
+   * The contract's operations are served only by a class tied to the service they belong to (gRPC: a class
+   * extending or implementing protoc's generated base, or registered with it — see `grpcServiceOf`). A class
+   * that merely has a method of the rpc's name is not a handler, so the cross-tier linkers never join the row to
+   * a function by that name alone.
+   */
+  handlerByServiceTie?: boolean;
+  /**
    * A non-relative import names a PACKAGE DIRECTORY, every file of which it
    * loads — Go `import "app/handler"`, Rust `mod` trees, Ruby load paths. The
    * component graph resolves such an import to the one project directory
