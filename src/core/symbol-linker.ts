@@ -4256,6 +4256,11 @@ function buildMemberTypes(
             point.typeFile = named.length === 1 ? named[0]! : named.length === 0 ? null : point.typeFile;
           }
         }
+        // A type written through its package or namespace (`league.Scout`) is the class declared there, never a namesake's.
+        if (type && typeName && point.typeName === typeName) {
+          const named = packageQualifiedFile(type, typeName, (n) => inSpace(classToFiles.get(n) ?? [], a.filePath), (f) => analysisOf.get(f));
+          if (named) point.typeFile = named;
+        }
         if (qualifier) point.qualifier = qualifier;
         if (type && type.includes("<")) point.written = type;
         members.set(name, point);
@@ -9338,6 +9343,12 @@ function scopedNameUncached(
         point.typeFile = named.length === 1 ? named[0]! : named.length === 0 ? null : point.typeFile;
       }
     }
+    // A local, parameter or field written through its package or namespace is the class declared there, never a namesake's.
+    if (typeName && declared.type && point.typeName === typeName) {
+      ctx.analysisByFile ??= new Map(ctx.analyses.map((a) => [a.filePath, a]));
+      const named = packageQualifiedFile(declared.type, typeName, (n) => nameableClassFiles(ctx, n, sourceFile), (f) => ctx.analysisByFile!.get(f));
+      if (named) point.typeFile = named;
+    }
     if (declared.qualifier) point.qualifier = declared.qualifier;
     if (param && !param.qualifier && !param.injected) {
       const cls = consumer ? ctx.classAt.get(memberKey(sourceFile, consumer)) : undefined;
@@ -9688,6 +9699,33 @@ function moduleQualifiedType(ctx: LinkContext, written: string, typeName: string
     if (ref) found.set(`${ref.typeFile}\0${ref.typeName}`, ref);
   }
   return found.size === 1 ? [...found.values()][0]! : null;
+}
+
+/**
+ * The one file declaring the class a type written through its package or namespace names (`League.Scouting.Scout`,
+ * `com.example.league.Scout`): among the files declaring `typeName`, the one whose package or namespace is the written
+ * qualifier (a C# namespace may be written relative to an enclosing one, so a trailing match counts). Undefined when
+ * the type is written bare, no file of the same language is in that package (a nested type `Outer.Inner`, a `using`
+ * alias, a library's namespace — the bare name's rules stand), or several are.
+ */
+function packageQualifiedFile(
+  written: string,
+  typeName: string,
+  filesOf: (name: string) => readonly string[],
+  analysisOf: (file: string) => FileAnalysis | undefined,
+): string | undefined {
+  if (!written.includes(".")) return undefined;
+  const qualifier = new RegExp(`(?:^|[^\\w.])([A-Za-z_]\\w*(?:\\.[A-Za-z_]\\w*)*)\\.${escapeRegex(typeName)}(?![\\w.])`).exec(written)?.[1];
+  if (!qualifier) return undefined;
+  const files = filesOf(typeName);
+  if (files.length < 2) return undefined;
+  const home = analysisOf(files[0]!)?.language;
+  const named = files.filter((f) => {
+    const a = analysisOf(f);
+    const ns = a?.packageName ?? a?.declaredNamespace;
+    return !!ns && a?.language === home && (ns === qualifier || ns.endsWith(`.${qualifier}`));
+  });
+  return named.length === 1 ? named[0] : undefined;
 }
 
 /**

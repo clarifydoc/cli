@@ -17,6 +17,7 @@ import { csharpElementFacts } from "./element-types.js";
 import { classValueContext, csharpFieldInitFacts, csharpValueFlow, fileDelegateNames } from "./value-flow.js";
 import type { ClassValueContext } from "./value-flow.js";
 import { csharpMemberEffects } from "./member-effects.js";
+import { unanchoredType } from "./local-types.js";
 import {
   FileScopeNodes,
   injectionKey,
@@ -176,7 +177,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
             member.childForFieldName("name")?.text ?? "unknown";
           const prop: PropertyInfo = {
             name: propName,
-            type: member.childForFieldName("type")?.text ?? null,
+            type: unanchoredType(member.childForFieldName("type")?.text ?? null),
             visibility: this.getCsharpVisibility(member),
             isStatic: this.hasModifier(member, "static"),
             isReadonly: this.hasModifier(member, "readonly"),
@@ -200,10 +201,10 @@ export class CSharpExtractor extends FunctionClassExtractor {
         } else if (member.type === "field_declaration") {
           // private readonly Foo _bar; — the tree-sitter shape is
           // field_declaration → variable_declaration { type, variable_declarator { name } }
-          const typeText = member.childForFieldName("type")?.text
+          const typeText = unanchoredType(member.childForFieldName("type")?.text
             ?? this.findChildByType(member, "variable_declaration")
               ?.childForFieldName("type")?.text
-            ?? null;
+            ?? null);
           const varDecl = this.findChildByType(member, "variable_declaration");
           if (varDecl) {
             for (const decl of varDecl.children) {
@@ -441,7 +442,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
         const type = kids[i + 1];
         const name = kids[i + 2];
         if (type && name?.type === "identifier") {
-          params.push({ name: name.text, type: type.text, defaultValue: null, variadic: true });
+          params.push({ name: name.text, type: unanchoredType(type.text), defaultValue: null, variadic: true });
           i += 2;
         }
         continue;
@@ -449,7 +450,7 @@ export class CSharpExtractor extends FunctionClassExtractor {
       if (p.type !== "parameter") continue;
       const param: ParamInfo = {
         name: p.childForFieldName("name")?.text ?? p.text,
-        type: p.childForFieldName("type")?.text ?? null,
+        type: unanchoredType(p.childForFieldName("type")?.text ?? null),
         defaultValue: csharpDefaultValue(p),
       };
       if (p.firstChild?.type === "attribute_list") {

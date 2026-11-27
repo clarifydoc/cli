@@ -184,6 +184,11 @@ export function staticTypeOf(expr: Node): StaticType | null {
   return null;
 }
 
+/** A type as written without the `global::` anchor, which only roots the namespace (`global::League.Scout` is `League.Scout`). */
+export function unanchoredType<T extends string | null>(type: T): T {
+  return (type?.startsWith("global::") ? type.slice(8) : type) as T;
+}
+
 /** `Shop.Domain.IRepo<User>?` → `IRepo`; null when no class name is left. */
 export function bareTypeName(text: string): string | null {
   let t = text.replace(/\s+/g, "").replace(/^global::/, "");
@@ -483,7 +488,7 @@ function localTypesFrom(found: Node[], scopeIds: ReadonlySet<number>, intoLambda
   for (const c of constructed) add(c.name, reassigned.has(c.name) ? c.declared : c.built);
 
   const out: LocalType[] = [];
-  for (const entry of byName.values()) if (entry) out.push(entry);
+  for (const entry of byName.values()) if (entry) out.push(entry.type ? { ...entry, type: unanchoredType(entry.type) } : entry);
   for (const [name, calls] of fromCalls) if (!byName.has(name)) out.push(...calls.values());
   return out.length > 0 ? out : undefined;
 }

@@ -1024,6 +1024,12 @@ function extractLocalTypes(body: Node | null, language: JkLang): LocalType[] {
         : init?.type === "call_expression" && fact?.constructed ? init.children[0]?.text : undefined;
       const path = written ? ownerTypePath(written.split("<")[0]!.replace(/\?/g, "").trim()) : null;
       if (path && path.endsWith(`.${simple}`)) simple = path;
+      else if (written) {
+        // `com.example.league.Scout s` / `new com.example.league.Scout()`: the package stays on the local, as it does on a
+        // parameter or a field, so the linker binds the class of that package and never a namesake's.
+        const base = written.split("<")[0]!.replace(/\?/g, "").replace(/\s+/g, "");
+        if (base.endsWith(`.${simple}`) && /^(?:[a-z_]\w*\.)+$/.test(base.slice(0, base.length - simple.length))) simple = base;
+      }
     }
     seen.add(name);
     const entry: LocalType = { name, type: simple };

@@ -109,7 +109,7 @@ class C {
     const locals = (await classesOf(src, "kotlin"))[0]!.methods.find((m) => m.name === "m")!.localTypes;
     expect(locals).toEqual([
       { name: "made", type: "CarRepo" },
-      { name: "qualified", type: "CarRepo" },
+      { name: "qualified", type: "com.acme.CarRepo" },
       { name: "applied", type: "CarRepo" },
       { name: "bean", type: "CarRepo" },
       { name: "named", type: "Storage", qualifier: "s3" },
