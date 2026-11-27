@@ -1,4 +1,5 @@
 import type { CallInfo, FileAnalysis, FunctionInfo } from "../../../types/analysis.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /**
  * A parameterless `def` (`def total: Int`, `def name = "x"`) is called without parentheses — `club.total`, a bare
@@ -77,7 +78,7 @@ export function addScalaGetterReads(lines: readonly string[], analysis: FileAnal
 
 /** A `def` of this name on the line with no parameter list: `def total: Int`, `def name = …`, `def all[T]: Seq[T]`. */
 function isParameterless(line: string, name: string): boolean {
-  const m = new RegExp(String.raw`(?<![\w$])def\s+${name.replace(/\$/g, "\\$")}\s*(\[[^\]]*\])?\s*([:={(]|$)`).exec(line);
+  const m = new RegExp(String.raw`(?<![\w$])def\s+${escapeRegex(name)}\s*(\[[^\]]*\])?\s*([:={(]|$)`).exec(line);
   return !!m && m[2] !== "(";
 }
 
@@ -113,7 +114,7 @@ const KEYWORDS: ReadonlySet<string> = new Set([
 
 /** Where the body begins in `slice` (the def's text): past its parameter lists and result type, after the `=` (or the `{`). */
 function bodyStart(slice: string, name: string): number {
-  const at = slice.search(new RegExp(String.raw`(?<![\w$])def\s+${name.replace(/\$/g, "\\$")}(?![\w$])`));
+  const at = slice.search(new RegExp(String.raw`(?<![\w$])def\s+${escapeRegex(name)}(?![\w$])`));
   if (at < 0) return -1;
   let depth = 0;
   for (let k = slice.indexOf(name, at) + name.length; k < slice.length; k++) {

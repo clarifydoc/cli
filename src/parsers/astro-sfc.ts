@@ -76,7 +76,7 @@ export interface AstroAssetRef {
  */
 export function astroAssetRefs(source: string): AstroAssetRef[] {
   const fm = astroFrontmatter(source);
-  const text = (fm ? source.slice(0, fm.close).replace(/[^\n]/g, " ") + source.slice(fm.close) : source).replace(/<!--[\s\S]*?-->/g, blank);
+  const text = (fm ? source.slice(0, fm.close).replace(/[^\n]/g, " ") + source.slice(fm.close) : source).replace(/<!--[\s\S]*?--!?>/g, blank);
   const refs: AstroAssetRef[] = [];
   const attr = (attrs: string, name: string): string | null => {
     const m = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i").exec(attrs);

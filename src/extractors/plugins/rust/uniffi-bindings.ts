@@ -1,5 +1,6 @@
 import type { ForeignBindingRule } from "../../../types/analysis.js";
 import { crateName, join, packageName } from "./foreign-bindings.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 type Declared = NonNullable<ForeignBindingRule["declared"]>;
 
@@ -7,7 +8,7 @@ const MAX_SCAFFOLD_FILES = 64;
 
 /** The section's body in a TOML text (`[bindings.kotlin]`), or "". */
 function tomlSection(toml: string, header: string): string {
-  const escaped = header.replace(/[.[\]]/g, "\\$&");
+  const escaped = escapeRegex(header);
   return new RegExp(`^[^\\S\\r\\n]*\\[${escaped}\\][^\\S\\r\\n]*$([\\s\\S]*?)(?=^[^\\S\\r\\n]*\\[|(?![\\s\\S]))`, "m").exec(toml)?.[1] ?? "";
 }
 

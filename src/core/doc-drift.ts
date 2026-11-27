@@ -122,9 +122,9 @@ export function docReferences(doc: string, text: string): DocReference[] {
       if (generated.test(raw)) generated = null;
       return;
     }
-    const g = fence ? null : /^\s*<!--\s*(?:([\w.-]+):start|BEGIN\b[^>]*?)\s*-->/i.exec(raw);
+    const g = fence ? null : /^\s*<!--\s*(?:([\w.-]+):start|BEGIN\b[^>]*?)\s*--!?>/i.exec(raw);
     if (g) {
-      generated = g[1] ? new RegExp(`<!--\\s*${escapeRegex(g[1])}:end\\s*-->`, "i") : /<!--\s*END\b[^>]*-->/i;
+      generated = g[1] ? new RegExp(`<!--\\s*${escapeRegex(g[1])}:end\\s*--!?>`, "i") : /<!--\s*END\b[^>]*--!?>/i;
       return;
     }
     const f = /^\s*(```+|~~~+)/.exec(raw);

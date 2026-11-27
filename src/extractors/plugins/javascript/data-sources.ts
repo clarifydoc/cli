@@ -112,7 +112,7 @@ function rebuiltTemplate(template: Node, depth = 0): string | null {
 }
 
 /** `(this.constructor as any)`, `(this.constructor as unknown as typeof Club)`, `(<any>this.constructor)`: `this.constructor`. */
-const CAST_CONSTRUCTOR = /\(\s*(?:<[^<>()]*>\s*)?this\s*\.\s*constructor(?:\s+(?:as|satisfies)\s+[^()]+?)*\s*\)/g;
+const CAST_CONSTRUCTOR = /\(\s*(?:<[^<>()]*>\s*)?this\s*\.\s*constructor(?:\s+(?:as|satisfies)\s[^()]*|\s*)\)/g;
 function uncastConstructor(target: string): string {
   return target.replace(CAST_CONSTRUCTOR, "this.constructor");
 }

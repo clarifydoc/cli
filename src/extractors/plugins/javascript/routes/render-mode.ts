@@ -17,6 +17,7 @@ import type { RouteResolver } from "../../../route-resolvers/base.js";
 import { splitTopLevel } from "../../../shared/split-top-level.js";
 import { blankStringAwareComments, matchingBracket } from "../../shared/text-scan.js";
 import { inferFileBasedRoute } from "./file-routes.js";
+import { escapeRegex } from "../../shared/path-utils.js";
 
 /**
  * How a page is rendered — `ssr` (per request), `ssg` (at build), `isr` (at build and again on a timer
@@ -102,7 +103,7 @@ function literal(value: string): boolean | number | string | undefined {
 
 /** Whether `name` is exported by the file, written as a declaration or an export list entry. */
 function exportsName(text: string, name: string): boolean {
-  const n = name.replace(/\$/g, "\\$");
+  const n = escapeRegex(name);
   return (
     new RegExp(`\\bexport\\s+(?:async\\s+)?(?:function\\s*\\*?|const|let|var)\\s+${n}\\b`).test(text) ||
     new RegExp(`\\bexport\\s*\\{[^}]*(?:\\bas\\s+${n}\\b|(?<![\\w$.])${n}(?![\\w$]))[^}]*\\}`).test(text)

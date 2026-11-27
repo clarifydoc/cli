@@ -1020,7 +1020,7 @@ function mutatesCollection(text: string, name: string): boolean {
     }
     return mutatedIn.names.has(name);
   }
-  const n = name.replace(/\$/g, "\\$");
+  const n = escapeRegex(name);
   return new RegExp(`(?<![\\w$.])${n}\\s*${MUTATING_WRITE}`).test(text);
 }
 

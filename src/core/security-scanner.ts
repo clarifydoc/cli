@@ -123,6 +123,22 @@ function isKeyShapedValue(text: string): boolean {
 }
 
 /**
+ * The `name` of `name = ` or `name: ` written just before `end` (the opening quote of its value), read backwards so a
+ * long run of name characters is scanned once: an unanchored `([\w$-]+)…$` regex retried it from every position.
+ */
+function nameBefore(text: string, end: number): string | null {
+  let i = end;
+  while (i > 0 && /\s/.test(text[i - 1]!)) i--;
+  if (i === 0 || (text[i - 1] !== "=" && text[i - 1] !== ":")) return null;
+  i--;
+  while (i > 0 && /\s/.test(text[i - 1]!)) i--;
+  if (i > 0 && "'\"`".includes(text[i - 1]!)) i--;
+  let start = i;
+  while (start > 0 && /[\w$-]/.test(text[start - 1]!)) start--;
+  return start < i ? text.slice(start, i) : null;
+}
+
+/**
  * A matched secret that is a placeholder, not a credential: documentation
  * values (`AKIAIOSFODNN7EXAMPLE`, `your-api-key-here`), template holes
  * (`${PASSWORD}`, `{{token}}`, `<password>`), masks (`****`, `xxxx`) and the
@@ -133,8 +149,8 @@ export function isPlaceholderSecret(text: string): boolean {
   const quoted = /['"`]([^'"`]*)['"`]\s*$/.exec(text);
   const value = (quoted ? quoted[1]! : text).trim();
   // A value equal to its own name, case- and separator-folded (`API_KEY = "API_KEY"`, `apiKey: "apiKey"`), is a key name.
-  const named = quoted ? /([\w$-]+)['"`]?\s*[=:]\s*['"`][^'"`]*['"`]\s*$/.exec(text) : null;
-  if (named && foldName(named[1]!) === foldName(value) && value.length > 0) return true;
+  const named = quoted ? nameBefore(text, quoted.index) : null;
+  if (named && foldName(named) === foldName(value) && value.length > 0) return true;
   // A connection URL's password is the part between `:` and `@`.
   const secret = urlPassword(value) ?? value;
   // Template holes in any dialect: `${x}`, `{{x}}`, Ruby `#{x}`, ERB/JSP `<%= x %>`, `<x>`, `%(x)s`.

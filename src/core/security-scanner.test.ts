@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scanSecurity, isVendoredSource, vendoredMinoritySet, isSecretConstant, dropSecretConstants } from "./security-scanner.js";
+import { scanSecurity, isVendoredSource, vendoredMinoritySet, isSecretConstant, dropSecretConstants, isPlaceholderSecret } from "./security-scanner.js";
 
 const cats = (src: string, filePath = "src/app.ts") =>
   scanSecurity(src, filePath, "typescript").map((i) => i.category);
@@ -303,6 +303,20 @@ describe("scanSecurity — secret snippets", () => {
     expect(key!.snippet).not.toContain("sk_l");
     const [url] = scanSecurity('const u = "postgres://app:Xy7qLmw83kd@db.example/league";', "src/db.ts", "typescript");
     expect(url!.snippet).not.toContain("Xy7q");
+  });
+});
+
+describe("isPlaceholderSecret — the key name before the value", () => {
+  it("reads the name backwards from the value's quote, in time linear in a long run of name characters", () => {
+    expect(isPlaceholderSecret('clubToken: "clubToken"')).toBe(true);
+    expect(isPlaceholderSecret('"CLUB_TOKEN" = "CLUB_TOKEN"')).toBe(true);
+    expect(isPlaceholderSecret('clubToken = "kickoff-9f2a7c41e8"')).toBe(false);
+    // An unanchored `([\w$-]+)…$` regex retried the run from every position: quadratic in its length.
+    const run = "$".repeat(60_000);
+    const started = performance.now();
+    expect(isPlaceholderSecret(`${run} "kickoff-9f2a7c41e8"`)).toBe(false);
+    expect(isPlaceholderSecret(`${run}x = "kickoff-9f2a7c41e8"`)).toBe(false);
+    expect(performance.now() - started).toBeLessThan(1_000);
   });
 });
 

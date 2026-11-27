@@ -86,7 +86,7 @@ const blankOf = (m: string) => m.replace(/[^\n\r]/g, " ");
 
 /** The template part of a file: scripts, styles and comments blanked, offsets kept. */
 function templateText(raw: string, vue: boolean): string {
-  let t = raw.replace(/<script\b[^>]*>[\s\S]*?<\/script\b[^>]*>|<style\b[^>]*>[\s\S]*?<\/style\b[^>]*>|<!--[\s\S]*?-->/gi, blankOf);
+  let t = raw.replace(/<script\b[^>]*>[\s\S]*?<\/script\b[^>]*>|<style\b[^>]*>[\s\S]*?<\/style\b[^>]*>|<!--[\s\S]*?--!?>/gi, blankOf);
   if (vue) {
     const m = /<template\b([^>]*)>([\s\S]*)<\/template>/i.exec(t);
     // A `lang="pug"` template is not HTML.

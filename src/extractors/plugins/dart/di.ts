@@ -503,7 +503,7 @@ const ALIAS_NOT_A_NAME = new Set(["this", "super", "null", "true", "false", "voi
 
 /** Whether a statement assigns the name again (`c = other;`, `if (x) c = y;`, `c ??= x;`, `c += 1`), which makes it no stable alias. */
 function reassigned(bodyLines: string[], name: string): boolean {
-  const id = name.replace(/\$/g, "\\$");
+  const id = escapeRegex(name);
   const declaration = new RegExp(String.raw`\b(?:final|var|late|const)\s+${id}\b`);
   const assignment = new RegExp(String.raw`(?<![\w$.])${id}\s*(?:\?\?|~/|<<|>>>?|[-+*/%&|^])?=(?!=)`);
   return bodyLines.some((l) => assignment.test(codeOf(l).replace(declaration, "")));

@@ -2910,7 +2910,7 @@ const TITLE_PLACEHOLDER_RE = /^(?:\{\{[^{}]*\}\}|\{%[^%]*%\}|<%=?[^%]*%>|%[A-Za-
 function withoutComments(source: string): string {
   const blank = (m: string) => m.replace(/[^\n]/g, " ");
   return source
-    .replace(/\/\*[\s\S]*?\*\/|<!--[\s\S]*?-->|@\*[\s\S]*?\*@/g, blank)
+    .replace(/\/\*[\s\S]*?\*\/|<!--[\s\S]*?--!?>|@\*[\s\S]*?\*@/g, blank)
     .replace(/(^|[^:"'`\\\w/])\/\/[^\n]*/gm, (m, lead: string) => lead + blank(m.slice(lead.length)));
 }
 

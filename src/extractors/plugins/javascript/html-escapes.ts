@@ -20,6 +20,7 @@
  * stays as it is.
  */
 import type { SecurityJudgement } from "../../../types/language-plugin.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /** A callee whose name says its result is safe to put in HTML. */
 const SAFE_CALLEE =
@@ -291,7 +292,7 @@ const TYPE_WORD = /^(?:string|number|boolean|unknown|any|null|undefined|never|ob
 function outerValues(source: string, at: number, name: string): Written[] | undefined {
   const dot = name.indexOf(".");
   if (dot >= 0) return memberValues(source, name.slice(dot + 1));
-  const esc = name.replace(/\$/g, "\\$");
+  const esc = escapeRegex(name);
   const before = source.slice(0, at);
   // Mermaid's render output (`.then(({ svg }) => …)`, `const { svg } = await mermaid.render(…)`) is sanitized
   // unless the file turns its sanitizing off (`securityLevel: "loose"`).
@@ -349,7 +350,7 @@ function parameterArguments(source: string, before: string, name: string): Writt
     if (index < 0) continue;
     const fn = head[1] ?? head[2]!;
     const out: Written[] = [];
-    const calls = new RegExp(String.raw`(?<![\w$.])${fn.replace(/\$/g, "\\$")}\s*\(`, "g");
+    const calls = new RegExp(String.raw`(?<![\w$.])${escapeRegex(fn)}\s*\(`, "g");
     for (let m = calls.exec(source); m; m = calls.exec(source)) {
       const at = m.index + m[0].length - 1;
       if (at === open) continue;
@@ -365,7 +366,7 @@ function parameterArguments(source: string, before: string, name: string): Writt
 /** Every value the file gives a member: `prop: value` in an object literal, `.prop = value`. Types (`prop: string;`) are none. */
 function memberValues(source: string, prop: string): Written[] | undefined {
   const out: Written[] = [];
-  const esc = prop.replace(/\$/g, "\\$");
+  const esc = escapeRegex(prop);
   const writes = new RegExp(String.raw`(?:(?<![\w$.?])${esc}\s*:(?!:)|\.${esc}\s*=(?!=))\s*`, "g");
   for (let m = writes.exec(source); m; m = writes.exec(source)) {
     const v = valueAt(source, m.index + m[0].length);

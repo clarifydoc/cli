@@ -18,7 +18,7 @@ const INERT = /^(?:[iu](?:8|16|32|64|128|size)|f(?:32|64)|bool|char|Uuid|Duratio
 
 /** Calls that make the text into a number or a quoted value, and calls whose name says they clean it: the result is clean. */
 const SANITIZER = new RegExp(
-  "\\.parse\\s*(?:::\\s*<[^>]*>)?\\s*\\(\\s*\\)(?:\\s*(?:\\?|\\.unwrap\\w*\\([^()]*\\)|\\.expect\\([^()]*\\)|\\.map_err\\([\\s\\S]*\\)|\\.ok\\(\\)))*\\s*$" +
+  "\\.parse\\s*(?:::\\s*<[^>]*>)?\\s*\\(\\s*\\)(?:\\s*(?:\\?|\\.unwrap\\w*\\([^()]*\\)|\\.expect\\([^()]*\\)|\\.ok\\(\\)))*(?:\\s*\\.map_err\\([\\s\\S]*\\)(?:\\s*\\?)*)?\\s*$" +
     "|\\.(?:len|count|is_empty|is_some|is_none|is_ok|is_err)\\s*\\(\\s*\\)\\s*$" +
     "|\\.(?:starts_with|ends_with|contains|contains_key|eq|ne|eq_ignore_ascii_case)\\s*\\([^()]*\\)\\s*$" +
     "|^\\s*(?:[iu](?:8|16|32|64|128|size)|f(?:32|64)|Uuid|bool)::(?:from_str|from|parse_str|try_from)\\s*\\(" +

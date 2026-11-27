@@ -1,5 +1,6 @@
 import type { CallBaseRef, HttpClientRegistration } from "../../../types/analysis.js";
 import { lineAt } from "../shared/text-scan.js";
+import { escapeRegex } from "../shared/path-utils.js";
 
 /**
  * REST client proxies declared in Spring XML — the way classic Spring
@@ -44,7 +45,7 @@ export function extractSpringClientProxies(lines: string[]): HttpClientRegistrat
   // (`<beans:bean>` is a `bean`); another namespace's tag (`<util:map>`) is no bean.
   let source = lines.join("\n").replace(/<!--[\s\S]*?-->/g, (c) => c.replace(/[^\n]/g, " "));
   const beansPrefix = /\bxmlns:([A-Za-z_][\w.-]*)\s*=\s*["']http:\/\/www\.springframework\.org\/schema\/beans["']/.exec(source)?.[1];
-  if (beansPrefix) source = source.replace(new RegExp(`<(/?)${beansPrefix.replace(/[.-]/g, "\\$&")}:(?=[A-Za-z_])`, "g"), "<$1");
+  if (beansPrefix) source = source.replace(new RegExp(`<(/?)${escapeRegex(beansPrefix)}:(?=[A-Za-z_])`, "g"), "<$1");
   if (!/java\.lang\.Class|serviceClass|jaxrs:client/.test(source)) return [];
   const out: HttpClientRegistration[] = [];
   const push = (type: string, address: string | undefined, index: number) => {

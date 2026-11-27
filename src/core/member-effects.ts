@@ -3,6 +3,7 @@ import { receiverTypeName } from "../extractors/shared/type-parser.js";
 import { manifestFor } from "../extractors/registry.js";
 import { importResolveContext } from "./import-index.js";
 import { declaresEvidenceName, evidenceFullName } from "./class-evidence.js";
+import { escapeRegex } from "../extractors/plugins/shared/path-utils.js";
 
 /**
  * Field writes and thrown exception types, resolved to project classes (`ProjectAnalysis.fieldWrites` /
@@ -35,7 +36,7 @@ const beyondDirectory = (language: string): boolean => manifestFor(language as L
 const writtenTypeName = (raw: string | null | undefined, language: string): string | null => {
   const simple = receiverTypeName(raw, language as LanguageName);
   if (!simple || !raw || /[.:\\]/.test(simple)) return simple;
-  const escaped = simple.replace(/[$]/g, "\\$");
+  const escaped = escapeRegex(simple);
   const written = new RegExp(`((?:[\\w$]+(?:::|\\.|\\\\))+)${escaped}(?![\\w$])`).exec(raw);
   return written ? `${written[1]}${simple}` : simple;
 };
