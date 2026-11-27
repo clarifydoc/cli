@@ -3,7 +3,7 @@ import { cp, mkdir, mkdtemp, readdir, rm } from "fs/promises";
 import { existsSync, realpathSync } from "fs";
 import { tmpdir } from "os";
 import { basename, join, relative, resolve } from "path";
-import { gitArgs } from "./git-safe.js";
+import { assertGitRef, gitArgs, gitEndOfOptions } from "./git-safe.js";
 import { analyze } from "./analyzer.js";
 
 /**
@@ -29,11 +29,12 @@ export async function analysisAtRef(
   ref: string,
   opts: { headAnalysisDir?: string; cacheBase: string; log?: (line: string) => void },
 ): Promise<{ dir: string; commit: string; reused: boolean }> {
+  assertGitRef(ref, "--base");
   const root = resolve(projectRoot);
   const repo = await git(root, ["rev-parse", "--show-toplevel"]).catch(() => {
     throw new Error(`${root} is not in a git repository: --base needs one`);
   });
-  const commit = await git(root, ["rev-parse", "--verify", `${ref}^{commit}`]).catch(() => {
+  const commit = await git(root, ["rev-parse", "--verify", ...(await gitEndOfOptions()), `${ref}^{commit}`]).catch(() => {
     throw new Error(`No commit "${ref}" in ${repo}`);
   });
   const name = basename(root);

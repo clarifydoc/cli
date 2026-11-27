@@ -39,3 +39,45 @@ export function gitText(root: string, args: readonly string[], timeoutMs = 3000)
     );
   });
 }
+
+/**
+ * A revision, branch or range that came from a caller (a `--base` flag, an MCP argument, a forge's
+ * pull request) read as a ref and never as a git option: a value that starts with `-` is refused
+ * (`--output=<file>` would make `git diff` write a file, `--exec=…` and `-p` change what it does),
+ * as is one holding a NUL or a line break. `what` names the argument in the error. Every git call
+ * that takes such a value passes it through here, and puts `--end-of-options` in front of it
+ * where git reads one (`diff`, `rev-parse`, `log`; see {@link gitEndOfOptions}); a test in
+ * `git-safe.test.ts` fails on a source file that spawns git without it.
+ */
+export function assertGitRef(value: string, what = "ref"): string {
+  if (value.startsWith("-")) throw new Error(`${what} "${value}" starts with "-": a git ref cannot be an option`);
+  if (/[\0\r\n]/.test(value)) throw new Error(`${what} holds a control character: not a git ref`);
+  return value;
+}
+
+/** Ends the options of a git command: what follows is a revision, never a flag (git 2.24 and later). */
+export const GIT_END_OF_OPTIONS = "--end-of-options";
+
+/** `[GIT_END_OF_OPTIONS]` for a `git version` text of 2.24 or later, else `[]`; an unreadable version gives `[]`. */
+export function endOfOptionsFor(versionText: string | null): string[] {
+  const m = /(\d+)\.(\d+)/.exec(versionText ?? "");
+  if (!m) return [];
+  const [major, minor] = [Number(m[1]), Number(m[2])];
+  return major > 2 || (major === 2 && minor >= 24) ? [GIT_END_OF_OPTIONS] : [];
+}
+
+let endOfOptionsProbe: Promise<string[]> | undefined;
+
+/**
+ * What goes before a caller's ref: `--end-of-options` when the installed git reads it, nothing on git
+ * before 2.24 (the refusal in {@link assertGitRef} alone closes the injection there). One `git version`
+ * per process, asked only by the diff, impact and base-ref paths.
+ */
+export function gitEndOfOptions(): Promise<string[]> {
+  endOfOptionsProbe ??= new Promise((resolve) => {
+    execFile(process.env.CLARIFYDOC_GIT ?? "git", ["version"], { timeout: 5000, windowsHide: true }, (err, out) =>
+      resolve(err ? [] : endOfOptionsFor(out.toString())),
+    );
+  });
+  return endOfOptionsProbe;
+}

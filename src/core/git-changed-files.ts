@@ -1,5 +1,5 @@
 import { execFile } from "child_process";
-import { GIT_SAFE_DIFF, gitArgs } from "./git-safe.js";
+import { GIT_SAFE_DIFF, assertGitRef, gitArgs, gitEndOfOptions } from "./git-safe.js";
 
 /**
  * Changed files via git, project-relative (matching the analysis `files[]`).
@@ -33,12 +33,13 @@ export async function gitChangedFiles(
       added: split(await run(["diff", "--name-only", "--relative", "--diff-filter=A", ...GIT_SAFE_DIFF, "--cached"])),
     };
   }
-  const base = opts.base ?? "HEAD";
-  const tracked = await run(["diff", "--name-only", "--relative", ...GIT_SAFE_DIFF, base]);
+  const base = assertGitRef(opts.base ?? "HEAD", "--base");
+  const eoo = await gitEndOfOptions();
+  const tracked = await run(["diff", "--name-only", "--relative", ...GIT_SAFE_DIFF, ...eoo, base]);
   const untracked = await run(["ls-files", "--others", "--exclude-standard"]);
   // Added = what git itself calls new: files the diff against `base` adds (`--diff-filter=A`, e.g. `git add`ed) and
   // untracked files it does not ignore. Not filtered by language: a new README is added too.
-  const addedTracked = await run(["diff", "--name-only", "--relative", "--diff-filter=A", ...GIT_SAFE_DIFF, base]);
+  const addedTracked = await run(["diff", "--name-only", "--relative", "--diff-filter=A", ...GIT_SAFE_DIFF, ...eoo, base]);
   return { files: [...split(tracked), ...split(untracked)], label: base, added: [...new Set([...split(addedTracked), ...split(untracked)])] };
 }
 
@@ -59,8 +60,9 @@ export async function gitUserName(cwd: string): Promise<string | undefined> {
  */
 export async function gitChangedHunks(root: string, opts: { base?: string; staged?: boolean } = {}): Promise<Map<string, Array<[number, number]>>> {
   const { parseUnifiedHunks } = await import("./changed-symbols.js");
+  const eoo = await gitEndOfOptions();
   const out = await new Promise<string>((res, rej) => {
-    const args = gitArgs(root, ["diff", "-U0", "--no-color", ...GIT_SAFE_DIFF, "--relative", ...(opts.staged ? ["--cached"] : [opts.base ?? "HEAD"])]);
+    const args = gitArgs(root, ["diff", "-U0", "--no-color", ...GIT_SAFE_DIFF, "--relative", ...(opts.staged ? ["--cached"] : [...eoo, assertGitRef(opts.base ?? "HEAD", "--base")])]);
     execFile("git", args, { maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => (err ? rej(new Error((stderr || err.message).trim())) : res(stdout)));
   });
   return parseUnifiedHunks(out);

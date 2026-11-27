@@ -182,6 +182,11 @@ export function diffTool(ctx: ToolContext): McpTool {
     readOnly: false,
     handler: async (args) => {
       const ref = stringArg(args, "base") ?? "HEAD";
+      try {
+        (await import("../../core/git-safe.js")).assertGitRef(ref, "base");
+      } catch (err) {
+        return { text: (err as Error).message, isError: true };
+      }
       if (!ctx.store.allowAnalyze && !runs.has(ref)) {
         return {
           text: `This server is read-only (--no-auto-analyze), and comparing with ${ref} needs an analysis of it. Run \`clarifydoc diff --base ${ref}\` in a terminal.`,
