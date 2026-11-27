@@ -2349,6 +2349,11 @@ export interface ParsedStructure {
   functionTypeAliases?: string[];
   /** Syntax errors the parser recovered from. Any makes core keep the regex reading of the file. */
   syntaxErrors: number;
+  /**
+   * With errors, the 1-based line of the token a reader that stops at its first error stopped at, for the C-family
+   * reading that drops the one conditional the error sits in (`readWithBranches`). Absent: the reader did not say.
+   */
+  errorLine?: number;
 }
 
 /**

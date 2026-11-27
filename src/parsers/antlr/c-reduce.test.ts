@@ -18,7 +18,8 @@ const texts = (lines: Array<{ t: string }>) => lines.map((l) => l.t).join("\n").
 
 // A header written once per build before one body: each branch closes another bracket, so no candidate that keeps
 // the conditional keeps the brackets balanced. The cause (a nested function, which the grammar has no rule for) sits
-// in the `#ifdef CLUB_LIVE` branch.
+// in the `#ifdef CLUB_LIVE` branch (which has an `#else`: a conditional with one branch only is left out by the
+// reader's third attempt).
 const SOURCE = `#include <club.h>
 #define CLUB_MAX 4
 
@@ -33,6 +34,8 @@ int club_report(int a
 {
 #ifdef CLUB_LIVE
   auto inline int club_pair(int x) { return x + 1; }
+#else
+  int club_pair = 0;
 #endif
   return club_pair(a);
 }

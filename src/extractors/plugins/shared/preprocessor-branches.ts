@@ -319,6 +319,66 @@ export function blankSplices(text: string): string {
 /** A front end's reading of a text; `also` is code the reading leaves out, lines in place, whose calls it counts. */
 type Read = (text: string, also?: string) => ParsedStructure;
 
+/** How many conditionals around the line a reader stopped at are tried, innermost first, as the one to leave out. */
+const LONE_BODY_TRIES = 2;
+
+/**
+ * The conditional sits in a function's body (braces open before it) and holds whole statements (its own braces pair):
+ * leaving it out cannot take a function's definition with it, which an include guard or a top-level `#ifdef` would.
+ */
+function insideFunctionBody(lines: readonly string[], block: ConditionalBlock): boolean {
+  const code = (from: number, to: number): string => lines.slice(from, to).join("\n");
+  const before = code(0, block.start);
+  let depth = 0;
+  if (before.includes("{")) {
+    const stripped = before
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !/^\s*#/.test(l))
+      .join("\n")
+      .replace(/\/\/.*$/gm, "")
+      .replace(/"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/g, "");
+    for (const ch of stripped) {
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+    }
+  }
+  return depth > 0 && bracesPair(code(block.start + 1, block.end));
+}
+
+/**
+ * The first-branch reading of a file whose reader stopped at `errorLine`, read again with the body of one conditional
+ * that has no other branch (`#ifdef X … #endif`) left out: the innermost around that line whose absence lets the file
+ * parse, at most `LONE_BODY_TRIES` of them — only one inside a function's body (`insideFunctionBody`). A branch that has an `#else` is not tried — its other arm is the reading
+ * the second attempt makes. The calls of the body count where they fall. Null when none parses.
+ */
+function readWithoutLoneBody(
+  compiled: string,
+  branches: string,
+  errorLine: number | undefined,
+  read: Read,
+  cplusplus: boolean,
+): { text: string; parsed: ParsedStructure } | null {
+  if (errorLine === undefined) return null;
+  const lines = branches.split("\n");
+  const around = conditionalBlocks(lines, cplusplus)
+    .filter((b) => b.arms.length === 1 && b.start < errorLine - 1 && errorLine - 1 < b.end && insideFunctionBody(lines, b))
+    .sort((x, y) => x.end - x.start - (y.end - y.start))
+    .slice(0, LONE_BODY_TRIES);
+  for (const block of around) {
+    const blanked = [...lines];
+    for (let i = block.start + 1; i < block.end; i++) {
+      if (DIRECTIVE.test(blanked[i]!)) {
+        while (blanked[i]!.endsWith("\\") && i + 1 < block.end) i++;
+      } else blanked[i] = blanked[i]!.replace(/\S/g, " ");
+    }
+    const text = blanked.join("\n");
+    const parsed = read(text, leftOut(compiled, text));
+    if (parsed.syntaxErrors === 0) return { text, parsed };
+  }
+  return null;
+}
+
 /**
  * A C-family file read as a compiler of the language would see it: without dead blocks, and, when that does not
  * parse, with only the first branch of every conditional (the other branches' calls counted where they fall), plus
@@ -330,15 +390,20 @@ export function readWithBranches(source: string, cplusplus: boolean, read: Read,
   const first = read(compiled);
   if (first.syntaxErrors === 0) return first;
   const branches = firstBranches(compiled, cplusplus, macros);
-  if (branches === compiled) return first;
-  const second = read(branches, leftOut(compiled, branches));
-  if (second.syntaxErrors > 0) return first;
+  let kept = branches;
+  let second = branches === compiled ? first : read(branches, leftOut(compiled, branches));
+  if (second.syntaxErrors > 0) {
+    // A construct no grammar reads inside one `#ifdef` with no `#else` (a GNU nested function): that body off.
+    const off = readWithoutLoneBody(compiled, branches, second.errorLine, read, cplusplus);
+    if (!off) return first;
+    ({ text: kept, parsed: second } = off);
+  }
   const others = secondBranches(compiled, cplusplus, macros);
-  if (others === branches) return second;
+  if (others === kept) return second;
   const third = read(others);
   if (third.syntaxErrors > 0) return second;
   // A definition the first branches left out, and no function of theirs spans: not the same function's other header.
-  const left = branches.split("\n");
+  const left = kept.split("\n");
   const added = third.functions.filter(
     (fn) => left[fn.line - 1]!.trim() === "" && !second.functions.some((kept) => kept.line <= fn.endLine && fn.line <= kept.endLine),
   );

@@ -373,4 +373,125 @@ CLUB_INLINE CLUB_TARGET CLUB_TEMPLATE(fast)
 `;
     expect(shape(source)).toEqual({ errors: 0, functions: [["club_pass", ["tally"]]] });
   });
+
+  it("leaves out the one `#ifdef` body that holds a GNU nested function, and no other (real-repo shape)", () => {
+    const source = `#ifdef CLUB_TRACE
+void trace_line(int n) { log_line(n); }
+#endif
+
+int rank_table(int n)
+{
+  int base = 0;
+#ifdef CLUB_NESTED
+  auto inline int bonus (home, away)
+	 int home;
+	 int away;
+    {
+      return add_points(home, away);
+    }
+  auto inline int penalty (int fouls)
+    {
+      return count_cards(fouls);
+    }
+  base = bonus(n, 1) + penalty(n);
+#endif
+  return base + points_for(n);
+}
+
+void other(void) { kick_off(); }
+`;
+    const parsed = readC(source);
+    expect(parsed.syntaxErrors).toBe(0);
+    // the functions of every other conditional stay; the dropped body's calls still count where they fall
+    expect(parsed.functions.map((f) => f.name)).toEqual(["trace_line", "rank_table", "other"]);
+    const rank = parsed.functions.find((f) => f.name === "rank_table")!;
+    expect(rank.calls.map((c) => c.name)).toEqual(expect.arrayContaining(["points_for", "add_points", "count_cards"]));
+    // a conditional with an `#else` is not a lone body: it stays refused, as before
+    const decoy = `int rank_table(int n)
+{
+#ifdef CLUB_NESTED
+  auto inline int bonus (int home) { return add_points(home); }
+#else
+  int bonus = 0;
+#endif
+  return bonus + points_for(n);
+}
+`;
+    expect(readC(decoy).syntaxErrors).toBeGreaterThan(0);
+    // a conditional outside every function (an include guard, a top-level `#ifdef`) is never left out: it holds definitions
+    const guarded = `#ifndef CLUB_GUARD_H
+#define CLUB_GUARD_H
+static inline int club_twice(int n) { return n +; }
+#endif
+`;
+    expect(readC(guarded).syntaxErrors).toBeGreaterThan(0);
+    // a refusal outside every conditional stays a refusal
+    expect(readC("int f(void) { return 1 +; }\n#ifdef CLUB_X\nint g(void) { return 2; }\n#endif\n").syntaxErrors).toBeGreaterThan(0);
+  });
+
+  it("reads a `_t` name that is indexed and then read for a member as a variable (real-repo shape)", () => {
+    const source = `static void fill_cols(club_col_t *name, club_col_t col_goals_t[GOAL_KINDS], club_col_t col_cards_t[CARD_KINDS]) {
+	CLUB_COLUMN_LIST
+	col_goals_t[kind_total].width = 10;
+	col_cards_t[0]->width = 4;
+	paint(name);
+}
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["fill_cols", ["paint"]]] });
+    // a `_t` name that is declared stays a type: `club_t[3]` is never followed by a member access
+    const decoy = `typedef int club_t;
+club_t scores[3];
+void show(void) { club_t first = scores[0]; announce(first); }
+`;
+    expect(shape(decoy)).toEqual({ errors: 0, functions: [["show", ["announce"]]] });
+  });
+
+  it("reads a type definition after a call macro with no `;` and a forward declaration of it (real-repo shape)", () => {
+    const source = `club_define(match_t, match)
+
+typedef struct squad_s squad_t;
+struct squad_s {
+	int size;
+	club_match_t match;
+};
+
+static void *
+squad_reader(void *arg) {
+	return load(arg);
+}
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["squad_reader", ["load"]]] });
+    // a K&R definition after a call macro keeps its parameters: the `{` after them is the body
+    const kr = `club_define(match_t, match)
+int tally(a, b)
+	int a;
+	int b;
+{
+	return add(a, b);
+}
+`;
+    expect(shape(kr)).toEqual({ errors: 0, functions: [["tally", ["add"]]] });
+  });
+
+  it("sets aside a macro between a basic type keyword and `*`, and a run of attribute macros before the name (real-repo shape)", () => {
+    const source = `CLUB_EXPORT CLUB_ALLOCATOR
+void CLUB_NOTHROW *
+CLUB_ATTR(malloc) CLUB_SIZE(1)
+club_alloc(size_t size) {
+	return grab(size);
+}
+void *
+CLUB_ATTR(malloc)
+club_calloc(size_t n) { return grab(n); }
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["club_alloc", ["grab"]], ["club_calloc", ["grab"]]] });
+    // the same names as expressions stay expressions
+    const decoy = `int club_scale(int a, int *p) {
+	int total = a * CLUB_FACTOR;
+	int more = *p * CLUB_ATTR(2) + total;
+	return total * CLUB_SIZE(1) + more;
+}
+`;
+    expect(shape(decoy)).toEqual({ errors: 0, functions: [["club_scale", ["CLUB_ATTR", "CLUB_SIZE"]]] });
+  });
 });

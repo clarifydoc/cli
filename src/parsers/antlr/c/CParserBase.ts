@@ -299,12 +299,19 @@ export abstract class CParserBase extends Parser {
     return (SPECIFIER_KEYWORDS.has(after.type) || this.known(after)) && this.declarationFollows(after);
   }
 
-  /** From `t`, a `(` comes before a `{`, or the file ends; so does an `=`, which no K&R parameter has (`= { … }` initializes). */
+  /**
+   * From `t`, a `(` comes before a `{` that is no function's body, or the file ends; so does an `=`, which no K&R
+   * parameter has (`= { … }` initializes). A `{` after a tag (`struct club {`, `enum {`) opens that type's body, a
+   * definition of its own (`typedef struct club club_t;⏎struct club { … };` after a call macro with no `;`).
+   */
   private declarationFollows(t: Token): boolean {
     let at: Token | null = t;
-    for (let steps = 0; at && steps < 256; steps++, at = this.following(at)) {
+    let before: Token | null = null;
+    let beforeThat: Token | null = null;
+    for (let steps = 0; at && steps < 256; steps++, beforeThat = before, before = at, at = this.following(at)) {
       if (at.type === CLexer.LeftParen || at.type === CLexer.Assign) return true;
-      if (at.type === CLexer.LeftBrace) return false;
+      if (at.type !== CLexer.LeftBrace) continue;
+      return !!before && (TAG_KEYWORDS.has(before.type) || (before.type === CLexer.Identifier && !!beforeThat && TAG_KEYWORDS.has(beforeThat.type)));
     }
     return at === null;
   }

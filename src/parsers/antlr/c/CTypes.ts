@@ -104,7 +104,7 @@ function enumBodies(tokens: Token[]): Uint8Array {
  * a comma could stand. The same pass sets aside a macro in a cast's type, after an attribute, a call between a `*` and
  * the declared function's name, a name between a type and an attribute that precedes the declared name or between a
  * prototype's parameters and its attribute, one after `[` before a called name, and names alone before a struct
- * body's `}` or ending a file, and a list macro (called or bare) before an enum's next name where no comma stands, and
+ * body's `}` or ending a file, one between a basic type keyword and a `*` (`void CLUB_NOTHROW *name(`), and a list macro (called or bare) before an enum's next name where no comma stands, and
  * two or more bare macros at a struct member's start before its type (`CLUB_A⏎CLUB_B⏎int x;`).
  */
 function hideMacros(all: Token[]): void {
@@ -153,11 +153,23 @@ function hideMacros(all: Token[]): void {
       hide(i, i);
       continue;
     }
+    // `void CLUB_NOTHROW *⏎club_malloc(`: a macro between a basic type keyword and a `*` stands for part of the type; a
+    // keyword is never followed by a declarator that a `*` then follows. A tag keyword (`struct CLUB *`) names a tag.
+    if (MACRO_NAME.test(name) && !called && TYPE_KEYWORDS.has(prev) && !TAG_KEYWORDS.has(prev) && type(i + 1) === CLexer.Star) {
+      hide(i, i);
+      continue;
+    }
     // `const char * FORMAT_ARG(3)⏎name(`: a macro call between a `*` and the declared function's name — an expression
     // never has a name after a call.
-    if (MACRO_NAME.test(name) && called && prev === CLexer.Star && after === CLexer.Identifier && type(close[i + 1]! + 2) === CLexer.LeftParen) {
-      hide(i, close[i + 1]!);
-      continue;
+    // Several may stand there (`void * CLUB_ATTR(malloc) CLUB_SIZE(1)⏎name(`): each is called, the declared name last.
+    if (MACRO_NAME.test(name) && called && prev === CLexer.Star) {
+      let end = close[i + 1]!;
+      while (type(end + 1) === CLexer.Identifier && MACRO_NAME.test(tokens[end + 1]!.text ?? "") && type(end + 2) === CLexer.LeftParen && close[end + 2]! >= 0) end = close[end + 2]!;
+      if (type(end + 1) === CLexer.Identifier && type(end + 2) === CLexer.LeftParen) {
+        hide(i, end);
+        i = end;
+        continue;
+      }
     }
     // `static int⏎club_internal __attribute ((pure))⏎name(`: a name between a whole type and an attribute that is
     // followed by the declared name is a macro, as is the one after it (`static __attribute__ ((unused)) club_t f(`).
@@ -261,10 +273,26 @@ export function readTypes(stream: CommonTokenStream): CTokenFacts {
   /** The token at `i` is a type keyword, a name or `*`: what a function's return type ends in. */
   const typeish = (i: number) => isId(i) || BEFORE_MACRO_KEYWORDS.has(type(i)) || type(i) === CLexer.Star;
   const tagBody = tagBodies(tokens);
+  // `cols_t[i].width = 1;`: a name indexed and then read for a member is a variable, whatever its suffix says; no type
+  // is followed by an index and a member access.
+  const indexedMembers = new Set<string>();
+  for (let i = 0; i < tokens.length; i++) {
+    if (!isId(i) || !names[i]!.endsWith("_t") || type(i + 1) !== CLexer.LeftBracket || type(i - 1) === CLexer.Dot || type(i - 1) === CLexer.Arrow) continue;
+    let k = i + 1;
+    while (type(k) === CLexer.LeftBracket) {
+      for (let depth = 0; k < tokens.length; k++) {
+        if (type(k) === CLexer.LeftBracket) depth++;
+        else if (type(k) === CLexer.RightBracket && --depth === 0) break;
+        else if (type(k) === CLexer.Semi) break;
+      }
+      k++;
+    }
+    if (type(k) === CLexer.Dot || type(k) === CLexer.Arrow) indexedMembers.add(names[i]!);
+  }
   for (let i = 0; i < tokens.length; i++) {
     if (!isId(i) || tag(i)) continue;
     const name = names[i]!;
-    if (name.endsWith("_t")) types.add(name);
+    if (name.endsWith("_t") && !indexedMembers.has(name)) types.add(name);
     const prev = type(i - 1);
     if (prev === CLexer.Dot || prev === CLexer.Arrow) continue;
     // A specifier macro: `leagueAtomic int n;`, `TARGET_POPCNT static int f(`.

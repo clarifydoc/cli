@@ -82,6 +82,7 @@ interface Found {
 /** Reads `text`; `also` is code the reading leaves out, lines in place, whose calls go to the function around them. */
 function read(text: string, also?: string): ParsedStructure {
   let stream: Token[] = [];
+  let reader: CParser | undefined;
   const { tree, errors } = parseWithAntlr(
     text,
     (input) => new CLexer(input),
@@ -89,13 +90,15 @@ function read(text: string, also?: string): ParsedStructure {
       const parser = new CParser(tokens);
       parser.prepare(tokens);
       stream = tokens.getTokens();
+      reader = parser;
       return parser;
     },
     (parser) => parser.compilationUnit(),
     // A file with an error is not read at all: core keeps the patterns' reading of it.
     { firstError: true },
   );
-  if (!tree) return { functions: [], topLevelCalls: [], syntaxErrors: errors };
+  // The token the parser stopped at: the line `readWithBranches` looks for a conditional around.
+  if (!tree) return { functions: [], topLevelCalls: [], syntaxErrors: errors, errorLine: reader?.getCurrentToken()?.line };
   const bindings = new Map<PatternCallName[], LocalBinding[]>();
   const tables: CallInfo[] = [];
   const found = walk(tree, stream, bindings, tables);
