@@ -46,7 +46,7 @@ export function dispatchMapEntries(declarator: Node): { holder: string; entries:
 }
 
 /** `dispatchMapEntries` plus the keys held by a function written in place, and also for a map holding only such functions. */
-function readMap(declarator: Node): { holder: string; entries: DispatchMapEntry[]; inline: string[] } | null {
+function readMap(declarator: Node): { holder: string; entries: DispatchMapEntry[]; inline: string[]; inlineAt: Array<{ key: string; node: Node }> } | null {
   if (declarator.type !== "variable_declarator") return null;
   const decl = declarator.parent;
   if (decl?.type !== "lexical_declaration" || decl.child(0)?.type !== "const") return null;
@@ -54,8 +54,25 @@ function readMap(declarator: Node): { holder: string; entries: DispatchMapEntry[
   let value = declarator.childForFieldName("value");
   while (value && TYPE_WRAPPERS.has(value.type)) value = value.namedChildren[0] ?? null;
   if (name?.type !== "identifier" || value?.type !== "object") return null;
+  return mapOfObject(name.text, value);
+}
+
+/**
+ * The anonymous default export `export default { save: saveClub, remove, list: () => get() }` read as a dispatch map
+ * held under the holder `default` (what an importer's `import actions from './clubActions'` binds). Null for anything
+ * else: a component's options (`name: 'X'`, `data() {}`, `components: {}`), a literal, a spread, a nested object.
+ */
+export function defaultExportMap(statement: Node): { holder: string; entries: DispatchMapEntry[]; inline: string[]; inlineAt: Array<{ key: string; node: Node }> } | null {
+  if (statement.type !== "export_statement" || statement.parent?.type !== "program" || !statement.children.some((c) => c.type === "default")) return null;
+  let value = statement.childForFieldName("value");
+  while (value && TYPE_WRAPPERS.has(value.type)) value = value.namedChildren[0] ?? null;
+  return value?.type === "object" ? mapOfObject("default", value) : null;
+}
+
+function mapOfObject(holder: string, value: Node): { holder: string; entries: DispatchMapEntry[]; inline: string[]; inlineAt: Array<{ key: string; node: Node }> } | null {
   const entries: DispatchMapEntry[] = [];
   const inline: string[] = [];
+  const inlineAt: Array<{ key: string; node: Node }> = [];
   for (const member of value.namedChildren) {
     if (member.type === "comment" || member.type === "method_definition") continue;
     if (member.type === "shorthand_property_identifier") {
@@ -67,14 +84,18 @@ function readMap(declarator: Node): { holder: string; entries: DispatchMapEntry[
     const held = member.childForFieldName("value");
     if (!key || !held) return null;
     if (INLINE_FUNCTIONS.has(held.type)) {
-      if (key.type === "property_identifier" || key.type === "string") inline.push(key.type === "string" ? key.text.slice(1, -1) : key.text);
+      if (key.type === "property_identifier" || key.type === "string") {
+        const text = key.type === "string" ? key.text.slice(1, -1) : key.text;
+        inline.push(text);
+        inlineAt.push({ key: text, node: held });
+      }
       continue;
     }
     if ((held.type !== "identifier" && held.type !== "member_expression") || !NAMED_VALUE.test(held.text)) return null;
     const keyText = key.type === "string" ? key.text.slice(1, -1) : key.text;
     entries.push({ value: held, key: keyText });
   }
-  return entries.length > 0 || inline.length > 0 ? { holder: name.text, entries, inline } : null;
+  return entries.length > 0 || inline.length > 0 ? { holder, entries, inline, inlineAt } : null;
 }
 
 let mapsTree: Node["tree"] | null = null;

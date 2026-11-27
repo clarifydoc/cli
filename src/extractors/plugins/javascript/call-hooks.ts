@@ -5,7 +5,7 @@ import type { CallExtractionHooks } from "../../../types/language-plugin.js";
 import { receiverTypeOfCall } from "./di.js";
 import { signalReceiverTypeOfCall } from "./signal-receivers.js";
 import { boundHandler, boundThroughWrapper } from "./wrapped-functions.js";
-import { dispatchMapCallee, dispatchMapEntries, dispatchMapMember, importedMapMember, recordCallee } from "./dispatch-maps.js";
+import { defaultExportMap, dispatchMapCallee, dispatchMapEntries, dispatchMapMember, importedMapMember, recordCallee } from "./dispatch-maps.js";
 import { enclosingFunctionNode, paramNames } from "../../shared/node-helpers.js";
 import { genericResolveCallName } from "../../shared/call-graph.js";
 import { TEST_REGISTRATION } from "./test-cases.js";
@@ -140,7 +140,7 @@ export const javascriptCallHooks: CallExtractionHooks = {
   // <ComponentName ... /> counts as using ComponentName, and an attribute whose
   // value names a function (`onClick={saveClub}`, `renderItem={CarTile}`,
   // `onRefresh={clubs.loadLatest}`) hands that function on.
-  perNodeTypes: ["jsx_opening_element", "jsx_self_closing_element", "jsx_attribute", "return_statement", "variable_declarator", "assignment_expression"],
+  perNodeTypes: ["jsx_opening_element", "jsx_self_closing_element", "jsx_attribute", "return_statement", "variable_declarator", "assignment_expression", "export_statement"],
   collectExtraCalls(node, addResult) {
     if (node.type === "jsx_opening_element" || node.type === "jsx_self_closing_element") {
       const nameNode = node.childForFieldName("name") ?? node.child(1);
@@ -180,6 +180,15 @@ export const javascriptCallHooks: CallExtractionHooks = {
             for (const key of derivedMemberKeys(local, method)) addResult(name, value, "property", key, { libraryOption: option });
           }
         }
+      }
+    } else if (node.type === "export_statement") {
+      // The anonymous default export `export default { save: saveClub, list: () => get() }` holds its values under `default.save`:
+      // what an importer's `import actions from './clubActions'; <ClubRow actions={actions} />` reads. A key written in place is
+      // the function of that name (skipped when the file declares another of it at the top level).
+      const map = defaultExportMap(node);
+      if (map) {
+        for (const { value, key } of map.entries) addResult(value.text, value, "property", `default.${key}`);
+        for (const { key, node: fn } of map.inlineAt) if (!declaresAtTopLevel(node.parent!, key)) addResult(key, fn, "property", `default.${key}`);
       }
     } else if (node.type === "assignment_expression") {
       // A function value assigned to a module object's member at run time (`dialog.callback = deleteClubs`).
@@ -638,3 +647,17 @@ function moduleCallback(node: Node): boolean {
   return callee?.type === "identifier" && !TEST_REGISTRATION.has(callee.text) && call!.parent?.type !== "arguments";
 }
 
+
+/** Whether a program declares `name` at its top level (a function, a class or a variable, exported or not). */
+function declaresAtTopLevel(program: Node, name: string): boolean {
+  for (const stmt of program.namedChildren) {
+    const decl = stmt.type === "export_statement" ? stmt.childForFieldName("declaration") : stmt;
+    if (!decl) continue;
+    if (decl.type === "function_declaration" || decl.type === "class_declaration") {
+      if (decl.childForFieldName("name")?.text === name) return true;
+    } else if (decl.type === "lexical_declaration" || decl.type === "variable_declaration") {
+      if (decl.namedChildren.some((d) => d.type === "variable_declarator" && d.childForFieldName("name")?.text === name)) return true;
+    }
+  }
+  return false;
+}

@@ -33,6 +33,33 @@ export function destructuredProps(pattern: string): Map<string, string | null> {
   return out;
 }
 
+/**
+ * The locals an object pattern's array-pattern properties bind, by position: `{ pair: [table, , setTable], n }` →
+ * pair → [table, null, setTable]. A hole, a rest element and a nested pattern read as null, a default is dropped
+ * (`[go = noop]` binds `go`). Anything but an object pattern reads as none.
+ */
+export function destructuredArrayProps(pattern: string): Map<string, Array<string | null>> {
+  const out = new Map<string, Array<string | null>>();
+  const text = pattern.trim();
+  if (!text.startsWith("{")) return out;
+  for (const raw of splitTopLevel(text.slice(1)) ?? []) {
+    const part = raw.trim();
+    const colon = part.startsWith("...") ? -1 : topLevelIndex(part, ":");
+    if (colon < 0) continue;
+    const key = part.slice(0, colon).trim().replace(/^(["'])(.*)\1$/, "$2");
+    const value = part.slice(colon + 1).trim();
+    if (!key || !value.startsWith("[")) continue;
+    // The array pattern closes at its own bracket; what follows is a default (`= []`) or nothing.
+    const elements = splitTopLevel(value.slice(1));
+    if (!elements) continue;
+    out.set(key, elements.map((e) => {
+      const bound = withoutDefault(e);
+      return IDENTIFIER.test(bound) ? bound : null;
+    }));
+  }
+  return out;
+}
+
 /** The name an object pattern's rest element binds (`{ n, ...others }` → `others`), else null. */
 export function destructuredRest(pattern: string): string | null {
   const text = pattern.trim();

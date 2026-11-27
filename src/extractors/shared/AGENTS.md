@@ -12,7 +12,7 @@ Utilities used by multiple language plugins. If something is only used by one la
 | [node-helpers.ts](node-helpers.ts) | tree-sitter AST helpers (`getVisibility`, `getNameFromNode`, `getCallName`, `stripQuotes`, `literalString`, `enclosingFunctionNode`, `paramNames`) and the per-grammar decorator extractors |
 | [builtin-types.ts](builtin-types.ts) | `isBuiltinType`, `COMMON_PRIMITIVES` (per-language sets pushed in by the registry) |
 | [type-parser.ts](type-parser.ts), [type-ref-helpers.ts](type-ref-helpers.ts) | declared-type parsing; `emitParsed`, `findChildByType`, `lineOf` for the `type-references.ts` walkers |
-| [destructuring.ts](destructuring.ts) | a destructuring parameter named by its pattern: the props it takes, the names it binds |
+| [destructuring.ts](destructuring.ts) | a destructuring parameter named by its pattern: the props it takes, the names it binds, the locals of its array-pattern properties by position (`destructuredArrayProps`) |
 | [own-value.ts](own-value.ts) | `ownValue` — every lookup in a fact map (`fieldValues`, `moduleValues`, `stringConstants`) goes through it, never `map?.[key]` (a key the source chose may be `constructor`) |
 | [workspace-packages.ts](workspace-packages.ts) | an import of a package the repository itself holds, rewritten to the project path before call classification (JavaScript rules: [JavaScript](../plugins/javascript/AGENTS.md)) |
 | [tsconfig-aliases.ts](tsconfig-aliases.ts), [bundler-aliases.ts](bundler-aliases.ts) | import aliases (tsconfig `paths`, bundler `resolve.alias`, framework-generated aliases) rewritten into imports before call classification |

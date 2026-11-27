@@ -6,7 +6,7 @@ import { propFunctionName } from "./markup-calls.js";
 import { WHOLE_SLOT_PROPS } from "./template-scopes.js";
 import { dispatchMapHoldersOf, type MapHeld } from "./dispatch-map-props.js";
 import { escapeRegex } from "../shared/path-utils.js";
-import { destructuredProps, destructuredRest } from "../../shared/destructuring.js";
+import { destructuredArrayProps, destructuredProps, destructuredRest } from "../../shared/destructuring.js";
 
 /**
  * Component-event dispatch: wire a child component's `emit('save')` to the
@@ -805,7 +805,13 @@ export class JsPropCallbackResolver implements DispatchResolver {
         // it under another name calls it by that name (`{ onRemove: remove }` → `remove()`). A member of an object prop
         // (`table.nextPage`, a library object handed down) is the prop's when the component takes its head.
         const freeName = PROP_CALLBACK.test(prop) || childFile.endsWith(".vue") || !!child.declaredProps?.includes(head);
+        // `pair={[archive, purge]}` is the props `pair.0` and `pair.1`: a component taking `{ pair: [first, second] }` calls `first()`.
+        const slot = /^\.(\d+)(\.[\s\S]*)?$/.exec(member);
         const callsProp = (name: string, line: number): boolean => {
+          if (slot) {
+            const bound = arrayLocalOf(child, head, Number(slot[1]), line);
+            return !!bound && name === bound + (slot[2] ?? "");
+          }
           const local = propLocalOf(child, head, line);
           // `actions.map((a) => a.run())` over the prop: the element's member is the prop's `actions.run`.
           if (member && propElementsOf(child, local ? [local] : [`props.${head}`, `this.props.${head}`], line).some((e) => name === e + member)) return true;
@@ -903,6 +909,15 @@ function propLocalOf(file: FileAnalysis, prop: string, line: number): string | n
     if (props.has(prop)) return props.get(prop)!;
   }
   return undefined;
+}
+
+/** The local the component around `line` binds the element `index` of its prop `prop` to by an array pattern (`{ pair: [first, second] }`), else null. */
+function arrayLocalOf(file: FileAnalysis, prop: string, index: number, line: number): string | null {
+  for (const f of enclosingFunctions(file, line)) {
+    const bound = destructuredArrayProps(f.params[0]?.name ?? "").get(prop)?.[index];
+    if (bound) return bound;
+  }
+  return null;
 }
 
 /** The name the component around `line` binds the props its pattern names no other way to (`function Pager({ n, ...others })` → `others`), else null. */

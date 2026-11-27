@@ -1,7 +1,7 @@
 import type { Node, Tree } from "web-tree-sitter";
 import type { CallInfo, FileAnalysis, FunctionPropBinding, InteractiveElementInfo, PropBinding } from "../../../types/analysis.js";
 import { expressionOrigin, templateValueOrigin } from "./arg-origins.js";
-import { ITERATORS, derivedMemberKeys, derivedObjectAt, importedBinding, libraryObjectAt } from "./library-callbacks.js";
+import { ITERATORS, defaultImportSource, derivedMemberKeys, derivedObjectAt, importedBinding, libraryObjectAt } from "./library-callbacks.js";
 import { dispatchMapAt, PROJECT_SOURCE } from "./dispatch-map-props.js";
 import { heldFunction } from "./held-functions.js";
 import { namesFunction } from "./member-values.js";
@@ -117,13 +117,23 @@ export function jsxFunctionProps(tree: Tree, sourceText: string, declared: Reado
       // `<ActionBar actions={[{ label: 'Award', run: award }]} />`: the child's loop over its prop runs `actions.run`;
       // `<Panel action={{ onClick: reload }} />`: the child's `props.action.onClick()` runs it.
       const literal = expr?.type === "array" ? arrayCallbacksOf(expr, declared) : expr?.type === "object" ? objectCallbacksOf(expr, declared) : null;
+      // `pair={[squadTable, loadSquad]}`: the element at each position is the prop `pair.0`, `pair.1` — a function, or a
+      // library object whose methods the child's binding of that position calls (`pair.0.nextPage`).
+      if (expr?.type === "array") {
+        expr.namedChildren.forEach((el, i) => {
+          if (!el) return;
+          for (const h of elementHeldAt(el, attr, declared, heldFunction, namesFunction)) {
+            out.push({ component: tag, prop: `${name.text}.${i}${h.member}`, handler: h.name, line: attr.startPosition.row + 1, ...(h.handlerImport ? { handlerImport: h.handlerImport } : {}) });
+          }
+        });
+      }
       if (literal) {
         for (const h of literal) out.push({ component: tag, prop: `${name.text}.${h.key}`, handler: h.name, line: attr.startPosition.row + 1 });
         continue;
       }
-      // `<ClubTable actions={clubActions} />` with `clubActions` imported: a dispatch map there, which the resolver reads.
-      const imported = expr?.type === "identifier" && !declared.has(expr.text) ? importedBinding(expr.tree, expr.text) : null;
-      if (imported && imported.imported !== "default" && PROJECT_SOURCE.test(imported.source)) out.push({ component: tag, prop: name.text, handler: expr!.text, line: attr.startPosition.row + 1, mapImport: { source: imported.source, name: imported.imported } });
+      // `<ClubTable actions={clubActions} />` with `clubActions` imported: a dispatch map there, which the resolver reads (`export default { … }` is the holder `default`).
+      const imported = expr?.type === "identifier" && !declared.has(expr.text) ? importedBinding(expr.tree, expr.text) ?? (() => { const source = defaultImportSource(expr.tree, expr.text); return source ? { imported: "default", source } : null; })() : null;
+      if (imported && PROJECT_SOURCE.test(imported.source)) out.push({ component: tag, prop: name.text, handler: expr!.text, line: attr.startPosition.row + 1, mapImport: { source: imported.source, name: imported.imported } });
       // `order={orderKit}`, `order={this.orderKit}`, or an arrow passing it on: `order={(size) => orderKit(size)}`.
       const handler = expr ? handedFunction(expr.type === "arrow_function" || expr.type === "function_expression" ? firstCallee(expr) : expr) : null;
       if (handler && declared.has(handler.replace(/^this\./, ""))) out.push({ component: tag, prop: name.text, handler, line: attr.startPosition.row + 1 });
@@ -192,6 +202,25 @@ function objectCallbacksOf(el: Node, declared: ReadonlySet<string>): Array<{ key
     if (named && declared.has(named.replace(/^this\./, ""))) out.push({ key, name: named });
   }
   return out;
+}
+
+/** The functions one element of an array literal holds, each under the member the child reads it by (empty for the element itself). */
+function elementHeldAt(
+  el: Node,
+  site: Node,
+  declared: ReadonlySet<string>,
+  heldFunction: (fn: Node) => string | null,
+  namesFunction: (site: Node, name: string) => boolean,
+): Array<{ member: string; name: string; handlerImport?: { source: string; name: string } }> {
+  if (el.type === "arrow_function" || el.type === "function_expression") {
+    const own = heldFunction(el);
+    return own ? [{ member: "", name: own }] : [];
+  }
+  if (el.type !== "identifier") return [];
+  if (declared.has(el.text)) return [{ member: "", name: el.text }];
+  const library = libraryObjectAt(site, el.text, heldFunction, namesFunction);
+  if (library) return library.map((m) => ({ member: `.${m.method}`, name: m.name }));
+  return (dispatchMapAt(site, el.text, namesFunction) ?? []).map((m) => ({ member: `.${m.key}`, name: m.name, ...(m.handlerImport ? { handlerImport: m.handlerImport } : {}) }));
 }
 
 /** Whether a file iterates anything (a derived local is an iteration's parameter). */

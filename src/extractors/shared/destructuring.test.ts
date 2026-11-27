@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { destructuredProps, patternBindings } from "./destructuring.js";
+import { destructuredArrayProps, destructuredProps, patternBindings } from "./destructuring.js";
 
 describe("destructuredProps", () => {
   it("names each top-level property with the local it binds", () => {
@@ -36,5 +36,19 @@ describe("patternBindings", () => {
     expect(patternBindings("club")).toBeNull();
     expect(patternBindings("{:keys [a b]}")).toBeNull();
     expect(patternBindings("[a b]")).toBeNull();
+  });
+});
+
+describe("destructuredArrayProps", () => {
+  it("names the locals of each array-pattern property by position", () => {
+    expect([...destructuredArrayProps("{ pair: [table, , setTable], n, 'tuple': [a = 1, { b }, ...rest], club: { id }, ...others }")]).toEqual([
+      ["pair", ["table", null, "setTable"]],
+      ["tuple", ["a", null, null]],
+    ]);
+  });
+
+  it("reads anything but an object pattern as none", () => {
+    expect(destructuredArrayProps("[first, second]").size).toBe(0);
+    expect(destructuredArrayProps("{ pair }").size).toBe(0);
   });
 });

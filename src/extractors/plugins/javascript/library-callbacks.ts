@@ -165,6 +165,25 @@ export function importedBinding(tree: Tree, local: string): { imported: string; 
   return importsOf(tree).get(local) ?? null;
 }
 
+let defaultsTree: Tree | null = null;
+let defaultImports = new Map<string, string>();
+
+/** The module a file's top-level default import (`import clubActions from './clubActions'`) binds a local name to, or null. */
+export function defaultImportSource(tree: Tree, local: string): string | null {
+  if (tree !== defaultsTree) {
+    defaultsTree = tree;
+    defaultImports = new Map();
+    for (const stmt of tree.rootNode.namedChildren) {
+      if (stmt?.type !== "import_statement") continue;
+      const source = stmt.childForFieldName("source")?.text.slice(1, -1);
+      const clause = stmt.namedChildren.find((c) => c?.type === "import_clause");
+      const name = clause?.namedChildren.find((c) => c?.type === "identifier");
+      if (source && name) defaultImports.set(name.text, source);
+    }
+  }
+  return defaultImports.get(local) ?? null;
+}
+
 /** A call building a library object: its factory as the package exports it and the options object it writes. */
 export interface LibraryObjectCall {
   library: LibraryObject;
