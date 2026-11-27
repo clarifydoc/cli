@@ -3,6 +3,56 @@
 User-facing changes to the `clarifydoc` CLI, its MCP server and its library exports. Earlier versions are
 recorded in the git history only.
 
+## 1.3.0 — 2026-11-27
+
+Extractor 1.723.0 → 1.775.0: every cached analysis is read again once.
+
+### Added
+
+- **Symbol ids that tell namesakes apart.** A nested or function-local class and its members carry their owner path
+  (`Match.java::Left.Builder.build`), overloaded methods their parameter types (`Squad.Pick(int,string)`), C++ nested
+  types the same dotted path (`Left.Builder.build`, the label stays `Left::Builder`) and Rust inline-module functions
+  their module path (`pitch.run`, `tests.helper`). Class-graph and entity-graph nodes follow, so two nested `Builder`s
+  are two nodes. A name typed without the path, without parameters or with `::` still finds every match.
+- **Property reads** for TS/JS, Java, Kotlin, C#, Python and PHP (`fieldReads`, `clarifydoc_trace
+  direction=readers`), and **field writes and thrown types** for C#, Python, PHP, Go, Ruby, Rust, C++, Dart, Swift,
+  Scala, Objective-C and Elixir (throws only where the language has them).
+- **Apex and Salesforce markup:** an Apex plugin with SOQL/DML data access and SObject entities; Lightning web
+  components, Aura components and applications and Visualforce pages join their Apex controllers, and fired events
+  reach their handlers.
+- **Tcl:** procs, classes, calls and `source` edges.
+- **Rust uniffi:** Kotlin and Swift callers join the Rust crate their bindings come from.
+- **More links from the screen to the data:** a request whose URL is one of several values
+  (`editing ? "/clubs/update" : "/clubs/add"`) reaches every route it names, AMBIGUOUS; gateways built by factories,
+  default-exported dispatch maps, callback props into context providers, `let` URL builders over an environment
+  origin, scheme-hole URLs and fetch options held in a constant; DynamoDB calls through a project wrapper; bulk writes
+  through an inherited service; a table a deployment declares is a data-model node.
+- **Linking:** long receiver chains, Go explicit type arguments, Ruby setters, operators and indexes as calls, Scala
+  parameterless defs called by a read, R package-qualified, replacement, infix, R6 and S4 calls, Rust `use` paths into
+  inline modules, and an overload chosen by a typed local argument.
+- **Sequences** (`clarifydoc_sequence`) draw calls in run order with repeats, `await` and `try` sections.
+- **Security rules** for Rust, Dart, Scala and Swift.
+- **C and C++:** more macro shapes read by the ANTLR front ends (list macros, macros before attributes, casts and
+  initializers, GNU nested functions inside an `#ifdef`), so fewer files fall back to the line patterns.
+- **MCP:** did-you-mean answers for file paths, generated files ranked last, and `Type::method` accepted wherever a
+  symbol is.
+- **Manifests and config files saved as UTF-16** are read.
+
+### Changed
+
+- **Agent hooks:** the search hook stays silent on searches of logs, notes, temp files, installed packages and builds,
+  and when the map matches only part of the term.
+- **Faster and lighter:** syntax trees are read once into flat arrays, ANTLR decisions for Go, Rust, C and C++ settle
+  from tokens, link-run lookups are memoized, idle workers stop once files are read and JSON is written in slices —
+  peak memory on a cold run is about a fifth lower on large repositories.
+
+### Fixed
+
+- False links: an overload the arguments rule out is never linked; package imports bind no project namesake; a local
+  or parameter hides a same-named class in C#; a Python function-level import binds in its function; a Go external
+  test package shares no names with its subject; a qualified type binds only through its own qualifier.
+- A `this.constructor` URL no longer aborts the analysis; secret findings skip prose and dotted values.
+
 ## 1.2.0 — 2026-11-23
 
 Extractor 1.709.0 → 1.723.0: every cached analysis is read again once.
