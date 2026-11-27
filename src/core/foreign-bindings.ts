@@ -100,7 +100,7 @@ function setBound<T extends Bound | BoundClass>(map: Map<string, T | null>, name
 const camel = (name: string) => name.replace(/^_+/, "").replace(/_+([a-z0-9])/g, (_, c: string) => c.toUpperCase());
 
 /** `wasm_bindgen(js_name = renewContract)` → `{ name: "wasm_bindgen", args: { js_name: "renewContract" }, flags: [] }`. */
-function decoratorArgs(written: string): { name: string; named: Map<string, string>; flags: Set<string> } {
+function decoratorArgs(written: string): { name: string; path: string; named: Map<string, string>; flags: Set<string> } {
   const m = /^\s*([\w:]+)\s*(?:\((.*)\))?\s*$/s.exec(written);
   const named = new Map<string, string>();
   const flags = new Set<string>();
@@ -109,16 +109,20 @@ function decoratorArgs(written: string): { name: string; named: Map<string, stri
     if (kv) named.set(kv[1]!, kv[2]!);
     else if (part.trim()) flags.add(part.trim());
   }
-  return { name: m?.[1]?.split("::").pop() ?? "", named, flags };
+  return { name: m?.[1]?.split("::").pop() ?? "", path: (m?.[1] ?? "").replace(/^::/, ""), named, flags };
 }
 
 /** The name a rule binds a function under, or null when it binds none. */
-function boundName(fn: Pick<FunctionInfo, "name" | "isExported" | "decorators">, rule: ForeignBindingRule): string | null {
+function boundName(fn: Pick<FunctionInfo, "name" | "isExported" | "decorators">, rule: ForeignBindingRule, inClass?: string): string | null {
   if (!fn.isExported) return null;
+  if (rule.declared) {
+    const listed = inClass === undefined ? rule.declared.functions : rule.declared.classes.find((c) => c.name === inClass)?.methods;
+    if (!listed?.includes(fn.name)) return null;
+  }
   const spec = rule.decorator;
   let rename: string | undefined;
   if (spec) {
-    const own = (fn.decorators ?? []).map(decoratorArgs).filter((d) => d.name === spec.name);
+    const own = (fn.decorators ?? []).map(decoratorArgs).filter((d) => d.name === spec.name || d.path === spec.name);
     if (spec.required && own.length === 0) return null;
     for (const d of own) {
       if (spec.skipArgument && d.flags.has(spec.skipArgument)) return null;
@@ -130,10 +134,26 @@ function boundName(fn: Pick<FunctionInfo, "name" | "isExported" | "decorators">,
 }
 
 /** True when the function carries the generator's attribute with the constructor flag (`#[wasm_bindgen(constructor)]`). */
-function isConstructor(fn: Pick<FunctionInfo, "decorators">, rule: ForeignBindingRule): boolean {
+function isConstructor(fn: Pick<FunctionInfo, "name" | "decorators">, rule: ForeignBindingRule, inClass?: string): boolean {
+  if (rule.declared) return fn.name === "new" && !!rule.declared.classes.find((c) => c.name === inClass)?.constructors.includes("new");
   const spec = rule.decorator;
+  if (spec?.constructorAttribute) return fn.name === "new" && (fn.decorators ?? []).map(decoratorArgs).some((d) => d.path === spec.constructorAttribute);
   if (!spec?.constructorArgument) return false;
   return (fn.decorators ?? []).map(decoratorArgs).some((d) => d.name === spec.name && d.flags.has(spec.constructorArgument!));
+}
+
+/** True when the rule binds types: by their attribute, or by a declaration. */
+const bindsClasses = (rule: ForeignBindingRule): boolean => !!rule.declared?.classes.length || !!(rule.decorator?.classes && rule.decorator.required);
+
+/** The name a rule binds a type under, or null: it declares it, derives the trait, or carries the attribute. */
+function boundClassName(cls: ClassInfo, rule: ForeignBindingRule): string | null {
+  if (rule.declared) return rule.declared.classes.some((c) => c.name === cls.name) ? cls.name : null;
+  const derive = rule.decorator?.classDerive;
+  if (derive) {
+    const derived = (cls.decorators ?? []).some((d) => /^derive\s*\(/.test(d) && d.slice(d.indexOf("(") + 1).split(/[,()]/).some((t) => t.trim().replace(/^::/, "") === derive));
+    return derived ? cls.name : null;
+  }
+  return boundName(cls, rule);
 }
 
 /** The class a type names, without its generics or an async wrapper: `Promise<SquadIndex>`, `SquadIndex | null`, `w.SquadIndex`. */
@@ -178,11 +198,11 @@ function bindClasses(a: FileAnalysis, rule: ForeignBindingRule, entry: BoundModu
   const methodsOf = (cls: ClassInfo, into: BoundClass): void => {
     for (const m of cls.methods) {
       const bound: Bound = { file: a.filePath, symbol: `${cls.name}.${m.name}`, line: m.line };
-      if (isConstructor(m, rule)) {
+      if (isConstructor(m, rule, cls.name)) {
         if (m.isExported) into.ctor = into.ctor === null ? bound : into.ctor;
         continue;
       }
-      const name = boundName(m, rule);
+      const name = boundName(m, rule, cls.name);
       if (name) setBound(into.methods, name, bound, sameBound);
     }
   };
@@ -195,7 +215,7 @@ function bindClasses(a: FileAnalysis, rule: ForeignBindingRule, entry: BoundModu
   }
   for (const cls of a.classes) {
     if (cls.extension) continue;
-    const name = boundName(cls, rule);
+    const name = boundClassName(cls, rule);
     if (!name) continue;
     const bound: BoundClass = { self: { file: a.filePath, symbol: cls.name, line: cls.line }, ctor: null, methods: new Map() };
     methodsOf(cls, bound);
@@ -220,12 +240,12 @@ export function foreignBindingLinks(analyses: readonly FileAnalysis[], rules: re
         const name = boundName(fn, rule);
         if (name) setBound(entry.names, name, { file: a.filePath, symbol: fn.name, line: fn.line }, sameBound);
       }
-      if (rule.decorator?.classes && rule.decorator.required) bindClasses(a, rule, entry, false);
+      if (bindsClasses(rule)) bindClasses(a, rule, entry, false);
     }
   }
   // An `impl` apart from its struct's file, then the name each class answers to: its constructor, else the class.
   for (const rule of rules) {
-    if (!rule.decorator?.classes || !rule.decorator.required) continue;
+    if (!bindsClasses(rule)) continue;
     for (const a of analyses) {
       const mod = moduleOf(a.filePath, rule);
       if (mod !== null && a.classes.some((c) => c.extension)) bindClasses(a, rule, modules.get(mod)!, true);
@@ -244,6 +264,34 @@ export function foreignBindingLinks(analyses: readonly FileAnalysis[], rules: re
     const rel = mod === rule.output ? "" : mod.slice(rule.output.length + 1);
     spelled.set(`${rule.importPrefix}${rel ? `/${rel}` : ""}${rule.outputExtension}`, mod);
   }
+  // Modules spelled as a package or module name; one that two modules share binds neither.
+  const packages = new Map<string, string | null>();
+  for (const [mod, { rule }] of modules) {
+    if (!rule.importModule) continue;
+    for (const spelling of [rule.importModule, ...(rule.importAlso ?? [])]) {
+      const prior = packages.get(spelling);
+      packages.set(spelling, prior === undefined || prior === mod ? mod : null);
+    }
+  }
+  /** The modules whose own directories hold this file: it sits in the generated module and needs no import. */
+  const dirModules = (file: string): string[] => {
+    const out: string[] = [];
+    for (const [mod, { rule }] of modules) {
+      if (rule.moduleDirs?.some((d) => file.startsWith(`${d}/`)) && rule.importerExtensions?.some((e) => file.endsWith(e))) out.push(mod);
+    }
+    return out;
+  };
+  /** The module (and the one name of it) an import of a package-spelled module brings in, for a file of an extension the rule names. */
+  const packageImport = (importer: string, source: string): { mod: string; member: string | null } | null => {
+    const read = (spelling: string, member: string | null) => {
+      const mod = packages.get(spelling);
+      return mod && modules.get(mod)!.rule.importerExtensions?.some((e) => importer.endsWith(e)) ? { mod, member } : null;
+    };
+    const whole = read(source, null);
+    if (whole) return whole;
+    const dot = source.lastIndexOf(".");
+    return dot > 0 && !source.slice(dot + 1).includes("/") ? read(source.slice(0, dot), source.slice(dot + 1)) : null;
+  };
   /** The bound module an import names: by its package spelling, or a relative path with or without the extension. */
   const moduleNamed = (importer: string, source: string): string | null => {
     const bySpelling = spelled.get(source);
@@ -259,7 +307,8 @@ export function foreignBindingLinks(analyses: readonly FileAnalysis[], rules: re
 
   const links: SymbolLink[] = [];
   for (const a of analyses) {
-    if (!a.imports?.length) continue;
+    const sameModule = dirModules(a.filePath);
+    if (!a.imports?.length && sameModule.length === 0) continue;
     // Prefixes (`as contracts`, `* as club`) and names in scope, each to its module.
     const prefixes = new Map<string, string>();
     const named = new Map<string, { mod: string; exported: string }>();
@@ -268,7 +317,21 @@ export function foreignBindingLinks(analyses: readonly FileAnalysis[], rules: re
     const boundMods = new Set<string>();
     const foreignNames = new Set<string>();
     let bound = false;
-    for (const imp of a.imports) {
+    for (const mod of sameModule) {
+      bound = true;
+      boundMods.add(mod);
+      scopes.push({ mod });
+    }
+    for (const imp of a.imports ?? []) {
+      const pkg = packageImport(a.filePath, imp.source);
+      if (pkg) {
+        bound = true;
+        boundMods.add(pkg.mod);
+        const { names, classes } = modules.get(pkg.mod)!;
+        if (pkg.member === null) scopes.push({ mod: pkg.mod });
+        else if (names.has(pkg.member) || classes.has(pkg.member)) named.set(imp.specifiers[0] ?? pkg.member, { mod: pkg.mod, exported: pkg.member });
+        continue;
+      }
       const mod = moduleNamed(a.filePath, imp.source);
       if (!mod) {
         for (const spec of imp.specifiers) foreignNames.add(spec);
@@ -334,7 +397,7 @@ export function foreignBindingLinks(analyses: readonly FileAnalysis[], rules: re
         if (third === undefined) {
           // `SquadIndex.create()` (static) or `idx.search()` on a local the file types.
           const hit = named.get(head);
-          const cls = hit ? classNamed(head) : classNamed(typeOfLocal(fn, head));
+          const cls = hit ? classNamed(head) : classNamed(typeOfLocal(fn, head)) ?? (/^[A-Z]/.test(head) ? classNamed(head) : null);
           return cls?.methods.get(second) ?? null;
         }
         // `this.index.search()` on a field the class types.

@@ -1,5 +1,6 @@
 import type { ForeignBindingRule } from "../../../types/analysis.js";
 import { escapeRegex } from "../shared/path-utils.js";
+import { uniffiBindings } from "./uniffi-bindings.js";
 
 /**
  * Rust libraries other languages call through generated bindings, as the
@@ -15,7 +16,8 @@ import { escapeRegex } from "../shared/path-utils.js";
  *     script in a package.json, possibly after `cd <crate> &&`): the crate's
  *     `#[wasm_bindgen]` functions, and those of the project crates it links
  *     (`use club_kit as _;`), named by `js_name` when it says so, in the one
- *     module `<dir>/<crate_name>.js`.
+ *     module `<dir>/<crate_name>.js`;
+ *   - uniffi (`uniffi-bindings.ts`): a crate's proc-macro or UDL exports, as a Kotlin package and a Swift module.
  *
  * Leaf code: reads only its arguments.
  *
@@ -26,10 +28,10 @@ import { escapeRegex } from "../shared/path-utils.js";
  * `<dir>/<crate_name>.js`).
  */
 export function rustForeignBindings(root: string, read: (path: string) => string | undefined, files: ReadonlySet<string>): ForeignBindingRule[] {
-  return [...flutterRustBridge(root, read, files), ...wasmPack(root, read, files)];
+  return [...flutterRustBridge(root, read, files), ...wasmPack(root, read, files), ...uniffiBindings(root, read, files)];
 }
 
-function join(...parts: string[]): string {
+export function join(...parts: string[]): string {
   const out: string[] = [];
   for (const part of parts) {
     for (const seg of part.split("/")) {
@@ -43,7 +45,7 @@ function join(...parts: string[]): string {
   return out.join("/");
 }
 
-const crateName = (name: string) => name.replace(/-/g, "_");
+export const crateName = (name: string) => name.replace(/-/g, "_");
 
 /** Top-level `key: value` pairs of a flat YAML file; a value written as a list (`- a`) joins its items with commas. */
 function flatYaml(text: string): Map<string, string> {
@@ -71,7 +73,7 @@ function flatYaml(text: string): Map<string, string> {
 const unquote = (v: string) => v.replace(/^(['"])(.*)\1$/, "$2");
 
 /** The `[package] name` a Cargo.toml declares. */
-function packageName(toml: string | undefined): string | null {
+export function packageName(toml: string | undefined): string | null {
   if (!toml) return null;
   const section = /^[^\S\r\n\u2028\u2029]*\[package\]\s*$([\s\S]*?)(?=^\s*\[|(?![\s\S]))/m.exec(toml)?.[1] ?? "";
   return /^[^\S\r\n\u2028\u2029]*name\s*=\s*"([^"]+)"/m.exec(section)?.[1] ?? null;

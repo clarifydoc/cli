@@ -2689,7 +2689,35 @@ export interface ForeignBindingRule {
    * `renameArgument`, with the methods that carry it (a method of a `#[wasm_bindgen] impl` inherits it);
    * `constructorArgument` flags the method that constructs it (`#[wasm_bindgen(constructor)]`).
    */
-  decorator?: { name: string; required: boolean; renameArgument?: string; skipArgument?: string; classes?: boolean; constructorArgument?: string };
+  decorator?: {
+    name: string;
+    required: boolean;
+    renameArgument?: string;
+    skipArgument?: string;
+    classes?: boolean;
+    constructorArgument?: string;
+    /** An attribute of its own that marks a constructor (`uniffi::constructor`): the one named `new` is what constructing the class runs, any other is a static factory. */
+    constructorAttribute?: string;
+    /** A type is bound when it derives this trait (`uniffi::Object` of `#[derive(uniffi::Object)]`). */
+    classDerive?: string;
+  };
+  /**
+   * The name importers write for the generated module where the language names modules by package (a Kotlin
+   * package `uniffi.league`, a Swift module `league`), instead of a path: importing it brings every bound name
+   * into scope, and `<importModule>.<name>` imports one. Only files of `importerExtensions` read it; two
+   * modules spelled alike bind nothing.
+   */
+  importModule?: string;
+  importerExtensions?: string[];
+  /** Other names that import the same module (a Swift package target wrapping the generated file, the generated `<namespace>FFI` module). */
+  importAlso?: string[];
+  /** Directories whose files are part of the generated module and see its names without an import (a Swift target's sources). */
+  moduleDirs?: string[];
+  /**
+   * Bound by declaration where no attribute states it (a uniffi UDL file): the Rust functions, and the
+   * classes with their methods and constructors, as the declaration lists them (Rust spelling).
+   */
+  declared?: { functions: string[]; classes: Array<{ name: string; methods: string[]; constructors: string[] }> };
 }
 
 export interface PathArgCall {
