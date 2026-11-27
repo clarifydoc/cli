@@ -27,6 +27,7 @@ function toRanges(lines: readonly number[]): string {
   return out.join(",");
 }
 import { isTestFile } from "./test-file-detector.js";
+import { mdCode, mdText } from "./markdown-escape.js";
 import { hubFollow, testCodeIndex, testFilterPath } from "./test-functions.js";
 
 /**
@@ -856,62 +857,63 @@ export function renderImpactMarkdown(r: ImpactDiffResult): string {
   md.push(`### ClarifyDoc impact — **${r.risk.level.toUpperCase()}** risk`);
   md.push("");
   md.push(
-    `**${r.changedFiles.length} changed file(s)** (base: ${r.baseLabel})` +
-      (r.risk.reasons.length ? ` — ${r.risk.reasons.join("; ")}` : ""),
+    `**${r.changedFiles.length} changed file(s)** (base: ${mdText(r.baseLabel)})` +
+      (r.risk.reasons.length ? ` — ${mdText(r.risk.reasons.join("; "))}` : ""),
   );
   md.push("");
   const row = (label: string, value: string) => md.push(`| ${label} | ${value} |`);
+  const code = (x: string) => mdCode(x, true);
   md.push("| | |");
   md.push("|---|---|");
-  row("Changed", r.changedFiles.map((f) => `\`${f}\``).join(", ") || "—");
-  if (r.unknownFiles.length) row("Unknown", r.unknownFiles.map((f) => `\`${f}\``).join(", "));
-  if (r.removedFiles.length) row("Removed", r.removedFiles.map((f) => `\`${f}\``).join(", "));
-  if (r.addedFiles?.length) row("Added", r.addedFiles.map((f) => `\`${f}\``).join(", "));
-  if (r.renamedFiles?.length) row("Renamed", r.renamedFiles.map((m) => `\`${m.from}\` → \`${m.to}\` (${m.similarity}%)`).join(", "));
+  row("Changed", r.changedFiles.map((f) => code(f)).join(", ") || "—");
+  if (r.unknownFiles.length) row("Unknown", r.unknownFiles.map((f) => code(f)).join(", "));
+  if (r.removedFiles.length) row("Removed", r.removedFiles.map((f) => code(f)).join(", "));
+  if (r.addedFiles?.length) row("Added", r.addedFiles.map((f) => code(f)).join(", "));
+  if (r.renamedFiles?.length) row("Renamed", r.renamedFiles.map((m) => `${code(m.from)} → ${code(m.to)} (${m.similarity}%)`).join(", "));
   row(
     `Screens (${geq(r)}${r.screenCount})`,
-    r.screens.map((s) => `${s.name}${s.route ? ` (\`${s.route}\`)` : ""}`).join(", ") || "—",
+    r.screens.map((s) => `${mdText(s.name)}${s.route ? ` (${code(s.route)})` : ""}`).join(", ") || "—",
   );
   row(
     `API routes (${geq(r)}${r.routeCount})`,
-    r.routes.map((rt) => `\`${rt.method ?? "ANY"} ${rt.path}\``).join(", ") || "—",
+    r.routes.map((rt) => code(`${rt.method ?? "ANY"} ${rt.path}`)).join(", ") || "—",
   );
-  row(`Data (${geq(r)}${r.entityCount})`, r.entities.map((e) => `\`${e}\``).join(", ") || "—");
-  if (r.queueCount > 0) row(`Queues (${geq(r)}${r.queueCount})`, r.queues.map((q) => `\`${q}\``).join(", "));
+  row(`Data (${geq(r)}${r.entityCount})`, r.entities.map((e) => code(e)).join(", ") || "—");
+  if (r.queueCount > 0) row(`Queues (${geq(r)}${r.queueCount})`, r.queues.map((q) => code(q)).join(", "));
   if (r.measuredTests) {
     const m = r.measuredTests;
     const rest = m.tests.length - Math.min(10, m.tests.length) + m.more;
-    row(`Measured — tests that ran the change (${m.from.join(", ")})`, `${m.tests.slice(0, 10).map((t) => `\`${measuredLabel(t, false)}\``).join(", ")}${rest ? ` … +${rest} more` : ""}`);
+    row(`Measured — tests that ran the change (${mdText(m.from.join(", "))})`, `${m.tests.slice(0, 10).map((t) => code(measuredLabel(t, false))).join(", ")}${rest ? ` … +${rest} more` : ""}`);
   }
-  row(`Tests to run (${r.testCount})`, r.tests.map((t) => `\`${t}\``).join(", ") || "—");
-  if (r.coverageNote) row("Per-test evidence", `unavailable — ${r.coverageNote}`);
-  if (r.testCommands?.length) row("Run", r.testCommands.map((c) => `\`${c.command}\``).join("<br>"));
-  if (r.untested?.length) row(`Untested (${r.untested.length})`, r.untested.map((u) => `\`${u.symbol ?? u.file}\``).join(", "));
-  if (r.patchCoverage) row(`Changed lines no test runs (${r.patchCoverage.uncoveredLines})`, r.patchCoverage.files.map((f) => `\`${f.file}:${f.uncovered}\``).join(", "));
+  row(`Tests to run (${r.testCount})`, r.tests.map((t) => code(t)).join(", ") || "—");
+  if (r.coverageNote) row("Per-test evidence", `unavailable — ${mdText(r.coverageNote)}`);
+  if (r.testCommands?.length) row("Run", r.testCommands.map((c) => code(c.command)).join("<br>"));
+  if (r.untested?.length) row(`Untested (${r.untested.length})`, r.untested.map((u) => code(u.symbol ?? u.file)).join(", "));
+  if (r.patchCoverage) row(`Changed lines no test runs (${r.patchCoverage.uncoveredLines})`, r.patchCoverage.files.map((f) => code(`${f.file}:${f.uncovered}`)).join(", "));
   if (r.missingCoChanges?.length) {
-    row("Usually changed with", r.missingCoChanges.map((m) => `\`${m.file}\` (${Math.round(m.score * 100)}% with \`${m.with}\`)`).join(", "));
+    row("Usually changed with", r.missingCoChanges.map((m) => `${code(m.file)} (${Math.round(m.score * 100)}% with ${code(m.with)})`).join(", "));
   }
-  if (r.docs?.length) row(`Docs to update (${r.docCount ?? r.docs.length})`, [...new Set(r.docs.map((d) => `\`${d.doc}:${d.line}\``))].slice(0, 10).join(", "));
+  if (r.docs?.length) row(`Docs to update (${r.docCount ?? r.docs.length})`, [...new Set(r.docs.map((d) => code(`${d.doc}:${d.line}`)))].slice(0, 10).join(", "));
   if (r.symbolImpact) {
     const si = r.symbolImpact;
-    row(`Changed functions (${si.changed.length})`, si.changed.map((s) => `\`${s.symbol}\``).join(", ") || "—");
-    if (si.routes.length) row(`Routes reached by call (${si.routes.length})`, si.routes.map((rt) => `\`${rt.route}\``).join(", "));
-    row(`Callers (${si.direct.length} direct, ${si.transitive.length} further)`, si.direct.slice(0, 10).map((c) => `\`${c.symbol}\``).join(", ") || "—");
+    row(`Changed functions (${si.changed.length})`, si.changed.map((s) => code(s.symbol)).join(", ") || "—");
+    if (si.routes.length) row(`Routes reached by call (${si.routes.length})`, si.routes.map((rt) => code(rt.route)).join(", "));
+    row(`Callers (${si.direct.length} direct, ${si.transitive.length} further)`, si.direct.slice(0, 10).map((c) => code(c.symbol)).join(", ") || "—");
     const unverified = si.direct.filter((c) => c.standing === "unverified");
     if (si.direct.some((c) => c.standing)) {
-      row("Direct callers stand", `${standingCounts(si.direct)}${unverified.length ? ` — check: ${unverified.slice(0, 10).map((c) => `\`${c.symbol}\``).join(", ")}` : ""}`);
+      row("Direct callers stand", `${standingCounts(si.direct)}${unverified.length ? ` — check: ${unverified.slice(0, 10).map((c) => code(c.symbol)).join(", ")}` : ""}`);
     }
     const sig = si.signatureChanges ?? [];
-    if (sig.length) row("Signature changes", sig.map((c) => `${c.breaking ? "**breaking** " : ""}\`${c.symbol}\` ${describeSignatureChange(c)} (${c.callers} caller${c.callers === 1 ? "" : "s"}${signatureChangeTail(c) ? `; ${signatureChangeTail(c)}` : ""})`).join(", "));
+    if (sig.length) row("Signature changes", sig.map((c) => `${c.breaking ? "**breaking** " : ""}${code(c.symbol)} ${mdText(describeSignatureChange(c))} (${c.callers} caller${c.callers === 1 ? "" : "s"}${signatureChangeTail(c) ? `; ${mdText(signatureChangeTail(c))}` : ""})`).join(", "));
   }
-  if (r.owners?.length) row("Owners", r.owners.map((o) => `${o.owner} (${o.files})`).join(", "));
-  if (r.reviewers?.length) row("Suggested reviewers", r.reviewers.map((x) => `${x.name} (${x.commits} commits)`).join(", "));
+  if (r.owners?.length) row("Owners", r.owners.map((o) => `${mdText(o.owner)} (${o.files})`).join(", "));
+  if (r.reviewers?.length) row("Suggested reviewers", r.reviewers.map((x) => `${mdText(x.name)} (${x.commits} commits)`).join(", "));
   row("Dependents", `${r.dependentCount}${narrowedNote(r)}`);
   if (r.chains.length > 0) {
     md.push("");
     md.push("<details><summary>Dependency chains (UI → changed file)</summary>");
     md.push("");
-    for (const c of r.chains) md.push(`- ${chainLine(c)}`);
+    for (const c of r.chains) md.push(`- ${[...c.path].reverse().map(mdText).join(" → ")}  [${mdText(c.endsAt)}]`);
     md.push("");
     md.push("</details>");
   }
@@ -919,7 +921,7 @@ export function renderImpactMarkdown(r: ImpactDiffResult): string {
     md.push("");
     md.push("**Could not judge**");
     md.push("");
-    for (const l of r.limitations) md.push(`- ${l}`);
+    for (const l of r.limitations) md.push(`- ${mdText(l)}`);
   }
   return md.join("\n");
 }
@@ -1007,10 +1009,10 @@ export function renderImpactBrief(r: ImpactDiffResult, priorities: readonly Revi
   if (md) {
     out.push(`### ClarifyDoc impact — **${r.risk.level.toUpperCase()}** risk — review first`, "");
     priorities.forEach((p, i) => {
-      out.push(`${i + 1}. **${p.risk.toUpperCase()}** \`${place(p)}\` ${p.symbol !== p.file ? `\`${p.symbol}\` ` : ""}— ${p.callers} caller(s); tests: ${tests(p)}${p.why.length ? ` — ${p.why.join("; ")}` : ""}`);
+      out.push(`${i + 1}. **${p.risk.toUpperCase()}** ${mdCode(place(p))} ${p.symbol !== p.file ? `${mdCode(p.symbol)} ` : ""}— ${p.callers} caller(s); tests: ${mdText(tests(p))}${p.why.length ? ` — ${mdText(p.why.join("; "))}` : ""}`);
     });
     if (!priorities.length) out.push("Nothing changed in the analysis.");
-    if (r.limitations?.length) out.push("", ...r.limitations.map((l) => `- _Could not judge:_ ${l}`));
+    if (r.limitations?.length) out.push("", ...r.limitations.map((l) => `- _Could not judge:_ ${mdText(l)}`));
     return out.join("\n");
   }
   out.push(`Review first — ${priorities.length === 1 ? "the 1 change" : `the ${priorities.length} riskiest changes`}  [risk: ${r.risk.level.toUpperCase()}, base: ${r.baseLabel}]`);

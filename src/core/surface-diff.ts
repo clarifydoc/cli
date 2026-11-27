@@ -2,6 +2,7 @@ import type { ApiRouteLink, JsonSchemaNode, ProjectAnalysis, RouteInfo } from ".
 import { findCircularDeps } from "./health-scorer.js";
 import { runtimeGraph } from "./import-kinds.js";
 import { isTestFile } from "./test-file-detector.js";
+import { mdCode, mdText } from "./markdown-escape.js";
 
 /**
  * What changed in the API surface between two analyses of a project — a base
@@ -334,7 +335,7 @@ const KIND_LABEL: Record<SurfaceChangeKind, string> = {
 
 export function renderSurfaceMarkdown(d: SurfaceDiff, labels: { base?: string; head?: string } = {}): string {
   const out: string[] = [];
-  const title = labels.base || labels.head ? ` — ${labels.base ?? "base"} → ${labels.head ?? "head"}` : "";
+  const title = labels.base || labels.head ? ` — ${mdText(labels.base ?? "base")} → ${mdText(labels.head ?? "head")}` : "";
   out.push(`### API surface diff${title}`, "");
   if (d.counts.total === 0) {
     out.push("No change to routes, guards, request bodies or cross-tier links.");
@@ -345,13 +346,13 @@ export function renderSurfaceMarkdown(d: SurfaceDiff, labels: { base?: string; h
   if (d.changes.length) out.push("| | Change | Route | Where | Why |", "|---|---|---|---|---|");
   for (const c of d.changes) {
     const mark = c.breaking ? "🔴" : c.risky ? "🟠" : "⚪";
-    const where = c.file ? `\`${c.file}${c.line ? `:${c.line}` : ""}\`` : "";
-    out.push(`| ${mark} | ${KIND_LABEL[c.kind]} | \`${c.route}\` | ${where} | ${c.reasons.join("; ").replace(/\\/g, "\\\\").replace(/\|/g, "\\|")} |`);
+    const where = c.file ? mdCode(`${c.file}${c.line ? `:${c.line}` : ""}`, true) : "";
+    out.push(`| ${mark} | ${KIND_LABEL[c.kind]} | ${mdCode(c.route, true)} | ${where} | ${mdText(c.reasons.join("; "))} |`);
   }
   if (d.cycles) {
     out.push("", "**Import cycles this change creates**", "");
-    for (const c of d.cycles.introduced) out.push(`- 🟠 new: ${c.map((f) => `\`${f}\``).join(" ↔ ")}`);
-    for (const g of d.cycles.grown) out.push(`- 🟠 grown${g.added.length ? ` by ${g.added.map((f) => `\`${f}\``).join(", ")}` : " (two cycles merged)"}: ${g.files.length} files`);
+    for (const c of d.cycles.introduced) out.push(`- 🟠 new: ${c.map((f) => mdCode(f)).join(" ↔ ")}`);
+    for (const g of d.cycles.grown) out.push(`- 🟠 grown${g.added.length ? ` by ${g.added.map((f) => mdCode(f)).join(", ")}` : " (two cycles merged)"}: ${g.files.length} files`);
   }
   return out.join("\n") + "\n";
 }

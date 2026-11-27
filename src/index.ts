@@ -32,6 +32,8 @@ export {
   renderImpactMarkdown,
   type ImpactDiffResult,
 } from "./core/impact-diff.js";
+// Escaping for analyzed text written into Markdown posted where others render it.
+export { mdCode, mdText } from "./core/markdown-escape.js";
 export { impactOfContents } from "./core/impact-proposed.js";
 // What changed in the API surface between two analyses, and whether it breaks
 // a caller (what `diff` prints).
