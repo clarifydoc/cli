@@ -171,7 +171,7 @@ function receiverIn(callName: string, scope: ReadonlySet<string>, fold: (n: stri
  */
 export function declaredSupertypes(cls: ClassInfo, analysis: FileAnalysis): string[] {
   const related = new Set<string>();
-  for (const r of analysis.entityRelations ?? []) if (r.fromEntity === cls.name) related.add(r.toEntity);
+  for (const r of analysis.entityRelations ?? []) if (r.fromEntity === cls.name && (r.fromLine === undefined || r.fromLine === cls.line)) related.add(r.toEntity);
   const out: string[] = [];
   if (cls.extends) out.push(cls.extends);
   for (const i of cls.implements) if (!related.has(bareSupertypeName(i))) out.push(i);

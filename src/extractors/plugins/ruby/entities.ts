@@ -96,11 +96,14 @@ export class RubyEntityExtractor extends EntityExtractor {
 
       for (const stmt of statements) {
         try {
+          // A statement inside a class nested in this one is the nested class's own.
+          const at = cls.line + stmt.line;
+          if (ctx.analysis.classes.some((c) => c !== cls && c.line > cls.line && c.line <= at && at <= c.endLine && c.endLine <= cls.endLine)) continue;
           const rel = this.parseAssociation(cls.name, stmt.text, orm);
           // An association is a relation only: `has_many :players` is no
           // module the model implements.
           if (rel) {
-            relations.push(rel);
+            relations.push({ ...rel, fromLine: cls.line });
             this.addAssociationReader(cls, rel, stmt.text, cls.line + stmt.line);
           }
         } catch {
@@ -963,23 +966,23 @@ function moveConcernRelations(analyses: FileAnalysis[]): void {
   const ruby = analyses.filter((a) => a.language === "ruby");
   const entities = new Set<string>();
   // Every class or module by what it mixes in; an entity's `implements` are the modules it takes.
-  const includers = new Map<string, Array<{ a: FileAnalysis; name: string; entity: boolean }>>();
+  const includers = new Map<string, Array<{ a: FileAnalysis; name: string; line: number; entity: boolean }>>();
   for (const a of ruby) {
     for (const cls of a.classes) {
       const entity = cls.decorators.includes("entity");
       if (entity) entities.add(cls.name);
       for (const mixin of cls.implements) {
         const name = mixin.replace(/^::/, "");
-        includers.set(name, [...(includers.get(name) ?? []), { a, name: cls.name, entity }]);
+        includers.set(name, [...(includers.get(name) ?? []), { a, name: cls.name, line: cls.line, entity }]);
       }
     }
   }
   // `include Scoreable` names the concern as declared; a namespaced one is written in full.
   // A concern another concern includes reaches the models that include the outer one.
-  const includersOf = (concern: string, seen: Set<string> = new Set()): Array<{ a: FileAnalysis; model: string }> => {
+  const includersOf = (concern: string, seen: Set<string> = new Set()): Array<{ a: FileAnalysis; model: string; line: number }> => {
     if (seen.has(concern) || seen.size > 8) return [];
     seen.add(concern);
-    return (includers.get(concern) ?? []).flatMap((inc) => (inc.entity ? [{ a: inc.a, model: inc.name }] : includersOf(inc.name, seen)));
+    return (includers.get(concern) ?? []).flatMap((inc) => (inc.entity ? [{ a: inc.a, model: inc.name, line: inc.line }] : includersOf(inc.name, seen)));
   };
   const moved: Array<{ a: FileAnalysis; rel: EntityRelation }> = [];
   for (const a of ruby) {
@@ -987,13 +990,13 @@ function moveConcernRelations(analyses: FileAnalysis[]): void {
     if (!rels?.some((r) => !entities.has(r.fromEntity))) continue;
     a.entityRelations = rels.filter((r) => {
       if (entities.has(r.fromEntity)) return true;
-      for (const inc of includersOf(r.fromEntity)) moved.push({ a: inc.a, rel: { ...r, fromEntity: inc.model } });
+      for (const inc of includersOf(r.fromEntity)) moved.push({ a: inc.a, rel: { ...r, fromEntity: inc.model, fromLine: inc.line } });
       return false;
     });
   }
   for (const { a, rel } of moved) {
     const list = (a.entityRelations ??= []);
-    if (!list.some((r) => r.fromEntity === rel.fromEntity && r.fromField === rel.fromField)) list.push(rel);
+    if (!list.some((r) => r.fromEntity === rel.fromEntity && r.fromLine === rel.fromLine && r.fromField === rel.fromField)) list.push(rel);
   }
 }
 

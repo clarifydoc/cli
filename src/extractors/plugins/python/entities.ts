@@ -151,7 +151,7 @@ export class PythonEntityExtractor extends EntityExtractor {
             tableName: pythonTableName(body.join("\n")) ?? (orm.id === "sqlalchemy" ? flaskImplicitTable(cls.name, declLine, members) : null),
           }),
         );
-        for (const rel of classRelations) relations.push(rel);
+        for (const rel of classRelations) relations.push({ ...rel, fromLine: cls.line });
       } catch {
         // Never throw — skip anything we can't parse.
       }

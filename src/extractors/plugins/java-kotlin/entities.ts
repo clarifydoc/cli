@@ -128,7 +128,7 @@ export class JavaKotlinEntityExtractor extends EntityExtractor {
               if (rel) {
                 // The association lives in `entityRelations` only: listing its
                 // target in `implements` drew a false supertype edge.
-                relations.push(rel);
+                relations.push({ ...rel, fromLine: cls.line });
                 continue; // an association is not also a scalar column.
               }
 

@@ -84,7 +84,8 @@ export function reconcileProjectEntities(analyses: FileAnalysis[]): void {
  */
 export function mergeEntities(analysis: FileAnalysis, result: EntityExtractResult): void {
   for (const e of result.entities) {
-    const existing = analysis.classes.find((c) => c.name === e.name);
+    // Two namesakes of one file (`Left.Squad`, `Right.Squad`) are told apart by their line.
+    const existing = analysis.classes.find((c) => c.name === e.name && c.line === e.line) ?? analysis.classes.find((c) => c.name === e.name);
     if (existing) {
       for (const d of e.decorators) {
         // SYNTHETIC_ENTITY says "no declaration backs this" — a declaration
@@ -143,20 +144,24 @@ export function mergeEntities(analysis: FileAnalysis, result: EntityExtractResul
 function pruneRelationColumns(analysis: FileAnalysis, relations: EntityRelation[]): void {
   const navByEntity = new Map<string, Set<string>>();
   const fkByEntity = new Map<string, Set<string>>();
+  // A relation that states its declaring class's line belongs to that class alone.
+  const keyOf = (name: string, line: number | undefined): string => (line === undefined ? name : `${name}\0${line}`);
   for (const r of relations) {
-    if (!navByEntity.has(r.fromEntity)) navByEntity.set(r.fromEntity, new Set());
-    navByEntity.get(r.fromEntity)!.add(r.fromField);
+    const key = keyOf(r.fromEntity, r.fromLine);
+    if (!navByEntity.has(key)) navByEntity.set(key, new Set());
+    navByEntity.get(key)!.add(r.fromField);
     if (r.foreignKey) {
-      if (!fkByEntity.has(r.fromEntity)) fkByEntity.set(r.fromEntity, new Set());
-      fkByEntity.get(r.fromEntity)!.add(r.foreignKey);
+      if (!fkByEntity.has(key)) fkByEntity.set(key, new Set());
+      fkByEntity.get(key)!.add(r.foreignKey);
     }
   }
   for (const cls of analysis.classes) {
     // Only touch ORM entities (carry the "entity" decorator) so non-entity
     // classes that happen to share a name are never altered.
     if (!cls.decorators.includes("entity")) continue;
-    const nav = navByEntity.get(cls.name);
-    const fks = fkByEntity.get(cls.name) ?? new Set<string>();
+    const own = keyOf(cls.name, cls.line);
+    const nav = navByEntity.get(own) ?? navByEntity.get(cls.name);
+    const fks = fkByEntity.get(own) ?? fkByEntity.get(cls.name) ?? new Set<string>();
     cls.properties = cls.properties.filter((p) => {
       // ORM config/magic properties are never real columns.
       if (ORM_NON_COLUMN_FIELDS.has(p.name)) return false;

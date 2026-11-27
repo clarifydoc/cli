@@ -273,6 +273,7 @@ export class JavaScriptEntityExtractor extends EntityExtractor {
           const explicitTarget = target != null;
           relations.push({
             fromEntity: cls.name,
+            fromLine: cls.line,
             fromField: decl?.name ?? this.lcFirst(toEntity),
             toEntity,
             cardinality,

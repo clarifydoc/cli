@@ -411,11 +411,13 @@ export function buildEntityGraph(analyses: FileAnalysis[]): EntityGraph {
   const fkByEntity = new Map<string, Set<string>>();
 
   for (const a of analyses) {
+    // A relation that states its declaring class's line is that class's, even when a namesake shares the file.
+    const owners = (a.entityRelations ?? []).some((r) => r.fromLine !== undefined) ? ownerIndex(a) : undefined;
     for (const r of a.entityRelations ?? []) {
       // Resolve the source by name too: a relation usually lives in the same
       // file as its `fromEntity`, but jOOQ centralizes every FK in `Keys.java`,
       // so the owning table is defined elsewhere.
-      const sameFileSrc = `${a.filePath}::${r.fromEntity}`;
+      const sameFileSrc = `${a.filePath}::${r.fromLine !== undefined && owners ? owners.classSymbol(r.fromEntity, r.fromLine) : r.fromEntity}`;
       const fromProject = a.projectId ?? "root";
       const srcId = nodes.has(sameFileSrc) ? sameFileSrc : resolveTarget(r.fromEntity, a.filePath, fromProject, r.orm);
       if (!srcId) continue;

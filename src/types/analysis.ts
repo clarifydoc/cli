@@ -3636,6 +3636,13 @@ export interface ServiceAddress {
 export interface EntityRelation {
   /** Entity declaring the relation — matches a ClassInfo.name in this file. */
   fromEntity: string;
+  /**
+   * The line the declaring class starts on, where the plugin states it. Two same-named entities in one file
+   * (`Left.Squad`, `Right.Squad`) are told apart by it; a relation without it belongs to the entity of that name
+   * (the top-level one, else none of the namesakes). Optional: a relation read from a file that does not hold its
+   * entity (a central key file) states none.
+   */
+  fromLine?: number;
   /** Field/property on fromEntity holding the relation (e.g. "author", "posts"). */
   fromField: string;
   /** Target entity name — matches a ClassInfo.name somewhere in the project. */

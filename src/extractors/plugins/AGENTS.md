@@ -167,7 +167,7 @@ Manifest-level framework rules live with the plugin that owns the ecosystem — 
 
 ### Add an ORM entity extractor
 
-Subclass `EntityExtractor` in `plugins/<lang>/entities.ts`, register it in [src/extractors/entities/index.ts](../entities/index.ts). Emit entity `ClassInfo`s (merged into `analysis.classes` by name) + `EntityRelation`s. For a cross-file join the per-file pass can't do (e.g. Rails attaching `db/schema.rb` columns to models defined in other files), override `reconcileProject(analyses)` — core runs every extractor's pass once via `reconcileProjectEntities` and never names a language itself.
+Subclass `EntityExtractor` in `plugins/<lang>/entities.ts`, register it in [src/extractors/entities/index.ts](../entities/index.ts). Emit entity `ClassInfo`s (merged into `analysis.classes` by name, and by line first when two share a name) + `EntityRelation`s, each stating `fromLine` (the declaring class's `line`) where the extractor walks `analysis.classes`. For a cross-file join the per-file pass can't do (e.g. Rails attaching `db/schema.rb` columns to models defined in other files), override `reconcileProject(analyses)` — core runs every extractor's pass once via `reconcileProjectEntities` and never names a language itself.
 
 ### Container formats (e.g. Vue SFC, Delphi .dfm)
 

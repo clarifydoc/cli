@@ -85,7 +85,7 @@ export class CSharpEntityExtractor extends EntityExtractor {
         }
 
         for (const rel of clsRelations) {
-          relations.push({ ...rel, fromEntity: cls.name, orm });
+          relations.push({ ...rel, fromEntity: cls.name, fromLine: cls.line, orm });
         }
 
         entities.push(
@@ -347,7 +347,7 @@ export class CSharpEntityExtractor extends EntityExtractor {
         const colByLower = new Map(props.map((p) => [p.name.toLowerCase(), p.name]));
         const seen = new Set(
           (a.entityRelations ?? [])
-            .filter((r) => r.fromEntity === cls.name)
+            .filter((r) => r.fromEntity === cls.name && (r.fromLine === undefined || r.fromLine === cls.line))
             .map((r) => `${r.fromField} ${r.toEntity}`),
         );
         const derived: EntityRelation[] = [];
@@ -360,7 +360,7 @@ export class CSharpEntityExtractor extends EntityExtractor {
             if (target && entityNames.has(target) && !isScalar(target) && !isDenylistedType(target)) {
               if (!seen.has(`${p.name} ${target}`)) {
                 derived.push({
-                  fromEntity: cls.name, fromField: p.name, toEntity: target,
+                  fromEntity: cls.name, fromLine: cls.line, fromField: p.name, toEntity: target,
                   cardinality: "one-to-many", foreignKey: null, optional: false,
                   confidence: "INFERRED", orm: "ef-core",
                 });
@@ -378,7 +378,7 @@ export class CSharpEntityExtractor extends EntityExtractor {
               null;
             if (!seen.has(`${p.name} ${bare}`)) {
               derived.push({
-                fromEntity: cls.name, fromField: p.name, toEntity: bare,
+                fromEntity: cls.name, fromLine: cls.line, fromField: p.name, toEntity: bare,
                 cardinality: "many-to-one", foreignKey: fk, optional: isNullable(rawType),
                 confidence: "INFERRED", orm: "ef-core",
               });
@@ -1379,6 +1379,7 @@ function splitCsharpList(s: string, sep: string): string[] {
 function sameRelation(a: EntityRelation, b: EntityRelation): boolean {
   return (
     a.fromEntity === b.fromEntity &&
+    (a.fromLine === undefined || b.fromLine === undefined || a.fromLine === b.fromLine) &&
     a.toEntity === b.toEntity &&
     a.fromField === b.fromField
   );

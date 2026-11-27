@@ -72,7 +72,7 @@ function emitClassRefs(cls: ClassInfo, a: FileAnalysis, language: Language, refs
   if (cls.extends) emitTypeRefs(cls.extends, "extends", baseCtx, refs);
   for (const iface of declaredSupertypes(cls, a).slice(cls.extends ? 1 : 0)) emitTypeRefs(iface, "implements", baseCtx, refs);
   for (const r of a.entityRelations ?? []) {
-    if (r.fromEntity === cls.name) emitTypeRefs(r.toEntity, "field", { ...baseCtx, sourceSymbol: `${classSymbol}.${r.fromField}` }, refs);
+    if (r.fromEntity === cls.name && (r.fromLine === undefined || r.fromLine === cls.line)) emitTypeRefs(r.toEntity, "field", { ...baseCtx, sourceSymbol: `${classSymbol}.${r.fromField}` }, refs);
   }
 
   for (const prop of cls.properties ?? []) {
