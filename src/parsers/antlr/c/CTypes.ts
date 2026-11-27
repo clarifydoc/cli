@@ -334,7 +334,10 @@ export function readTypes(stream: CommonTokenStream): CTokenFacts {
       const pointer = prev === CLexer.Star;
       if (after !== CLexer.LeftBracket) while (declared > i && (macroName(declared) || (pointer && names[declared]!.startsWith("__")))) declared--;
       // `WINBASEAPI BOOL WINAPI f(`: a name after a type of the run is one too, but the one before the declared name stands for a calling convention.
-      const inRun = isId(i - 1) && types.has(names[i - 1]!) && declared > i + 1;
+      // `CLUB_A CLUB_B⏎club_t⏎CLUB_JOIN(a, b)⏎(params) {`: the declared name is a called macro, so the run ends in the type
+      // before it (`declared` stops on it): a name after a type of the run is a specifier of that type too.
+      const inRun = isId(i - 1) && types.has(names[i - 1]!)
+        && (declared > i + 1 || (declared === i + 1 && j > declared && after === CLexer.LeftParen && (names[declared]!.endsWith("_t") || types.has(names[declared]!))));
       if (declared > i && (AFTER_NAME.has(after) || CALLING_KEYWORDS.has(after) || (after === CLexer.LeftParen && (boundary(i) || afterType || inRun)) || after === CLexer.Star)) types.add(name);
     }
     // `CLUB_TYPE CLUB_FIELD(score);` in a struct: no member function exists in C, so the name before a call that

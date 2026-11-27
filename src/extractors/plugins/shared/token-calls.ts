@@ -16,6 +16,10 @@ export interface TokenKinds {
   dot: number;
   arrow: number;
   leftParen: number;
+  rightParen: number;
+  leftBrace: number;
+  /** `*`: a pointer return type before a header's name (`club_t *name (`) is no operator before a call. */
+  star: number;
   /** `::`, when the language has it: `Club::create(` names its class, `ns::f(` the function alone. */
   scope?: number;
   /** `p->kick(` is `p.kick`, as `p.kick(` is (C++); else a member after `->` is named alone (C, where it calls through a function pointer). */
@@ -64,6 +68,25 @@ export function defineCalls(tokens: readonly Token[], kinds: TokenKinds, found: 
   }
 }
 
+/**
+ * Whether the `(` at `open` starts a function header rather than a call: a name that follows a type's `*` or the `)` of
+ * an attribute and whose parameters are followed by the body's `{` or by a K&R parameter declaration (`const char *a;`,
+ * a type or a name no expression continues with) — a GNU nested function a dropped `#ifdef` body holds. A call is
+ * followed by an operator, `;`, `,` or `)`; the `{` of `if (f (x)) {` follows a `)` this one has already closed.
+ */
+function startsHeader(tokens: readonly Token[], open: number, before: number, kinds: TokenKinds): boolean {
+  if (before !== kinds.rightParen && before !== kinds.star) return false;
+  let depth = 0;
+  let i = open;
+  for (; i < tokens.length; i++) {
+    const type = tokens[i]!.type;
+    if (type === kinds.leftParen) depth++;
+    else if (type === kinds.rightParen && --depth === 0) break;
+  }
+  const next = tokens[i + 1]?.type;
+  return next !== undefined && (next === kinds.leftBrace || next === kinds.identifier || kinds.declares.has(next));
+}
+
 /** The calls of code a reading left out (`also`, lines in place) go to the function around each line. */
 export function leftOutCalls(also: string, kinds: TokenKinds, found: readonly CallOwner[]): void {
   const tokens = lexAll(also, kinds);
@@ -107,7 +130,7 @@ export function tokenCalls(tokens: readonly Token[], kinds: TokenKinds, calls: P
         before = prev;
       }
     } else if (t.type !== kinds.dot && t.type !== kinds.arrow && t.type !== kinds.scope) {
-      if (t.type === kinds.leftParen && steps.at(-1)?.kind === "id" && !(before === kinds.identifier || kinds.declares.has(before))) {
+      if (t.type === kinds.leftParen && steps.at(-1)?.kind === "id" && !(before === kinds.identifier || kinds.declares.has(before) || startsHeader(tokens, i, before, kinds))) {
         const leaf = steps[0]!;
         const named = kinds.namespaceQualified && namespaces.length > 0 && steps.length === 1 && leaf.kind === "id"
           ? { name: `${namespaces.at(-1)}.${leaf.name}`, leafName: leaf.name, line: leaf.line, column: leaf.column, receiverType: namespaces.join("::") }

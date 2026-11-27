@@ -374,6 +374,77 @@ CLUB_INLINE CLUB_TARGET CLUB_TEMPLATE(fast)
     expect(shape(source)).toEqual({ errors: 0, functions: [["club_pass", ["tally"]]] });
   });
 
+  it("counts no nested-function header of a dropped body as a call, and every real call (real-repo shape)", () => {
+    const source = `int rank_table(int n)
+{
+  int base = 0;
+#ifdef CLUB_NESTED
+  auto inline int32_t
+  __attribute ((always_inline))
+  bonus (home, away)
+	 const unsigned char *home;
+	 size_t away;
+    {
+      return add_points (home, away);
+    }
+  auto inline club_t *penalty (int fouls)
+    {
+      return count_cards (fouls);
+    }
+  static int helper (int x) { return x; }
+  if (check_rule (base)) { whistle (); }
+  base = (club_t) convert (n) + bonus (n, 1) + penalty (n);
+  base = total * scale (n);
+#endif
+  return base + points_for (n);
+}
+`;
+    const rank = readC(source).functions.find((f) => f.name === "rank_table")!;
+    expect(readC(source).syntaxErrors).toBe(0);
+    expect(rank.calls.map((c) => c.name)).toEqual([
+      "add_points", "count_cards", "check_rule", "whistle", "convert", "bonus", "penalty", "scale", "points_for",
+    ]);
+  });
+
+  it("reads a function named by a call macro after two leading macros and a `_t` type (real-repo shape)", () => {
+    const source = `typedef struct {
+  void *ptr;
+  size_t size;
+} club_result_t;
+
+CLUB_EXPORT CLUB_ALLOC
+club_result_t CLUB_NOTHROW
+/* why a plain attribute cannot be used */
+CLUB_JOIN2(club_make_, CLUB_VERSION)
+  (size_t size, int flags) {
+  return tally(size, flags);
+}
+
+club_result_t club_next(int n) { return step(n); }
+`;
+    const parsed = readC(source);
+    expect(parsed.syntaxErrors).toBe(0);
+    expect(parsed.functions.map((f) => [f.name, f.calls.map((c) => c.name)])).toEqual([
+      ["CLUB_JOIN2", ["tally"]],
+      ["club_next", ["step"]],
+    ]);
+    // three leading macros, and a prototype run the same way, stay declarations
+    const decoy = `CLUB_A CLUB_B CLUB_C
+club_result_t
+CLUB_JOIN(club_, make)
+  (int n) {
+  return tally(n);
+}
+
+CLUB_A CLUB_B club_result_t club_peek(int n);
+
+int club_scale(int n) { return n * CLUB_SCALE(n); }
+`;
+    const read = readC(decoy);
+    expect(read.syntaxErrors).toBe(0);
+    expect(read.functions.map((f) => f.name)).toEqual(["CLUB_JOIN", "club_scale"]);
+  });
+
   it("leaves out the one `#ifdef` body that holds a GNU nested function, and no other (real-repo shape)", () => {
     const source = `#ifdef CLUB_TRACE
 void trace_line(int n) { log_line(n); }
