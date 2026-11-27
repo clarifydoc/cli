@@ -12,10 +12,10 @@
 //               also ends at `--!>`, so write `--!?>`.
 //
 // Every regex literal and every `RegExp(…)` / `new RegExp(…)` built from string literals, templates (a `${…}` reads
-// as one letter) and `+` of them is read with tree-sitter's TypeScript grammar, tests included. The nested rule is a heuristic:
+// as one letter) and `+` of them is read with tree-sitter's TypeScript grammar, in src/ (tests included) and scripts/. The nested rule is a heuristic:
 // it reasons about what each part can match over a sample of characters, and it does not see polynomial
 // (quadratic) shapes — code scanning still runs on every push, and its alerts are read after it.
-// A shape kept on purpose goes in scripts/regex-safety-allow.json as { "<file>:<rule>:<pattern>": "reason" }.
+// A shape kept on purpose goes in scripts/regex-safety-allow.json as { "<path from the cli root>:<rule>:<pattern>": "reason" }.
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,7 +23,8 @@ import { createRequire } from "node:module";
 import { Language, Parser } from "web-tree-sitter";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const srcDir = process.argv[2] ?? join(root, "src");
+// The sources and the scripts beside them: code scanning reads both.
+const srcDirs = process.argv[2] ? [process.argv[2]] : [join(root, "src"), join(root, "scripts")];
 const allowPath = process.argv[3] ?? join(root, "scripts", "regex-safety-allow.json");
 const ESCAPE_HOME = join("extractors", "plugins", "shared", "path-utils.ts");
 
@@ -32,7 +33,7 @@ function* walk(dir) {
     const p = join(dir, e.name);
     if (e.isDirectory()) {
       if (e.name !== "node_modules" && !e.name.startsWith(".")) yield* walk(p);
-    } else if (e.name.endsWith(".ts") && !e.name.endsWith(".d.ts")) yield p;
+    } else if (/\.(?:ts|mjs|js)$/.test(e.name) && !e.name.endsWith(".d.ts")) yield p;
   }
 }
 
@@ -266,7 +267,8 @@ function check(file, text) {
   const judge = (node, source, flags) => {
     const line = node.startPosition.row + 1;
     // An HTML comment matcher (`<!--`) or a comment-end check beside `*/`; a Mermaid or Raku `-->` arrow is no comment.
-    if (/-->/.test(source) && /<!--|\\\*\\\//.test(source)) found.push({ line, rule: "comment", pattern: source });
+    // Plain text tests: a regex matching `-->` here reads, to the code scanner, as a comment filter of its own.
+    if (source.includes("-->") && (source.includes("<!--") || source.includes("\\*\\/"))) found.push({ line, rule: "comment", pattern: source });
     let parsed;
     try { parsed = parseRegex(source, flags); } catch { return; }
     if (nestedRepetition(parsed)) found.push({ line, rule: "nested", pattern: source });
@@ -300,11 +302,12 @@ function check(file, text) {
 const allow = existsSync(allowPath) ? JSON.parse(readFileSync(allowPath, "utf8")) : {};
 const problems = [];
 let regexFiles = 0;
-for (const file of walk(srcDir)) {
+for (const srcDir of srcDirs)
+  for (const file of walk(srcDir)) {
   const text = readFileSync(file, "utf8");
   if (!/\/|RegExp/.test(text)) continue;
   regexFiles++;
-  const rel = relative(srcDir, file).split(sep).join("/");
+  const rel = relative(srcDirs.length > 1 ? root : srcDir, file).split(sep).join("/");
   for (const f of check(file, text)) if (!allow[`${rel}:${f.rule}:${f.pattern}`]) problems.push({ rel, ...f });
 }
 const ADVICE = {

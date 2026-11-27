@@ -1,11 +1,11 @@
 {
-  "extractors/plugins/sfmarkup/index.ts:comment:<!--[\\s\\S]*?-->": "XML: a comment ends only at -->",
-  "extractors/plugins/shared/android-manifest.ts:comment:<!--[\\s\\S]*?-->": "XML: a comment ends only at -->",
-  "extractors/plugins/shared/xml-scan.ts:comment:<!--[\\s\\S]*?-->": "XML: a comment ends only at -->",
-  "extractors/plugins/springxml/client-proxies.ts:comment:<!--[\\s\\S]*?-->": "XML: a comment ends only at -->",
-  "extractors/plugins/springxml/index.ts:comment:<!--[\\s\\S]*?-->": "XML: a comment ends only at -->",
-  "extractors/plugins/springxml/liquibase.ts:comment:<!--[\\s\\S]*?-->": "XML: a comment ends only at -->",
-  "extractors/plugins/springxml/mybatis.ts:comment:<!--[\\s\\S]*?-->": "XML: a comment ends only at -->",
-  "extractors/plugins/springxml/orm-mappings.ts:comment:<!--[\\s\\S]*?-->": "XML: a comment ends only at -->",
-  "extractors/plugins/xaml/index.ts:comment:<!--[\\s\\S]*?-->": "XML: a comment ends only at -->"
+  "src/extractors/plugins/sfmarkup/index.ts:comment:<!--[\\s\\S]*?-->": "XML: a comment ends only at -->",
+  "src/extractors/plugins/shared/android-manifest.ts:comment:<!--[\\s\\S]*?-->": "XML: a comment ends only at -->",
+  "src/extractors/plugins/shared/xml-scan.ts:comment:<!--[\\s\\S]*?-->": "XML: a comment ends only at -->",
+  "src/extractors/plugins/springxml/client-proxies.ts:comment:<!--[\\s\\S]*?-->": "XML: a comment ends only at -->",
+  "src/extractors/plugins/springxml/index.ts:comment:<!--[\\s\\S]*?-->": "XML: a comment ends only at -->",
+  "src/extractors/plugins/springxml/liquibase.ts:comment:<!--[\\s\\S]*?-->": "XML: a comment ends only at -->",
+  "src/extractors/plugins/springxml/mybatis.ts:comment:<!--[\\s\\S]*?-->": "XML: a comment ends only at -->",
+  "src/extractors/plugins/springxml/orm-mappings.ts:comment:<!--[\\s\\S]*?-->": "XML: a comment ends only at -->",
+  "src/extractors/plugins/xaml/index.ts:comment:<!--[\\s\\S]*?-->": "XML: a comment ends only at -->"
 }
