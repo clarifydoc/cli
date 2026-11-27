@@ -1,4 +1,5 @@
 import type { FunctionInfo, PropertyInfo } from "../../../types/analysis.js";
+import { statePathIds } from "../shared/path-utils.js";
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { extractCatalystRoutes, extractMojoDancerRoutes, isDancerFile, isMojoliciousFile, perlRequestAccess } from "./web.js";
 
@@ -179,7 +180,7 @@ export const perlSpec: RegexLangSpec = {
 
     // Attach functions and Moose-style attributes to their owning package
     // based on line ranges.
-    return pkgs.map((pkg) => {
+    const classes = pkgs.map((pkg) => {
       const methods = fns.filter((fn) => fn.line >= pkg.line && fn.line <= pkg.endLine);
       const properties: PropertyInfo[] = [];
       for (let i = pkg.line; i < pkg.endLine && i < lines.length; i++) {
@@ -198,6 +199,8 @@ export const perlSpec: RegexLangSpec = {
         endLine: pkg.endLine,
       };
     });
+    statePathIds(classes);
+    return classes;
   },
 
   importPatterns: [

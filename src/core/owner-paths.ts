@@ -17,7 +17,7 @@
  */
 
 import { manifestFor } from "../extractors/registry.js";
-import type { ClassInfo, FileAnalysis, Language, ParamInfo, ProjectAnalysis } from "../types/analysis.js";
+import type { ClassInfo, FileAnalysis, FunctionInfo, Language, ParamInfo, ProjectAnalysis } from "../types/analysis.js";
 
 interface Node {
   kind: "class" | "fn";
@@ -170,8 +170,10 @@ export function ownerIndex(a: FileAnalysis, lexical = !!manifestFor(a.language a
       q = `${moduleSymbol(mod)}.${own}`;
     } else if (n.kind === "class") {
       const path = owner ? symbolOf(owner) : n.cls?.owner ?? "";
+      const leaf = leafOf(n, owner);
+      // A path-shaped label the owner's name does not lead (a compact `League::Table` in `module Cup`) is spelled by its `idPath`.
       if (!owner && n.cls?.idPath) q = n.cls.idPath;
-      else if (path) q = `${path}.${leafOf(n, owner)}`;
+      else if (path) q = `${path}.${n.cls?.idPath && leaf === n.name ? n.cls.idPath : leaf}`;
     } else if (owner?.kind === "class") {
       // A member of its class: a name that already starts with the class (`Builder.build`) takes the class's
       // id in its place; a bare member name (`build`) is qualified only when the class itself is nested.
@@ -234,6 +236,20 @@ export function ownerIndex(a: FileAnalysis, lexical = !!manifestFor(a.language a
       return cls.length ? classByKey.get(`${name}|${cls[0]!.line}`)?.q ?? name : name;
     },
   };
+}
+
+/**
+ * Every function and method of a file with the id the links name it by (`Cup.League.Table.rank`): what a reader of
+ * the finished summary keys a member by, never `${c.name}.${m.name}`. `owner` is the class of a method.
+ */
+export function functionIds(
+  a: Pick<FileAnalysis, "functions" | "classes"> & Partial<Pick<FileAnalysis, "language" | "inlineModules" | "complexities">>,
+): Array<{ symbol: string; fn: FunctionInfo; owner?: ClassInfo }> {
+  const ids = ownerIndex(a as FileAnalysis);
+  return [
+    ...(a.functions ?? []).map((fn) => ({ symbol: ids.functionSymbol(fn.name, fn.line), fn })),
+    ...(a.classes ?? []).flatMap((c) => (c.methods ?? []).map((fn) => ({ symbol: ids.functionSymbol(`${c.name}.${fn.name}`, fn.line), fn, owner: c }))),
+  ];
 }
 
 /**
@@ -301,6 +317,8 @@ export interface QualifyCounts {
   complexity: number;
   symbolDataAccess: number;
   symbolReach: number;
+  /** Hops of `dataFlows` paths. */
+  dataFlows?: number;
   /** Overload groups spelled by parameter types, and groups left unsplit (two members spell alike). */
   overloadGroups?: number;
   unsplitOverloadGroups?: number;
@@ -353,6 +371,20 @@ export function qualifyNestedSymbols(project: ProjectAnalysis, analyses: readonl
   for (const r of project.symbolReach ?? []) {
     const q = indexes.get(r.file)?.symbolNamed(r.symbol);
     if (q !== undefined && q !== r.symbol) { r.symbol = q; counts.symbolReach++; }
+    // An effect names the function that performs it as the row does: a reader joins it to that function's data access.
+    for (const e of r.effects ?? []) {
+      const qe = indexes.get(e.originFile)?.symbolNamed(e.originSymbol);
+      if (qe !== undefined && qe !== e.originSymbol) { e.originSymbol = qe; counts.symbolReach++; }
+    }
+  }
+  // A flow's hops: a hop's line is the call inside its function that leads on, as a link's source line is.
+  for (const f of project.dataFlows ?? []) {
+    for (const h of f.via ?? []) {
+      const ix = indexes.get(h.file);
+      if (!ix) continue;
+      const q = h.line !== undefined ? ix.functionContaining(h.symbol, h.line) : ix.symbolNamed(h.symbol);
+      if (q !== undefined && q !== h.symbol) { h.symbol = q; counts.dataFlows = (counts.dataFlows ?? 0) + 1; }
+    }
   }
   return counts;
 }

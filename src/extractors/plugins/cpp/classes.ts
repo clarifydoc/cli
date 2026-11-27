@@ -6,7 +6,7 @@ import {
   isControlFlowKeyword,
   type RegexLangSpec,
 } from "../shared/regex-base.js";
-import { stripAngleGroups } from "../shared/path-utils.js";
+import { stripAngleGroups, statePathIds } from "../shared/path-utils.js";
 
 /**
  * What may stand between `class` and the class's name: an all-caps export macro (`CLUB_API`, `Q_DECL_EXPORT`),
@@ -143,7 +143,7 @@ export function extractCppClasses(sourceLines: string[], fns: FunctionInfo[], sp
   scopeNestedTypeNames(all, fns, lines);
   untypeTemplateParameters(all, fns, lines);
   // The label stays `Left::Builder`; the id spells the path with `.` like every language (`core/owner-paths.ts`).
-  for (const cls of all) if (/^\w+(?:::\w+)+$/.test(cls.name)) cls.idPath = cls.name.replace(/::/g, ".");
+  statePathIds(all);
   return all;
 }
 

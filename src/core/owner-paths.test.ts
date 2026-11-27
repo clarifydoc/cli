@@ -142,6 +142,20 @@ describe("qualifyNestedSymbols", () => {
     qualifyNestedSymbols(p2, [one]);
     expect(p2.symbolReach![0]!.symbol).toBe("Outer.Inner.go");
   });
+
+  it("spells an effect's origin and a flow's hops as the row and the links do", () => {
+    const one = file("One.java", [cls("Outer", 1, 9), cls("Inner", 2, 8, [fn("go", 4)])], [], [complexity("Inner.go", 4, 6)]);
+    const effect = { kind: "db-read", resource: "Player", originFile: "One.java", originSymbol: "Inner.go", distance: 0, confidence: "EXTRACTED" };
+    const project = {
+      symbolReach: [{ file: "Garage.java", symbol: "Garage.go", effects: [{ ...effect, distance: 1, confidence: "INFERRED" }] }, { file: "One.java", symbol: "Inner.go", effects: [effect] }],
+      dataFlows: [{ entryKind: "route", entryLabel: "GET /players", entryFile: "Garage.java", effect: "db-read", resource: "Player", distance: 1, confidence: "INFERRED",
+        via: [{ file: "Garage.java", symbol: "Garage.go", line: 4 }, { file: "One.java", symbol: "Inner.go", line: 5 }, { file: "One.java", symbol: "Inner.go" }] }],
+    } as unknown as ProjectAnalysis;
+    const counts = qualifyNestedSymbols(project, [one, decoy]);
+    expect(project.symbolReach!.map((r) => `${r.symbol} <- ${r.effects.map((e) => e.originSymbol).join(",")}`)).toEqual(["Garage.go <- Outer.Inner.go", "Outer.Inner.go <- Outer.Inner.go"]);
+    expect(project.dataFlows![0]!.via!.map((h) => h.symbol)).toEqual(["Garage.go", "Outer.Inner.go", "Outer.Inner.go"]);
+    expect(counts.dataFlows).toBe(2);
+  });
 });
 
 /** The shape, end to end, in the languages whose plugins nest (Java, C#, TypeScript namespace, Python, C++). */

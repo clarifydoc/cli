@@ -85,7 +85,7 @@ describe("links around Struct classes and constant-holding locals", () => {
 
   it("links calls on an untyped parameter to the Struct class's endless methods", () => {
     const got = links("app/services/resolver.rb").map((l) => `${l.callName} -> ${l.targetSymbol}`).sort();
-    expect(got).toEqual(["state.fresh? -> League::ScoreStore.Snapshot.fresh?", "state.stale? -> League::ScoreStore.Snapshot.stale?"]);
+    expect(got).toEqual(["state.fresh? -> League.ScoreStore.Snapshot.fresh?", "state.stale? -> League.ScoreStore.Snapshot.stale?"]);
   });
 
   it("links a call inside a Struct block to the class that follows the block", () => {
@@ -95,11 +95,11 @@ describe("links around Struct classes and constant-holding locals", () => {
 
   it("resolves the same local inside an RSpec example, but not a block parameter", () => {
     const got = links("spec/stats/table_spec.rb").filter((l) => l.callName.endsWith(".names")).map((l) => `${l.sourceLine} ${l.targetSymbol}`).sort();
-    expect(got).toEqual(["4 League::Stats::Resources::Columns.names", "9 League::Stats::Resources::Columns.names"]);
+    expect(got).toEqual(["4 League.Stats.Resources.Columns.names", "9 League.Stats.Resources.Columns.names"]);
   });
 
   it("resolves a local holding a module constant to that module's singleton method, whatever shares the name", () => {
     const got = links("app/services/builder.rb").map((l) => l.targetSymbol);
-    expect(got).toEqual(["League::Stats::Resources::Columns.names"]);
+    expect(got).toEqual(["League.Stats.Resources.Columns.names"]);
   });
 });

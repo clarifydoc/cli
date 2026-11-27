@@ -198,7 +198,8 @@ export async function overridesOfMethods(
       const owner = ix.classSymbol(cls.name, cls.line);
       const hasBelow = index.children.has(classId(file, owner));
       for (const m of cls.methods ?? []) {
-        const symbol = `${cls.name}.${m.name}`;
+        // The id links name it by (`Cup.League.Table.rank`), the key `symbolsInHunks` asks with.
+        const symbol = ix.functionSymbol(`${cls.name}.${m.name}`, m.line);
         if (!hasBelow && !fannedOut.has(`${file}::${symbol}`)) continue;
         const rows = await overridesBelow(index, links, file, `${owner}.${m.name}`, classesOf);
         if (rows.length) out.set(`${file}::${symbol}`, rows);

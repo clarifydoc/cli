@@ -1,4 +1,5 @@
 import { readFile } from "fs/promises";
+import { functionIds } from "./owner-paths.js";
 import { extname } from "path";
 import type { Language } from "../types/analysis.js";
 import type { Cfg } from "../types/control-flow.js";
@@ -284,12 +285,9 @@ async function regexFallback(
   // Only the functions and classes name the graphs: the rest of the regex reading is not needed.
   const analysis = regexStructure(source, displayPath, language);
 
-  const rows = [
-    ...analysis.functions.map((f) => ({ name: f.name, line: f.line, endLine: f.endLine })),
-    ...analysis.classes.flatMap((c) =>
-      c.methods.map((m) => ({ name: `${c.name}.${m.name}`, line: m.line, endLine: m.endLine })),
-    ),
-  ]
+  // Named as the links name them (`Cup.League.Table.rank`): a sequence diagram asks for a function by its link symbol.
+  const rows = functionIds({ ...analysis, language })
+    .map(({ symbol, fn }) => ({ name: symbol, line: fn.line, endLine: fn.endLine }))
     .filter((row) => row.name !== "<setup>" && row.endLine > row.line)
     .sort((a, b) => a.line - b.line);
 

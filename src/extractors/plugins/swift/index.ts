@@ -1,5 +1,6 @@
 import { isSwiftExtension, swiftDeclaredMembers, swiftMemberEffects } from "./member-effects.js";
 import { applyEffects } from "../shared/member-effects-kit.js";
+import { statePathIds } from "../shared/path-utils.js";
 import { extractUIKitNavigation } from "./uikit-navigation.js";
 import { extractSwiftUINavigation } from "./swiftui-navigation.js";
 import type { ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
@@ -329,6 +330,7 @@ export const swiftSpec: RegexLangSpec = {
       const members = cls.extension ? null : swiftDeclaredMembers(lines, cls, classes);
       for (const m of cls.methods) applyEffects(m, swiftMemberEffects(lines, m, { members }));
     }
+    statePathIds(classes);
     return classes;
   },
 

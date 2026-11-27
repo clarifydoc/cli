@@ -54,14 +54,14 @@ describe("Swift nested types are named by their path", () => {
   afterAll(async () => done());
 
   it("keeps two nested types of one leaf name apart", () => {
-    expect(targets(summary, "Coach.run", "t.rank")).toEqual(["Sources/League.swift:League::Table.rank:injection"]);
-    expect(targets(summary, "Coach.run", "u.seed")).toEqual(["Sources/Cup.swift:Cup::Table.seed:injection"]);
-    expect(targets(summary, "Coach.run", "w.rank")).toEqual(["Sources/League.swift:League::Table.rank:injection"]);
+    expect(targets(summary, "Coach.run", "t.rank")).toEqual(["Sources/League.swift:League.Table.rank:injection"]);
+    expect(targets(summary, "Coach.run", "u.seed")).toEqual(["Sources/Cup.swift:Cup.Table.seed:injection"]);
+    expect(targets(summary, "Coach.run", "w.rank")).toEqual(["Sources/League.swift:League.Table.rank:injection"]);
   });
   it("resolves a construction through the path, and a bare name inside the nesting type", () => {
-    expect(targets(summary, "Coach.run", "League.Table")).toEqual(["Sources/League.swift:League::Table:constructor"]);
-    expect(targets(summary, "Coach.run", "Cup.Table")).toEqual(["Sources/Cup.swift:Cup::Table:constructor"]);
-    expect(targets(summary, "League.build", "t.rank")).toEqual(["Sources/League.swift:League::Table.rank:injection"]);
+    expect(targets(summary, "Coach.run", "League.Table")).toEqual(["Sources/League.swift:League.Table:constructor"]);
+    expect(targets(summary, "Coach.run", "Cup.Table")).toEqual(["Sources/Cup.swift:Cup.Table:constructor"]);
+    expect(targets(summary, "League.build", "t.rank")).toEqual(["Sources/League.swift:League.Table.rank:injection"]);
   });
 });
 

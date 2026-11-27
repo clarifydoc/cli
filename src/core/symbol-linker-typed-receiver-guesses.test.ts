@@ -220,7 +220,7 @@ describe("symbol-linker — name guesses respect the receiver", () => {
     });
 
     it("leaves a namesake overlay module's member to the guess — it may be mixed in unseen", () => {
-      expect(linksOf("ruby", "TicketDesk.renew", "season_ticket.seat_label")[0]).toMatchObject({ targetSymbol: "Overlay::Concerns::SeasonTicket.seat_label" });
+      expect(linksOf("ruby", "TicketDesk.renew", "season_ticket.seat_label")[0]).toMatchObject({ targetSymbol: "Overlay.Concerns.SeasonTicket.seat_label" });
     });
   });
 

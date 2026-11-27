@@ -59,12 +59,12 @@ describe("Perl package-qualified and method calls", () => {
 
   it("links constructors, typed locals, inherited subs and qualified subs to the right package", () => {
     const all = links();
-    expect(all).toContain("<setup> League::Club.new -> lib/League/Club.pm#League::Club.new");
-    expect(all).toContain("<setup> club.sign -> lib/League/Club.pm#League::Club.sign");
-    expect(all).toContain("<setup> League::Club.release -> lib/League/Club.pm#League::Club.release");
-    expect(all).toContain("<setup> a.sign -> lib/League/Club.pm#League::Club.sign");
-    expect(all).toContain("League::Academy.train self.sign -> lib/League/Club.pm#League::Club.sign");
-    expect(all).toContain("League::Academy.train self.helper -> lib/League/Academy.pm#League::Academy.helper");
+    expect(all).toContain("<setup> League::Club.new -> lib/League/Club.pm#League.Club.new");
+    expect(all).toContain("<setup> club.sign -> lib/League/Club.pm#League.Club.sign");
+    expect(all).toContain("<setup> League::Club.release -> lib/League/Club.pm#League.Club.release");
+    expect(all).toContain("<setup> a.sign -> lib/League/Club.pm#League.Club.sign");
+    expect(all).toContain("League.Academy.train self.sign -> lib/League/Club.pm#League.Club.sign");
+    expect(all).toContain("League.Academy.train self.helper -> lib/League/Academy.pm#League.Academy.helper");
   });
 
   it("never reaches the namesake package, and leaves an untyped receiver alone", () => {

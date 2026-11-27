@@ -15,7 +15,7 @@ import type { CallInfo, RouteInfo, RouteFact, ClassInfo, FunctionInfo, DataSourc
 import type { RegexLangSpec } from "../shared/regex-base.js";
 import { joinConstantClassHeaders } from "./constant-class-headers.js";
 import { extractCallsFromBody, extractClassesWithSpec, splitBracketedArgs } from "../shared/regex-base.js";
-import { escapeRegex } from "../shared/path-utils.js";
+import { escapeRegex, statePathIds } from "../shared/path-utils.js";
 import { addRubyWhereFields, withRubyArgOrigins, withRubyArgOriginsInClasses } from "./arg-origins.js";
 import type { GuardAttr } from "../../shared/route-metadata.js";
 import { applyRouteMeta } from "../../shared/route-metadata.js";
@@ -1697,6 +1697,7 @@ export const rubySpec: RegexLangSpec = {
   // Where each call's arguments come from (a request value, a parameter), for `paramColumns`.
   postProcessClasses: (lines, classes) => {
     withRubyArgOriginsInClasses(lines, classes);
+    statePathIds(classes);
     return classes;
   },
 

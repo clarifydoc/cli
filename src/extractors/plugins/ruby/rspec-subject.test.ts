@@ -140,25 +140,25 @@ describe("RSpec: the described class is the spec's subject", () => {
 
   it("links described_class.new to the constructor and a let built from it to the class's methods", () => {
     expect(linksFrom("spec/services/league/transfer_service_spec.rb")).toEqual([
-      "League:TransferService -> League::TransferService.initialize",
-      "League:TransferService › #perform › posts the ledger too -> League::LedgerService",
-      "League:TransferService › #perform › posts the ledger too -> League::LedgerService.perform",
-      "League:TransferService › #perform › posts the ledger too -> League::TransferService.initialize",
-      "League:TransferService › #perform › posts the ledger too -> League::TransferService.perform",
-      "League:TransferService › #perform › settles -> League::TransferService.perform",
+      "League:TransferService -> League.TransferService.initialize",
+      "League:TransferService › #perform › posts the ledger too -> League.LedgerService",
+      "League:TransferService › #perform › posts the ledger too -> League.LedgerService.perform",
+      "League:TransferService › #perform › posts the ledger too -> League.TransferService.initialize",
+      "League:TransferService › #perform › posts the ledger too -> League.TransferService.perform",
+      "League:TransferService › #perform › settles -> League.TransferService.perform",
     ]);
   });
 
   it("types a named subject, and a nested group's stand-in rebinding it links nothing", () => {
     // A class declaring no constructor is itself what `described_class.new` constructs.
     expect(linksFrom("spec/services/league/fixture_builder_spec.rb")).toEqual([
-      "League:FixtureBuilder -> League::FixtureBuilder",
-      "League:FixtureBuilder › builds rounds -> League::FixtureBuilder.generate_rounds",
+      "League:FixtureBuilder -> League.FixtureBuilder",
+      "League:FixtureBuilder › builds rounds -> League.FixtureBuilder.generate_rounds",
     ]);
   });
 
   it("runs the described job's perform when the spec enqueues it", () => {
-    expect(linksFrom("spec/jobs/league/close_window_job_spec.rb")).toContain("League:CloseWindowJob -> League::CloseWindowJob.perform");
+    expect(linksFrom("spec/jobs/league/close_window_job_spec.rb")).toContain("League:CloseWindowJob -> League.CloseWindowJob.perform");
   });
 
   it("calls the described classes tested and leaves the others untested", async () => {

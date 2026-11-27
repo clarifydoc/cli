@@ -6,6 +6,7 @@ import type { Confidence, FileAnalysis, ImportInfo, ProjectAnalysis, SymbolLink 
 import { GIT_SAFE_CONFIG, GIT_SAFE_DIFF } from "./git-safe.js";
 import { importersOf } from "./importers.js";
 import { manifestFor } from "../extractors/registry.js";
+import { functionIds } from "./owner-paths.js";
 
 /** New-side line ranges a diff changed, per project-relative file (1-based, inclusive). */
 export type ChangedHunks = Map<string, Array<[number, number]>> & {
@@ -174,6 +175,8 @@ export type HunkSpans = Pick<FileAnalysis, "functions" | "classes"> & {
   language?: FileAnalysis["language"];
   /** The names the file binds at its top level and the lines each owns (`FileAnalysis.moduleNames`). */
   moduleNames?: ReadonlyArray<{ name: string; line: number; endLine: number }>;
+  /** `FileAnalysis.inlineModules`: the module blocks whose functions an id spells through them. */
+  inlineModules?: FileAnalysis["inlineModules"];
 };
 
 /**
@@ -210,10 +213,10 @@ export function symbolsInHunks(
     const typeSpans: ChangedClass[] = a.classes
       .filter((c) => c.endLine >= c.line)
       .map((c) => ({ file, name: c.name, kind: c.kind ?? "class", interfaceLike: c.kind === "interface" || !!c.abstract, line: c.line, endLine: c.endLine }));
-    const spans: ChangedSymbol[] = [
-      ...a.functions.filter((f) => f.name !== "<setup>" && f.endLine >= f.line).map((f) => ({ file, symbol: f.name, line: f.line, endLine: f.endLine })),
-      ...a.classes.flatMap((c) => c.methods.filter((m) => m.endLine >= m.line).map((m) => ({ file, symbol: `${c.name}.${m.name}`, line: m.line, endLine: m.endLine }))),
-    ];
+    // Named as the links name them (`Cup.League.Table.rank`).
+    const spans: ChangedSymbol[] = functionIds(a)
+      .filter(({ fn, owner }) => (owner || fn.name !== "<setup>") && fn.endLine >= fn.line)
+      .map(({ symbol, fn }) => ({ file, symbol, line: fn.line, endLine: fn.endLine }));
     for (const [s, e] of ranges) {
       const hit = spans
         .filter((sp) => sp.line <= e && sp.endLine >= s)
@@ -364,7 +367,7 @@ export async function loadFileAnalyses(analysisDir: string, files: readonly stri
       const a = JSON.parse(await readFile(join(analysisDir, `${f}.json`), "utf8")) as FileAnalysis;
       const imported = new Set((a.imports ?? []).flatMap((i) => [...i.specifiers, ...Object.keys(i.aliases ?? {})]));
       const reexports = (a.exports ?? []).filter((e) => e.kind === "re-export" || imported.has(e.name)).flatMap((e) => (e.sourceName ? [e.name, e.sourceName] : [e.name]));
-      out.set(f, { functions: a.functions ?? [], classes: a.classes ?? [], imports: (a.imports ?? []).map((i) => ({ line: i.line })), ...(a.language ? { language: a.language } : {}), ...(reexports.length ? { reexports } : {}), ...(a.moduleNames?.length ? { moduleNames: a.moduleNames } : {}) });
+      out.set(f, { functions: a.functions ?? [], classes: a.classes ?? [], imports: (a.imports ?? []).map((i) => ({ line: i.line })), ...(a.language ? { language: a.language } : {}), ...(a.inlineModules?.length ? { inlineModules: a.inlineModules } : {}), ...(reexports.length ? { reexports } : {}), ...(a.moduleNames?.length ? { moduleNames: a.moduleNames } : {}) });
     } catch {
       // Not analyzed (new since the analysis, or not a source file).
     }
@@ -416,7 +419,7 @@ export interface SignatureChange {
   breaking: boolean;
 }
 
-type Spans = Pick<FileAnalysis, "functions" | "classes">;
+type Spans = HunkSpans;
 
 /**
  * "removed (possibly renamed to placeOrder)", "moved to src/orders.ts", "1 → 2 required parameters",
@@ -478,8 +481,7 @@ function signatures(a: Spans): Map<string, Signature> {
       ...(typeof fn.isExported === "boolean" ? { exported: fn.isExported } : {}),
     });
   };
-  for (const f of a.functions) if (f.name !== "<setup>") add(f.name, f);
-  for (const c of a.classes) for (const m of c.methods) add(`${c.name}.${m.name}`, m);
+  for (const { symbol, fn, owner } of functionIds(a)) if (owner || fn.name !== "<setup>") add(symbol, fn);
   return out;
 }
 
@@ -560,9 +562,9 @@ export function signatureChanges(
       // Overrides the change leaves as they were: in a file it does not touch, or still declaring the old parameters.
       const stale = () => {
         const rows = (options.overrides?.get(`${file}::${symbol}`) ?? []).filter((o) => {
-          const now = after.get(o.file);
+          const now = after_.get(o.file);
           if (!now) return true;
-          const theirs = signatures(now).get(o.symbol);
+          const theirs = now.get(o.symbol);
           return !!theirs && shape(theirs) === shape(sig);
         });
         return rows.length ? { staleOverrides: rows.map((o) => ({ file: o.file, symbol: o.symbol, line: o.line })) } : {};
@@ -927,7 +929,7 @@ export async function analyzeWorkingFiles(projectRoot: string, files: readonly s
         projectRoot,
         tsconfigAliases: new Map(),
       }).catch(() => null);
-      if (res) out.set(f, { functions: res.analysis.functions, classes: res.analysis.classes });
+      if (res) out.set(f, { functions: res.analysis.functions, classes: res.analysis.classes, language: res.analysis.language, ...(res.analysis.inlineModules?.length ? { inlineModules: res.analysis.inlineModules } : {}) });
     }
   } finally {
     await rm(scratch, { recursive: true, force: true });

@@ -9,6 +9,15 @@ export function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * States `ClassInfo.idPath` for every class whose label is a path (`Left::Builder`, a compact Ruby
+ * `League::Table`, a Perl package, a Swift nested type): the id spells the path with `.` like every language,
+ * the label keeps its `::`. A label that is no path states nothing.
+ */
+export function statePathIds(classes: readonly { name: string; idPath?: string }[]): void {
+  for (const cls of classes) if (/^\w+(?:::\w+)+$/.test(cls.name)) cls.idPath = cls.name.replace(/::/g, ".");
+}
+
 /** `s` with every `<…>` type-argument list removed, however deeply nested (`Map<K, List<V>>` → `Map`); innermost
  *  lists go first, so no `<` or `>` of a balanced list survives. */
 export function stripTypeArguments(s: string): string {

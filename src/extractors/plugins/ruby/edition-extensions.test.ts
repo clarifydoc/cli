@@ -93,8 +93,8 @@ describe("Rails edition extensions prepended with prepend_mod_with", () => {
   it("takes the prepended module's action before the class's own, its `super` the class's, never a namesake module elsewhere", () => {
     const row = summary.routeMap.find((r) => r.path === "/api/v1/fixtures/:id")!;
     expect(row.filePath).toBe("enterprise/app/controllers/enterprise/api/v1/fixtures_controller.rb");
-    const sup = summary.symbolLinks.filter((l) => l.sourceSymbol === "Enterprise::Api::V1::FixturesController.destroy" && l.callName === "super").map((l) => l.targetSymbol);
-    expect(sup).toEqual(["Api::V1::FixturesController.destroy"]);
+    const sup = summary.symbolLinks.filter((l) => l.sourceSymbol === "Enterprise.Api.V1.FixturesController.destroy" && l.callName === "super").map((l) => l.targetSymbol);
+    expect(sup).toEqual(["Api.V1.FixturesController.destroy"]);
     const writes = (summary.dataFlows ?? []).filter((f) => f.entryLabel?.endsWith("/api/v1/fixtures/:id") && f.effect === "db-write").map((f) => f.resource).sort();
     expect(writes).toEqual(["ArchivedFixture", "Fixture"]);
     expect(summary.routeMap.some((r) => (r.filePath ?? "").startsWith("lib/archive"))).toBe(false);

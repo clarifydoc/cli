@@ -175,7 +175,7 @@ describe("Rails concerns: class methods reach the classes that include them", ()
   it("calls a module's methods on the module after `extend self` or `module_function :name`", () => {
     expect(linksOf("FixtureService.label", "League::Slugs.slug")).toEqual(["lib/league/slugs.rb::League.Slugs.slug"]);
     expect(linksOf("League.Slugs.slug", "clean")).toEqual(["lib/league/slugs.rb::League.Slugs.clean"]);
-    expect(linksOf("FixtureService.label", "League::Pads.pad")).toEqual(["lib/league/pads.rb::League::Pads.pad"]);
-    expect(linksOf("League::Pads.trim", "pad")).toEqual(["lib/league/pads.rb::League::Pads.pad"]);
+    expect(linksOf("FixtureService.label", "League::Pads.pad")).toEqual(["lib/league/pads.rb::League.Pads.pad"]);
+    expect(linksOf("League.Pads.trim", "pad")).toEqual(["lib/league/pads.rb::League.Pads.pad"]);
   });
 });

@@ -17,6 +17,7 @@ import { extensionFamily } from "../extractors/plugins/shared/path-utils.js";
 import { resolveImportSource } from "./import-index.js";
 import { byOrdinal } from "./ordinal.js";
 import { isTestFile } from "./test-file-detector.js";
+import { functionIds } from "./owner-paths.js";
 
 /** Every test function of the analysis, by file, in source order. Files without one are left out. */
 export function collectTestFunctions(analyses: readonly FileAnalysis[]): Record<string, TestFunctionRow[]> {
@@ -424,11 +425,11 @@ export function fileTestVerdict(
   const importers = excluded ? [] : ctx.testImportersOf(path).filter((f) => !mockedBy.includes(f));
   if (importers.length) basis.push("importer");
   const own = new Set(declared.map((d) => d.symbol));
+  // Named as the links name them: a nested or path-named class's member by its owner path (`Cup.League.Table.x`).
   const functions = file
-    ? [
-        ...file.functions.filter((fn) => fn.name !== "<setup>" && !fn.synthetic).map((fn) => ({ symbol: fn.name, line: fn.line })),
-        ...file.classes.flatMap((c) => c.methods.filter((m) => !m.synthetic).map((m) => ({ symbol: `${c.name}.${m.name}`, line: m.line }))),
-      ].filter((fn) => !own.has(fn.symbol))
+    ? functionIds(file)
+        .filter(({ symbol, fn, owner }) => !fn.synthetic && (owner || fn.name !== "<setup>") && !own.has(symbol))
+        .map(({ symbol, fn }) => ({ symbol, line: fn.line }))
     : [];
   const reach = functions.length && !excluded ? ctx.reach(functions.map((fn) => ({ file: path, symbol: fn.symbol }))) : new Map<string, TestReach>();
   if (reach.size) basis.push("reached-function");

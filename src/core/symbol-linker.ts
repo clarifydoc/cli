@@ -5719,6 +5719,7 @@ function resolveCallToDefinition(
     if (link) link = { ...link, callName: call.name };
   }
   if (invoke === "same-file" && link && link.targetFile !== sourceFile) return null;
+  if (link && call.line) link = pinLexicalDeclaration(ctx, analysis, call, link);
   if (!link || link.targetFile !== sourceFile || !call.line || !pluginFor(analysis.language)?.lexicalCallScope) return link;
   const dot = link.targetSymbol.indexOf(".");
   if (dot <= 0) return link;
@@ -5729,6 +5730,41 @@ function resolveCallToDefinition(
   const member = link.targetSymbol.slice(dot + 1);
   const method = chosen.methods.find((m) => m.name === member);
   return method ? { ...link, targetLine: method.line } : null;
+}
+
+/**
+ * A link into a file that declares its target's class name more than once (`Garage::Table` and `League::Table`):
+ * the symbol index holds one entry for `Table.build`, so the link lands on whichever declaration came last. Where
+ * the call writes a constant path (`League::Table.build`, or the bare `Table.new` inside `module Garage`) of a
+ * language that looks constants up lexically, the path is looked up as the language does and the link is
+ * aimed at the member of the class declared there; null when that class has no such member. A path that
+ * names no class of the target file, or names two of them (a class reopened), leaves the link as it is.
+ */
+function pinLexicalDeclaration(ctx: LinkContext, analysis: FileAnalysis, call: CallInfo, link: SymbolLink): SymbolLink | null {
+  const lexical = manifestFor(analysis.language as Language)?.lexicalConstants;
+  if (!lexical) return link;
+  const dot = link.targetSymbol.indexOf(".");
+  const className = dot > 0 ? link.targetSymbol.slice(0, dot) : link.targetSymbol;
+  const written = call.name.match(/^(::)?([A-Z]\w*(?:::[A-Z]\w*)*)[.:]/);
+  if (!written || written[2]!.split("::").pop() !== className) return link;
+  const target = analysisByFileOf(ctx).get(link.targetFile);
+  if (!target || target.classes.filter((c) => c.name === className).length < 2) return link;
+  ctx.typePaths ??= buildTypePaths(ctx.analyses);
+  const nesting = written[1] ? [] : lexical.nesting(analysis.classes, call.line);
+  for (const scope of [...nesting, ""]) {
+    const path = scope ? `${scope}::${written[2]}` : written[2]!;
+    const decls = ctx.typePaths.get(path);
+    if (!decls?.length) continue;
+    const here = target.classes.filter((c) => c.name === className && lexical.pathOf(c, target.classes) === path);
+    if (here.length !== 1) return link;
+    const chosen = here[0]!;
+    if (link.targetLine >= chosen.line && link.targetLine <= chosen.endLine) return link;
+    if (dot <= 0) return { ...link, targetLine: chosen.line };
+    const member = link.targetSymbol.slice(dot + 1);
+    const method = chosen.methods.find((m) => m.name === member);
+    return method ? { ...link, targetLine: method.line } : null;
+  }
+  return link;
 }
 
 function resolveCallUnscoped(
