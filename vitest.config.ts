@@ -6,6 +6,6 @@ export default defineConfig({
     // Plugins load lazily in production; tests get everything up front.
     setupFiles: ["src/test-setup.ts"],
     include: ["src/**/*.test.ts"],
-    exclude: ["node_modules/**", "dist/**"],
+    exclude: ["node_modules/**", "dist/**", "test-fixtures/**"],
   },
 });
