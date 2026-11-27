@@ -21,7 +21,9 @@ import { keyOf } from "./symbol-graph.js";
  *
  * AMBIGUOUS links are skipped — the target is one of several candidate routes,
  * and a wrong edge would propagate entities into traces that never touch them
- * (same no-guess rule the symbol linker follows).
+ * (same no-guess rule the symbol linker follows). The exception is a variant
+ * (`ApiRouteLink.variant`): a URL that is one of several values (`edit ? "/x/update" : "/x/add"`)
+ * reaches each route it names for certain on one branch, so every variant keeps its edge, AMBIGUOUS.
  *
  * Symbol resolution is structural, not language-specific:
  *  - source: innermost function/method whose span contains the call line;
@@ -233,7 +235,7 @@ export function synthesizeApiRouteSymbolLinks(
   // One trace edge per subclass a fanned-out base request was resolved for.
   const hops = links.flatMap((l): Array<ApiRouteLink & { viaSubclass?: string }> => (l.viaSubclasses?.length ? l.viaSubclasses.map((v) => ({ ...l, viaSubclass: v })) : [l]));
   for (const link of hops) {
-    if (link.confidence === "AMBIGUOUS") continue;
+    if (link.confidence === "AMBIGUOUS" && !link.variant) continue;
 
     let src = innermostAt(spansFor(link.source), link.sourceLine);
     if (!src) continue; // top-level call (module scope) — no trace symbol to anchor

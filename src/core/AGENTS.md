@@ -68,7 +68,7 @@ Order of the passes: module values → route bases → (link) → call origins �
 - [param-columns.ts](param-columns.ts) — `ParamColumn[]`: the route parameter followed forward to the column a statement filters on (`clarifydoc_contract`, FLOWS.md).
 - [project-dependencies.ts](project-dependencies.ts) — `ProjectDependency[]`: sub-project → sub-project `http`, `bus` and `package` edges.
 - [contract-check.ts](contract-check.ts) — `ContractFinding[]`: a call's body against the route's closed schema.
-- [request-schemas.ts](request-schemas.ts) — handler `params` and `routeMap[].requestSchema`; [route-linker.ts](route-linker.ts) — `apiRouteLinks` (the three tiers, contract twins via `codeTwinsIndex`).
+- [request-schemas.ts](request-schemas.ts) — handler `params` and `routeMap[].requestSchema`; [route-linker.ts](route-linker.ts) — `apiRouteLinks` (the three tiers, contract twins via `codeTwinsIndex`). A call whose URL is one of several values (`targetChoice`) links each route it reaches, `AMBIGUOUS` and marked `ApiRouteLink.variant`; `api-route-symbol-links.ts` skips every other AMBIGUOUS link but keeps a variant's trace edge (AMBIGUOUS), so a screen that picks `edit ? update : add` reaches the data both routes write.
 
 ### Screens and navigation
 

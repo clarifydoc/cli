@@ -2884,6 +2884,11 @@ export interface ApiRouteLink {
    */
   viaSubclasses?: string[];
   /**
+   * One of several routes the call's URL may take (`ApiCall.targetChoice`): each is a definite match of one
+   * value, `AMBIGUOUS` only because a single value runs per call. The trace pass keeps these as edges.
+   */
+  variant?: true;
+  /**
    * Sub-project of the calling file and of the route. They differ when one
    * project calls another's API — a frontend its backend, a service another
    * service — which is what a project-level dependency is made of.
