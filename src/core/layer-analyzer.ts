@@ -230,6 +230,13 @@ export function detectLayerViolations(
   analyses: FileAnalysis[],
   componentGraph: Record<string, string[]>,
   fileLayerMap: Record<string, ArchLayer>,
+  /**
+   * The other layers a file's content puts it in (`layerDisagreements().alternates`). A source is judged from the
+   * highest of its layers: a file named like a service that declares the app's routes (`code-router.tsx`), a
+   * `lib/main.dart` that does, or the urlconf the routes are registered in sits at the top of the stack, so its
+   * imports of pages and views are its job, not an upward reach.
+   */
+  alternates: Readonly<Record<string, ReadonlyArray<{ layer: ArchLayer }>>> = {},
 ): LayerViolation[] {
   const violations: LayerViolation[] = [];
 
@@ -244,8 +251,8 @@ export function detectLayerViolations(
     // config file. They keep the config layer for display only.
     if (WIRING_CLASS_RE.test(sourceFile)) continue;
     const sourceLayer = fileLayerMap[sourceFile] ?? "unknown";
-    const sourceLevel = LAYER_LEVEL[sourceLayer];
-    if (sourceLevel < 0) continue; // exempt
+    if (LAYER_LEVEL[sourceLayer] < 0) continue; // exempt
+    const sourceLevel = Math.max(LAYER_LEVEL[sourceLayer], ...(alternates[sourceFile] ?? []).map((e) => LAYER_LEVEL[e.layer]));
 
     const sourceDir = sourceFile.slice(0, sourceFile.lastIndexOf("/") + 1);
     // The layer the source's folder states (`routers/` for `routers/api.py`, which its name makes services).
@@ -489,8 +496,8 @@ export interface LayerEvidence {
  * modules never reads as an upward import. Database access is not evidence
  * on its own: entry and wiring files touch it too.
  */
-export function layerEvidence(a: FileAnalysis | undefined): { layer: ArchLayer; reason: string } | null {
-  const first = layerEvidenceAll(a).find((e) => !e.notAlone);
+export function layerEvidence(a: FileAnalysis | undefined, registered = 0): { layer: ArchLayer; reason: string } | null {
+  const first = layerEvidenceAll(a, registered).find((e) => !e.notAlone);
   return first ? { layer: first.layer, reason: first.reason } : null;
 }
 
@@ -503,7 +510,14 @@ export function layerEvidence(a: FileAnalysis | undefined): { layer: ArchLayer; 
  * import: a file that imports a web framework's error type or dependency
  * marker declares no route and is no API file.
  */
-export function layerEvidenceAll(a: FileAnalysis | undefined): LayerEvidence[] {
+export function layerEvidenceAll(
+  a: FileAnalysis | undefined,
+  /**
+   * Routes other files serve whose registration is in this file (`RouteInfo.registeredAt`: a Django urlconf, Rails
+   * `config/routes.rb`): it is the app's routing, at the top of the stack, though its own rows moved to the handlers.
+   */
+  registered = 0,
+): LayerEvidence[] {
   // An API contract (OpenAPI, …) declares routes it does not serve: it is no layer of the application.
   if (!a || isApiContractLanguage(a.language)) return [];
   const n = (k: number, word: string) => `${k} ${word}${k === 1 ? "" : "s"}`;
@@ -519,6 +533,10 @@ export function layerEvidenceAll(a: FileAnalysis | undefined): LayerEvidence[] {
       agrees: api ? ["ui", "services"] : ["ui", "components"],
       ...(api ? { strong: true } : {}),
     });
+  } else if (registered) {
+    // Not strong, so a routes file kept under `config/` (where its framework wants it) is never called misplaced;
+    // it is still an alternate layer beside its path's, which is what judges its imports.
+    out.push({ layer: "ui", reason: `it registers ${n(registered, "route")} other files serve — the top of the stack, as a routes folder is`, agrees: ["ui", "services"] });
   }
   const entities = a.classes.filter((c) => c.decorators?.includes("entity")).map((c) => c.name);
   if (entities.length) out.push({ layer: "data", reason: `it defines the ${entities.length === 1 ? "entity" : "entities"} ${entities.slice(0, 3).join(", ")}`, agrees: ["data"], strong: true });
@@ -542,13 +560,15 @@ export function layerDisagreements(
   layers: Readonly<Record<string, ArchLayer>>,
   tiers: Readonly<Record<string, LayerTier>>,
   skip: (file: string) => boolean,
+  /** How many routes other files serve are registered in each file (see `layerEvidenceAll`). */
+  registeredIn: (file: string) => number = () => 0,
 ): { alternates: Record<string, Array<{ layer: ArchLayer; reason: string }>>; conflicts: Array<{ file: string; layer: ArchLayer; evidence: string }> } {
   const alternates: Record<string, Array<{ layer: ArchLayer; reason: string }>> = {};
   const conflicts: Array<{ file: string; layer: ArchLayer; evidence: string }> = [];
   for (const a of analyses) {
     const layer = layers[a.filePath];
     if (!layer || layer === "test" || layer === "unknown" || skip(a.filePath)) continue;
-    const evidence = layerEvidenceAll(a);
+    const evidence = layerEvidenceAll(a, registeredIn(a.filePath));
     const other = evidence.filter((e) => e.layer !== layer && !e.agrees.includes(layer));
     if (other.length) alternates[a.filePath] = other.map(({ layer: l, reason }) => ({ layer: l, reason }));
     const tier = tiers[a.filePath];

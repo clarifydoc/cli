@@ -158,9 +158,12 @@ export const djangoUrlconfResolver: RouteResolver = {
     if (!any) return;
 
     const added = new Map<FileAnalysis, RouteInfo[]>();
+    /** A row lands on its handler; `registeredAt` (the urlconf line) is kept only when that is another file. */
     const emit = (where: Where, row: Omit<RouteInfo, "line" | "calls" | "middleware"> & { middleware?: string[] }) => {
       const list = added.get(where.analysis) ?? [];
-      list.push({ calls: [], middleware: [], ...row, line: where.line });
+      const { registeredAt, ...rest } = row;
+      const moved = registeredAt && registeredAt.file !== where.analysis.filePath ? { registeredAt } : {};
+      list.push({ calls: [], middleware: [], ...rest, ...moved, line: where.line });
       added.set(where.analysis, list);
     };
 
@@ -257,7 +260,7 @@ export const djangoUrlconfResolver: RouteResolver = {
       const urlconf = ctx.fileOf(file);
       if (!urlconf) return;
       const ref = view.kind === "class" ? ctx.classes.resolve(viewFile, view.name) : null;
-      const extra = { ...(marker ? { prefixUnresolved: marker } : {}), ...(name ? { name } : {}) };
+      const extra = { ...(marker ? { prefixUnresolved: marker } : {}), ...(name ? { name } : {}), registeredAt: { file, line } };
       if (!ref) {
         // A function view, or a class we cannot see: a route at that path, any method.
         const auth = view.kind === "func" ? funcAuth(viewFile, view.name) : {};
@@ -317,7 +320,7 @@ export const djangoUrlconfResolver: RouteResolver = {
     const expandRegistration = (file: string, base: string, reg: DrfRegisterFact & { line: number }, slash: boolean, marker: string | undefined, router?: DrfRouterFact, ns: readonly string[] = []) => {
       const ref = ctx.classes.resolve(file, reg.viewset);
       const urlconf = ctx.fileOf(file);
-      const extra = marker ? { prefixUnresolved: marker } : {};
+      const extra = { ...(marker ? { prefixUnresolved: marker } : {}), registeredAt: { file, line: reg.line } };
       const ts = slash ? "/" : "";
       const prefix = reg.prefix.replace(/^\^|\/?\$$/g, "");
       const listPath = joinDjango(base, prefix, ts);

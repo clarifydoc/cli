@@ -617,3 +617,23 @@ def default_car(request): pass
     ]);
   });
 });
+
+describe("django-urlconf: where a route moved onto its view was registered", () => {
+  it("records the urlconf line on a row moved to its view, and none on a row that stays in its urlconf", async () => {
+    const files = await analyze({
+      "config/settings.py": `ROOT_URLCONF = "config.urls"\n`,
+      "config/urls.py": `from django.urls import path\nfrom garage.views import HealthView\n\ndef inline(request):\n    pass\n\nurlpatterns = [\n    path("health/", HealthView.as_view()),\n    path("inline/", inline),\n]\n`,
+      "garage/views.py": `from django.views import View\n\nclass HealthView(View):\n    def get(self, request):\n        pass\n`,
+    });
+    const all = files.flatMap((a) => a.routes.map((r) => ({ file: a.filePath, path: r.path, registeredAt: r.registeredAt })));
+    expect(all).toContainEqual({ file: "garage/views.py", path: "/health/", registeredAt: { file: "config/urls.py", line: 8 } });
+    expect(all.find((r) => r.path === "/inline/")).toEqual({ file: "config/urls.py", path: "/inline/", registeredAt: undefined });
+  });
+
+  it("records a DRF router registration's line on the viewset's routes", async () => {
+    const files = await analyze(SHOP);
+    const tags = files.flatMap((a) => a.routes.filter((r) => r.path === "/api/tags/").map((r) => r.registeredAt));
+    expect(tags.length).toBeGreaterThan(0);
+    for (const at of tags) expect(at).toEqual({ file: "config/urls.py", line: 7 });
+  });
+});

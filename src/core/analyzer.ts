@@ -1948,14 +1948,18 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const fileLayerReasons: Record<string, string> = {};
   const analysisOf = new Map(allAnalyses.map((a) => [a.filePath, a]));
   const fileLayerTiers: Record<string, LayerTier> = {};
+  // Routes whose registration a resolver kept in another file (a urlconf, a routes file): that file is the app's routing.
+  const routesRegisteredIn = new Map<string, number>();
+  for (const a of allAnalyses)
+    for (const r of a.routes) if (r.registeredAt && r.registeredAt.file !== a.filePath) routesRegisteredIn.set(r.registeredAt.file, (routesRegisteredIn.get(r.registeredAt.file) ?? 0) + 1);
   const fileLayerMap = classifyFileLayers(
     allAnalyses.map((a) => ({ path: a.filePath, language: a.language })),
     architecture,
-    (f) => layerEvidence(analysisOf.get(f)),
+    (f) => layerEvidence(analysisOf.get(f), routesRegisteredIn.get(f) ?? 0),
     fileLayerReasons,
     fileLayerTiers,
   );
-  const layerSplit = layerDisagreements(allAnalyses, fileLayerMap, fileLayerTiers, isUnauthored);
+  const layerSplit = layerDisagreements(allAnalyses, fileLayerMap, fileLayerTiers, isUnauthored, (f) => routesRegisteredIn.get(f) ?? 0);
   // Pages browser tests open by address, joined to the screen at that path.
   const isTestCode = (f: string) => fileLayerMap[f] === "test" || isTestFile(f, analysisOf.get(f)?.language);
   const testNavigations = joinTestNavigations({
@@ -1986,7 +1990,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // `import type` or `import()` closes is not a runtime init hazard.
   const typeOnly = typeOnlyEdges(typeOnlyImports, symbolLinks);
   const layerViolations = [
-    ...detectLayerViolations(allAnalyses, componentGraph, fileLayerMap),
+    ...detectLayerViolations(allAnalyses, componentGraph, fileLayerMap, layerSplit.alternates),
     // The team's own rules (`.clarifydoc/config.json` `rules`), beside the built-in order.
     ...detectRuleViolations(
       allAnalyses,

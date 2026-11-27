@@ -112,6 +112,17 @@ describe("classifyFileLayers", () => {
 describe("detectLayerViolations", () => {
   const analyses = [] as unknown as FileAnalysis[];
 
+  it("judges a source from the highest layer its content puts it in, so a router declaring the routes may import pages", () => {
+    const files = ["src/club-router.tsx", "src/pages/Squad.tsx", "src/models/match.ts"];
+    const layers = classifyFileLayers(files);
+    const graph = { "src/club-router.tsx": ["src/pages/Squad.tsx"], "src/models/match.ts": ["src/pages/Squad.tsx"] };
+    // By its name alone the router is a service reaching up into a page.
+    expect(detectLayerViolations(analyses, graph, layers).map((v) => v.sourceFile)).toEqual(["src/club-router.tsx", "src/models/match.ts"]);
+    // It declares the app's routes: the top of the stack. The model beside it declares none and stays a violation.
+    const alternates = { "src/club-router.tsx": [{ layer: "ui" as const }] };
+    expect(detectLayerViolations(analyses, graph, layers, alternates).map((v) => v.sourceFile)).toEqual(["src/models/match.ts"]);
+  });
+
   it("does not flag utils importing data (1-level jump) or test sources", () => {
     const graph = {
       "src/utils/coverage.ts": ["src/App.Models/Training.cs"],
@@ -470,5 +481,18 @@ describe("ruleVerdicts — whether each team rule said anything", () => {
     expect(failingResults(log, { categories: ["vacuous-rule"] })).toHaveLength(1);
     expect(failingResults(log, { categories: ["import-rule"] })).toHaveLength(1);
     expect(failingResults(log, { level: "error" })).toHaveLength(1);
+  });
+});
+
+describe("layerEvidenceAll — routes registered in a file", () => {
+  it("reads a file other files' routes are registered in as routing, an alternate layer but never misplaced", () => {
+    const urls = createEmptyAnalysis("config/urls.py", "python");
+    expect(layerEvidenceAll(urls)).toEqual([]);
+    const [evidence] = layerEvidenceAll(urls, 3);
+    expect(evidence).toMatchObject({ layer: "ui", agrees: ["ui", "services"] });
+    expect(evidence!.strong).toBeUndefined();
+    const { alternates, conflicts } = layerDisagreements([urls], { "config/urls.py": "config" }, { "config/urls.py": "folder" }, () => false, () => 3);
+    expect(alternates["config/urls.py"]).toEqual([{ layer: "ui", reason: expect.stringContaining("registers 3 routes") }]);
+    expect(conflicts).toEqual([]);
   });
 });
