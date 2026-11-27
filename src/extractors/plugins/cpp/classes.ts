@@ -142,6 +142,8 @@ export function extractCppClasses(sourceLines: string[], fns: FunctionInfo[], sp
   nameTwinsByPath([...stubs.values()]);
   scopeNestedTypeNames(all, fns, lines);
   untypeTemplateParameters(all, fns, lines);
+  // The label stays `Left::Builder`; the id spells the path with `.` like every language (`core/owner-paths.ts`).
+  for (const cls of all) if (/^\w+(?:::\w+)+$/.test(cls.name)) cls.idPath = cls.name.replace(/::/g, ".");
   return all;
 }
 

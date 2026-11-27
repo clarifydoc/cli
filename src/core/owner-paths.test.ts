@@ -177,6 +177,18 @@ describe("owner-qualified ids, end to end", () => {
         "struct Right {", "  struct Builder {", "    static int build() {", "      return 2;", "    }", "  };", "};", "}", "",
         "int go() {", "  return league::Right::Builder::build();", "}", "",
       ].join("\n"),
+      "o.h": [
+        "class Left {", " public:", "  class Builder {", "   public:", "    void build();", "    static int make();", "  };", "};", "",
+        "class Right {", " public:", "  class Builder {", "   public:", "    void build() {", "      stamp();", "    }", "  };", "};", "",
+        "class Builder {", " public:", "  void build();", "};", "",
+      ].join("\n"),
+      "o.cpp": [
+        '#include "o.h"', "", "void Left::Builder::build() {", "  stamp();", "}", "", "int Left::Builder::make() {", "  return 1;", "}", "",
+        "void Builder::build() {", "}", "",
+        "void useLeft() {", "  Left::Builder::make();", "}", "",
+        "void useRight() {", "  Right::Builder r;", "  r.build();", "}", "",
+        "void useTop() {", "  Builder t;", "  t.build();", "}", "",
+      ].join("\n"),
     };
     for (const [rel, text] of Object.entries(files)) {
       await mkdir(dirname(join(root, rel)), { recursive: true });
@@ -199,8 +211,18 @@ describe("owner-qualified ids, end to end", () => {
     expect(functions(path)).toEqual(expected);
   });
 
-  it("leaves a language whose class lines are an envelope alone (C++ already names nested classes by their path)", () => {
-    expect(functions("n.cpp")).toEqual(["Left::Builder.build", "Right::Builder.build", "go"]);
+  it("spells a C++ nested class by its path with `.` too, from the qualified name its plugin states", () => {
+    expect(functions("n.cpp")).toEqual(["Left.Builder.build", "Right.Builder.build", "go"]);
+  });
+
+  it("names a C++ member defined outside its class by the class's path, and keeps a top-level namesake plain", () => {
+    expect(functions("o.cpp")).toEqual(["Builder.build", "Left.Builder.build", "Left.Builder.make", "useLeft", "useRight", "useTop"]);
+    const to = (call: string): string[] =>
+      (summary.symbolLinks as Array<{ sourceSymbol: string; targetFile: string; targetSymbol: string; callName: string }>)
+        .filter((l) => l.callName === call).map((l) => `${l.targetFile}:${l.targetSymbol}`);
+    expect(to("Left::Builder.make")).toEqual(["o.cpp:Left.Builder.make"]);
+    expect(to("r.build")).toEqual(["o.h:Right.Builder.build"]);
+    expect(to("t.build")).toEqual(["o.cpp:Builder.build"]);
   });
 
   it("leaves a decoy namesake in a file with no nesting untouched", () => {
@@ -210,12 +232,20 @@ describe("owner-qualified ids, end to end", () => {
   it("links the E-233 call to the nested method and names it by its owner path", () => {
     const links = (summary.symbolLinks as Array<{ sourceSymbol: string; targetFile: string; targetSymbol: string; callName: string }>)
       .filter((l) => l.callName === "Right.Builder.build" || l.callName === "Right::Builder.build");
-    expect(links.map((l) => `${l.targetFile}:${l.targetSymbol}`).sort()).toEqual(["Nested.java:Right.Builder.build", "n.cpp:Right::Builder.build"]);
+    expect(links.map((l) => `${l.targetFile}:${l.targetSymbol}`).sort()).toEqual(["Nested.java:Right.Builder.build", "n.cpp:Right.Builder.build"]);
   });
 
   it("gives the two function-local classes of one name distinct link targets", () => {
     const targets = (summary.symbolLinks as Array<{ targetFile: string; targetSymbol: string }>).filter((l) => l.targetFile === "n.py").map((l) => l.targetSymbol);
     expect(targets).toContain("test_a.Fake");
     expect(targets).toContain("test_b.Fake");
+  });
+});
+
+describe("symbolAnswersTo", () => {
+  it("answers to the leaf, the id's path and the `::` label a person types for a C++ nested class", async () => {
+    const { symbolAnswersTo } = await import("./owner-paths.js");
+    for (const want of ["builder.build", "right.builder.build", "right::builder.build", "right.builder.build"]) expect(symbolAnswersTo("Right.Builder.build", want)).toBe(true);
+    expect(symbolAnswersTo("Left.Builder.build", "right::builder.build")).toBe(false);
   });
 });

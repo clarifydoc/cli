@@ -89,7 +89,7 @@ export function ownerIndex(a: FileAnalysis, lexical = !!manifestFor(a.language a
   const modules: ModuleNode[] = (a.inlineModules ?? []).filter((m) => m.name && m.line > 0 && m.endLine >= m.line).map((m) => ({ ...m }));
   if (classes.length === 0 && !overloading && modules.length === 0) return NONE;
   // Lines say nesting only where a class's lines are its block (`lexicalClassRanges`); a plugin's own owner holds anywhere.
-  if (!lexical && !overloading && modules.length === 0 && !classes.some((c) => c.owner)) return NONE;
+  if (!lexical && !overloading && modules.length === 0 && !classes.some((c) => c.owner || c.idPath)) return NONE;
   const nodes: Node[] = classes.map((c) => ({ kind: "class", name: c.name, line: c.line, endLine: c.endLine, cls: c }));
   const seen = new Set<string>();
   const addFn = (name: string, line: number, endLine: number | undefined, member = false): void => {
@@ -121,6 +121,16 @@ export function ownerIndex(a: FileAnalysis, lexical = !!manifestFor(a.language a
     while (stack.length && !contains(stack[stack.length - 1]!, n)) stack.pop();
     if (lexical && stack.length) container.set(n, stack[stack.length - 1]!);
     stack.push(n);
+  }
+  // A class whose plugin states its path (`ClassInfo.idPath`, C++) owns the members named through its label, wherever
+  // their lines are: `Left::Builder.build` defined outside the class is `Left.Builder.build`.
+  for (const n of nodes) {
+    if (n.kind !== "class" || !n.cls?.idPath) continue;
+    for (const m of nodes) {
+      if (m.kind !== "fn" || container.has(m) || !m.name.startsWith(`${n.name}.`)) continue;
+      const held = container.get(m);
+      if (!held || held.name.length < n.name.length) container.set(m, n);
+    }
   }
 
   /** A class's own name: one a plugin already writes through its owner (`Left::Builder` inside `Left`) keeps only its last part. */
@@ -160,7 +170,8 @@ export function ownerIndex(a: FileAnalysis, lexical = !!manifestFor(a.language a
       q = `${moduleSymbol(mod)}.${own}`;
     } else if (n.kind === "class") {
       const path = owner ? symbolOf(owner) : n.cls?.owner ?? "";
-      if (path) q = `${path}.${leafOf(n, owner)}`;
+      if (!owner && n.cls?.idPath) q = n.cls.idPath;
+      else if (path) q = `${path}.${leafOf(n, owner)}`;
     } else if (owner?.kind === "class") {
       // A member of its class: a name that already starts with the class (`Builder.build`) takes the class's
       // id in its place; a bare member name (`build`) is qualified only when the class itself is nested.
@@ -273,12 +284,12 @@ export function bareSymbol(symbol: string): string {
 
 /**
  * Whether `symbol` answers to what a person typed (`want`, lowercased): the whole id, or a trailing run of its dotted
- * path. Typing no parameter list names every overload (`squad.pick` finds `Squad.Pick(int)` and `Squad.Pick(string)`);
+ * path (a `::` path typed names the same `.` path). Typing no parameter list names every overload (`squad.pick` finds `Squad.Pick(int)` and `Squad.Pick(string)`);
  * typing one (`squad.pick(int)`) names the one.
  */
-export function symbolAnswersTo(symbol: string, rawWant: string): boolean {
-  // A path written with `::` (`pitch::run`, the label of an inline-module function) names the same dotted id.
-  const want = rawWant.includes("::") ? rawWant.replace(/::/g, ".") : rawWant;
+export function symbolAnswersTo(symbol: string, typed: string): boolean {
+  // A `::` path typed (a C++ label `Left::Builder.build`, a Rust inline-module label `pitch::run`) names the id's `.` path.
+  const want = typed.includes("::") ? typed.replace(/::/g, ".") : typed;
   const s = symbol.toLowerCase();
   const hit = (c: string): boolean => c === want || c.endsWith(`.${want}`);
   return hit(s) || (!want.includes("(") && hit(bareSymbol(s)));

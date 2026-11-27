@@ -2136,6 +2136,13 @@ export interface ClassInfo {
    */
   owner?: string;
   /**
+   * The class's whole path as its id spells it (`Left.Builder`), stated where `name` is the source's qualified label
+   * (C++ `Left::Builder`, which stays the label) and the lines show no owner (a method defined outside the class, a
+   * stub for such definitions). Core joins a member to it by the label (`Left::Builder.build` is `Left.Builder.build`)
+   * and never parses a label or an id. Omitted for a class whose name is its path.
+   */
+  idPath?: string;
+  /**
    * A class a framework's container builds under the name it is registered by (an AngularJS service, factory or
    * controller: `.service("orders", …)`), not one a module exports: found by a type's name (an injected parameter's, a call
    * on that name) and never by an import's binding, which a variable of the same name (`var orders = require("./orders")`)
