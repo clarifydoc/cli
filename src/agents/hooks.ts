@@ -16,6 +16,9 @@ import { buildMcpServer, defaultAnalysisDir, locateProjectRoot } from "../mcp/se
  *  - `pre-search` (before Grep/Glob, or a shell grep/rg): when the map
  *    already knows what the agent is searching for — a route, a symbol, a
  *    file — say so, with where and who calls it. Never blocks the search.
+ *    Silent for a search that reads no code (a log, a note, a data file, a
+ *    temp file, an installed package, a build: `readsNoSource`) and when the
+ *    map matches only part of the term.
  *  - `post-search`: the same, after the search ran — for Copilot, whose
  *    pre-tool hooks can only allow or deny, and whose VS Code runtime calls
  *    the hook after every tool whatever its matcher says.
@@ -54,7 +57,7 @@ const HOST_EVENT: Record<HookEvent, string> = {
   "subagent-start": "SubagentStart",
 };
 
-type ToolInput = { pattern?: string; query?: string; file_path?: string; path?: string; command?: string; edits?: unknown };
+type ToolInput = { pattern?: string; query?: string; file_path?: string; path?: string; glob?: string; type?: string; command?: string; edits?: unknown };
 
 export interface HookInput {
   cwd?: string;
@@ -117,6 +120,8 @@ export async function runHook(
   const cwd = input.cwd && isAbsolute(input.cwd) ? input.cwd : fallbackCwd;
   const { root } = locateProjectRoot(cwd);
   const analysisDir = defaultAnalysisDir(root);
+  // A search of a log, a note, a temp file or a build: the map knows the code, not what those hold.
+  if (search && readsNoSource(input, cwd, root, analysisDir)) return null;
   if (!existsSync(join(analysisDir, "project-summary.json"))) return null;
   const { server } = buildMcpServer({ projectRoot: root, analysisDir, allowAnalyze: false, allowColdStart: false });
   const call = async (name: string, args: Record<string, unknown>): Promise<string | null> => {
@@ -130,7 +135,8 @@ export async function runHook(
   let context: string | null = null;
   if (search && term) {
     const text = await call("clarifydoc_search", { query: term, limit: 6 });
-    if (!text || /^No |no match/i.test(text.trim())) return null;
+    // Rows that match only part of the term (`pre-search` → some `search()`) answer a question nobody asked.
+    if (!text || /^No |no match|No result matches every term/i.test(text.trim())) return null;
     context = framed(
       `ClarifyDoc's map of this repository already knows "${term}" — with where it is and what calls it:`,
       text,
@@ -273,21 +279,113 @@ function searchArguments(words: string[]): string[] | null {
   return SEARCHERS.has(lead) ? words.slice(i + 1) : null;
 }
 
-/** The pattern of the first search a command leads with (`-e PATTERN` included); a pipeline's later stages and plain text never count. */
-function shellSearchPattern(command: string): string | null {
+/** What one search reads: its path arguments and its file filters (`-g '*.md'`, `--include=*.log`, `-t md`). */
+export interface SearchTargets {
+  paths: string[];
+  filters: string[];
+  /** The directory a `cd` before the search moved to (`cd notes && grep x a.txt`), as written. */
+  dir?: string;
+}
+
+/** Flags whose value names the files a search reads, not its pattern. */
+const FILTER_FLAGS = new Set(["-g", "--glob", "--iglob", "--include", "-t", "--type"]);
+
+/** The first search a command leads with: its pattern (`-e PATTERN` included) and what it reads; a pipeline's later stages and plain text never count. */
+function shellSearch(command: string): ({ pattern: string } & SearchTargets) | null {
+  let dir: string | undefined;
   for (const segment of shellSegments(command)) {
+    if (segment[0] === "cd" && segment.length === 2) dir = dir && !isAbsolute(unquote(segment[1]!)) ? join(dir, unquote(segment[1]!)) : unquote(segment[1]!);
     const words = searchArguments(segment);
     if (!words) continue;
+    let pattern: string | null = null;
+    const paths: string[] = [];
+    const filters: string[] = [];
     for (let i = 0; i < words.length; i++) {
       const w = words[i]!;
-      if (w === "-e" || w === "--regexp") return unquote(words[i + 1] ?? "") || null;
-      if (VALUE_FLAGS.has(w)) { i++; continue; }
+      if (w === "-e" || w === "--regexp") {
+        pattern ??= unquote(words[++i] ?? "");
+        continue;
+      }
+      // A redirection is no argument: `2>/dev/null`, `> out`; an input file (`< x.log`) is what the search reads.
+      if (/^\d*>/.test(w)) {
+        if (/^\d*>>?$/.test(w)) i++;
+        continue;
+      }
+      if (w === "<") {
+        if (words[i + 1]) paths.push(unquote(words[++i]!));
+        continue;
+      }
+      const eq = w.match(/^(--\w[\w-]*)=(.*)$/);
+      if (eq && FILTER_FLAGS.has(eq[1]!)) {
+        filters.push(filterOf(eq[1]!, unquote(eq[2]!)));
+        continue;
+      }
+      if (FILTER_FLAGS.has(w)) {
+        if (words[i + 1] !== undefined) filters.push(filterOf(w, unquote(words[++i]!)));
+        continue;
+      }
+      if (/^-t\w+$/.test(w)) {
+        filters.push(filterOf("-t", w.slice(2)));
+        continue;
+      }
+      if (VALUE_FLAGS.has(w)) {
+        i++;
+        continue;
+      }
       if (w.startsWith("-")) continue;
-      return unquote(w);
+      if (pattern === null) pattern = unquote(w);
+      else paths.push(unquote(w));
     }
-    return null;
+    return pattern ? { pattern, paths, filters, ...(dir ? { dir } : {}) } : null;
   }
   return null;
+}
+
+/** A file type named to `-t`/`--type` reads as the glob of its extension, so one test serves both. */
+const filterOf = (flag: string, value: string): string => (flag === "-t" || flag === "--type" ? `*.${value}` : value);
+
+/** The pattern of the first search a command leads with. */
+function shellSearchPattern(command: string): string | null {
+  return shellSearch(command)?.pattern || null;
+}
+
+/** What a Grep/Glob or a shell search reads: the paths it names and the file filters it applies. */
+export function searchTargets(input: HookInput): SearchTargets {
+  const ti = input.tool_input ?? {};
+  if (ti.command && input.tool_name !== "Grep" && input.tool_name !== "Glob") {
+    const found = shellSearch(ti.command);
+    return { paths: found?.paths ?? [], filters: found?.filters ?? [], ...(found?.dir ? { dir: found.dir } : {}) };
+  }
+  const filters = [...(ti.glob ? [ti.glob] : []), ...(ti.type ? [`*.${ti.type}`] : [])];
+  return { paths: ti.path ? [ti.path] : [], filters };
+}
+
+/** Files that hold no code the map reads: notes, logs, data, patches, lock files, source maps. */
+const NO_SOURCE_FILE = /\.(?:md|markdown|mdx|txt|log|out|output|csv|tsv|json|jsonl|ndjson|patch|diff|lock|snap|map)$/i;
+/** Folders of installed, built or recorded files, never the project's own code. */
+const NO_SOURCE_DIR = new Set(["node_modules", ".git", "dist", "coverage"]);
+
+/**
+ * Whether a search reads only what the map does not hold: every path it names lies outside the project (a temp file,
+ * `/dev/null`), inside the analysis, an installed package, a build or `.git`, or is a note, log or data file; or every
+ * file filter it applies names such a file (`-g '*.md'`, `--include=*.log`, `-t json`). Paths are read from the
+ * directory a leading `cd` moved to; a search that names no path reads that directory.
+ */
+export function readsNoSource(input: HookInput, cwd: string, root: string, analysisDir: string): boolean {
+  const { paths: named, filters, dir } = searchTargets(input);
+  const base = dir ? resolve(cwd, dir) : cwd;
+  const paths = named.length ? named : ["."];
+  const noSourcePath = (p: string): boolean => {
+    if (NO_SOURCE_FILE.test(p.replace(/[*?]+$/, ""))) return true;
+    const abs = resolve(base, p);
+    const rel = relative(root, abs);
+    if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return true;
+    const inAnalysis = relative(analysisDir, abs);
+    if (inAnalysis === "" || !(inAnalysis === ".." || inAnalysis.startsWith(`..${sep}`) || isAbsolute(inAnalysis))) return true;
+    return rel.split(sep).some((part) => NO_SOURCE_DIR.has(part));
+  };
+  if (paths.length && paths.every(noSourcePath)) return true;
+  return filters.length > 0 && filters.every((f) => NO_SOURCE_FILE.test(f.replace(/[*?}]+$/, "")));
 }
 
 const unquote = (w: string) => w.replace(/^(['"])(.*)\1$/, "$2");

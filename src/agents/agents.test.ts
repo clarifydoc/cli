@@ -3,7 +3,7 @@ import { cpSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, read
 import { execFileSync } from "child_process";
 import { tmpdir } from "os";
 import { dirname, join, resolve } from "path";
-import { editedFile, fileStem, framed, normalizeHookInput, runHook, searchTerm } from "./hooks.js";
+import { editedFile, fileStem, framed, normalizeHookInput, readsNoSource, runHook, searchTerm } from "./hooks.js";
 import { CLIENTS, applyPlans, versionPinnedLauncher, explorerTools, mcpSnippet, pinnedLauncher, planClaudeHooks, planCodexHooks, planCopilotHooks, planGitHooks, planGuidance, planHooks, planMcpConfig, planPlugin, planSkills, projectFacts, selfCommand, userServerKey } from "./install.js";
 import { parseJsonc, removeJsoncMember, upsertJsoncMember } from "./jsonc.js";
 import { applyRemoval, planRemoval } from "./remove.js";
@@ -89,6 +89,10 @@ describe("hooks for Claude Code's shell and subagents", () => {
       const shell = JSON.parse((await runHook("pre-search", { cwd: root, tool_name: "Bash", tool_input: { command: "grep -rn searchPlayers services" } }))!);
       expect(shell.hookSpecificOutput.additionalContext).toContain("searchPlayers");
       expect(await runHook("pre-search", { cwd: root, tool_name: "Bash", tool_input: { command: "npm test" } })).toBeNull();
+      // A grep of a log or a note, and an answer that matches only part of the term, say nothing.
+      expect(await runHook("pre-search", { cwd: root, tool_name: "Bash", tool_input: { command: `grep -c searchPlayers ${join(dir, "run.log")}` } })).toBeNull();
+      expect(await runHook("pre-search", { cwd: root, tool_name: "Bash", tool_input: { command: "rg -n searchPlayers NOTES.md" } })).toBeNull();
+      expect(await runHook("pre-search", { cwd: root, tool_name: "Bash", tool_input: { command: "rg -n searchGoalkeepers ." } })).toBeNull();
 
       const sub = JSON.parse((await runHook("subagent-start", { cwd: root }, root, "claude", "node /opt/garage/cli.js"))!).hookSpecificOutput;
       expect(sub.hookEventName).toBe("SubagentStart");
@@ -703,5 +707,38 @@ describe("shell search detection", () => {
   ];
   it.each(table)("%s", (command, expected) => {
     expect(searchTerm({ tool_input: { command } })).toBe(expected);
+  });
+});
+
+describe("searches that read no code", () => {
+  // root /garage, analysis in /garage/.clarifydoc/garage; the search runs in /garage unless a `cd` leads it.
+  const noSource = (input: Parameters<typeof readsNoSource>[0]) => readsNoSource(input, "/garage", "/garage", "/garage/.clarifydoc/garage");
+  const shell: Array<[string, boolean]> = [
+    ["grep -c searchPlayers /tmp/run.log", true],
+    ["rg searchPlayers NOTES.md", true],
+    ["grep -rn searchPlayers node_modules/pitch", true],
+    ["grep -l searchPlayers dist/*.js", true],
+    ["grep -rn searchPlayers .clarifydoc/garage", true],
+    ["rg -g '*.md' searchPlayers", true],
+    ["grep -r --include=*.log searchPlayers .", true],
+    ["rg -t json searchPlayers", true],
+    ["grep searchPlayers < run.log", true],
+    ["cd /tmp/scratch && grep -rn searchPlayers", true],
+    ["cd /tmp/scratch && grep searchPlayers lineup.txt", true],
+    ["rg searchPlayers", false],
+    ["grep -rn searchPlayers services 2>/dev/null", false],
+    ["grep -rn searchPlayers services NOTES.md", false],
+    ["rg -g '*.ts' searchPlayers", false],
+    ["cd services && grep -rn searchPlayers .", false],
+    ["grep -rn -e searchPlayers services", false],
+  ];
+  it.each(shell)("%s", (command, expected) => {
+    expect(noSource({ tool_name: "Bash", tool_input: { command } })).toBe(expected);
+  });
+  it("reads the Grep tool's path and glob", () => {
+    expect(noSource({ tool_name: "Grep", tool_input: { pattern: "searchPlayers", path: "/tmp/scratch" } })).toBe(true);
+    expect(noSource({ tool_name: "Grep", tool_input: { pattern: "searchPlayers", glob: "*.md" } })).toBe(true);
+    expect(noSource({ tool_name: "Grep", tool_input: { pattern: "searchPlayers", path: "services" } })).toBe(false);
+    expect(noSource({ tool_name: "Grep", tool_input: { pattern: "searchPlayers" } })).toBe(false);
   });
 });
