@@ -63,6 +63,11 @@ export interface ImpactDiffResult {
    * Only a git-driven run states it; an older consumer ignores it.
    */
   addedFiles?: string[];
+  /**
+   * Files the change moves (git's rename records): the old path is charged as a removed file (its importers
+   * import nothing now), the new one is an added file. Only a git-driven run states it.
+   */
+  renamedFiles?: Array<{ from: string; to: string; similarity: number }>;
   screens: TraceImpactScreen[];
   screenCount: number;
   routes: TraceImpactRoute[];
@@ -223,6 +228,10 @@ export function computeImpactDiff(
     removedFiles?: string[];
     /** Paths the change adds (`gitChangedFiles().added`); stated on the result only when given. */
     addedFiles?: string[];
+    /** Moves git read (`gitChangedFiles().renamed`); both paths are also in `changed`. */
+    renamedFiles?: Array<{ from: string; to: string; similarity: number }>;
+    /** What the changed list could not say (`gitChangedFiles().notes`), added to `limitations`. */
+    notes?: string[];
     baseLabel?: string;
     author?: string;
     /** The changed functions (from `symbolsInHunks`), when the diff's lines are known. */
@@ -570,6 +579,7 @@ export function computeImpactDiff(
 
   const limitations: string[] = [];
   if (unknownFiles.length) limitations.push(`${unknownFiles.length} changed file(s) are not in the analysis (${unknownFiles.slice(0, 5).join(", ")}${unknownFiles.length > 5 ? ", …" : ""}), so what they reach was not judged — analyze again to include them`);
+  for (const n of options?.notes ?? []) limitations.push(n);
   if (options?.symbols?.starReexportsStale) limitations.push(STAR_REEXPORTS_STALE_NOTE);
   if (truncated) limitations.push("a capped list overflowed, so the counts of screens, routes, data and dependents are lower bounds");
   if (coverageNote) limitations.push(`no per-test evidence: ${coverageNote}`);
@@ -582,6 +592,7 @@ export function computeImpactDiff(
     unknownFiles,
     removedFiles: (options?.removedFiles ?? []).map(normalizePath).sort(),
     ...(options?.addedFiles ? { addedFiles: [...new Set(options.addedFiles.map(normalizePath))].sort() } : {}),
+    ...(options?.renamedFiles?.length ? { renamedFiles: options.renamedFiles.map((r) => ({ from: normalizePath(r.from), to: normalizePath(r.to), similarity: r.similarity })).sort((a, b) => byOrdinal(a.from, b.from)) } : {}),
     screens: [...screens.values()].sort((a, b) => byOrdinal(a.name, b.name)),
     screenCount: screens.size,
     routes: [...routes.values()].sort((a, b) => byOrdinal(a.path, b.path)),
@@ -753,6 +764,7 @@ export function renderImpactText(r: ImpactDiffResult): string {
   if (r.unknownFiles.length) lines.push(`Unknown:  ${r.unknownFiles.join(", ")}  (not in the analysis)`);
   if (r.removedFiles.length) lines.push(`Removed:  ${r.removedFiles.join(", ")}`);
   if (r.addedFiles?.length) lines.push(`Added:    ${r.addedFiles.join(", ")}`);
+  if (r.renamedFiles?.length) lines.push(`Renamed:  ${r.renamedFiles.map((m) => `${m.from} -> ${m.to} (${m.similarity}%)`).join(", ")}`);
   if (r.screenCount > 0) {
     lines.push("", `Screens reached (${geq(r)}${r.screenCount}):`);
     for (const s of r.screens) lines.push(`  ${s.name}${s.route ? `  ${s.route}` : ""}  (${s.file})`);
@@ -855,6 +867,7 @@ export function renderImpactMarkdown(r: ImpactDiffResult): string {
   if (r.unknownFiles.length) row("Unknown", r.unknownFiles.map((f) => `\`${f}\``).join(", "));
   if (r.removedFiles.length) row("Removed", r.removedFiles.map((f) => `\`${f}\``).join(", "));
   if (r.addedFiles?.length) row("Added", r.addedFiles.map((f) => `\`${f}\``).join(", "));
+  if (r.renamedFiles?.length) row("Renamed", r.renamedFiles.map((m) => `\`${m.from}\` → \`${m.to}\` (${m.similarity}%)`).join(", "));
   row(
     `Screens (${geq(r)}${r.screenCount})`,
     r.screens.map((s) => `${s.name}${s.route ? ` (\`${s.route}\`)` : ""}`).join(", ") || "—",

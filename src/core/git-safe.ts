@@ -12,7 +12,8 @@ import { execFile } from "child_process";
  *   selects run on any diff or `log -p` — `GIT_SAFE_DIFF` turns both off.
  * - `core.quotePath`, `diff.noprefix` and `diff.mnemonicPrefix` are pinned (config, so
  *   before the subcommand) and `GIT_SAFE_DIFF` states the prefixes, so a diff reads the same
- *   under every user's config.
+ *   under every user's config. `GIT_SAFE_DIFF` also pins `--inter-hunk-context=0` and `--diff-algorithm=myers`:
+ *   no hunk is widened or moved by the user's `diff.interHunkContext` or `diff.algorithm`.
  */
 export const GIT_SAFE_CONFIG: readonly string[] = [
   "-c", "core.fsmonitor=false",
@@ -24,7 +25,15 @@ export const GIT_SAFE_CONFIG: readonly string[] = [
 ];
 
 /** Options for a command that renders a diff (`diff`, `log -p`, `show`). */
-export const GIT_SAFE_DIFF: readonly string[] = ["--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/"];
+export const GIT_SAFE_DIFF: readonly string[] = [
+  "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/",
+  // `diff.interHunkContext` joins two edits into one hunk and so reports the unchanged lines between them as changed.
+  "--inter-hunk-context=0",
+  // `diff.algorithm` moves hunk edges: on repeated shapes (several functions with one body) myers reports scattered
+  // lines of unchanged functions where patience/histogram report one block. Pinned to git's own default, so every
+  // user reads the same hunks as a repository without that config.
+  "--diff-algorithm=myers",
+];
 
 /** `git -C root …args` with the safe config in front. */
 export function gitArgs(root: string, args: readonly string[]): string[] {
