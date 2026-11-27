@@ -554,6 +554,58 @@ public class DatabaseFixture {
     expect(rows[0]!.entity).toBeUndefined();
   });
 
+  it("binds a generic repository's EF statements to its type parameter, through any query operators (real-repo FP)", async () => {
+    const rows = await rowsOf(`namespace League.Data;
+public abstract class BaseGarage<T> where T : EntityBase {
+  public LeagueContext DataContext { get; set; }
+  protected readonly DbSet<T> _dbSet;
+  public IQueryable<T> Sorted<TS>(Expression<Func<T, TS>> o) { return DataContext.Set<T>().AsNoTracking().OrderBy(o); }
+  public Task<T> First(Expression<Func<T, bool>> w) { return DataContext.Set<T>().Where(w).AsNoTracking().Cacheable().FirstOrDefaultAsync(); }
+  public Task<int> DeleteById(int id) { return DataContext.Set<T>().Where(t => t.Id == id).ExecuteDeleteAsync(); }
+  public void Drop(T t) { DataContext.Remove(t); }
+  public void Park(T t) { DataContext.Add(t); }
+  public void Scrap(IEnumerable<T> list) { DataContext.RemoveRange(list); }
+  public int Count(Expression<Func<T, bool>> w) { return EF.CompileQuery((LeagueContext ctx) => ctx.Set<T>().Count(w))(DataContext); }
+  public void Track(T t) { _dbSet.Attach(t); }
+  public int Save() { return DataContext.SaveChanges(); }
+  public void Decoy(List<T> items, T t, Registry reg) { items.Add(t); items.Remove(t); reg.Add(t); var s = Other.Set<T>(); }
+}`);
+    expect(rows.map((d) => `${d.name} ${d.entity ?? (d.entityTypeParameter ? `<${d.entityTypeParameter}>` : "-")} ${d.access ?? "-"} @${d.line}`)).toEqual([
+      "EF: OrderBy <T> read @5",
+      "EF: FirstOrDefaultAsync <T> read @6",
+      "EF: ExecuteDeleteAsync <T> write @7",
+      "EF: Remove <T> write @8",
+      "EF: Add <T> write @9",
+      "EF: RemoveRange <T> write @10",
+      "EF: Count <T> read @11",
+      "EF: Attach <T> write @12",
+      "EF: SaveChanges - write @13",
+    ]);
+  });
+
+  it("binds them in a file with no sign of EF when the context is named for what it is, and not a cache's Set<T>() (real-repo FP)", async () => {
+    const rows = await rowsOf(`namespace League.Data;
+public abstract class BaseGarage<T> where T : EntityBase {
+  public virtual GarageData DataContext { get; set; }
+  private ICache _cache;
+  public Task<int> DeleteById(int id) { return DataContext.Set<T>().Where(t => t.Id == id).ExecuteDeleteAsync(); }
+  public void Drop(T t) { DataContext.Remove(t); }
+  public int Count(Expression<Func<T, bool>> w) { return EF.CompileQuery((GarageContext ctx) => ctx.Set<T>().Count(w))(DataContext); }
+  public void Remember(T t) { _cache.Set<T>().Where(x => x.Id == 1).FirstOrDefault(); }
+  public IQueryable<T> Matching(Expression<Func<T, bool>> w) { return DataContext.Set<T>().Where(w); }
+  public T Upsert<TKey>(Expression<Func<T, TKey>> key, T t) { DataContext.Set<T>().AddOrUpdate(key, t); return t; }
+  public void Tally(string k) { _counts.AddOrUpdate(k, 1, (x, n) => n + 1); }
+}`);
+    expect(rows.map((d) => `${d.name} ${d.entityTypeParameter ?? "-"} @${d.line}`)).toEqual([
+      "EF: ExecuteDeleteAsync T @5",
+      "EF: Remove T @6",
+      "EF: Count T @7",
+      // Once named as a table `T`; now the parameter itself.
+      "EF: Where T @9",
+      "EF: AddOrUpdate T @10",
+    ]);
+  });
+
   it("records a generic base repository's set without naming its type parameter", async () => {
     const rows = await rowsOf(`namespace X;
 public abstract class BaseRepository<TContext, TClass> where TClass : class {

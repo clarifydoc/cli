@@ -259,6 +259,8 @@ function identityAccess(kind: "user" | "role" | "signin", method: string): "read
 
 /** Detect EF DbContext "owner" patterns — names ending with Context/DbContext. */
 const DBCONTEXT_SUFFIX = /Context$/;
+/** A receiver named like a database context (`_context`, `db`, `DataContext`). */
+const CONTEXT_RECEIVER = /^(?:_?(?:db)?[Cc]ontext|\w+Context|_?db|_?dbContext|Db)$/;
 
 // ─── Desktop/GUI I/O sinks (settings, clipboard, file storage) ──────────────
 // A desktop/GUI app (e.g. a Blazor Hybrid / WinUI tool app) has no HTTP or DB
@@ -346,6 +348,8 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
   private mqttFile = false;
   /** Locals and fields the file builds with `new RestRequest(…)`: sending one is no second request. */
   private restRequestVars = new Set<string>();
+  /** Names declared `DbSet<T>` over a type parameter of the file (`protected readonly DbSet<TClass> _dbSet;`) → that parameter. */
+  private dbSetParams = new Map<string, string>();
   /** A RestRequest local's verb when the file sets it (`request.Method = Method.Delete`) or sends it through one verb helper. */
   private restRequestVerbs = new Map<string, string>();
   /** The file uses Flurl.Http (`"https://…".AppendPathSegment("clubs").GetJsonAsync()`). */
@@ -374,6 +378,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
 
   override beginFile(tree: Tree, sourceText: string): void {
     this.dbSetNames = new Map();
+    this.dbSetParams = new Map();
     this.efLocals = new Map();
     this.queryHelpers = new Map();
     this.queryHelperSets = new Map();
@@ -411,6 +416,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
         if (params.some(([from, to]) => m.index! >= from && m.index! < to)) continue;
         const type = m[1]!.slice(m[1]!.lastIndexOf(".") + 1);
         if (!this.dbSetNames.has(m[2]!)) this.dbSetNames.set(m[2]!, typeParams.has(type) ? null : type);
+        if (typeParams.has(type) && !this.dbSetParams.has(m[2]!)) this.dbSetParams.set(m[2]!, type);
       }
     }
     this.identityManagers = new Map();
@@ -862,8 +868,81 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     return null;
   }
 
-  /** The EF access an invocation is, when it is one (see `visitNode`). */
+  /**
+   * The EF access an invocation is, when it is one (see `visitNode`). A statement in a generic class whose set is
+   * the class's type parameter (`DataContext.Set<T>().Where(…).ExecuteDelete()`, `_db.Add(t)` with `t` a `T`)
+   * names no entity but the parameter (`entityTypeParameter`): the data-flow reach closes it over each caller's
+   * type argument.
+   */
   private efRow(node: Node): DataSourceInfo | null {
+    const row = this.efRowOf(node);
+    if (row?.routine || row?.entityProducer) return row;
+    const params = this.classTypeParameters(node);
+    // A row naming the class's own type parameter as its entity (`Set<T>()` read as a table `T`) is the open form.
+    const named = row?.entity || null;
+    if (named && !params.has(named)) return row;
+    const fn = node.childForFieldName("function");
+    const fullName = fn ? this.fullCallName(fn) : null;
+    if (!fn || !fullName) return row;
+    const method = fullName.split(".").pop()!.replace(/<.*$/, "");
+    const open = this.openSetParameter(node, fn, fullName, method, params) ?? named;
+    if (!open) return row;
+    if (row) {
+      const { entity: _entity, ...rest } = row;
+      return { ...rest, entityTypeParameter: open };
+    }
+    return this.ds({ kind: "database", name: `EF: ${method}`, target: null, entityTypeParameter: open, ...(method === "AddOrUpdate" ? { access: "write" as const } : efAccess(method, node)), line: node.startPosition.row + 1 });
+  }
+
+  /** The type parameters of the class around `node`, less any the enclosing method declares again. */
+  private classTypeParameters(node: Node): Set<string> {
+    const params = new Set((enclosingTypeDecl(node)?.namedChildren.find((c) => c.type === "type_parameter_list")?.namedChildren ?? []).map((t) => t.text));
+    for (const t of enclosingMember(node)?.namedChildren.find((c) => c.type === "type_parameter_list")?.namedChildren ?? []) params.delete(t.text);
+    return params;
+  }
+
+  /**
+   * The class type parameter an EF statement's set is: the chain starts at `<context>.Set<T>()` through any
+   * query operators, at a field declared `DbSet<T>`, or is a set write (`Add`, `Remove`, `AttachRange`…) on a
+   * context-named receiver whose argument is declared `T`, or a collection of it. Null for any other statement,
+   * for a method's own type parameter and outside an EF file.
+   */
+  private openSetParameter(node: Node, fn: Node, fullName: string, method: string, params: Set<string>): string | null {
+    // EF 6's `Set<T>().AddOrUpdate(key, item)` extension: an upsert only when it runs on a set (a dictionary has one too).
+    const upsert = method === "AddOrUpdate";
+    if (!upsert && !EF_READ_METHODS.has(method) && !EF_WRITE_METHODS.has(method)) return null;
+    if (params.size === 0) return null;
+    // `<context>.Set<T>()` at the start of the chain, `.Where(…)`, `.AsNoTracking()`… between it and the statement.
+    for (let cur: Node | null = fn.childForFieldName("expression"); cur;) {
+      if (cur.type === "invocation_expression") {
+        const f = cur.childForFieldName("function");
+        const name = f?.type === "member_access_expression" ? f.childForFieldName("name") : null;
+        const arg = name?.type === "generic_name" && /^Set$/.test(name.namedChildren[0]?.text ?? "") && argumentNodes(cur).length === 0
+          ? name.namedChildren.find((c) => c.type === "type_argument_list")?.namedChildren : null;
+        // A file with no sign of EF needs the context's name on the receiver (`cache.Set<T>()` is no entity set).
+        const owner = f?.type === "member_access_expression" ? f.childForFieldName("expression") : null;
+        if (arg?.length === 1 && params.has(arg[0]!.text) && (this.efFile || CONTEXT_RECEIVER.test(owner?.text.replace(/^this\./, "") ?? "") || DBCONTEXT_SUFFIX.test(parameterType(node, owner?.text ?? "") ?? ""))) return arg[0]!.text;
+        cur = f?.type === "member_access_expression" ? f.childForFieldName("expression") : null;
+      } else if (cur.type === "member_access_expression") cur = cur.childForFieldName("expression");
+      else break;
+    }
+    const base = chainBase(fn);
+    const held = base !== null ? this.dbSetParams.get(base) : undefined;
+    if (held && params.has(held)) return held;
+    if (upsert) return null;
+    // `_context.Add(item)`: the argument's declared type names the set.
+    const parts = fullName.replace(/^this\./, "").split(".");
+    if (!EF_SET_WRITES.has(method) || parts.length !== 2 || !CONTEXT_RECEIVER.test(parts[0]!)) return null;
+    const arg = argumentNodes(node)[0]?.namedChildren[0];
+    const declared = arg?.type === "identifier" ? parameterType(node, arg.text) : null;
+    if (!declared) return null;
+    const bare = declared.replace(/\s+/g, "").replace(/\?$/, "");
+    const type = /^(\w+)\[\]$/.exec(bare)?.[1] ??
+      /^(?:[\w.]+\.)?(?:IEnumerable|IList|List|ICollection|IReadOnlyCollection|IReadOnlyList|HashSet)<(\w+)>$/.exec(bare)?.[1] ?? bare;
+    return params.has(type) ? type : null;
+  }
+
+  private efRowOf(node: Node): DataSourceInfo | null {
     const fn = node.childForFieldName("function");
     const fullName = fn ? this.fullCallName(fn) : null;
     if (!fn || !fullName) return null;
@@ -1248,7 +1327,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     }
 
     // EF Core / EF 6 — DbContext.Set<T>(), context.Entities.Where(), SaveChanges()
-    if (EF_READ_METHODS.has(method) || EF_WRITE_METHODS.has(method)) {
+    if (EF_READ_METHODS.has(method) || EF_WRITE_METHODS.has(method) || method === "AddOrUpdate") {
       const row = this.efRow(node);
       if (row) {
         // `FromSqlRaw("SELECT * FROM clubs …")`, `Database.ExecuteSqlRaw("UPDATE players SET …")`: the statement's own
