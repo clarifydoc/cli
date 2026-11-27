@@ -442,7 +442,7 @@ async function plan(ctx: ToolContext, loaded: LoadedAnalysis, def: Definition, t
 }
 
 function isClass(summary: ProjectAnalysis, def: Definition): boolean {
-  return (summary.classGraph?.nodes ?? []).some((n) => !n.isFile && !n.isExternal && n.filePath === def.file && n.name === def.symbol);
+  return (summary.classGraph?.nodes ?? []).some((n) => !n.isFile && !n.isExternal && n.filePath === def.file && (n.name === def.symbol || n.id === `${def.file}::${def.symbol}`));
 }
 
 /** ` (line:col-end)` for the name on a line, or nothing where it is not exactly once. */

@@ -8,6 +8,7 @@
  */
 import type { ClassGraph, ClassInfo, FileAnalysis, SymbolLink } from "../types/analysis.js";
 import { byOrdinal } from "./ordinal.js";
+import { ownerIndex } from "./owner-paths.js";
 
 /** How far up or down a hierarchy is followed. */
 const MAX_DEPTH = 12;
@@ -53,14 +54,25 @@ export function inheritanceIndex(graph: ClassGraph | undefined): InheritanceInde
 
 const classId = (file: string, name: string): ClassId => `${file}::${name}`;
 const splitId = (id: ClassId): { file: string; name: string } => {
-  const at = id.lastIndexOf("::");
+  const at = id.indexOf("::"); // a path holds no `::`, a class name may (`League::Club`)
   return { file: id.slice(0, at), name: id.slice(at + 2) };
 };
+
+/**
+ * The class a node id names: `name` is the class graph's id symbol, a nested class's owner path (`Left.Builder`) or a
+ * top-level class's own name.
+ */
+async function classNamed(classesOf: ClassesOf, file: string, name: string): Promise<ClassInfo | undefined> {
+  const a = await classesOf(file);
+  if (!a) return undefined;
+  const ix = ownerIndex(a as FileAnalysis);
+  return a.classes?.find((c: ClassInfo) => ix.classSymbol(c.name, c.line) === name) ?? a.classes?.find((c: ClassInfo) => c.name === name);
+}
 
 /** The method `name` a class declares, when it does. */
 async function declared(classesOf: ClassesOf, id: ClassId, method: string): Promise<{ line: number; abstract: boolean } | null> {
   const { file, name } = splitId(id);
-  const cls = (await classesOf(file))?.classes?.find((c: ClassInfo) => c.name === name);
+  const cls = await classNamed(classesOf, file, name);
   const m = cls?.methods?.find((x) => x.name === method && !x.synthetic);
   if (!m) return null;
   return { line: m.line, abstract: !!m.abstract || cls!.kind === "interface" };
@@ -153,7 +165,7 @@ export async function relatives(index: InheritanceIndex, file: string, name: str
         seen.add(other);
         next.push(other);
         const { file: f, name: n } = splitId(other);
-        const cls = (await classesOf(f))?.classes?.find((c) => c.name === n);
+        const cls = await classNamed(classesOf, f, n);
         out.push({ file: f, symbol: n, line: cls?.line ?? 0, depth, ...(cls?.kind === "interface" ? { abstract: true } : {}) });
       }
     }
@@ -181,12 +193,14 @@ export async function overridesOfMethods(
   const fannedOut = new Set(links.filter((l) => l.relation === "implements").map((l) => `${l.sourceFile}::${l.sourceSymbol}`));
   const out = new Map<string, OverrideRow[]>();
   for (const [file, a] of files) {
+    const ix = ownerIndex(a as FileAnalysis);
     for (const cls of a.classes ?? []) {
-      const hasBelow = index.children.has(classId(file, cls.name));
+      const owner = ix.classSymbol(cls.name, cls.line);
+      const hasBelow = index.children.has(classId(file, owner));
       for (const m of cls.methods ?? []) {
         const symbol = `${cls.name}.${m.name}`;
         if (!hasBelow && !fannedOut.has(`${file}::${symbol}`)) continue;
-        const rows = await overridesBelow(index, links, file, symbol, classesOf);
+        const rows = await overridesBelow(index, links, file, `${owner}.${m.name}`, classesOf);
         if (rows.length) out.set(`${file}::${symbol}`, rows);
       }
     }

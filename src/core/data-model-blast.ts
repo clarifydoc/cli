@@ -17,6 +17,7 @@ import type { ClassIndex } from "../types/project.js";
 import { ormOf } from "./entity-graph.js";
 import { SYNTHETIC_ENTITY } from "../extractors/entities/base.js";
 import { pluginFor } from "../extractors/registry.js";
+import { ownerIndex, type OwnerIndex } from "./owner-paths.js";
 
 /**
  * Where a type is split across files of one directory — a Go struct and the
@@ -25,18 +26,22 @@ import { pluginFor } from "../extractors/registry.js";
  * stands for it: its richest declaration (a base class, then the most
  * properties, then the most methods, then the path — the same choice the
  * symbol linker makes). `${file}::${name}` → representative file, for parts
- * only; a type declared once maps to nothing.
+ * only; a type declared once maps to nothing. With `bySymbol`, the parts of a nested type are those of
+ * one owner path (`Left.Builder` in two files, never `Left.Scope` with `Right.Scope`) and the key ends in
+ * that path (`owner-paths.ts`); a top-level type is the same either way.
  */
-export function splitTypeRepresentatives(analyses: FileAnalysis[]): Map<string, string> {
-  const groups = new Map<string, Array<{ file: string; cls: FileAnalysis["classes"][number] }>>();
+export function splitTypeRepresentatives(analyses: FileAnalysis[], bySymbol = false): Map<string, string> {
+  const groups = new Map<string, Array<{ file: string; cls: FileAnalysis["classes"][number]; symbol: string }>>();
   for (const a of analyses) {
     if (pluginFor(a.language)?.typesSpanFiles !== true) continue;
     const dir = a.filePath.slice(0, a.filePath.lastIndexOf("/") + 1);
+    const owners = bySymbol ? ownerIndex(a) : undefined;
     for (const cls of a.classes ?? []) {
-      const key = `${dir}\0${a.language}\0${cls.name}`;
+      const symbol = owners ? owners.classSymbol(cls.name, cls.line) : cls.name;
+      const key = `${dir}\0${a.language}\0${symbol}`;
       let list = groups.get(key);
       if (!list) groups.set(key, (list = []));
-      list.push({ file: a.filePath, cls });
+      list.push({ file: a.filePath, cls, symbol });
     }
   }
   const out = new Map<string, string>();
@@ -47,7 +52,7 @@ export function splitTypeRepresentatives(analyses: FileAnalysis[]): Map<string, 
       const rx = rank(x), ry = rank(y);
       return ry[0]! - rx[0]! || ry[1]! - rx[1]! || ry[2]! - rx[2]! || byOrdinal(x.file, y.file);
     })[0]!.file;
-    for (const p of parts) out.set(`${p.file}::${p.cls.name}`, rep);
+    for (const p of parts) out.set(`${p.file}::${p.symbol}`, rep);
   }
   return out;
 }
@@ -299,17 +304,25 @@ export function buildClassGraph(
   // edges to them don't dangle.
   const nodeIndex = new Map<string /* classId */, ClassGraphNode>();
   // The parts of a type split across files are ONE node, at its representative.
-  const splitRep = splitTypeRepresentatives(analyses);
+  const splitRep = splitTypeRepresentatives(analyses, true);
 
-  function nodeIdFor(name: string, filePath: string): string {
-    return `${splitRep.get(`${filePath}::${name}`) ?? filePath}::${name}`;
+  // A nested or function-local class is told apart by its owner path (`Left.Builder`), the one spelling for every
+  // language; a top-level class keeps its name. The label (`name`) stays as the source writes it.
+  const owners = new Map<string, OwnerIndex>();
+  for (const a of analyses) owners.set(a.filePath, ownerIndex(a));
+  /** The id symbol of each node id (`Left.Builder` for `File.java::Left.Builder`). */
+  const symbolOfId = new Map<string, string>();
+
+  function nodeIdFor(name: string, filePath: string, symbol: string = name): string {
+    return `${splitRep.get(`${filePath}::${symbol}`) ?? filePath}::${symbol}`;
   }
 
-  function ensureNode(name: string, filePath: string, isInterface: boolean, isExternal: boolean, isFile = false): string {
-    const id = isFile ? `file::${filePath}` : nodeIdFor(name, filePath);
+  function ensureNode(name: string, filePath: string, isInterface: boolean, isExternal: boolean, isFile = false, symbol: string = name): string {
+    const id = isFile ? `file::${filePath}` : nodeIdFor(name, filePath, symbol);
     if (!nodeIndex.has(id)) {
+      symbolOfId.set(id, symbol);
       nodeIndex.set(id, {
-        id, name, filePath: isFile ? filePath : splitRep.get(`${filePath}::${name}`) ?? filePath,
+        id, name, filePath: isFile ? filePath : splitRep.get(`${filePath}::${symbol}`) ?? filePath,
         isInterface, isExternal, isFile,
         inboundCount: 0, outboundCount: 0,
       });
@@ -341,7 +354,7 @@ export function buildClassGraph(
         continue;
       }
       const isInterface = (cls.methods?.length ?? 0) === 0 && (cls.properties?.length ?? 0) > 0;
-      const id = ensureNode(cls.name, a.filePath, isInterface, false);
+      const id = ensureNode(cls.name, a.filePath, isInterface, false, false, owners.get(a.filePath)!.classSymbol(cls.name, cls.line));
       // A split type's node is no interface if ANY part carries methods.
       if ((cls.methods?.length ?? 0) > 0) nodeIndex.get(id)!.isInterface = false;
       // Tag ORM entities so the Data Models view can distinguish DB-backed
@@ -366,6 +379,26 @@ export function buildClassGraph(
       localByName.set(exp.name, arr);
     }
   }
+
+  /** The node of the class a reference sits in: by its name and the line (two nested `Builder`s are told apart by the lines they span). */
+  const sourceIdOf = (ref: TypeReference, a: FileAnalysis): string =>
+    nodeIdFor(ref.sourceClass!, a.filePath, owners.get(a.filePath)!.classContaining(ref.sourceClass!, ref.sourceLine));
+  /**
+   * Of several same-file classes of one name, the one the source can see first: the longest owner path the two share
+   * (a `Builder` beside the source under the same `Left`), then the shallowest, then the first declared. A file source
+   * (no class) takes the top-level one.
+   */
+  const nearestNamesake = (ids: string[], sourceId: string): string => {
+    const own = (symbolOfId.get(sourceId) ?? "").split(".");
+    const shared = (id: string): number => {
+      const parts = (symbolOfId.get(id) ?? "").split(".");
+      let n = 0;
+      while (n < parts.length - 1 && n < own.length - 1 && parts[n] === own[n]) n++;
+      return n;
+    };
+    const depth = (id: string): number => (symbolOfId.get(id) ?? "").split(".").length;
+    return ids.reduce((best, id) => (shared(id) > shared(best) || (shared(id) === shared(best) && depth(id) < depth(best)) ? id : best));
+  };
 
   // Pass 2: aggregate edges. Each TypeReference contributes one edge tick
   // from its source (class OR file, when not inside a class) to the type
@@ -407,7 +440,7 @@ export function buildClassGraph(
           // `from league import base`, `import com.league.cup.Club`), as the linker
           // resolves it — never merely the first class of that name. Unresolved: no edge.
           const hit = classIndex.resolve(ref.sourceFile, ref.rawType || ref.typeName);
-          const hitId = hit && hit.cls.name === ref.typeName ? nodeIdFor(hit.cls.name, hit.filePath) : null;
+          const hitId = hit && hit.cls.name === ref.typeName ? nodeIdFor(hit.cls.name, hit.filePath, owners.get(hit.filePath)?.classSymbol(hit.cls.name, hit.cls.line)) : null;
           if (!hitId || !candidates.includes(hitId)) continue;
           targetId = hitId;
         }
@@ -424,10 +457,12 @@ export function buildClassGraph(
         targetId = ensureNode(ref.typeName, "", false, true);
       } else {
         const importedFrom = importIndex.localFor(ref.sourceFile, ref.typeName);
+        // The file an import names: its top-level class of that name, else the one it has (a nested one).
         const importedId = importedFrom ? nodeIdFor(ref.typeName, importedFrom) : null;
-        const fromImport = importedId && candidates.includes(importedId) ? importedId : null;
-        const sameFile = candidates.find((c) => c.startsWith(`${a.filePath}::`));
-        targetId = fromImport ?? sameFile ?? candidates[0]!;
+        const inImported = importedFrom ? candidates.filter((c) => nodeIndex.get(c)?.filePath === importedFrom || c.startsWith(`${importedFrom}::`)) : [];
+        const fromImport = importedId && candidates.includes(importedId) ? importedId : inImported.length === 1 ? inImported[0]! : null;
+        const sameFiles = candidates.filter((c) => c.startsWith(`${a.filePath}::`));
+        targetId = fromImport ?? (sameFiles.length > 1 ? nearestNamesake(sameFiles, ref.sourceClass ? sourceIdOf(ref, a) : "") : sameFiles[0]) ?? candidates[0]!;
       }
 
       // Pick the source node — either the containing class, or (when the
@@ -435,9 +470,9 @@ export function buildClassGraph(
       // so functional codebases still draw edges to their data models.
       let sourceId: string;
       if (ref.sourceClass) {
-        sourceId = nodeIdFor(ref.sourceClass, a.filePath);
+        sourceId = sourceIdOf(ref, a);
         if (!nodeIndex.has(sourceId)) {
-          ensureNode(ref.sourceClass, a.filePath, false, false);
+          ensureNode(ref.sourceClass, a.filePath, false, false, false, symbolOfId.get(sourceId) ?? ref.sourceClass);
         }
       } else {
         sourceId = ensureNode(fileBasename(a.filePath), a.filePath, false, false, true);

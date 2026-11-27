@@ -17,6 +17,7 @@ import { byOrdinal } from "./ordinal.js";
 import { isTestFile } from "./test-file-detector.js";
 import { resolveImportSource } from "./import-index.js";
 import { isApiContractLanguage } from "../extractors/registry.js";
+import { ownerIndex } from "./owner-paths.js";
 
 /**
  * Build the project-wide entity-relationship graph rendered in the report's
@@ -288,6 +289,8 @@ export function buildEntityGraph(analyses: FileAnalysis[]): EntityGraph {
   for (const a of analyses) {
     const contract = isApiContractLanguage(a.language);
     if (contract && modelled) continue;
+    // A nested entity carries its owner path in its id (`Outer.Row`), as in the class graph; the label stays its name.
+    const owners = ownerIndex(a);
     for (const cls of a.classes ?? []) {
       const decs = cls.decorators ?? [];
       const isEntity = decs.includes("entity") || decs.includes("table");
@@ -299,7 +302,7 @@ export function buildEntityGraph(analyses: FileAnalysis[]): EntityGraph {
         contractSchemas.add(shape);
       }
 
-      const id = `${a.filePath}::${cls.name}`;
+      const id = `${a.filePath}::${owners.classSymbol(cls.name, cls.line)}`;
       if (nodes.has(id)) continue;
       projectOf.set(id, a.projectId ?? "root");
       if (decs.includes("table") && !decs.includes("entity")) ddlIds.add(id);
@@ -371,7 +374,10 @@ export function buildEntityGraph(analyses: FileAnalysis[]): EntityGraph {
     if (sameFile.length === 1) return sameFile[0]!;
     if (sameFile.length > 1) {
       const exact = sameFile.filter((id) => nodes.get(id)?.name === name);
-      return exact.length === 1 ? exact[0]! : null;
+      if (exact.length === 1) return exact[0]!;
+      // Namesakes nested under different owners: the top-level one, if the file has it; else no way to choose.
+      const top = exact.filter((id) => id === `${fromFile}::${name}`);
+      return top.length === 1 ? top[0]! : null;
     }
     const pick = (cands: string[]): string | null => {
       if (cands.length === 1) return cands[0]!;

@@ -97,7 +97,8 @@ export interface TypeUsageSummary {
  * changing this class touch?" visually.
  */
 export interface ClassGraphNode {
-  /** Unique id. For classes: "filePath::className". For file sources:
+  /** Unique id. For classes: "filePath::className", a nested or function-local class "filePath::Owner.className"
+   *  (owner path joined with `.`, as in `symbolLinks`; `name` keeps the plain name). For file sources:
    *  "file::filePath". For external types: "::typeName" (empty owning file). */
   id: string;
   /** Human-readable name (class name, file basename, or external type name). */
@@ -181,7 +182,7 @@ export interface EntityModelRef {
 }
 
 export interface EntityGraphNode {
-  /** `${filePath}::${name}` — unique even when two files define the same name. */
+  /** `${filePath}::${name}` — unique even when two files define the same name; a nested entity's name is its owner path (`Outer.Row`). */
   id: string;
   name: string;
   /** The physical table, when the ORM names one other than `name` (ClassInfo.tableName). */

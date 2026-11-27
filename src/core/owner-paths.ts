@@ -37,6 +37,8 @@ interface Node {
 export interface OwnerIndex {
   /** The class declared at `line` under `name`: its id symbol (`name` when it is top-level). */
   classSymbol(name: string, line: number): string;
+  /** The class named `name` whose lines contain `line` (innermost): its id symbol; `name` when no class says so. */
+  classContaining(name: string, line: number): string;
   /** The function or method a link spells `name` that starts at `line`: its id symbol. */
   functionSymbol(name: string, line: number): string;
   /** The function whose lines contain `line`, by the name a link's source names: its id symbol. */
@@ -52,6 +54,7 @@ export interface OwnerIndex {
 
 const NONE: OwnerIndex = {
   classSymbol: (n) => n,
+  classContaining: (n) => n,
   functionSymbol: (n) => n,
   functionContaining: (n) => n,
   symbolNamed: (n) => n,
@@ -166,6 +169,12 @@ export function ownerIndex(a: FileAnalysis, lexical = !!manifestFor(a.language a
     unsplitOverloadGroups: overloads.unsplit,
     classSymbol: (name, line) => classByKey.get(`${name}|${line}`)?.q ?? name,
     functionSymbol: (name, line) => fnByKey.get(`${name}|${line}`)?.q ?? classByKey.get(`${name}|${line}`)?.q ?? memberOfUniqueClass(name),
+    classContaining: (name, line) => {
+      const hit = classes.filter((c) => c.name === name && c.line <= line && line <= c.endLine);
+      if (hit.length === 0) return name;
+      const inner = hit.reduce((best, c) => (c.line > best.line ? c : best));
+      return classByKey.get(`${name}|${inner.line}`)?.q ?? name;
+    },
     symbolNamed: (name) => {
       const qs = new Set<string>();
       for (const n of nodes) if (n.name === name) qs.add(n.q!);

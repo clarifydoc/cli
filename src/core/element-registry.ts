@@ -169,6 +169,8 @@ export interface NormFileComplexity {
 export interface NormClassGraphNode {
   /** Element index. A file-node has an empty-symbol element (`<path>::`). */
   el: number;
+  /** The label, where it is not the id's symbol: a nested class's id is its owner path (`Left.Builder`), its name `Builder`. */
+  name?: string;
   isEntity?: boolean;
   orm?: string | null;
   inboundCount: number;
@@ -191,12 +193,16 @@ export interface NormClassGraph {
 /** Normalized EntityModelRef — id → element index; isInterface/kinds/count stay inline. */
 export interface NormEntityModelRef {
   ref: number;
+  /** The label, where it is not the id's symbol (a nested class: the id is its owner path). */
+  name?: string;
   isInterface: boolean;
   kinds: TypeUsageKind[];
   count: number;
 }
 /** Normalized EntityGraphNode — identity (id, kind, line) → element; everything else inline verbatim. */
 export interface NormEntityGraphNode {
+  /** The label, where it is not the id's symbol (a nested entity: the id is its owner path). */
+  name?: string;
   /** The physical table (EntityGraphNode.table). */
   table?: string;
   ref: number;
@@ -856,6 +862,7 @@ export function normalizeProject(p: ProjectAnalysis): NormalizedProjectAnalysis 
       };
       if (node.isEntity !== undefined) nn.isEntity = node.isEntity;
       if ("orm" in node) nn.orm = node.orm;
+      if (!node.isFile && node.name !== splitElementId(node.id)[1]) nn.name = node.name;
       return nn;
     });
     const edges: NormClassGraphEdge[] = cgRaw.edges.map((e) => ({
@@ -871,10 +878,11 @@ export function normalizeProject(p: ProjectAnalysis): NormalizedProjectAnalysis 
   if (egRaw) {
     out.entityGraph = {
       nodes: egRaw.nodes.map(({ node, idx, rms }) => {
-        const nn: NormEntityGraphNode = { ref: remap[idx], orm: node.orm, columns: node.columns, ...(node.table ? { table: node.table } : {}), ...(node.origin ? { origin: node.origin } : {}) };
+        const nn: NormEntityGraphNode = { ref: remap[idx], ...(node.name !== splitElementId(node.id)[1] ? { name: node.name } : {}), orm: node.orm, columns: node.columns, ...(node.table ? { table: node.table } : {}), ...(node.origin ? { origin: node.origin } : {}) };
         if (node.referencingModels !== undefined) {
           nn.referencingModels = rms!.map(({ rm, idx: rIdx }) => ({
             ref: remap[rIdx],
+            ...(rm.name !== splitElementId(rm.id)[1] ? { name: rm.name } : {}),
             isInterface: rm.isInterface,
             kinds: rm.kinds,
             count: rm.count,
@@ -1053,7 +1061,7 @@ export function denormalizeProject(obj: unknown): ProjectAnalysis {
         const isFile = el?.kind === "file";
         const node: ClassGraphNode = {
           id: isFile ? `file::${file}` : el?.id ?? "",
-          name: isFile ? basename(file) : symbol,
+          name: isFile ? basename(file) : nn.name ?? symbol,
           filePath: file,
           isInterface: el?.isInterface ?? false,
           isExternal: el?.isExternal ?? false,
@@ -1082,7 +1090,7 @@ export function denormalizeProject(obj: unknown): ProjectAnalysis {
         const [filePath, name] = splitElementId(el?.id ?? "");
         const node: EntityGraphNode = {
           id: el?.id ?? "",
-          name,
+          name: nn.name ?? name,
           orm: nn.orm,
           kind: (el?.kind as EntityGraphNode["kind"]) ?? "entity",
           filePath,
@@ -1095,7 +1103,7 @@ export function denormalizeProject(obj: unknown): ProjectAnalysis {
           node.referencingModels = nn.referencingModels.map((r): EntityModelRef => {
             const rel = elements[r.ref];
             const [rf, rn] = splitElementId(rel?.id ?? "");
-            return { id: rel?.id ?? "", name: rn, filePath: rf, isInterface: r.isInterface, kinds: r.kinds, count: r.count };
+            return { id: rel?.id ?? "", name: r.name ?? rn, filePath: rf, isInterface: r.isInterface, kinds: r.kinds, count: r.count };
           });
         }
         return node;

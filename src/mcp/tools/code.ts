@@ -1163,8 +1163,11 @@ async function overridesReport(ctx: ToolContext, loaded: LoadedAnalysis, symbol:
     if (l.relation === "implements" && (!file || l.sourceFile === file) && named(l.sourceSymbol)) defs.set(`${l.sourceFile}::${l.sourceSymbol}`, { file: l.sourceFile, symbol: l.sourceSymbol, line: l.sourceLine, isClass: false });
   }
   for (const n of summary.classGraph?.nodes ?? []) {
-    if (n.isFile || n.isExternal || (file && n.filePath !== file) || n.name.toLowerCase() !== want) continue;
-    defs.set(`${n.filePath}::${n.name}`, { file: n.filePath, symbol: n.name, line: 0, isClass: true });
+    if (n.isFile || n.isExternal || (file && n.filePath !== file)) continue;
+    // The node id ends in the class's id symbol: a nested class is its owner path (`Left.Builder`), the one spelling of `trace`.
+    const id = n.id.startsWith(`${n.filePath}::`) ? n.id.slice(n.filePath.length + 2) : n.name;
+    if (n.name.toLowerCase() !== want && !symbolAnswersTo(id, want)) continue;
+    defs.set(n.id, { file: n.filePath, symbol: id, line: 0, isClass: true });
   }
   if (defs.size === 0) {
     const near = nearSymbols(summary, symbol);
