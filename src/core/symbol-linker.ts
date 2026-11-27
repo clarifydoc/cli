@@ -1276,12 +1276,12 @@ function buildSymbolIndex(
  */
 function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[], analysisAt: ReadonlyMap<string, FileAnalysis>): Set<SymbolLink> {
   const touched = new Set<SymbolLink>();
-  type Overload = { line: number; stated: boolean; receiver: boolean; min: number; max: number; params: ParamInfo[]; variadic: boolean; typeKey?: (t: string) => string; strict?: boolean; ranked?: boolean; specializedOn?: string[]; explicit?: boolean };
+  type Overload = { line: number; stated: boolean; receiver: boolean; min: number; max: number; params: ParamInfo[]; variadic: boolean; typeKey?: (t: string) => string; strict?: boolean; ranked?: boolean; specializedOn?: string[]; explicit?: boolean; typeParameters?: ReadonlySet<string> };
   const overloads = new Map<string, Overload[]>();
   // `${file}\0${Class}` → the symbol its constructors share (`Club.constructor`, `Garage.Garage`): a call
   // naming the class (`Club(3)`, `new Garage(4)`) reaches one of them, whether its link names the class or one.
   const ctorsOf = new Map<string, string>();
-  const add = (file: string, name: string, fn: FunctionInfo, typeKey: ((t: string) => string) | undefined, strict?: boolean, flags?: { ranked?: boolean; explicit?: boolean }): void => {
+  const add = (file: string, name: string, fn: FunctionInfo, typeKey: ((t: string) => string) | undefined, strict?: boolean, flags?: { ranked?: boolean; explicit?: boolean }, owner?: ClassInfo): void => {
     const params = fn.params.filter((p) => !p.isReceiver);
     const variadic = !!fn.variadic || params.some((p) => p.variadic);
     const min = params.filter((p) => !p.variadic && !p.optional && p.defaultValue == null).length;
@@ -1291,7 +1291,8 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[], a
     list.push({ line: fn.line, stated: params.length > 0, receiver: fn.params.some((p) => p.isReceiver), min, max: variadic ? Number.POSITIVE_INFINITY : params.length, params, variadic, typeKey, ...(strict ? { strict } : {}),
       ...(flags?.ranked ? { ranked: true } : {}),
       ...(flags?.explicit ? { explicit: true } : {}),
-      ...(fn.specializedOn ? { specializedOn: fn.specializedOn } : {}) });
+      ...(fn.specializedOn ? { specializedOn: fn.specializedOn } : {}),
+      ...(owner?.typeParameters?.length ? { typeParameters: new Set(owner.typeParameters) } : {}) });
   };
   for (const a of analyses) {
     const calls = pluginFor(a.language)?.calls;
@@ -1306,7 +1307,7 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[], a
     const nesting = twins ? callableNesting(a) : null;
     for (const fn of a.functions) if (!nesting?.get(fn)?.parent) add(a.filePath, fn.name, fn, typeKey, strict, flags);
     for (const cls of a.classes) {
-      for (const m of cls.methods) add(a.filePath, `${cls.name}.${m.name}`, m, typeKey, strict, flags);
+      for (const m of cls.methods) add(a.filePath, `${cls.name}.${m.name}`, m, typeKey, strict, flags, cls);
       const ctor = cls.methods.find((m) => isConstructor(m, cls));
       if (ctor) ctorsOf.set(`${a.filePath}\u0000${cls.name}`, `${cls.name}.${ctor.name}`);
     }
@@ -1383,7 +1384,13 @@ function pickOverloads(links: SymbolLink[], analyses: readonly FileAnalysis[], a
       const typeKey = fits[0]!.typeKey;
       const kinds = site!.call.argKinds.map((k) => (k.startsWith("@") ? variableKind(k.slice(1), site!, typeKey, (t) => typesOf().ancestors(t) !== null) : k));
       const best = bestOverload(kinds, fits.map((o) => ({
-        types: o.params.map((p) => (p.type ? typeKey(p.type) : null)),
+        // A parameter written as a type parameter of its class (`T t`) accepts any argument: unknown, never a class named
+        // `T` (the same letter passed on, `Save(t)` inside the class, still matches exactly).
+        types: o.params.map((p, a) => {
+          if (!p.type) return null;
+          const key = typeKey(p.type);
+          return o.typeParameters?.has(p.type.trim().replace(/\?$/, "")) && kinds[a] !== key ? null : key;
+        }),
         variadic: o.variadic,
         // A variadic parameter is where the untyped arguments begin; a function-level `...` begins past them all.
         ...(o.variadic && !o.params.some((p) => p.variadic) ? { restFrom: o.params.length } : {}),

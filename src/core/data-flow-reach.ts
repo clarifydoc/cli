@@ -226,6 +226,10 @@ interface Seed {
   dist?: number;
   /** For a bound generic access: the hops below `key` down to the performing method. */
   tail?: FlowHop[];
+  /** A bound generic access: the effect is `ReachedEffect.typeArgument`. */
+  bound?: true;
+  /** A bound generic access that crossed a link resting on one of several tied overloads: its path is AMBIGUOUS. */
+  guessed?: true;
 }
 
 /** `List<Club>?`, `League.Club[]` → `Club`; null when not a plain type name. */
@@ -365,7 +369,7 @@ export function computeSymbolReachWithWitness(input: SymbolReachInput): { reach:
     parents.set(`${kind} ${resource}`, parent);
     const first = new Map<string, string>();
     firstNodes.set(`${kind} ${resource}`, first);
-    type Hop = { key: string; dist: number; oFile: string; oSym: string; guessed: boolean; state: string };
+    type Hop = { key: string; dist: number; oFile: string; oSym: string; guessed: boolean; state: string; bound?: true };
     const reached: Hop[] = [];
     const reachedAt = new Map<string, number>();
     // Every node the walk took up, each of a symbol's states: the guessing tier resumes from all of them.
@@ -373,6 +377,8 @@ export function computeSymbolReachWithWitness(input: SymbolReachInput): { reach:
     // Roots that start further out (bound generic accesses) join the queue when
     // its frontier reaches their distance, so every symbol keeps its shortest one.
     const pending: Array<Hop & { tail?: FlowHop[] }> = [];
+    // A bound access whose path crossed a tied-overload link starts in the guessing tier, as every guessed path does.
+    const pendingGuessed: typeof pending = [];
     const walk = (queue: Hop[], allowGuess: boolean): void => {
       let qi = 0;
       let pi = 0;
@@ -387,7 +393,7 @@ export function computeSymbolReachWithWitness(input: SymbolReachInput): { reach:
             if (!t) tails.set(`${kind} ${resource}`, (t = new Map()));
             t.set(root.key, root.tail);
           }
-          queue.splice(qi, 0, { key: root.key, dist: root.dist, oFile: root.oFile, oSym: root.oSym, guessed: false, state: "" });
+          queue.splice(qi, 0, { key: root.key, dist: root.dist, oFile: root.oFile, oSym: root.oSym, guessed: root.guessed, state: "", ...(root.bound ? { bound: true as const } : {}) });
         }
         if (qi >= queue.length) break;
         const cur = queue[qi++]!;
@@ -411,14 +417,14 @@ export function computeSymbolReachWithWitness(input: SymbolReachInput): { reach:
           if (viaGuess && !allowGuess) continue;
           visited.add(node);
           parent.set(node, stateNode(cur.key, cur.state));
-          queue.push({ key: next, dist: cur.dist + 1, oFile: cur.oFile, oSym: cur.oSym, guessed: cur.guessed || viaGuess, state });
+          queue.push({ key: next, dist: cur.dist + 1, oFile: cur.oFile, oSym: cur.oSym, guessed: cur.guessed || viaGuess, state, ...(cur.bound ? { bound: true as const } : {}) });
         }
       }
     };
     const roots: Hop[] = [];
     for (const s of group) {
       if (s.dist) {
-        pending.push({ key: s.key, dist: s.dist, oFile: s.originFile, oSym: s.originSymbol, guessed: false, state: "", ...(s.tail ? { tail: s.tail } : {}) });
+        (s.guessed ? pendingGuessed : pending).push({ key: s.key, dist: s.dist, oFile: s.originFile, oSym: s.originSymbol, guessed: !!s.guessed, state: "", ...(s.bound ? { bound: true as const } : {}), ...(s.tail ? { tail: s.tail } : {}) });
       } else if (!visited.has(s.key)) {
         visited.add(s.key);
         parent.set(s.key, null);
@@ -428,6 +434,7 @@ export function computeSymbolReachWithWitness(input: SymbolReachInput): { reach:
     pending.sort((a, b) => a.dist - b.dist);
     walk(roots, false);
     pending.length = 0;
+    pending.push(...pendingGuessed.sort((a, b) => a.dist - b.dist));
     walk(dequeued, true);
     for (const cur of reached) {
       addEffect(cur.key, {
@@ -438,6 +445,7 @@ export function computeSymbolReachWithWitness(input: SymbolReachInput): { reach:
         distance: cur.dist,
         confidence: cur.guessed ? "AMBIGUOUS" : cur.dist === 0 ? "EXTRACTED" : "INFERRED",
         ...(cur.state ? { viaBinding: true as const } : {}),
+        ...(cur.bound ? { typeArgument: true as const } : {}),
       });
     }
   }
@@ -472,7 +480,9 @@ export function computeSymbolReachWithWitness(input: SymbolReachInput): { reach:
  * link whose `typeArgs` close it moves it to the caller's own parameter or —
  * once it names a type — ends the walk with an ordinary seed at that caller,
  * carrying the hops walked. A caller that states no binding ends nothing: the
- * table is never guessed. Guessed (AMBIGUOUS) links are not crossed.
+ * table is never guessed. Guessed (AMBIGUOUS) links are not crossed, except one
+ * resting only on a tie between overloads of the same method: it is crossed and
+ * the seed's path is AMBIGUOUS.
  */
 function bindGenericAccess(
   input: SymbolReachInput,
@@ -481,6 +491,15 @@ function bindGenericAccess(
   guessed: (callee: string, caller: string) => boolean,
 ): Seed[] {
   const bindings = new Map<string, Array<Array<string | null>>>();
+  // An edge whose every guess is a tie between overloads of one method (`SymbolLink.overloadsFit`): the receiver's
+  // type arguments, not the overload, say which table the call reaches, so the binding crosses it, as AMBIGUOUS.
+  const tied = new Set<string>();
+  const otherGuess = new Set<string>();
+  for (const l of input.symbolLinks) {
+    if (l.confidence !== "AMBIGUOUS") continue;
+    const ek = edgeKey(keyOf(l.sourceFile, l.sourceSymbol), keyOf(l.targetFile, l.targetSymbol));
+    (l.overloadsFit && l.overloadsFit > 1 ? tied : otherGuess).add(ek);
+  }
   for (const l of input.symbolLinks) {
     if (!l.typeArgs) continue;
     const ek = edgeKey(keyOf(l.sourceFile, l.sourceSymbol), keyOf(l.targetFile, l.targetSymbol));
@@ -496,16 +515,19 @@ function bindGenericAccess(
   const best = new Map<string, Seed>();
   for (const g of input.genericDataAccess ?? []) {
     const kind: DataEffectKind = g.access === "write" ? "db-write" : g.access === "read" ? "db-read" : "db";
-    type State = { key: string; param: number; dist: number; prev: State | null };
-    const start: State = { key: keyOf(g.file, g.symbol), param: g.parameter, dist: 0, prev: null };
-    const seen = new Set<string>([`${start.key}\0${start.param}`]);
+    type State = { key: string; param: number; dist: number; prev: State | null; tie: boolean };
+    const start: State = { key: keyOf(g.file, g.symbol), param: g.parameter, dist: 0, prev: null, tie: false };
+    const seen = new Set<string>([`${start.key}\0${start.param}\0false`]);
     const queue: State[] = [start];
     for (let qi = 0; qi < queue.length; qi++) {
       const cur = queue[qi]!;
       if (cur.dist + 1 > MAX_DEPTH) continue;
       const curClass = classOf(cur.key);
       for (const caller of reverse.get(cur.key) ?? []) {
-        if (guessed(cur.key, caller)) continue;
+        const viaGuess = guessed(cur.key, caller);
+        const ek = edgeKey(caller, cur.key);
+        if (viaGuess && (!tied.has(ek) || otherGuess.has(ek))) continue;
+        const tie = cur.tie || viaGuess;
         const callerClass = classOf(caller);
         const bound = bindings.get(edgeKey(caller, cur.key));
         const outcomes: Array<{ param: number } | { type: string }> = [];
@@ -526,15 +548,17 @@ function bindGenericAccess(
         }
         for (const o of outcomes) {
           if ("param" in o) {
-            const sk = `${caller}\0${o.param}`;
+            const sk = `${caller}\0${o.param}\0${tie}`;
             if (seen.has(sk)) continue;
             seen.add(sk);
-            queue.push({ key: caller, param: o.param, dist: cur.dist + 1, prev: cur });
+            queue.push({ key: caller, param: o.param, dist: cur.dist + 1, prev: cur, tie });
             continue;
           }
           const resource = input.canonicalEntity?.(o.type) ?? o.type;
           const id = `${caller}\0${kind}\0${resource}`;
-          if ((best.get(id)?.dist ?? Infinity) <= cur.dist + 1) continue;
+          const held = best.get(id);
+          // A path resolved link by link beats a tied-overload one at any distance; otherwise the shorter wins.
+          if (held && (!!held.guessed === tie ? (held.dist ?? 0) <= cur.dist + 1 : !held.guessed)) continue;
           const tail: FlowHop[] = [];
           for (let h: State | null = cur; h; h = h.prev) {
             const hop: FlowHop = { file: fileOf(h.key), symbol: symbolOf(h.key) };
@@ -542,7 +566,7 @@ function bindGenericAccess(
             if (line !== undefined) hop.line = line;
             tail.push(hop);
           }
-          best.set(id, { key: caller, kind, resource, originFile: g.file, originSymbol: g.symbol, dist: cur.dist + 1, tail });
+          best.set(id, { key: caller, kind, resource, originFile: g.file, originSymbol: g.symbol, dist: cur.dist + 1, tail, bound: true, ...(tie ? { guessed: true as const } : {}) });
         }
       }
     }

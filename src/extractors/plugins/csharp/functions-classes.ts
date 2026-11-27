@@ -442,14 +442,14 @@ export class CSharpExtractor extends FunctionClassExtractor {
         const type = kids[i + 1];
         const name = kids[i + 2];
         if (type && name?.type === "identifier") {
-          params.push({ name: name.text, type: unanchoredType(type.text), defaultValue: null, variadic: true });
+          params.push({ name: name.text.replace(/^@/, ""), type: unanchoredType(type.text), defaultValue: null, variadic: true });
           i += 2;
         }
         continue;
       }
       if (p.type !== "parameter") continue;
       const param: ParamInfo = {
-        name: p.childForFieldName("name")?.text ?? p.text,
+        name: (p.childForFieldName("name")?.text ?? p.text).replace(/^@/, ""),
         type: unanchoredType(p.childForFieldName("type")?.text ?? null),
         defaultValue: csharpDefaultValue(p),
       };

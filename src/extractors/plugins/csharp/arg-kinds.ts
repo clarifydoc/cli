@@ -105,7 +105,7 @@ export function csharpArgKind(node: Node): string {
     case "typeof_expression":
       return "Type";
     case "identifier":
-      return `@${node.text}`;
+      return `@${node.text.replace(/^@/, "")}`;
     case "member_access_expression":
       return node.childForFieldName("expression")?.type === "this_expression" || node.childForFieldName("expression")?.type === "this"
         ? `@${node.childForFieldName("name")?.text ?? ""}` : "?";
@@ -171,7 +171,9 @@ export function typeCsharpVariableArgs(calls: readonly CallInfo[], params: reado
   if (!body || !calls.some((c) => c.argKinds?.some((k) => k.startsWith("@")))) return;
   const known = new Map<string, string>();
   for (const p of params) if (!p.isReceiver) known.set(p.name, p.type ? csharpOverloadTypeKey(p.type) : "?");
-  const declare = (name: string | undefined, type: string | undefined | null, init?: Node | null): void => {
+  const declare = (written: string | undefined, type: string | undefined | null, init?: Node | null): void => {
+    // A verbatim identifier (`@where`) is the name without its `@`.
+    const name = written?.replace(/^@/, "");
     if (!name || known.has(name)) return;
     if (type && type !== "var") known.set(name, csharpOverloadTypeKey(type));
     else {

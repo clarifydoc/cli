@@ -4649,6 +4649,11 @@ export interface ReachedEffect {
    * a parent's handler's, which the shared child's own screen does not list.
    */
   viaBinding?: true;
+  /**
+   * The table is a caller's type argument: the effect is a generic repository's access to a class type
+   * parameter, closed over the type a caller names (`ClubService : BaseService<Club>`), not a row of its own.
+   */
+  typeArgument?: true;
 }
 
 /**
