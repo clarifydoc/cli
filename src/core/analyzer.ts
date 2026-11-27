@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { open, readFile } from "fs/promises";
 import { resolve as pathResolve, join, relative, sep, basename, extname } from "path";
 import { existsSync, readFileSync, readdirSync, statSync } from "fs";
-import { execFileSync } from "child_process";
 import { globUnignored as glob } from "./clarifydoc-ignore.js";
 import { DEFAULT_IGNORE } from "./file-discovery.js";
 import { normalizeRoutePath } from "./route-linker.js";
@@ -46,7 +45,7 @@ import { linkRenderedViews } from "./rendered-views.js";
 import { linkOwnViewPosts } from "./own-view-posts.js";
 import { runProjectPasses } from "../extractors/project-passes.js";
 import { resolveRouterMounts } from "../extractors/shared/router-mounts.js";
-import { gitArgs } from "./git-safe.js";
+import { gitPathHistory } from "./doc-history.js";
 import {
   writeProjectSummary,
   writeReportData,
@@ -459,7 +458,7 @@ async function docsOnlyResult(args: {
       return null;
     }
   }))).filter((a): a is FileAnalysis => !!a?.classes);
-  const docDrift = await computeDocDrift(args.projectRoot, analyses, prev.routeMap ?? [], args.gitHistory).catch(() => undefined);
+  const docDrift = await computeDocDrift(args.projectRoot, analyses, prev.routeMap ?? [], args.gitHistory, args.outputDir).catch(() => undefined);
   const sourceRevision = args.sourceRevision ? await args.sourceRevision : null;
   const summary: ProjectAnalysis = {
     ...prev,
@@ -2530,7 +2529,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const historySecrets = options.historySecrets ? await scanHistorySecrets(projectRoot).catch(() => undefined) : undefined;
   if (historySecrets) progress.detail(`  History secrets: ${historySecrets.findings.length} credential(s) in ${historySecrets.commits} commit(s), ${historySecrets.findings.filter((f) => !f.inTree).length} no longer in the tree`);
   // What the project's Markdown names that the tree no longer bears out.
-  const docDrift = await computeDocDrift(projectRoot, allAnalyses, allRoutes, options.gitHistory !== false).catch(() => undefined);
+  const docDrift = await computeDocDrift(projectRoot, allAnalyses, allRoutes, options.gitHistory !== false, dryRun ? undefined : outputDir).catch(() => undefined);
   if (docDrift?.findings.length) progress.detail(`  Doc drift: ${docDrift.findings.length} reference(s) in ${new Set(docDrift.findings.map((f) => f.doc)).size} doc(s) the tree does not bear out`);
   await prefetched;
   const deployRepo = repoFiles(projectRoot);
@@ -4524,6 +4523,7 @@ async function computeDocDrift(
   analyses: readonly FileAnalysis[],
   routes: ReadonlyArray<{ kind?: string; httpMethod?: string | null; path: string; filePath?: string }>,
   useGit: boolean,
+  outputDir?: string,
 ): Promise<ProjectAnalysis["docDrift"]> {
   const docs = (await glob("**/*.{md,markdown}", { cwd: projectRoot, ignore: DEFAULT_IGNORE, caseSensitiveMatch: false }))
     .filter((d) => !/(?:^|\/)(?:CHANGELOG|CHANGES|HISTORY|RELEASES?|NEWS)[^/]*$/i.test(d))
@@ -4551,7 +4551,7 @@ async function computeDocDrift(
       else classMembers.set(c.name, new Set([...(prev ?? []), ...names]));
     }
   }
-  const history = useGit ? gitPathHistory(projectRoot) : undefined;
+  const history = useGit ? gitPathHistory(projectRoot, outputDir) : undefined;
   const findings = checkDocReferences(refs, {
     // A path that leaves the root (a backslash climb, a drive or UNC path) is not ours to judge.
     exists: (p) => {
@@ -4565,6 +4565,7 @@ async function computeDocDrift(
     classMembers,
     ...(history ? { history } : {}),
   });
+  history?.save();
   // The references the tree bears out, as edges from the document to the file it names.
   const routeFiles = new Map<string, string | null>();
   for (const r of api) {
@@ -4588,28 +4589,4 @@ async function computeDocDrift(
     classFile: (name) => classFiles.get(name) ?? undefined,
   });
   return { docs: docs.length, references: refs.length, findings: findings.slice(0, 500), ...(links.length ? { links } : {}) };
-}
-
-/**
- * What git knows of a missing path: the commit that removed it and, when that
- * commit renamed it, the new name — read from the whole commit with rename
- * detection, since a path filter hides the new side of a rename.
- */
-function gitPathHistory(root: string): (path: string) => { deletedIn?: string; renamedTo?: string } | null {
-  const run = (args: string[]) =>
-    execFileSync("git", gitArgs(root, args), { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000 }).trim();
-  return (path) => {
-    try {
-      const head = run(["log", "-1", "--diff-filter=D", "--format=%h %cs", "--", path]);
-      if (!head) return null;
-      const [commit, date] = head.split(" ");
-      for (const line of run(["show", "-M", "--name-status", "--format=", commit!]).split("\n")) {
-        const cols = line.split("\t");
-        if (cols[0]?.startsWith("R") && cols[1] === path && cols[2]) return { renamedTo: cols[2] };
-      }
-      return { deletedIn: date ? `${commit} (${date})` : commit };
-    } catch {
-      return null;
-    }
-  };
 }
