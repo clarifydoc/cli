@@ -290,6 +290,14 @@ export interface DataAccessGraph {
 
 /** Per-file analysis result */
 export interface FileAnalysis {
+  /**
+   * The inline module blocks the file writes (`mod pitch { … }`, Rust), outermost first: each owns the plain functions whose
+   * lines lie inside it, so their id carries its path (`pitch.run`, `pitch.inner.kick`, `core/owner-paths.ts`). `name` is the
+   * block's own name, `path` the path from the file's root as the plugin writes it into a function's name (`pitch::inner`), so a
+   * function the plugin already named by its module (`pitch::helper`) keeps one spelling in its id. `line`..`endLine` are
+   * the block's source lines (1-based). Omitted for a file with no inline module.
+   */
+  inlineModules?: InlineModuleSpan[];
   /** Value-flow facts of the file's module-level code (see `ValueFlowFact`); omitted when it states none. */
   moduleValueFlow?: ValueFlowFact[];
   /**
@@ -1105,6 +1113,14 @@ export interface ModuleBindingInfo {
    * (`League::SERVICE`); within the 1-based line span of that namespace's body the bare `name` stands for it too.
    */
   lexical?: { name: string; line: number; endLine: number };
+}
+
+/** An inline module block of a file (`FileAnalysis.inlineModules`). */
+export interface InlineModuleSpan {
+  name: string;
+  path: string;
+  line: number;
+  endLine: number;
 }
 
 /** A name a module binds at its top level and the lines it owns (`FileAnalysis.moduleNames`). */

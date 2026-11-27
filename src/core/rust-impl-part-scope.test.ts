@@ -59,7 +59,7 @@ describe.each([
   };
 
   it("links a method of the impl part when the use names the struct's declaration", () => {
-    expect(linkOf("wash_the_kit", "Kit.wash")).toBe("schema/src/impls/kit.rs Kit.wash");
+    expect(linkOf("tests.wash_the_kit", "Kit.wash")).toBe("schema/src/impls/kit.rs Kit.wash");
   });
 
   it("leaves a call unlinked when nothing in scope names the type", () => {

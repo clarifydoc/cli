@@ -29,7 +29,19 @@ interface Node {
   params?: ParamInfo[];
   /** A property accessor (`FunctionInfo.accessor`, `getter`): never an overload. */
   accessor?: boolean;
+  /** A class member (`Class.method`): owned by its class, never by a module. */
+  member?: boolean;
   /** Memoized id symbol. */
+  q?: string;
+}
+
+/** An inline module block (`FileAnalysis.inlineModules`): owns the plain functions inside its lines. */
+interface ModuleNode {
+  name: string;
+  /** The path a plugin writes into a function's name for a function of this block (`pitch::inner`). */
+  path: string;
+  line: number;
+  endLine: number;
   q?: string;
 }
 
@@ -74,22 +86,23 @@ const contains = (outer: Node, inner: Node): boolean =>
 export function ownerIndex(a: FileAnalysis, lexical = !!manifestFor(a.language as Language)?.lexicalClassRanges): OwnerIndex {
   const classes = (a.classes ?? []).filter((c) => !c.synthetic && c.line > 0 && c.endLine >= c.line);
   const overloading = !!manifestFor(a.language as Language)?.overloadedMembers;
-  if (classes.length === 0 && !overloading) return NONE;
+  const modules: ModuleNode[] = (a.inlineModules ?? []).filter((m) => m.name && m.line > 0 && m.endLine >= m.line).map((m) => ({ ...m }));
+  if (classes.length === 0 && !overloading && modules.length === 0) return NONE;
   // Lines say nesting only where a class's lines are its block (`lexicalClassRanges`); a plugin's own owner holds anywhere.
-  if (!lexical && !overloading && !classes.some((c) => c.owner)) return NONE;
+  if (!lexical && !overloading && modules.length === 0 && !classes.some((c) => c.owner)) return NONE;
   const nodes: Node[] = classes.map((c) => ({ kind: "class", name: c.name, line: c.line, endLine: c.endLine, cls: c }));
   const seen = new Set<string>();
-  const addFn = (name: string, line: number, endLine: number | undefined): void => {
+  const addFn = (name: string, line: number, endLine: number | undefined, member = false): void => {
     const key = `${name}|${line}`;
     if (!name || !(line > 0) || seen.has(key)) return;
     // A generated member states no end line: it is the line it is generated from.
     const end = typeof endLine === "number" && endLine >= line ? endLine : line;
     seen.add(key);
-    nodes.push({ kind: "fn", name, line, endLine: end });
+    nodes.push({ kind: "fn", name, line, endLine: end, member });
   };
   for (const c of a.complexities ?? []) addFn(c.functionName, c.line, c.endLine);
   for (const f of a.functions ?? []) addFn(f.name, f.line, f.endLine);
-  for (const c of classes) for (const m of c.methods ?? []) addFn(`${c.name}.${m.name}`, m.line, m.endLine);
+  for (const c of classes) for (const m of c.methods ?? []) addFn(`${c.name}.${m.name}`, m.line, m.endLine, true);
   if (overloading) {
     const declared = new Map<string, { params: ParamInfo[]; accessor: boolean }>();
     for (const f of a.functions ?? []) declared.set(`${f.name}|${f.line}`, { params: f.params ?? [], accessor: !!f.accessor || !!f.getter });
@@ -117,12 +130,35 @@ export function ownerIndex(a: FileAnalysis, lexical = !!manifestFor(a.language a
     return rest && rest !== n.name.slice(owner.name.length) ? rest : n.name;
   };
 
+  /** The innermost module block whose lines hold `line`..`endLine` (a module is never its own owner). */
+  const moduleAround = (line: number, endLine: number, self?: ModuleNode): ModuleNode | undefined => {
+    let best: ModuleNode | undefined;
+    for (const m of modules) {
+      if (m === self || m.line > line || m.endLine < endLine) continue;
+      if (self && m.line === self.line && m.endLine === self.endLine) continue;
+      if (!best || m.line > best.line || (m.line === best.line && m.endLine < best.endLine)) best = m;
+    }
+    return best;
+  };
+  const moduleSymbol = (m: ModuleNode): string => {
+    if (m.q !== undefined) return m.q;
+    m.q = m.name;
+    const up = moduleAround(m.line, m.endLine, m);
+    m.q = up ? `${moduleSymbol(up)}.${m.name}` : m.name;
+    return m.q;
+  };
+
   const symbolOf = (n: Node): string => {
     if (n.q !== undefined) return n.q;
     n.q = n.name; // a cycle cannot form (containers are strictly larger), but never loop
     const owner = container.get(n);
     let q = n.name;
-    if (n.kind === "class") {
+    const mod = n.kind === "fn" && !n.member && !n.name.includes(".") && !owner ? moduleAround(n.line, n.endLine) : undefined;
+    if (mod) {
+      // A function the plugin already named by its module (`pitch::helper`) keeps one spelling: `pitch.helper`.
+      const own = n.name.startsWith(`${mod.path}::`) ? n.name.slice(mod.path.length + 2) : n.name;
+      q = `${moduleSymbol(mod)}.${own}`;
+    } else if (n.kind === "class") {
       const path = owner ? symbolOf(owner) : n.cls?.owner ?? "";
       if (path) q = `${path}.${leafOf(n, owner)}`;
     } else if (owner?.kind === "class") {
@@ -240,7 +276,9 @@ export function bareSymbol(symbol: string): string {
  * path. Typing no parameter list names every overload (`squad.pick` finds `Squad.Pick(int)` and `Squad.Pick(string)`);
  * typing one (`squad.pick(int)`) names the one.
  */
-export function symbolAnswersTo(symbol: string, want: string): boolean {
+export function symbolAnswersTo(symbol: string, rawWant: string): boolean {
+  // A path written with `::` (`pitch::run`, the label of an inline-module function) names the same dotted id.
+  const want = rawWant.includes("::") ? rawWant.replace(/::/g, ".") : rawWant;
   const s = symbol.toLowerCase();
   const hit = (c: string): boolean => c === want || c.endsWith(`.${want}`);
   return hit(s) || (!want.includes("(") && hit(bareSymbol(s)));

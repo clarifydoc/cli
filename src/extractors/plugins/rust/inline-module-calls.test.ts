@@ -124,25 +124,25 @@ describe.each([["ANTLR", undefined], ["regex", "no-antlr"]])("Rust inline module
   });
 
   it("links `sys::ignite()` to the function of the inline `mod sys`, also through a `use … as` rename", () => {
-    expect(links).toContain("src/main.rs:8 ignite -> src/main.rs::ignite");
-    expect(links).toContain("src/main.rs:8 rank -> src/main.rs::rank");
+    expect(links).toContain("src/main.rs:8 ignite -> src/main.rs::sys.ignite");
+    expect(links).toContain("src/main.rs:8 rank -> src/main.rs::league.table.rank");
   });
 
   it("links a call to the right one of two same-named functions in two inline modules, and a bare call to its own module's", () => {
-    expect(links).toContain("src/pair.rs:3 sys::ignite -> src/pair.rs::sys::ignite");
-    expect(links).toContain("src/pair.rs:2 decoy::ignite -> src/pair.rs::decoy::ignite");
+    expect(links).toContain("src/pair.rs:3 sys::ignite -> src/pair.rs::sys.ignite");
+    expect(links).toContain("src/pair.rs:2 decoy::ignite -> src/pair.rs::decoy.ignite");
     expect(links.filter((l) => l.startsWith("src/pair.rs:3") && l.includes("decoy"))).toEqual([]);
   });
 
   it("links path and bare calls to the block's own items, never the parent module's namesake", () => {
     const m = "src/main_block.rs";
-    expect(links).toContain(`${m}:4 pitch::helper -> ${m}::pitch::helper`);
-    expect(links).toContain(`${m}:5 pitch::helper -> ${m}::pitch::helper`);
-    expect(links).toContain(`${m}:12 pitch::helper -> ${m}::pitch::helper`);
-    expect(links).toContain(`${m}:13 run -> ${m}::run`);
-    expect(links).toContain(`${m}:14 pitch::stand::helper -> ${m}::pitch::stand::helper`);
-    expect(links).toContain(`${m}:6 pitch::stand::helper -> ${m}::pitch::stand::helper`);
-    expect(links).toContain(`${m}:6 pitch::helper -> ${m}::pitch::helper`);
+    expect(links).toContain(`${m}:4 pitch::helper -> ${m}::pitch.helper`);
+    expect(links).toContain(`${m}:5 pitch::helper -> ${m}::pitch.helper`);
+    expect(links).toContain(`${m}:12 pitch::helper -> ${m}::pitch.helper`);
+    expect(links).toContain(`${m}:13 run -> ${m}::pitch.run`);
+    expect(links).toContain(`${m}:14 pitch::stand::helper -> ${m}::pitch.stand.helper`);
+    expect(links).toContain(`${m}:6 pitch::stand::helper -> ${m}::pitch.stand.helper`);
+    expect(links).toContain(`${m}:6 pitch::helper -> ${m}::pitch.helper`);
     // The file's own `helper` is called only by the bare call in `main`.
     expect(links.filter((l) => l.endsWith(`${m}::helper`))).toEqual([`${m}:15 helper -> ${m}::helper`]);
     expect(links).toContain(`${m}:11 crate::util::render -> src/util.rs::render`);
@@ -152,27 +152,27 @@ describe.each([["ANTLR", undefined], ["regex", "no-antlr"]])("Rust inline module
   it("links a path call into a project module whose function has a noise name, never the std macro or path", () => {
     const n = "src/noise.rs";
     expect(links).toContain(`${n}:5 crate::fmt_util::format -> src/fmt_util.rs::format`);
-    expect(links).toContain(`${n}:6 write -> ${n}::write`);
+    expect(links).toContain(`${n}:6 write -> ${n}::pitch.write`);
     expect(links.filter((l) => l.startsWith(`${n}:7`) || l.startsWith(`${n}:8`))).toEqual([]);
   });
 
   it("links a function imported by name from an inline module of another file to that module's, not the file's namesake", () => {
-    expect(links).toContain("src/crew.rs:4 mow -> src/stadium.rs::pitch::mow");
-    expect(links).toContain("src/crew.rs:4 sweep -> src/stadium.rs::stand::mow");
+    expect(links).toContain("src/crew.rs:4 mow -> src/stadium.rs::pitch.mow");
+    expect(links).toContain("src/crew.rs:4 sweep -> src/stadium.rs::stand.mow");
     expect(links).toContain("src/crew.rs:4 plain -> src/stadium.rs::mow");
-    expect(links).toContain("src/crew_grouped.rs:2 cut -> src/stadium.rs::pitch::mow");
-    expect(links.filter((l) => l.startsWith("src/crew.rs:4") && l.endsWith("::mow"))).toHaveLength(3);
+    expect(links).toContain("src/crew_grouped.rs:2 cut -> src/stadium.rs::pitch.mow");
+    expect(links.filter((l) => l.startsWith("src/crew.rs:4") && /(?:::|\.)mow$/.test(l))).toHaveLength(3);
   });
 
   it("links a bare call through a glob import of an inline module to that module's function", () => {
-    expect(links).toContain("src/crew_glob.rs:2 mow -> src/stadium.rs::pitch::mow");
+    expect(links).toContain("src/crew_glob.rs:2 mow -> src/stadium.rs::pitch.mow");
     expect(links.filter((l) => l.startsWith("src/crew_glob.rs"))).toHaveLength(1);
   });
 
   it("links a bare call in a nested test module through its `use super::*` and `use self::x::*`, never the file's namesake", () => {
     const f = "src/pitch_tests.rs";
-    expect(links).toContain(`${f}:10 pitch::rank -> ${f}::pitch::rank`);
-    expect(links).toContain(`${f}:10 pitch::tests::kit::sample -> ${f}::pitch::tests::kit::sample`);
+    expect(links).toContain(`${f}:10 pitch::rank -> ${f}::pitch.rank`);
+    expect(links).toContain(`${f}:10 pitch::tests::kit::sample -> ${f}::pitch.tests.kit.sample`);
     expect(links.filter((l) => l.startsWith(`${f}:10`) && (l.endsWith(`${f}::rank`) || l.endsWith(`${f}::sample`)))).toEqual([]);
   });
 

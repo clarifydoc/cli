@@ -84,7 +84,7 @@ describe.each([
 
   it("links through `use super::` and an inline module's `use super::*`", () => {
     expect(linkOf("through_super", "Garage.park")).toBe("src/garage.rs Garage.park class-name");
-    expect(linkOf("inline_glob", "Garage.new")).toMatch(/^src\/garage\.rs Garage\.new /);
+    expect(linkOf("tests.inline_glob", "Garage.new")).toMatch(/^src\/garage\.rs Garage\.new /);
   });
 
   it("links a type written with its module path, and the type of the same file", () => {

@@ -30,6 +30,8 @@ export function promoteModuleCalls(analysis: FileAnalysis, lines: string[]): voi
   }
   const modules = inlineModules(lines);
   nameDuplicatesByModule(analysis, modules, lines);
+  // The blocks themselves: core gives each function inside one its module path in its id (`pitch.run`).
+  if (modules.length > 0) analysis.inlineModules = modules.map((m) => ({ name: m.path.split("::").at(-1)!, path: m.path, line: m.from, endLine: m.to }));
   // A noise-named leaf (`fs::write`) is kept at extraction only for a path into a project module: a head the file's
   // `use` binds from the standard library or another crate, or a written `std::`/`core::`/`alloc::` root, is no
   // project call and its row goes (`keepNoise`).
