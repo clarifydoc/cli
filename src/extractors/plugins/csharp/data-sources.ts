@@ -943,7 +943,7 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
    * parameter of a declared type, through nothing but query composition (`Where`, `OrderBy`, `AsNoTracking`…) —
    * `_repo.Active().Where(…).ExecuteUpdateAsync` is `ClubRepository`'s `Active`. Null for any other start.
    */
-  private queryProducer(fn: Node, at: Node): { type: string; method: string } | null {
+  private queryProducer(fn: Node, at: Node): { type: string; method: string; receiver?: string } | null {
     let node: Node | null = fn.type === "member_access_expression" ? fn.childForFieldName("expression") : null;
     while (node?.type === "invocation_expression") {
       const f: Node | null = node.childForFieldName("function");
@@ -952,10 +952,14 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
       const nameNode = f.childForFieldName("name");
       const name = nameNode?.type === "generic_name" ? nameNode.namedChildren[0]?.text : nameNode?.text;
       if (!expr || !name) return null;
-      if (expr.type === "identifier" || expr.type === "this_expression" || (expr.type === "member_access_expression" && expr.childForFieldName("expression")?.type === "this_expression")) {
+      const isThis = (n: Node | null | undefined) => n?.type === "this" || n?.type === "this_expression"; // an anonymous `this` token in current grammars
+      if (expr.type === "identifier" || isThis(expr) || (expr.type === "member_access_expression" && isThis(expr.childForFieldName("expression")))) {
         const receiver = expr.type === "identifier" ? expr.text : expr.type === "member_access_expression" ? expr.childForFieldName("name")?.text : null;
         const declared = receiver ? parameterType(at, receiver) ?? memberDeclaredType(at, receiver) : null;
         const type = declared?.replace(/<[\s\S]*$/, "").trim().split(".").pop() ?? "";
+        // A receiver this class does not declare may be a member of a base class (`BaseController.Clubs`): the project
+        // pass finds its type there (`receiver`, no `type` yet).
+        if (!declared && receiver && /^[A-Za-z_]\w*$/.test(receiver)) return { type: "", method: name, receiver };
         return /^[A-Z]\w*$/.test(type) && !DBCONTEXT_SUFFIX.test(type) ? { type, method: name } : null;
       }
       if (!QUERY_COMPOSERS.has(name)) return null;

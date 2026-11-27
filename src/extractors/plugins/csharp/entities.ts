@@ -1150,23 +1150,63 @@ function producedQueryEntities(analyses: readonly FileAnalysis[]): void {
   if (!analyses.some((a) => a.dataSources?.some((d) => d.entityProducer && !d.entity))) return;
   const byName = new Map<string, ClassInfo[]>();
   for (const a of analyses) if (a.language === "csharp") for (const c of a.classes ?? []) (byName.get(c.name) ?? byName.set(c.name, []).get(c.name)!).push(c);
+  /** The entity names a query method of `typeName` declares (its own, else its bases'), a type parameter bound by `args`. */
+  const queryEntities = (typeName: string, args: readonly string[], method: string, seen: Set<string>): { declared: boolean; found: Set<string> } => {
+    const out = { declared: false, found: new Set<string>() };
+    if (seen.has(typeName)) return out;
+    seen.add(typeName);
+    for (const cls of byName.get(typeName) ?? []) {
+      const bound = new Map<string, string>();
+      (cls.typeParameters ?? []).forEach((p, i) => { if (args[i]) bound.set(p, args[i]!); });
+      const own = cls.methods.filter((x) => x.name === method);
+      for (const m of own) {
+        out.declared = true;
+        const ret = (m.returnType ?? "").replace(/\s+/g, "");
+        const inner = /^(?:(?:[\w.]+\.)?(?:Task|ValueTask)<)?(?:[\w.]+\.)?(?:I(?:Ordered|Includable)?Queryable|I?DbSet)<([\w.]+?)(?:,[\w.<>]+)?>>?$/.exec(ret)?.[1];
+        const raw = inner ? inner.slice(inner.lastIndexOf(".") + 1) : "";
+        const entity = bound.get(raw) ?? raw;
+        out.found.add(/^[A-Z]\w*$/.test(entity) && !(cls.typeParameters ?? []).includes(entity) && !/^T(?:[A-Z][a-z]\w*)?$/.test(entity) ? entity : "");
+      }
+      if (own.length > 0) continue;
+      // Not declared here: the base type (`IClubService : IRepositoryOf<Club>`) may declare it for its type argument.
+      for (const base of [cls.extends, ...cls.implements]) {
+        const m = base ? /^(?:[\w.]+\.)?([A-Za-z_]\w*)\s*(?:<([\s\S]*)>)?$/.exec(base.trim()) : null;
+        if (!m) continue;
+        const baseArgs = (m[2] ?? "").split(",").map((s) => s.trim().replace(/^[\w.]+\./, "")).filter(Boolean).map((s) => bound.get(s) ?? s);
+        const inherited = queryEntities(m[1]!, baseArgs, method, new Set(seen));
+        if (inherited.declared) out.declared = true;
+        for (const e of inherited.found) out.found.add(e);
+      }
+    }
+    return out;
+  };
+  /** The declared type of `receiver` on the narrowest class around `line`, else on its base classes. */
+  const receiverType = (a: FileAnalysis, line: number, receiver: string): string | null => {
+    const around = (a.classes ?? []).filter((c) => c.line <= line && line <= c.endLine).sort((x, y) => (x.endLine - x.line) - (y.endLine - y.line))[0];
+    const seen = new Set<ClassInfo>();
+    const look = (cls: ClassInfo | undefined): string | null => {
+      if (!cls || seen.has(cls)) return null;
+      seen.add(cls);
+      const own = cls.properties?.find((p) => p.name === receiver)?.type;
+      if (own) return bareType(own);
+      for (const base of [cls.extends, ...cls.implements]) {
+        const name = base ? bareType(base) : "";
+        const hits = name ? (byName.get(name) ?? []).map(look).filter((x): x is string => !!x) : [];
+        if (hits.length > 0 && new Set(hits).size === 1) return hits[0]!;
+      }
+      return null;
+    };
+    return look(around);
+  };
   for (const a of analyses) {
     if (a.language !== "csharp") continue;
     for (const ds of a.dataSources ?? []) {
       if (!ds.entityProducer || ds.entity) continue;
-      const found = new Set<string>();
-      let declaredAny = false;
-      for (const cls of byName.get(ds.entityProducer.type) ?? []) {
-        for (const m of cls.methods.filter((x) => x.name === ds.entityProducer!.method)) {
-          declaredAny = true;
-          const ret = (m.returnType ?? "").replace(/\s+/g, "");
-          const inner = /^(?:(?:[\w.]+\.)?(?:Task|ValueTask)<)?(?:[\w.]+\.)?(?:I(?:Ordered|Includable)?Queryable|I?DbSet)<([\w.]+?)(?:,[\w.<>]+)?>>?$/.exec(ret)?.[1];
-          const entity = inner ? inner.slice(inner.lastIndexOf(".") + 1) : "";
-          found.add(/^[A-Z]\w*$/.test(entity) && !/^T(?:[A-Z][a-z]\w*)?$/.test(entity) ? entity : "");
-        }
-      }
+      const type = ds.entityProducer.type || (ds.entityProducer.receiver ? receiverType(a, ds.line, ds.entityProducer.receiver) : null);
+      if (!type) continue;
+      const { declared, found } = queryEntities(type, [], ds.entityProducer.method, new Set());
       const [entity] = found;
-      if (!declaredAny || found.size !== 1 || !entity) continue;
+      if (!declared || found.size !== 1 || !entity) continue;
       ds.entity = entity;
       ds.target = entity;
     }

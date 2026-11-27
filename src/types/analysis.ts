@@ -3223,9 +3223,11 @@ export interface DataSourceInfo {
    * `SystemConfigFetcher#getConfigMap`). `entity` stays empty; the plugin's project
    * pass takes the method's declared return type (a `Mono<X>` / `Optional<X>` unwrapped). C#: a bulk write
    * (`ExecuteUpdateAsync`, `ExecuteDelete`) on the query another class's method returns
-   * (`_repo.Active().ExecuteUpdateAsync(…)`), typed by that method's declared `IQueryable<X>`.
+   * (`_repo.Active().ExecuteUpdateAsync(…)`), typed by that method's declared `IQueryable<X>`. A receiver the writing
+   * class does not declare names no `type` (empty) but the `receiver` member: the project pass looks it up on the
+   * class's base classes.
    */
-  entityProducer?: { type: string; method: string };
+  entityProducer?: { type: string; method: string; receiver?: string };
   /**
    * For `queue-publish`/`queue-consume`: the channel is this parameter of the
    * enclosing function (`clientSend(event, room) { server.to(room).emit(event) }`);

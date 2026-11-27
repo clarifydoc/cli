@@ -506,10 +506,23 @@ public class Svc {
     expect(at(4)).toEqual([{ type: "ClubRepository", method: "Active" }]);
     expect(at(5)).toEqual([{ type: "ClubRepository", method: "Active" }]);
     expect(at(6)).toEqual([{ type: "CarRepository", method: "Active" }]);
-    // a materialized list, an undeclared receiver and a read name no producer
+    // a materialized list and a read name no producer; a receiver this class does not declare waits for its bases
     expect(at(7)).toEqual([]);
-    expect(at(8)).toEqual([]);
+    expect(at(8)).toEqual([{ type: "", method: "Active", receiver: "_other" }]);
     expect(at(9)).toEqual([]);
+  });
+
+  it("defers a bulk write on a member the class does not declare to its base classes (inherited service property)", async () => {
+    const rows = await rowsOf(`namespace X;
+public class ClubsController : BaseController {
+  public Task A() => Clubs.Active().ExecuteUpdateAsync(s => s);
+  public Task B() => this.Clubs.Active().Where(c => c.Id > 0).ExecuteDeleteAsync();
+  public Task C() => Clubs.Active().ToList().ExecuteDeleteAsync();
+}`);
+    const at = (n: number) => rows.filter((d) => d.line === n).map((d) => d.entityProducer);
+    expect(at(3)).toEqual([{ type: "", method: "Active", receiver: "Clubs" }]);
+    expect(at(4)).toEqual([{ type: "", method: "Active", receiver: "Clubs" }]);
+    expect(at(5)).toEqual([]);
   });
 
   it("takes a parameter declared as a set for that set in its own member only (real-repo FP)", async () => {

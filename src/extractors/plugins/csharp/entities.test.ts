@@ -350,6 +350,29 @@ describe("EF Core cross-file entity reconciliation", () => {
     expect(api.dataSources.map((d) => `${d.line} ${d.entity ?? "-"}`)).toEqual(["10 Club", "11 Car"]); // an unbound write (no query method, no such class) is dropped, not left entity-less
   });
 
+  it("types a bulk write through an inherited service property and a generic base interface (inherited helper)", () => {
+    const method = (name: string, returnType: string) => ({ name, line: 3, endLine: 4, params: [], calls: [], returnType }) as never;
+    const base = { ...cls("IRepositoryOf"), kind: "interface", typeParameters: ["T"] } as ClassInfo;
+    base.methods = [method("Active", "IQueryable<T>"), method("Active", "IOrderedQueryable<T>"), method("Names", "List<T>")];
+    const clubs = { ...cls("IClubService", { extends: "IRepositoryOf<Club>" }), kind: "interface" } as ClassInfo;
+    const cars = { ...cls("ICarService", { extends: "IRepositoryOf<Car>" }), kind: "interface" } as ClassInfo;
+    const baseController = cls("BaseController", { properties: [{ name: "Clubs", type: "IClubService" }, { name: "Cars", type: "ICarService" }, { name: "Raw", type: "IRepositoryOf<Club>" }] });
+    const controller = cls("ClubsController", { extends: "BaseController" });
+    controller.line = 2;
+    controller.endLine = 40;
+    const csharp = (path: string, classes: ClassInfo[]) => ({ ...analysis(path, classes), language: "csharp" }) as FileAnalysis;
+    const row = (receiver: string, m: string, line: number) => ({ kind: "database", name: "EF: ExecuteUpdateAsync", target: null, entityProducer: { type: "", method: m, receiver }, access: "write", calls: [], line });
+    const api = { ...csharp("Api/ClubsController.cs", [controller]), dataSources: [
+      row("Clubs", "Active", 10),
+      row("Cars", "Active", 11), // the same helper name over another entity
+      row("Clubs", "Names", 12), // returns no query
+      row("Raw", "Active", 13), // the base interface's own type parameter stays unbound
+      row("Missing", "Active", 14), // no such inherited member
+    ] } as unknown as FileAnalysis;
+    new CSharpEntityExtractor().reconcileProject([csharp("Svc/IRepositoryOf.cs", [base, clubs, cars]), csharp("Api/BaseController.cs", [baseController]), api]);
+    expect(api.dataSources.map((d) => `${d.line} ${d.entity ?? "-"}`)).toEqual(["10 Club", "11 Car"]);
+  });
+
   it("establishes entity-ness and the table from the fluent API alone (Entity<T>(b => b.ToTable(…)))", () => {
     const call = (name: string, line: number, args?: string[]) => ({ name, kind: "internal", target: null, line, ...(args ? { args } : {}) });
     const ext = cls("TransferLogExtensions");

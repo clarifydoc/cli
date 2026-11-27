@@ -21,6 +21,7 @@ Each file's own rules are in its header comment; this page is the map and the ru
 - UI bridge: the XAML, Blazor and VB plugins emit markup facts; `CsharpUiBridgeResolver` joins them to code-behind by class name.
 - ASP.NET facts flow as `cs:controller`, `cs:attr-def` and `cs:assembly-scan` route facts that resolvers in [routes/](routes/) and [assembly-scan.ts](assembly-scan.ts) compose after per-file extraction.
 - A project anchored only by a migration or a `DbContext` would have every other file reported dead, so those are passive in reachability, never entries.
+- A bulk write on another class's returned query (`_repo.Active().ExecuteUpdateAsync(…)`) carries `DataSourceInfo.entityProducer`. When the writing class does not declare the receiver, the producer keeps `receiver` with an empty `type`, and `producedQueryEntities` in [entities.ts](entities.ts) looks the member up on the base-class chain, then finds the method on the interface or base chain, binding a generic base interface's type parameter from the `extends`/`implements` arguments (`IClubService : IBaseService<Club>`). A producer no class resolves is dropped.
 - Visibility: C# methods default to package-private (`isExported = false` unless `public`).
 - Generated files (`*.Designer.cs`, `*.g.cs`) and test projects are listed in the manifest; keep the globs case-sensitive.
 
