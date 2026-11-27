@@ -1,5 +1,6 @@
 import type { CallInfo, ClassInfo, FunctionInfo, ParamInfo, PropertyInfo } from "../../../types/analysis.js";
 import { extractParamsFromDeclaration, findEndLine, type ParamParser } from "../shared/regex-base.js";
+import { escapeRegex } from "../shared/path-utils.js";
 import { goFuncVarParams, goInlineBodyColumn } from "./func-vars.js";
 import { extractGoLocalTypes, goPackageVars, initializerType, type GoBodyReading, type GoConstructors } from "./locals.js";
 import { addExpressionReceiverCalls, type GoTypeEnv } from "./element-types.js";
@@ -92,6 +93,20 @@ export function extractGoClasses(lines: string[], fns: FunctionInfo[], parsePara
     const bound = new Set([...declared, ...literals.names]);
     if (bound.size > 0) fn.boundNames = [...bound];
     else delete fn.boundNames;
+    // A bare call of a name the body binds (`kickoff := func() {…}`, `for _, kickoff := range handlers`) runs that value,
+    // never the package function of the name.
+    // `pool := pool()` calls the package function: the new name is in scope after the statement.
+    if (bound.size > 0) {
+      const selfInit = (name: string): boolean => {
+        const word = new RegExp(`(?<![\\w.])${escapeRegex(name)}(?![\\w])`);
+        const call = new RegExp(`(?<![\\w.])${escapeRegex(name)}\\s*\\(`);
+        return body.some((l) => {
+          const m = /^(.*?)(?::=|(?<![=!<>:])=(?!=))(.*)$/.exec(l);
+          return !!m && word.test(m[1]!) && call.test(m[2]!);
+        });
+      };
+      for (const c of fn.calls) if (!c.passed && !c.name.includes(".") && bound.has(c.name) && !selfInit(c.name)) c.boundLocally = true;
+    }
     if (locals.length > 0) fn.localTypes = locals;
     else delete fn.localTypes;
     const writes = goMemberEffects(lines, fn, body, inline >= 0 ? fn.line : fn.line + 1, receiver?.name ?? null, bound);

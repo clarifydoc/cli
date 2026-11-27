@@ -1044,6 +1044,18 @@ export interface CallExtractionHooks {
    */
   namedBindingTypes?: readonly string[];
   /**
+   * Function-value node types a binding site's value may be that the plugin does NOT extract as a function (Python
+   * `lambda` inside a function: `kickoff = lambda: 2`). Such a binding is a value the function holds, so a bare call of
+   * its name is a call of that value (`CallInfo.boundLocally`), never of a module function of the same name.
+   */
+  unextractedFunctionValues?: readonly string[];
+  /**
+   * The names a body binds that `bindingSites` cannot state because the grammar names them by child type, not by field
+   * (Kotlin `val kickoff = …`, a local `fun kickoff()`, a lambda or loop variable). A bare call of one is a call of that
+   * value or local function (`CallInfo.boundLocally`), never of a module function of the same name.
+   */
+  bodyBoundNames?(body: Node): Iterable<string>;
+  /**
    * Declaration node types whose declarators are locals (Java `local_variable_declaration`). A function
    * expression bound there is a value the plugin does not extract as a function, so it is anonymous: its
    * calls are the enclosing function's (`Runnable r = () -> club.save();`). Unset, a declarator names it.

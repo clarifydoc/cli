@@ -356,7 +356,28 @@ export const kotlinCallHooks: CallExtractionHooks = {
   argOriginsOf: jvmArgOriginsOf,
   // `with(car) { wash() }` / `Car().apply { wash() }`: the lambda's receiver owns a bare name first.
   withSubjectsOf: kotlinImplicitReceivers,
+  bodyBoundNames: kotlinBodyBoundNames,
 };
+
+/**
+ * Every name a Kotlin body binds itself: a `val`/`var` (destructured too), a loop or lambda variable, a catch parameter
+ * and a local `fun` (no symbol of its own). `kickoff()` beside a top-level `fun kickoff()` calls that binding.
+ */
+function kotlinBodyBoundNames(body: Node): string[] {
+  const out: string[] = [];
+  const visit = (node: Node, root: boolean): void => {
+    const t = node.type;
+    if (t === "variable_declaration" || t === "catch_block" || (t === "function_declaration" && !root)) {
+      const name = node.namedChildren.find((c) => c.type === "simple_identifier");
+      // `val pool = pool()`: the new name is not in scope in its own initializer, so that call is the function's.
+      const init = t === "variable_declaration" && node.parent?.type === "property_declaration" ? node.parent.namedChildren.find((c) => c.type === "call_expression") : undefined;
+      if (name && !(init && init.child(0)?.type === "simple_identifier" && init.child(0)?.text === name.text)) out.push(name.text);
+    }
+    for (const child of node.namedChildren) visit(child, false);
+  };
+  visit(body, true);
+  return out;
+}
 
 /**
  * The receivers of the scope lambdas (`with(x) { }`, `x.apply { }`, `x.run { }`) a bare call sits in, innermost

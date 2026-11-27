@@ -14,6 +14,8 @@ export const pythonCallHooks: CallExtractionHooks = {
   anonymousScopeTypes: ["lambda"],
   // `on_ready = lambda: start()` is a function of its own: passing it is a reference.
   namedBindingTypes: ["assignment"],
+  // A lambda assigned in a function is a value the function holds (no symbol): `kickoff = lambda: 2; kickoff()`.
+  unextractedFunctionValues: ["lambda"],
   callbackArgNodeTypes: ["call"],
   // `Thread(target=worker)`, `register(self.handle)`, `schedule(cb=self.tick)`: a function handed on.
   passedArguments(call) {

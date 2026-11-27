@@ -47,11 +47,11 @@ const CALLBACK_ARG_BY_LANGUAGE = new Map<Language, ReadonlySet<string>>();
  * and pattern node type → fields holding further bound names, "*" = all.
  */
 type FieldTable = ReadonlyMap<string, ReadonlySet<string>>;
-interface BindingTables { sites: FieldTable; patterns: FieldTable }
+interface BindingTables { sites: FieldTable; patterns: FieldTable; opaque: ReadonlySet<string> }
 const BINDINGS_BY_LANGUAGE = new Map<Language, BindingTables>();
 /** Per language: the node types the `extractCalls` walk reads on a node — scope boundaries, binding sites, calls. */
 const READ_TYPES_BY_LANGUAGE = new Map<Language, ReadonlySet<string>>();
-const NO_BINDINGS: BindingTables = { sites: new Map(), patterns: new Map() };
+const NO_BINDINGS: BindingTables = { sites: new Map(), patterns: new Map(), opaque: new Set() };
 
 /** The leaves of a bound pattern. */
 const BOUND_IDENTIFIER_TYPES = new Set(["identifier", "shorthand_property_identifier_pattern"]);
@@ -70,7 +70,7 @@ export function registerCallExtraction(language: Language, hooks: CallExtraction
   NAMED_BINDING_BY_LANGUAGE.set(language, new Set(["variable_declarator", ...(hooks.namedBindingTypes ?? [])]));
   LOCAL_DECLARATION_BY_LANGUAGE.set(language, new Set(hooks.localDeclarationTypes ?? []));
   CALLBACK_ARG_BY_LANGUAGE.set(language, new Set(hooks.callbackArgNodeTypes ?? []));
-  const bindings = { sites: fieldTable(hooks.bindingSites), patterns: fieldTable(hooks.bindingPatterns) };
+  const bindings = { sites: fieldTable(hooks.bindingSites), patterns: fieldTable(hooks.bindingPatterns), opaque: new Set(hooks.unextractedFunctionValues ?? []) };
   BINDINGS_BY_LANGUAGE.set(language, bindings);
   READ_TYPES_BY_LANGUAGE.set(language, new Set([...(hooks.nestedScopeTypes ?? []), ...hooks.callNodeTypes, ...bindings.sites.keys(), ...(hooks.perNodeTypes ?? [])]));
 }
@@ -79,14 +79,16 @@ export function registerCallExtraction(language: Language, hooks: CallExtraction
  * Add every name `node`'s binding site binds (its parameters, its declarator...).
  * A declarator or assignment whose value is itself a function
  * (`const onClick = () => …`, `f = lambda: …`) binds a function — the plugin
- * extracts it as one — so passing it on stays a callback reference.
+ * extracts it as one — so passing it on stays a callback reference. `values`
+ * (a bare call's view, `unextractedFunctionValues`): a function value the plugin
+ * does not extract is a value the function holds, so its name is bound.
  */
-function collectBoundNames(site: Node, into: Set<string>, nested: ReadonlySet<string>, tables: BindingTables, type: string = site.type): void {
+function collectBoundNames(site: Node, into: Set<string>, nested: ReadonlySet<string>, tables: BindingTables, type: string = site.type, values = false): void {
   const fields = tables.sites.get(type);
   if (!fields) return;
   if (!nested.has(type)) {
     const value = site.childForFieldName("value") ?? site.childForFieldName("right");
-    if (value && nested.has(value.type)) return;
+    if (value && nested.has(value.type) && !(values && tables.opaque.has(value.type))) return;
   }
   for (const field of fields) {
     // "*": every name the site lists (`nonlocal a, b`).
@@ -94,6 +96,34 @@ function collectBoundNames(site: Node, into: Set<string>, nested: ReadonlySet<st
     const bound = field === "*" ? null : site.childForFieldName(field);
     if (bound) collectPatternNames(bound, into, tables.patterns);
   }
+}
+
+/** Whether a node type is a function with a parameter list (a binding site holding `parameters`/`parameter`). */
+function isFunctionLike(type: string, tables: BindingTables): boolean {
+  const fields = tables.sites.get(type);
+  return !!fields && (fields.has("parameters") || fields.has("parameter"));
+}
+
+/**
+ * The names a function's own body binds: its statements' binding sites, never those of a function or class written
+ * inside it, anonymous or not (a callback's parameter assigned in its body is the callback's).
+ */
+function collectLocalsOf(fn: Node, into: Set<string>, nested: ReadonlySet<string>, anonymous: ReadonlySet<string>, tables: BindingTables, callTypes: ReadonlySet<string>): void {
+  const body = fn.childForFieldName("body");
+  if (!body) return;
+  const visit = (node: Node): void => {
+    const type = node.type;
+    // Another function's names (an anonymous one's parameters and locals too) are its own, not the enclosing one's.
+    // (A method of an object literal is such a function too, whether or not the plugin lists it as a scope.)
+    if (nested.has(type) || isFunctionLike(type, tables)) return;
+    // `var state = wrap(function () {…})`: the plugin extracts the callback as a function of that name — the
+    // declaration a sibling's call reaches, not a value shadowing it.
+    const value = node.childForFieldName("value");
+    const handsOnFunction = !!value && callTypes.has(value.type) && !!value.childForFieldName("arguments")?.namedChildren.some((a) => nested.has(a.type));
+    if (!handsOnFunction) collectBoundNames(node, into, nested, tables, type, true);
+    for (const child of node.namedChildren) visit(child);
+  };
+  visit(body);
 }
 
 function collectPatternNames(pattern: Node, into: Set<string>, patterns: FieldTable): void {
@@ -325,7 +355,7 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
     // scope this walk attributes to the function (incl. inline arrows).
     collectBoundNames(node, boundHere, nested, bindings, type);
     // A body's own bindings (not a function's parameters): what a bare call of that name calls.
-    if (!nested.has(type) && !anonymous.has(type)) collectBoundNames(node, localHere, nested, bindings, type);
+    if (!nested.has(type) && !anonymous.has(type)) collectBoundNames(node, localHere, nested, bindings, type, true);
 
     // Standard call expressions
     if (callTypes.has(type)) {
@@ -390,7 +420,15 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
   if (!bindings.sites.has(bodyNode.type) && bodyNode.parent) collectBoundNames(bodyNode.parent, boundHere, nested, bindings);
   // A nested function's free names include its enclosing functions' parameters: values handed in
   // (`seconds`, a decorator's `func`), never a function of the project of that name.
-  for (let p = bodyNode.parent?.parent ?? null; p; p = p.parent) if (nested.has(p.type)) collectBoundNames(p, boundHere, nested, bindings);
+  // Its locals too: a name an enclosing function binds in its body is that value where a closure calls it
+  // (`def run(): return kickoff()` inside the function holding `kickoff = compute()`), never a module function's.
+  const ancestorLocals = new Set<string>();
+  for (let p = bodyNode.parent?.parent ?? null; p; p = p.parent) {
+    if (!nested.has(p.type)) continue;
+    collectBoundNames(p, boundHere, nested, bindings);
+    if (isFunctionLike(p.type, bindings)) collectLocalsOf(p, ancestorLocals, nested, anonymous, bindings, hooks.callNodeTypes);
+  }
+  for (const name of hooks.bodyBoundNames?.(bodyNode) ?? []) localHere.add(name);
   walk(bodyNode, true);
 
   const results: CallInfo[] = [];
@@ -431,7 +469,7 @@ export function extractCalls(bodyNode: Node | null, language: Language, skip?: (
     if (c.libraryOption) call.libraryOption = c.libraryOption;
     if (c.mapMember) call.mapMember = true;
     if (c.rebound) call.receiverRebound = true;
-    if (!c.isReference && (c.bound ?? localHere.has(c.name))) call.boundLocally = true;
+    if (!c.isReference && ((c.bound ?? localHere.has(c.name)) || (ancestorLocals.size > 0 && ancestorLocals.has(c.name)))) call.boundLocally = true;
     if (c.args) call.args = c.args;
     if (c.argCount != null) call.argCount = c.argCount;
     if (c.argOrigins?.length) call.argOrigins = c.argOrigins;
@@ -714,6 +752,8 @@ export function classifyCalls(
   const dottedSpecs = [...importMap.keys()].filter((s) => s.includes(".")).sort((a, b) => b.length - a.length);
 
   let importsByLastSegment: Map<string, ImportInfo> | undefined;
+  // The names an import inside a function binds (the caller's `imports` hold only the ones that reach it).
+  const scopedNames = imports.some((i) => i.scope) ? new Set(imports.filter((i) => i.scope && !i.isType).flatMap((i) => i.specifiers)) : undefined;
   outer:
   for (const call of calls) {
     // 0. Auto-imported globals (e.g. Vue <script setup> compiler macros)
@@ -730,7 +770,8 @@ export function classifyCalls(
     // not (`function k({ boost })`) — is what the body calls, never the import it shadows.
     // It may still be an API or database call by its name (steps 3-4).
     // A local destructured from a factory's result (`const { frac } = useFraction()`) is the factory's (step 2b).
-    if (call.boundLocally && variableAliases?.has(call.name)) delete call.boundLocally;
+    // Unless the file defines the name itself: the call is then the local value's, and the alias would only hand it to that function.
+    if (call.boundLocally && variableAliases?.has(call.name) && !(ownFunctions?.has(call.name) && !call.name.includes("."))) delete call.boundLocally;
     const dotAt = call.name.indexOf(".");
     const root = dotAt < 0 ? call.name : call.name.slice(0, dotAt);
     const ownParam = call.boundLocally === true || ownBindings?.has(root) === true;
@@ -738,7 +779,8 @@ export function classifyCalls(
     // 1. Check cross-file: exact match on import specifier — unless the file declares the name itself:
     // a later `def save` rebinds an imported `save` (Python), a file's own top-level `fun save` wins over
     // `import utils.save` (Kotlin); where the two clash (TS, PHP) the code does not compile.
-    const ownDefinition = !call.name.includes(".") && ownFunctions?.has(call.name) === true;
+    // An import inside a function (`ImportInfo.scope`) is no module-level rebinding: it is what that function's body calls.
+    const ownDefinition = !call.name.includes(".") && ownFunctions?.has(call.name) === true && !scopedNames?.has(call.name);
     const directMatch = ownParam || ownDefinition ? undefined : importMap.get(call.name);
     if (directMatch) {
       call.kind = "cross-file";

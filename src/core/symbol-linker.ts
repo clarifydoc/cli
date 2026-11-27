@@ -3759,7 +3759,8 @@ function nestedDefinition(
   const inside = caller ? candidates.filter((c) => within(c, caller)) : [];
   if (inside.length > 0) return { node: inside.reduce((a, b) => (b.depth < a.depth ? b : a)), confidence: "EXTRACTED" };
   const imported = call.kind === "cross-file";
-  const visible = candidates.filter((c) => (c.parent === null ? !imported : ancestors.has(c.parent)));
+  // A name the caller binds itself (`CallInfo.boundLocally`) is never the top-level function of that name.
+  const visible = candidates.filter((c) => (c.parent === null ? !imported && !call.boundLocally : ancestors.has(c.parent)));
   if (visible.length > 0) {
     // Two of one scope (a redeclaration): the later, as the symbol index keeps it.
     return { node: visible.reduce((a, b) => (b.depth >= a.depth ? b : a)), confidence: "EXTRACTED" };
