@@ -554,6 +554,40 @@ public class DatabaseFixture {
     expect(rows[0]!.entity).toBeUndefined();
   });
 
+  it("states the declared type of an entity-typed argument on a set write, and no list's or registry's Add", async () => {
+    const rows = await rowsOf(`namespace League.Data;
+public class ClubDesk {
+  private readonly LeagueContext _db;
+  private readonly List<Club> items = new();
+  public void Sign(Club club, List<Player> squad, Club[] youth, Registry reg) {
+    _db.Add(club);
+    _db.Update(club);
+    _db.RemoveRange(squad);
+    _db.AttachRange(youth);
+    items.Add(club);
+    reg.Add(club);
+    _db.Add(unknown);
+    _db.Add(new Club());
+    _db.Add(count);
+    var made = new Club();
+    _db.Add(made);
+  }
+  public void Other(string count, Registry reg) { _db.Add(count); }
+}`);
+    expect(rows.map((d) => `${d.name} ${d.entity ?? "-"} ${d.entityType ?? "-"} @${d.line}`)).toEqual([
+      "EF: Add - Club @6",
+      "EF: Update - Club @7",
+      "EF: RemoveRange - Player @8",
+      "EF: AttachRange - Club @9",
+      // No argument of a declared type, a string, or a list's `Add`: the row names no entity (as before).
+      "EF: Add - - @12",
+      "EF: Add - - @13",
+      "EF: Add - - @14",
+      "EF: Add - Club @16",
+      "EF: Add - - @18",
+    ]);
+  });
+
   it("binds a generic repository's EF statements to its type parameter, through any query operators (real-repo FP)", async () => {
     const rows = await rowsOf(`namespace League.Data;
 public abstract class BaseGarage<T> where T : EntityBase {

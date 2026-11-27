@@ -139,6 +139,11 @@ export class CSharpEntityExtractor extends EntityExtractor {
    * ER nodes (and their config-declared relations resolve). Mutates in place.
    */
   override reconcileProject(analyses: FileAnalysis[]): void {
+    this.reconcileEntities(analyses);
+    entityTypedWrites(analyses);
+  }
+
+  private reconcileEntities(analyses: FileAnalysis[]): void {
     producedQueryEntities(analyses);
     // (1) Names declared as EF entities by `DbSet<T>` or `IEntityTypeConfiguration<T>`.
     const efEntityNames = new Set<string>();
@@ -1212,6 +1217,30 @@ function producedQueryEntities(analyses: readonly FileAnalysis[]): void {
     }
     // A write no producing method gave an entity is no fact a reader can use (no table, a namespace as its target).
     if (a.dataSources?.some((d) => d.entityProducer && !d.entity)) a.dataSources = a.dataSources.filter((d) => !d.entityProducer || d.entity);
+  }
+}
+
+/**
+ * A set write on a context whose argument is declared of a type (`DataSourceInfo.entityType`, `_db.Add(club)`
+ * with `Club club`) names that entity when the type is a class the project declares as an entity (tagged above);
+ * otherwise the row stays entity-less. The field is dropped either way.
+ */
+function entityTypedWrites(analyses: readonly FileAnalysis[]): void {
+  const entities = new Set<string>();
+  for (const a of analyses) {
+    if (a.language !== "csharp") continue;
+    for (const cls of a.classes ?? []) if ((cls.decorators ?? []).includes("entity")) entities.add(cls.name);
+  }
+  for (const a of analyses) {
+    if (a.language !== "csharp") continue;
+    for (const ds of a.dataSources ?? []) {
+      if (!ds.entityType) continue;
+      if (!ds.entity && entities.has(ds.entityType)) {
+        ds.entity = ds.entityType;
+        ds.target = ds.entityType;
+      }
+      delete ds.entityType;
+    }
   }
 }
 

@@ -877,16 +877,34 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
   private efRow(node: Node): DataSourceInfo | null {
     const row = this.efRowOf(node);
     if (row?.routine || row?.entityProducer) return row;
-    const params = this.classTypeParameters(node);
-    // A row naming the class's own type parameter as its entity (`Set<T>()` read as a table `T`) is the open form.
-    const named = row?.entity || null;
-    if (named && !params.has(named)) return row;
+    return this.efRowOpen(node, row) ?? this.entityTypedWrite(node, row);
+  }
+
+  /** A write of an entity-typed argument on a context (`_db.Add(club)`): the row states the type as written (`entityType`); the project pass joins it to the entity set. */
+  private entityTypedWrite(node: Node, row: DataSourceInfo | null): DataSourceInfo | null {
+    if (row?.entity) return row;
     const fn = node.childForFieldName("function");
     const fullName = fn ? this.fullCallName(fn) : null;
     if (!fn || !fullName) return row;
     const method = fullName.split(".").pop()!.replace(/<.*$/, "");
+    const type = this.writtenType(node, fullName, method);
+    if (!type || !/^[A-Z]\w*$/.test(type)) return row;
+    if (row) return { ...row, entityType: type };
+    return this.ds({ kind: "database", name: `EF: ${method}`, target: null, entityType: type, access: "write", line: node.startPosition.row + 1 });
+  }
+
+  /** The row of a statement on the class's own type parameter (`entityTypeParameter`), else null. */
+  private efRowOpen(node: Node, row: DataSourceInfo | null): DataSourceInfo | null {
+    const params = this.classTypeParameters(node);
+    // A row naming the class's own type parameter as its entity (`Set<T>()` read as a table `T`) is the open form.
+    const named = row?.entity || null;
+    if (named && !params.has(named)) return null;
+    const fn = node.childForFieldName("function");
+    const fullName = fn ? this.fullCallName(fn) : null;
+    if (!fn || !fullName) return null;
+    const method = fullName.split(".").pop()!.replace(/<.*$/, "");
     const open = this.openSetParameter(node, fn, fullName, method, params) ?? named;
-    if (!open) return row;
+    if (!open) return null;
     if (row) {
       const { entity: _entity, ...rest } = row;
       return { ...rest, entityTypeParameter: open };
@@ -931,15 +949,37 @@ export class CSharpDataSourceExtractor extends DataSourceExtractor {
     if (held && params.has(held)) return held;
     if (upsert) return null;
     // `_context.Add(item)`: the argument's declared type names the set.
+    const type = this.writtenType(node, fullName, method);
+    return type !== null && params.has(type) ? type : null;
+  }
+
+  /**
+   * The declared type of the first argument of a set write on a context-named receiver (`_db.Add(club)` with
+   * `Club club`; a collection's element type: `List<Club>`, `Club[]`), as written; null for any other statement.
+   * A list's or dictionary's `Add` is none: the receiver must be named like a context.
+   */
+  private writtenType(node: Node, fullName: string, method: string): string | null {
     const parts = fullName.replace(/^this\./, "").split(".");
     if (!EF_SET_WRITES.has(method) || parts.length !== 2 || !CONTEXT_RECEIVER.test(parts[0]!)) return null;
     const arg = argumentNodes(node)[0]?.namedChildren[0];
-    const declared = arg?.type === "identifier" ? parameterType(node, arg.text) : null;
+    let declared = arg?.type === "identifier" ? parameterType(node, arg.text) : null;
+    // `var club = new Club(…)`: the constructed type is the local's.
+    if (declared === "var" && arg) declared = this.constructedType(node, arg.text);
     if (!declared) return null;
     const bare = declared.replace(/\s+/g, "").replace(/\?$/, "");
-    const type = /^(\w+)\[\]$/.exec(bare)?.[1] ??
+    return /^(\w+)\[\]$/.exec(bare)?.[1] ??
       /^(?:[\w.]+\.)?(?:IEnumerable|IList|List|ICollection|IReadOnlyCollection|IReadOnlyList|HashSet)<(\w+)>$/.exec(bare)?.[1] ?? bare;
-    return params.has(type) ? type : null;
+  }
+
+  /** The type a local named `name` in the member around `node` is constructed as (`var club = new Club()`), else null. */
+  private constructedType(node: Node, name: string): string | null {
+    const member = enclosingMember(node);
+    for (const d of member?.descendantsOfType("variable_declarator") ?? []) {
+      if (!d || (d.childForFieldName("name") ?? d.namedChildren[0])?.text !== name) continue;
+      const init = d.namedChildren.find((c) => c.type === "object_creation_expression" || c.type === "implicit_object_creation_expression");
+      return init?.type === "object_creation_expression" ? init.childForFieldName("type")?.text ?? null : null;
+    }
+    return null;
   }
 
   private efRowOf(node: Node): DataSourceInfo | null {

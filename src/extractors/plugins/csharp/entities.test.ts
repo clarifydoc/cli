@@ -332,6 +332,18 @@ describe("EF Core cross-file entity reconciliation", () => {
     expect(api.dataSources.map((d) => `${d.target} ${d.entity}`)).toEqual(["FanSubscription FanSubscription"]);
   });
 
+  it("names the entity of a set write through an entity-typed argument only when the project declares that entity", () => {
+    const ctx = analysis("Data/LeagueContext.cs", [
+      cls("LeagueContext", { extends: "DbContext", properties: [{ name: "Clubs", type: "DbSet<Club>" }] }),
+    ]);
+    const csharp = (path: string, classes: ClassInfo[]) => ({ ...analysis(path, classes), language: "csharp" }) as FileAnalysis;
+    const row = (entityType: string, line: number) => ({ kind: "database", name: "EF: Add", target: null, entityType, access: "write", calls: [], line });
+    const svc = { ...csharp("Svc/ClubService.cs", []), dataSources: [row("Club", 5), row("Badge", 6)] } as unknown as FileAnalysis;
+    new CSharpEntityExtractor().reconcileProject([{ ...ctx, language: "csharp" } as FileAnalysis, csharp("Domain/Club.cs", [cls("Club")]), csharp("Domain/Badge.cs", [cls("Badge")]), svc]);
+    // Club is a DbSet entity; Badge is a class no context declares as a set, so its row names nothing.
+    expect(svc.dataSources.map((d) => `${d.line} ${d.entity ?? "-"} ${d.entityType ?? "-"}`)).toEqual(["5 Club -", "6 - -"]);
+  });
+
   it("types a bulk write on another class's returned query by that method's declared query type", () => {
     const method = (name: string, returnType: string) => ({ name, line: 3, endLine: 4, params: [], calls: [], returnType }) as never;
     const clubs = cls("ClubRepository");

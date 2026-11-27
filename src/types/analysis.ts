@@ -3239,6 +3239,12 @@ export interface DataSourceInfo {
    */
   entityTypeParameter?: string;
   /**
+   * For `database`: a set write on a context (`_db.Add(club)`) whose argument is declared of this type as written
+   * (`Club`; a collection's element type). `entity` stays empty; the plugin's project pass sets it when the type is
+   * an entity the project declares, and drops this field either way.
+   */
+  entityType?: string;
+  /**
    * For `database`: the statement names the model this parameter of the
    * enclosing function holds (`def model_count(model): select(func.count(model.id))`).
    * `entity` stays empty; core adds a row at each resolved call site that hands
