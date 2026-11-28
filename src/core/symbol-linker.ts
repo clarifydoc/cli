@@ -1140,6 +1140,118 @@ function handedClientLinks(links: readonly SymbolLink[], ctx: LinkContext): Symb
   return out;
 }
 
+const twinNamesMemo = new WeakMap<readonly ClassInfo[], Set<string> | null>();
+
+/**
+ * The names a file declares more than once (`Garage::Table` and `League::Table`, two nested `Builder`s, a reopened
+ * class); null for the usual file with none. Memoized per `classes` array, which the index, `classAt` and the twin
+ * lookups all read.
+ */
+function twinClassNames(classes: readonly ClassInfo[]): Set<string> | null {
+  if (classes.length < 2) return null;
+  const hit = twinNamesMemo.get(classes);
+  if (hit !== undefined) return hit;
+  const seen = new Set<string>();
+  let twins: Set<string> | null = null;
+  for (const c of classes) {
+    if (c.synthetic) continue;
+    if (seen.has(c.name)) (twins ??= new Set()).add(c.name);
+    seen.add(c.name);
+  }
+  twinNamesMemo.set(classes, twins);
+  return twins;
+}
+
+/**
+ * A map (a file's symbols, `classAt`) whose twin keys (`Table@L12`, `Table@L12.build`: one declaration of a class name
+ * a file declares twice) answer `get` and `has` but are never enumerated, so every pass that walks it sees each name
+ * once. Every lookup of a type reference's `typeName` goes through `get`/`has` (over a hundred sites), which is why the
+ * twin keys answer there rather than in a map only the twin-aware callers read. Only a run or file that holds a twin
+ * builds this class; every other map is a plain `Map`, so the common `get`/`has` stays the builtin.
+ */
+class TwinKeyedMap<V> extends Map<string, V> {
+  readonly twin = new Map<string, V>();
+  override get(key: string): V | undefined {
+    return super.get(key) ?? (key.includes("@L") ? this.twin.get(key) : undefined);
+  }
+  override has(key: string): boolean {
+    return super.has(key) || (key.includes("@L") && this.twin.has(key));
+  }
+}
+
+/** Marks a class key that names one declaration of a twin (`Table@L12`); never a source spelling. */
+const TWIN_KEY = /@L\d+(?=\.|$)/g;
+
+/** A twin's key: the name and the line it is declared on. */
+function classKey(cls: ClassInfo): string {
+  return `${cls.name}@L${cls.line}`;
+}
+
+/** The key a type reference gives `cls` of `classes`: its own where the file declares the name twice, else the name. */
+function classKeyIn(classes: readonly ClassInfo[], cls: ClassInfo): string {
+  return twinClassNames(classes)?.has(cls.name) ? classKey(cls) : cls.name;
+}
+
+/** A symbol as the links spell it: a twin's key (`Table@L12.build`) is the class name. */
+function plainSymbol(symbol: string): string {
+  return symbol.includes("@L") ? symbol.replace(TWIN_KEY, "") : symbol;
+}
+
+/**
+ * The one declaration of `name` in `file` that a path index (`typePaths`) lists at a path: the class of `classes`
+ * (that file's) declared on the line the entry states. Undefined where the path lists none of the file's or two (a
+ * class reopened at that path), so the plain name stands.
+ */
+function twinAtPath(decls: ReadonlyArray<{ file: string; name: string; line?: number }>, file: string, name: string, classes: readonly ClassInfo[]): ClassInfo | undefined {
+  const here = decls.filter((d) => d.file === file && d.name === name);
+  return here.length === 1 && here[0]!.line !== undefined ? classes.find((c) => c.name === name && c.line === here[0]!.line) : undefined;
+}
+
+/**
+ * Register one method of `cls` in `defs` under `${keyPrefix}.${method.name}`: the class-level member beside an instance
+ * one of its name goes to `${keyPrefix}.self.<name>`, an explicit interface implementation never displaces the class's
+ * own member, and overloads fold their return types. The def is named `${cls.name}.<name>`, whatever the key prefix.
+ * Returns the def it stored under the qualified key (undefined when it stored none there).
+ */
+function registerMethod(defs: Map<string, SymbolDef>, keyPrefix: string, cls: ClassInfo, method: FunctionInfo): SymbolDef | undefined {
+  const key = `${keyPrefix}.${method.name}`;
+  const name = `${cls.name}.${method.name}`;
+  const seen = defs.get(key);
+  // What an explicit interface implementation stored first is not an overload of the class's own member.
+  const prev = seen?.explicitOnly && !method.explicitInterface ? undefined : seen;
+  // A class-level member beside an instance one of its name (a Kotlin companion's `foo` and the
+  // class's own): the instance one answers `x.foo()`, the class-level one `X.foo()` (`X.self.foo`).
+  if (method.classLevel && prev && !prev.classLevel && prev.line !== method.line) {
+    defs.set(`${keyPrefix}.self.${method.name}`, { name, line: method.line, endLine: method.endLine, classLevel: true });
+    return undefined;
+  }
+  // An explicit interface implementation shares its name with the class's own member: the member a
+  // class-typed receiver reaches is the latter, whichever line comes first.
+  if (method.explicitInterface && prev && !prev.explicitOnly) return undefined;
+  const def: SymbolDef = {
+    name,
+    line: method.line,
+    endLine: method.endLine,
+    ...(method.explicitInterface ? { explicitOnly: true as const } : {}),
+    returnType: overloadReturn(prev, method.returnType),
+    ...(method.declaredReturnType && !prev ? { declaredReturn: method.declaredReturnType } : {}),
+    ...(method.classLevel && (!prev || prev.classLevel) ? { classLevel: true as const } : {}),
+    ...(method.returnsInstance && (!prev || prev.returnsInstance) ? { returnsInstance: true as const } : {}),
+  };
+  defs.set(key, def);
+  return def;
+}
+
+/** A property read through its accessor method (`property Points read GetPoints`): the property's name answers with that method, so a read or call of it lands there. */
+function registerReadAccessors(defs: Map<string, SymbolDef>, keyPrefix: string, cls: ClassInfo): void {
+  for (const prop of cls.properties ?? []) {
+    if (!prop.readAccessor) continue;
+    const accessor = defs.get(`${keyPrefix}.${prop.readAccessor}`);
+    const key = `${keyPrefix}.${prop.name}`;
+    if (accessor && !defs.has(key)) defs.set(key, accessor);
+  }
+}
+
 /**
  * Build a per-file symbol index from all analyses.
  * Maps filePath → Map<symbolName → SymbolDef>
@@ -1150,7 +1262,9 @@ function buildSymbolIndex(
   const index = new Map<string, Map<string, SymbolDef>>();
 
   for (const analysis of analyses) {
-    const fileSymbols = new Map<string, SymbolDef>();
+    // A file that declares a class name twice also holds that name's declarations (`twinDefs`, below).
+    const twins = twinClassNames(analysis.classes);
+    const fileSymbols: Map<string, SymbolDef> = twins ? new TwinKeyedMap<SymbolDef>() : new Map<string, SymbolDef>();
 
     // Functions
     for (const fn of analysis.functions) {
@@ -1181,49 +1295,37 @@ function buildSymbolIndex(
       });
 
       for (const method of cls.methods) {
-        const qualified = `${cls.name}.${method.name}`;
-        const seen = fileSymbols.get(qualified);
-        // What an explicit interface implementation stored first is not an overload of the class's own member.
-        const prev = seen?.explicitOnly && !method.explicitInterface ? undefined : seen;
-        // A class-level member beside an instance one of its name (a Kotlin companion's `foo` and the
-        // class's own): the instance one answers `x.foo()`, the class-level one `X.foo()` (`X.self.foo`).
-        if (method.classLevel && prev && !prev.classLevel && prev.line !== method.line) {
-          fileSymbols.set(`${cls.name}.self.${method.name}`, { name: qualified, line: method.line, endLine: method.endLine, classLevel: true });
-          continue;
-        }
-        // An explicit interface implementation shares its name with the class's own member: the member a
-        // class-typed receiver reaches is the latter, whichever line comes first.
-        if (method.explicitInterface && prev && !prev.explicitOnly) continue;
-        fileSymbols.set(qualified, {
-          name: qualified,
-          line: method.line,
-          endLine: method.endLine,
-          ...(method.explicitInterface ? { explicitOnly: true as const } : {}),
-          returnType: overloadReturn(prev, method.returnType),
-          ...(method.declaredReturnType && !prev ? { declaredReturn: method.declaredReturnType } : {}),
-          ...(method.classLevel && (!prev || prev.classLevel) ? { classLevel: true as const } : {}),
-          ...(method.returnsInstance && (!prev || prev.returnsInstance) ? { returnsInstance: true as const } : {}),
-        });
+        const def = registerMethod(fileSymbols, cls.name, cls, method);
+        if (!def) continue;
         // Also store unqualified as fallback (if not already taken by a function). A constructor
         // its name does not mark (Dart's `Event.openPage`) is reached through its type only: by its
         // bare name it would be a candidate for every `x.openPage()` on a value.
         const bare = fileSymbols.get(method.name);
-        if ((!bare || (bare.explicitOnly && !method.explicitInterface && bare.name === qualified)) && !method.isConstructor) {
+        if ((!bare || (bare.explicitOnly && !method.explicitInterface && bare.name === def.name)) && !method.isConstructor) {
           fileSymbols.set(method.name, {
-            name: qualified,
+            name: def.name,
             line: method.line,
             endLine: method.endLine,
             ...(method.explicitInterface ? { explicitOnly: true as const } : {}),
           });
         }
       }
-      // A property read through its accessor method (`property Points read GetPoints`): the
-      // property's name answers with that method, so a read or call of it lands there.
-      for (const prop of cls.properties ?? []) {
-        if (!prop.readAccessor) continue;
-        const accessor = fileSymbols.get(`${cls.name}.${prop.readAccessor}`);
-        const key = `${cls.name}.${prop.name}`;
-        if (accessor && !fileSymbols.has(key)) fileSymbols.set(key, accessor);
+      registerReadAccessors(fileSymbols, cls.name, cls);
+    }
+
+    // A class the file declares twice (`Garage::Table`, `League::Table`; two nested `Builder`s) is also keyed by its own
+    // declaration (`classKey`): a type reference that names one twin lands on that twin's members. The plain
+    // `Class.member` keys above keep the last twin's, which is what a reference by name alone has always reached.
+    // The twin's members are registered as the plain ones are, accessors included, but with no bare-name entry: a bare
+    // member name belongs to the plain keys, where the last twin already answers it.
+    if (twins && !schemaClasses && fileSymbols instanceof TwinKeyedMap) {
+      const twinDefs = fileSymbols.twin;
+      for (const cls of analysis.classes) {
+        if (!twins.has(cls.name)) continue;
+        const key = classKey(cls);
+        twinDefs.set(key, { name: cls.name, line: cls.line, endLine: cls.endLine });
+        for (const method of cls.methods) registerMethod(twinDefs, key, cls, method);
+        registerReadAccessors(twinDefs, key, cls);
       }
     }
 
@@ -2321,7 +2423,7 @@ interface LinkContext {
    * path it is declared at (`League::Club` for `class Club` in `module League`) → its files and
    * the name each declares it under. Built on first use.
    */
-  typePaths?: Map<string, Array<{ file: string; name: string }>>;
+  typePaths?: Map<string, Array<{ file: string; name: string; line?: number }>>;
   /** Every name a segment of a `typePaths` path spells (`League`, `Club`), built on first use. */
   constantNames?: Set<string>;
   /** Analyses by path, built on first use (re-export following). */
@@ -3219,6 +3321,30 @@ function simpleClassName(analysis: FileAnalysis, written: string): string {
 }
 
 /**
+ * The key of the declaration a constant written `written` at `line` reaches in `filePath`, where that file declares the
+ * class name twice (`Garage::Table`, `League::Table`) and the language looks constants up lexically: the written path
+ * is looked up under each namespace the caller sits in, innermost first, then at the top level, and the first path some
+ * class is declared at decides. Null when the file holds no twin, the language has no lexical lookup, or the path
+ * names no declaration of this file or two (a class reopened) — the plain name stands then.
+ */
+function lexicalTwinKey(ctx: LinkContext, analysis: FileAnalysis, line: number, written: string, filePath: string, className: string): string | null {
+  const lexical = manifestFor(analysis.language as Language)?.lexicalConstants;
+  if (!lexical || !line || written.split("::").pop() !== className) return null;
+  const target = analysisByFileOf(ctx).get(filePath);
+  if (!target || !twinClassNames(target.classes)?.has(className)) return null;
+  ctx.typePaths ??= buildTypePaths(ctx.analyses);
+  const top = written.startsWith("::");
+  const path = top ? written.slice(2) : written;
+  for (const scope of [...(top ? [] : lexical.nesting(analysis.classes, line)), ""]) {
+    const decls = ctx.typePaths.get(scope ? `${scope}::${path}` : path);
+    if (!decls?.length) continue;
+    const cls = twinAtPath(decls, filePath, className, target.classes);
+    return cls ? classKey(cls) : null;
+  }
+  return null;
+}
+
+/**
  * Strategy 4: `ClassName.method` — a static/class method of a class the
  * project declares (`UserService.find_by_id`), searched across files. Without
  * an explicit import this is at best INFERRED.
@@ -3385,7 +3511,7 @@ function classNameMember(
     // or one the owner inherits from its bases (`Derby.Result` declared in `Derby`'s base) — the lookup types use.
     if (found.size === 0) {
       const viaOwner = ownerPathType(ctx, parts.slice(0, -1).join("."), sourceFile, analysis.projectId);
-      const nested = viaOwner ? analysisByFile.get(viaOwner.typeFile)?.classes?.find((c) => c.name === viaOwner.typeName) : undefined;
+      const nested = viaOwner ? ctx.classAt.get(memberKey(viaOwner.typeFile, viaOwner.typeName)) : undefined;
       if (viaOwner && nested) {
         found.set(viaOwner.typeFile, { line: nested.line, endLine: nested.endLine, bases: !!nested.extends || nested.implements.length > 0 || !!nested.mixins?.length });
         viaName = nested.name;
@@ -3426,15 +3552,19 @@ function classNameMember(
     const memberSymbolKey = `${declaredClass}.${methodName}`;
     for (const filePath of eligible) {
       const syms = symbolIndex.get(filePath)!;
+      // A bare constant (`Table` inside `module Garage`) in a file that declares the name twice: the declaration the
+      // caller's nesting reaches. A path written with `::` was settled by `lexicalPathRef` above.
+      const twin = path === undefined ? lexicalTwinKey(ctx, analysis, line, className, filePath, declaredClass) : null;
       // A call on the class itself reaches its class-level method when the
       // language names one apart (Ruby `def self.call` → `X.self.call`).
-      let classDef = syms.get(classLevelKey) ?? syms.get(memberSymbolKey);
+      const base = twin ?? declaredClass;
+      let classDef = twin ? syms.get(`${base}.self.${methodName}`) ?? syms.get(`${base}.${methodName}`) : syms.get(classLevelKey) ?? syms.get(memberSymbolKey);
       if (!classDef) {
         // Bare, only where the name IS a class of that file (a member it lists bare): a local
         // that merely shares a name with some symbol there (`text.count`, `entry.get`) reaches nothing.
         // The bare entry counts only inside the class's own body: a free
-        // function beside the class (or another class's member) is not its member.
-        const bare = syms.get(methodName);
+        // function beside the class (or another class's member) is not its member. A twin has no bare entry of its own.
+        const bare = twin ? undefined : syms.get(methodName);
         const cls = bare ? ctx.classAt.get(memberKey(filePath, declaredClass)) : undefined;
         // A class nested in its body (a Ruby concern's `ClassMethods`) has members of its own.
         if (bare && cls && bare.line >= cls.line && bare.line <= cls.endLine && (memberClassOf(ctx, filePath, bare) ?? cls.name) === cls.name) classDef = bare;
@@ -3473,10 +3603,11 @@ function classNameMember(
     // through a class-level call the class does not declare by that name.
     if (isConstructorCall(analysis.language, methodName)) {
       for (const filePath of eligible) {
-        const cls = ctx.classAt.get(memberKey(filePath, declaredClass));
+        const key = (path === undefined ? lexicalTwinKey(ctx, analysis, line, className, filePath, declaredClass) : null) ?? declaredClass;
+        const cls = ctx.classAt.get(memberKey(filePath, key));
         if (!cls || isDesignFormat(ctx.languageOf.get(filePath))) continue;
         const ctor = cls.methods.find((m) => isConstructor(m, cls));
-        const d = ctor ? symbolIn(ctx, filePath, `${declaredClass}.${ctor.name}`) : undefined;
+        const d = ctor ? symbolIn(ctx, filePath, `${key}.${ctor.name}`) : undefined;
         return mkLink(filePath, d?.name ?? declaredClass, d?.line ?? cls.line, "INFERRED", "constructor");
       }
     }
@@ -4861,9 +4992,13 @@ function buildClassFiles(analyses: FileAnalysis[]): Map<string, string[]> {
 
 /** `file\0className` → the class declaration, for direct member lookups. */
 function buildClassAt(analyses: FileAnalysis[]): Map<string, ClassInfo> {
-  const at = new Map<string, ClassInfo>();
+  const twinned = analyses.filter((a) => twinClassNames(a.classes));
+  const at = twinned.length > 0 ? new TwinKeyedMap<ClassInfo>() : new Map<string, ClassInfo>();
   for (const a of analyses) {
     for (const cls of a.classes) at.set(memberKey(a.filePath, cls.name), cls);
+  }
+  if (at instanceof TwinKeyedMap) {
+    for (const a of twinned) for (const cls of a.classes) if (twinClassNames(a.classes)!.has(cls.name)) at.twin.set(memberKey(a.filePath, classKey(cls)), cls);
   }
   return at;
 }
@@ -5736,7 +5871,6 @@ function resolveCallToDefinition(
     if (link) link = { ...link, callName: call.name };
   }
   if (invoke === "same-file" && link && link.targetFile !== sourceFile) return null;
-  if (link && call.line) link = pinLexicalDeclaration(ctx, analysis, call, link);
   if (!link || link.targetFile !== sourceFile || !call.line || !pluginFor(analysis.language)?.lexicalCallScope) return link;
   const dot = link.targetSymbol.indexOf(".");
   if (dot <= 0) return link;
@@ -5747,41 +5881,6 @@ function resolveCallToDefinition(
   const member = link.targetSymbol.slice(dot + 1);
   const method = chosen.methods.find((m) => m.name === member);
   return method ? { ...link, targetLine: method.line } : null;
-}
-
-/**
- * A link into a file that declares its target's class name more than once (`Garage::Table` and `League::Table`):
- * the symbol index holds one entry for `Table.build`, so the link lands on whichever declaration came last. Where
- * the call writes a constant path (`League::Table.build`, or the bare `Table.new` inside `module Garage`) of a
- * language that looks constants up lexically, the path is looked up as the language does and the link is
- * aimed at the member of the class declared there; null when that class has no such member. A path that
- * names no class of the target file, or names two of them (a class reopened), leaves the link as it is.
- */
-function pinLexicalDeclaration(ctx: LinkContext, analysis: FileAnalysis, call: CallInfo, link: SymbolLink): SymbolLink | null {
-  const lexical = manifestFor(analysis.language as Language)?.lexicalConstants;
-  if (!lexical) return link;
-  const dot = link.targetSymbol.indexOf(".");
-  const className = dot > 0 ? link.targetSymbol.slice(0, dot) : link.targetSymbol;
-  const written = call.name.match(/^(::)?([A-Z]\w*(?:::[A-Z]\w*)*)[.:]/);
-  if (!written || written[2]!.split("::").pop() !== className) return link;
-  const target = analysisByFileOf(ctx).get(link.targetFile);
-  if (!target || target.classes.filter((c) => c.name === className).length < 2) return link;
-  ctx.typePaths ??= buildTypePaths(ctx.analyses);
-  const nesting = written[1] ? [] : lexical.nesting(analysis.classes, call.line);
-  for (const scope of [...nesting, ""]) {
-    const path = scope ? `${scope}::${written[2]}` : written[2]!;
-    const decls = ctx.typePaths.get(path);
-    if (!decls?.length) continue;
-    const here = target.classes.filter((c) => c.name === className && lexical.pathOf(c, target.classes) === path);
-    if (here.length !== 1) return link;
-    const chosen = here[0]!;
-    if (link.targetLine >= chosen.line && link.targetLine <= chosen.endLine) return link;
-    if (dot <= 0) return { ...link, targetLine: chosen.line };
-    const member = link.targetSymbol.slice(dot + 1);
-    const method = chosen.methods.find((m) => m.name === member);
-    return method ? { ...link, targetLine: method.line } : null;
-  }
-  return link;
 }
 
 function resolveCallUnscoped(
@@ -5904,8 +6003,10 @@ function resolveCallToDefinitionBody(
       strategy,
       relation: relationForStrategy(strategy),
     };
-    // A name a route refers to (a class-based view) is the class, not a construction.
-    return reference ? link : constructionLink(link, call, ctx);
+    // A name a route refers to (a class-based view) is the class, not a construction. The construction reads the
+    // target as the class's key; the link then spells the class (a twin's key `Table@L12.build` is `Table.build`, its line says which).
+    const made = reference ? link : constructionLink(link, call, ctx);
+    return made.targetSymbol.includes("@L") ? { ...made, targetSymbol: plainSymbol(made.targetSymbol) } : made;
   };
   // A local bound to a module (`mod = load_backend()` where that function returns an imported module,
   // `m = importlib.import_module("other")`): the call is that module's own top-level function.
@@ -9340,7 +9441,7 @@ function scopedNameUncached(
       ? analysis.classes.find((c) => c.name === typeName && callable.line < c.line && c.endLine <= callable.endLine)
       : undefined;
     const ref = ownClass
-      ? { typeName: ownClass.name, typeFile: sourceFile }
+      ? { typeName: classKeyIn(analysis.classes, ownClass), typeFile: sourceFile }
       : typeName
       ? nestedTypeRef(ctx, consumer, typeName, sourceFile) ??
         typeRefFor(ctx, typeName, sourceFile, analysis.projectId, () => namespaceScope(ctx, analysis, sourceSymbol), declared.type)
@@ -9932,7 +10033,7 @@ function lexicalPathRef(ctx: LinkContext, written: string, sourceFile: string, p
 
 /** What `lexicalPathIn` reads: the path index and per-file facts. */
 interface LexicalPathEnv {
-  typePaths: Map<string, Array<{ file: string; name: string }>>;
+  typePaths: Map<string, Array<{ file: string; name: string; line?: number }>>;
   analysisOf: (file: string) => FileAnalysis | undefined;
   languageOf: (file: string) => string | undefined;
   projectOf: (file: string) => string | undefined;
@@ -9959,7 +10060,11 @@ function lexicalPathIn(env: LexicalPathEnv, written: string, sourceFile: string,
     if (names.size !== 1) return null;
     const name = [...names][0]!;
     const typeFile = pickDefinition(name, [...new Set(pool.map((d) => d.file))], sourceFile, env.declOf, env.languageOf);
-    return typeFile ? { typeName: name, typeFile } : null;
+    if (!typeFile) return null;
+    // A file declaring the name twice: the declaration at this path, when the path names one (a reopened class is both).
+    const classes = env.analysisOf(typeFile)?.classes ?? [];
+    const twin = twinClassNames(classes)?.has(name) ? twinAtPath(pool, typeFile, name, classes) : undefined;
+    return { typeName: twin ? classKey(twin) : name, typeFile };
   }
   return null;
 }
@@ -9974,14 +10079,14 @@ function projectConstantNames(ctx: LinkContext): Set<string> {
 }
 
 /** Every class of a `lexicalConstants` language by the full path it is declared at. */
-function buildTypePaths(analyses: readonly FileAnalysis[]): Map<string, Array<{ file: string; name: string }>> {
-  const out = new Map<string, Array<{ file: string; name: string }>>();
+function buildTypePaths(analyses: readonly FileAnalysis[]): Map<string, Array<{ file: string; name: string; line?: number }>> {
+  const out = new Map<string, Array<{ file: string; name: string; line?: number }>>();
   for (const a of analyses) {
     const lexical = manifestFor(a.language as Language)?.lexicalConstants;
     if (!lexical) continue;
     for (const cls of a.classes) {
       const path = lexical.pathOf(cls, a.classes);
-      (out.get(path) ?? out.set(path, []).get(path)!).push({ file: a.filePath, name: cls.name });
+      (out.get(path) ?? out.set(path, []).get(path)!).push({ file: a.filePath, name: cls.name, line: cls.line });
     }
   }
   return out;
@@ -10066,10 +10171,10 @@ function nestedClassByPath(classes: readonly ClassInfo[], written: string): stri
   const segments = written.split(".");
   if (segments.length < 2) return null;
   const gen = classes.find((c) => c.nestedPath === written);
-  const leaf = segments[segments.length - 1]!;
   if (gen) return classes.filter((c) => c.name === gen.name).length === 1 ? gen.name : null;
   const owners = classesAtOwnerPath(classes, segments[0]!, segments.slice(1));
-  return owners.length === 1 && classes.filter((c) => c.name === leaf).length === 1 ? leaf : null;
+  // Two classes of the leaf name in the file (two nested `Builder`s): the one at this path, by its own key.
+  return owners.length === 1 ? classKeyIn(classes, owners[0]!) : null;
 }
 
 /** The classes at owner path `owner` + `rest` within one file's `classes`: the non-synthetic class `owner`, then each next name inside the previous one's lines — the one lookup of the C# call-chain walk and of `ownerPathTypes`. */

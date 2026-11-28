@@ -51,6 +51,27 @@ module Garage
   end
 end
 `,
+  "twins.rb": `module Stadium
+  class Seat
+    def rank; end
+  end
+end
+
+module Fans
+  class Seat
+    def rank; end
+  end
+end
+
+class Dispatcher
+  def go
+    stadium_seat = Stadium::Seat.new
+    stadium_seat.rank
+    fans_seat = Fans::Seat.new
+    fans_seat.rank
+  end
+end
+`,
 };
 
 describe("a constant path in a file declaring two classes of one name", () => {
@@ -86,6 +107,12 @@ describe("a constant path in a file declaring two classes of one name", () => {
 
   it("finds a bare name through the namespace the caller opens", () => {
     expect(at("Table.new", 27)).toBe("tables.rb:3");
+  });
+
+  it("lands a typed receiver's member on the twin the constructor names", () => {
+    const rank = (line: number) => summary.symbolLinks.find((l) => l.sourceFile === "twins.rb" && l.sourceLine === line && l.callName.endsWith(".rank"));
+    expect(rank(16)).toMatchObject({ targetFile: "twins.rb", targetSymbol: "Stadium.Seat.rank", targetLine: 3 });
+    expect(rank(18)).toMatchObject({ targetFile: "twins.rb", targetSymbol: "Fans.Seat.rank", targetLine: 9 });
   });
 
   it("never lets a top-level or compact-path namesake stand for either", () => {
