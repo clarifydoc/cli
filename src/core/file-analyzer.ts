@@ -106,6 +106,8 @@ export interface FileResult {
   securityIssues: SecurityIssue[];
   /** The file's output JSON, not yet written: set for a task with `deferWrite`, whose caller writes it. */
   json?: Uint8Array;
+  /** Other files the parser front end read for this one (`ParsedStructure.reads`), absolute: the cache watches them. */
+  reads?: string[];
 }
 
 /**
@@ -151,7 +153,7 @@ export async function readWithParser(
   variant?: string,
   absolutePath?: string,
   includeDirs?: readonly string[],
-): Promise<{ parsed?: ParsedStructure; frontEnd: NonNullable<FileAnalysis["frontEnd"]> } | null> {
+): Promise<{ parsed?: ParsedStructure; frontEnd: NonNullable<FileAnalysis["frontEnd"]>; reads?: string[] } | null> {
   const plugin = pluginFor(language);
   const choice = plugin?.antlr && featureEnabled(`antlr:${plugin.antlr.grammar}`)
     ? { parser: "antlr" as const, frontEnd: plugin.antlr }
@@ -168,8 +170,10 @@ export async function readWithParser(
     const read = await frontEnd.load();
     const parsed = read(source, buildMacros, variant, absolutePath, includeDirs);
     const named = variant ? { variant } : {};
-    if (parsed.syntaxErrors > 0) return { frontEnd: { parser, grammar, fallback: "syntax-errors", syntaxErrors: parsed.syntaxErrors, ...named } };
-    return { parsed, frontEnd: { parser, grammar, ...named } };
+    // A refused reading's other files count too: a change to one of them can make the file parse.
+    const reads = parsed.reads?.length ? { reads: parsed.reads } : {};
+    if (parsed.syntaxErrors > 0) return { frontEnd: { parser, grammar, fallback: "syntax-errors", syntaxErrors: parsed.syntaxErrors, ...named }, ...reads };
+    return { parsed, frontEnd: { parser, grammar, ...named }, ...reads };
   } catch {
     return { frontEnd: { parser, grammar, fallback: "parser-error", ...(variant ? { variant } : {}) } };
   }
@@ -494,7 +498,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
         analysis.routes.some((r) => r.kind === "frontend") ||
         analysis.subComponents.length > 0 ||
         analysis.interactiveElements.length > 0;
-      return { analysis, rawSource: isUiSource ? rawSource : null, complexities: regexComplexities, securityIssues: fileSecurityIssues, ...stored };
+      return { analysis, rawSource: isUiSource ? rawSource : null, complexities: regexComplexities, securityIssues: fileSecurityIssues, ...stored, ...(read?.reads ? { reads: read.reads } : {}) };
     }
 
     // Container-format preprocessing (e.g. Vue SFC → its <script> block)

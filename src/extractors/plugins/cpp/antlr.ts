@@ -51,7 +51,7 @@ import { namesTemplateParameter } from "./classes.js";
 import { cppOverloadTypeKey } from "./arg-kinds.js";
 import { ITERATOR_INIT } from "../shared/c-family-locals.js";
 import { cppCollectionElement, cppCollectionElementOf, cppMapTypes } from "./collection-element.js";
-import { stripTypeArguments } from "../shared/path-utils.js";
+import { escapeRegex, stripTypeArguments } from "../shared/path-utils.js";
 
 /** How many calls deep a chain is named. */
 const CHAIN_DEPTH = 8;
@@ -74,6 +74,23 @@ const CPP_TOKENS: TokenKinds = {
 };
 
 /**
+ * Feature-test and project macros that turn C++26 reflection on. The reader has no `^^` / `std::meta` / `[[=]]`
+ * grammar: when a refused file mentions them, it is read again with these left undefined or 0, as a build that
+ * did not enable reflection would. A build that states one of them keeps that value.
+ */
+const REFLECTION_OFF: BuildMacros = [
+  { name: "__cpp_impl_reflection", undefined: true },
+  { name: "__cpp_lib_reflection", undefined: true },
+  { name: "__cpp_lib_define_static", undefined: true },
+  { name: "GLZ_REFLECTION26", value: "0" },
+  { name: "FMT_USE_REFLECTION", value: "0" },
+];
+
+const REFLECTION_MARK = new RegExp(
+  String.raw`\^\^|\[\[\s*=|\bstd::meta\b|\b(?:${REFLECTION_OFF.map((m) => escapeRegex(m.name)).join("|")})\b`,
+);
+
+/**
  * C++'s functions and calls as the grammars-v4 C++14 grammar reads them, in two passes (`parsers/antlr/cpp/CppTypes.ts`):
  * what each token is to the file first — the brackets, the template arguments, the names used as types — then the
  * parse, whose predicates read it to tell a declaration from an expression and `a < b` from `vector<Club>`, as a
@@ -88,43 +105,22 @@ const CPP_TOKENS: TokenKinds = {
  * `new Club(` as `Club`, a method on a call's result as the chain from its first call; a statement macro by its name,
  * its arguments read off the tokens, as are a `#define` inside a function's.
  */
-/**
- * Feature-test and project macros that turn C++26 reflection on. The reader has no `^^` / `std::meta` / `[[=]]`
- * grammar: when a refused file mentions them, it is read again with these left undefined or 0, as a build that
- * did not enable reflection would. A build that states one of them keeps that value.
- */
-const REFLECTION_OFF: BuildMacros = [
-  { name: "__cpp_impl_reflection", undefined: true },
-  { name: "__cpp_lib_reflection", undefined: true },
-  { name: "__cpp_lib_define_static", undefined: true },
-  { name: "GLZ_REFLECTION26", value: "0" },
-  { name: "FMT_USE_REFLECTION", value: "0" },
-];
-
-const REFLECTION_MARK = /\^\^|\[\[\s*=|\bstd::meta\b|__cpp_impl_reflection|__cpp_lib_reflection|__cpp_lib_define_static|GLZ_REFLECTION26|FMT_USE_REFLECTION/;
-
-function withoutReflection(macros: BuildMacros | undefined): BuildMacros {
-  const stated = new Set((macros ?? []).map((m) => m.name));
-  return [...(macros ?? []), ...REFLECTION_OFF.filter((m) => !stated.has(m.name))];
-}
-
 export function readCpp(source: string, macros?: BuildMacros, variant?: string, absolutePath?: string, includeDirs?: readonly string[]): ParsedStructure {
   // A header of a project with C sources and no C++ ones (`cppReadingVariant`): C's grammar first, which is also
   // the quicker one, and C++'s when C refuses it, so nothing that parsed as C++ stops parsing. C refusing it is
   // final: the default's second try as C would only repeat that reading.
   if (variant === "c-first") {
     const asC = readC(source, macros, undefined, absolutePath, includeDirs);
-    return asC.syntaxErrors === 0 ? asC : readWithBranches(blankRawStrings(normalizeSource(source)), true, read, macros);
+    return asC.syntaxErrors === 0 ? asC : withReads(readWithBranches(blankRawStrings(normalizeSource(source)), true, read, macros), asC);
   }
   const text = blankRawStrings(normalizeSource(source));
   const parsed = readWithBranches(text, true, read, macros);
   if (parsed.syntaxErrors === 0) return parsed;
-  // A refused file that mentions C++26 reflection: read again with the feature tests off, unless the build already
-  // named them (a project that enables reflection keeps that reading and may still refuse).
   if (REFLECTION_MARK.test(text)) {
-    const off = withoutReflection(macros);
-    if (off.length > (macros?.length ?? 0)) {
-      const attempt = readWithBranches(text, true, read, off);
+    const stated = new Set((macros ?? []).map((m) => m.name));
+    const add = REFLECTION_OFF.filter((m) => !stated.has(m.name));
+    if (add.length > 0) {
+      const attempt = readWithBranches(text, true, read, [...(macros ?? []), ...add]);
       if (attempt.syntaxErrors === 0) return attempt;
     }
   }
@@ -132,7 +128,12 @@ export function readCpp(source: string, macros?: BuildMacros, variant?: string, 
   // A header is this plugin's whatever language includes it: one of a C project may be C that no C++ compiler takes
   // (`char *restrict p`, `tre_ctype_t class;`, `typedef void *(fn)(void *)`), and C's grammar reads it.
   const asC = readC(source, macros, undefined, absolutePath, includeDirs);
-  return asC.syntaxErrors === 0 ? asC : parsed;
+  return asC.syntaxErrors === 0 ? asC : withReads(parsed, asC);
+}
+
+/** `parsed`, carrying the headers C's refused reading opened: a change to one of them can make C read the file. */
+function withReads(parsed: ParsedStructure, asC: ParsedStructure): ParsedStructure {
+  return asC.reads ? { ...parsed, reads: asC.reads } : parsed;
 }
 
 /** The text without comments and string literals, where `::` may stand in prose. */

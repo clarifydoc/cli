@@ -2385,6 +2385,11 @@ export interface ParsedStructure {
    * reading that drops the one conditional the error sits in (`readWithBranches`). Absent: the reader did not say.
    */
   errorLine?: number;
+  /**
+   * Other files the reading opened (absolute paths, sorted): headers a C file's macros come from. The reading depends
+   * on their bytes as well as the file's, so the incremental cache re-reads the file when one of them changes.
+   */
+  reads?: string[];
 }
 
 /**

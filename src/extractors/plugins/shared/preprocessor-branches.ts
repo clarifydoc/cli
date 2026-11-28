@@ -11,6 +11,9 @@ import { codeMask } from "./code-mask.js";
 /** The directive a line holds, its continuation lines (`\` at the end) joined. */
 const DIRECTIVE = /^\s*#\s*(if|ifdef|ifndef|elif|elifdef|elifndef|else|endif)\b(.*)$/;
 
+/** True when the line continues onto the next (`\` at the end, trailing space ignored). */
+const continues = (line: string): boolean => line.trimEnd().endsWith("\\");
+
 /** A conditional the text is in: which of its `count` branches, and which branches no compiler takes (`dead`). */
 export interface Frame {
   branch: number;
@@ -145,10 +148,10 @@ function deadBranches(lines: readonly string[], cplusplus: boolean, buildMacros:
   const top = { certain: true, dead: false };
   /** The directive's rest with continuation lines (`\` at the end) joined, so a multi-line `#if` is one condition. */
   const restOf = (start: number, first: string): string => {
-    let rest = first.replace(/\\$/, "");
-    for (let j = start; lines[j]!.trimEnd().endsWith("\\") && j + 1 < lines.length; ) {
+    let rest = first.trimEnd().replace(/\\$/, "");
+    for (let j = start; continues(lines[j]!) && j + 1 < lines.length; ) {
       j++;
-      rest += ` ${lines[j]!.replace(/\\$/, "").trim()}`;
+      rest += ` ${lines[j]!.trimEnd().replace(/\\$/, "").trim()}`;
     }
     return rest;
   };
@@ -168,7 +171,7 @@ function deadBranches(lines: readonly string[], cplusplus: boolean, buildMacros:
       } else if (stack.length > 0) {
         branch(stack.at(-1)!, kind === "else" ? true : condition(kind, restOf(i, m[2]!)), stack.length > 1 ? stack.at(-2)! : top);
       }
-      while (lines[i]!.trimEnd().endsWith("\\") && i + 1 < lines.length) i++;
+      while (continues(lines[i]!) && i + 1 < lines.length) i++;
       continue;
     }
     if (!judge) continue;
@@ -202,7 +205,7 @@ function blankBranches(text: string, cplusplus: boolean, keep: (frame: Frame) =>
         frames.push({ branch: 0, count: dead.length, dead });
       } else if (kind === "endif") frames.pop();
       else if (frames.length > 0) frames.at(-1)!.branch++;
-      while (lines[i]!.endsWith("\\") && i + 1 < lines.length) i++;
+      while (continues(lines[i]!) && i + 1 < lines.length) i++;
       continue;
     }
     if (frames.length > 0 && !frames.every(keep)) {
@@ -249,7 +252,7 @@ export function conditionalBlocks(lines: readonly string[], cplusplus?: boolean)
     if (!m) continue;
     const kind = m[1]!;
     const at = i;
-    while (lines[i]!.endsWith("\\") && i + 1 < lines.length) i++;
+    while (continues(lines[i]!) && i + 1 < lines.length) i++;
     if (kind === "if" || kind === "ifdef" || kind === "ifndef") {
       const dead = cplusplus === undefined ? deadCondition(kind, m[2]!, false) && !m[2]!.includes("__cplusplus") : deadCondition(kind, m[2]!, cplusplus);
       open.push({ start: at, armStart: i + 1, branch: 0, dead, arms: [] });
@@ -387,7 +390,7 @@ function readWithoutLoneBody(
     const blanked = [...lines];
     for (let i = block.start + 1; i < block.end; i++) {
       if (DIRECTIVE.test(blanked[i]!)) {
-        while (blanked[i]!.endsWith("\\") && i + 1 < block.end) i++;
+        while (continues(blanked[i]!) && i + 1 < block.end) i++;
       } else blanked[i] = blanked[i]!.replace(/\S/g, " ");
     }
     const text = blanked.join("\n");

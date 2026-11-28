@@ -2,12 +2,13 @@
  * What a file's own `#define`s stand for, read off the directive text (no preprocessor run): a macro whose body
  * opens a block, closes one, is a cast, is a compound statement, or pastes a name with `##`. A name defined twice
  * with different bodies is dropped. The reader rewrites a use only after the file as written failed to parse, and
- * only where that shape can stand, so a file that parsed is unchanged.
+ * only where that shape can stand; a function a paste macro names takes the built name in any reading.
  *
  * A quoted `#include` of a relative path (no `..`) is read the same way when the caller passes the file's path:
  * the header's shapes fill in names the file itself does not define. Directories the caller passes (a build's
  * `-iquote` and `-I`) are searched after the including file's own directory; a path that climbs (`..`), is absolute
- * or leaves the directory is not read.
+ * or leaves the directory is not read. Nothing is cached here: a reading is a function of the file and the headers on
+ * disk, and the headers it opened are reported (`ParsedStructure.reads`) so the incremental cache can watch them.
  */
 import { existsSync, readFileSync } from "fs";
 import { dirname, join, normalize, sep } from "path";
@@ -162,9 +163,20 @@ function firstDir(dirs: readonly string[], include: string): string | null {
   return null;
 }
 
-const headerCache = new Map<string, DefineFacts>();
 const MAX_HEADERS = 8;
 const MAX_HEADER_CHARS = 256 * 1024;
+/** Horizontal whitespace only: a `^\s*` gate re-reads a run of blank lines from every line start in it. */
+const QUOTED_INCLUDE = /^[ \t]*#[ \t]*include[ \t]+"([^"\n]+)"/gm;
+const ANGLE_INCLUDE = /^[ \t]*#[ \t]*include[ \t]+<([^>\n]+)>/gm;
+
+/** The headers `text` includes, quoted ones first, each in the order written. */
+export function includesIn(text: string): Array<{ name: string; quoted: boolean }> {
+  if (!text.includes("#include")) return [];
+  return [
+    ...[...text.matchAll(QUOTED_INCLUDE)].map((m) => ({ name: m[1]!, quoted: true })),
+    ...[...text.matchAll(ANGLE_INCLUDE)].map((m) => ({ name: m[1]!, quoted: false })),
+  ];
+}
 
 function absorb(into: DefineFacts, inner: DefineFacts, overwrite: boolean): void {
   for (const [name, shape] of inner.shapes) {
@@ -178,51 +190,48 @@ function absorb(into: DefineFacts, inner: DefineFacts, overwrite: boolean): void
   }
 }
 
-function factsOfHeader(path: string, seen: Set<string>, left: { n: number }, dirs: readonly string[]): DefineFacts {
-  const key = `${path}\0${dirs.join("\0")}`;
-  const cached = headerCache.get(key);
-  if (cached) return cached;
-  if (seen.has(path) || left.n <= 0) return emptyFacts();
-  seen.add(path);
-  left.n--;
+/** One walk over a file's headers: which it entered, how many more it may read, and every path it opened. */
+interface Walk {
+  dirs: readonly string[];
+  seen: Set<string>;
+  left: number;
+  reads: Set<string>;
+}
+
+function factsOfHeader(path: string, walk: Walk): DefineFacts {
+  if (walk.seen.has(path) || walk.left <= 0) return emptyFacts();
+  walk.seen.add(path);
+  walk.left--;
+  walk.reads.add(path);
   let text = "";
   try {
     text = readFileSync(path, "utf8");
   } catch {
-    headerCache.set(key, emptyFacts());
     return emptyFacts();
   }
   if (text.length > MAX_HEADER_CHARS) text = text.slice(0, MAX_HEADER_CHARS);
   const facts = defineFacts(text);
-  const take = (include: string, quoted: boolean) => {
-    const next = (quoted ? headerPath(path, include) : null) ?? firstDir(dirs, include);
-    if (!next) return;
-    absorb(facts, factsOfHeader(next, seen, left, dirs), false);
-  };
-  for (const inc of text.matchAll(/^\s*#\s*include\s+"([^"]+)"/gm)) take(inc[1]!, true);
-  for (const inc of text.matchAll(/^\s*#\s*include\s+<([^>]+)>/gm)) take(inc[1]!, false);
-  headerCache.set(key, facts);
+  for (const inc of includesIn(text)) {
+    const next = (inc.quoted ? headerPath(path, inc.name) : null) ?? firstDir(walk.dirs, inc.name);
+    if (next) absorb(facts, factsOfHeader(next, walk), false);
+  }
   return facts;
 }
 
 /**
  * Shapes from the headers `text` includes. A quoted include is the file's own directory, then `includeDirs`; an
  * angle include searches `includeDirs` only, and so do the headers those include, up to eight. Names the file itself
- * defines are not here.
+ * defines are not here. Nothing is kept between calls, so the answer depends only on `text` and the headers as they
+ * are on disk; every header opened is added to `reads`, for the caller's cache to watch.
  */
-export function includeFacts(text: string, absolutePath: string, includeDirs?: readonly string[]): DefineFacts {
+export function includeFacts(text: string, absolutePath: string, includeDirs?: readonly string[], reads?: Set<string>): DefineFacts {
   const facts = emptyFacts();
   if (!text.includes("#include") || !absolutePath) return facts;
-  const dirs = (includeDirs ?? []).filter((d) => d && !d.includes("\0"));
-  const seen = new Set<string>();
-  const left = { n: MAX_HEADERS };
-  const take = (include: string, quoted: boolean) => {
-    const path = (quoted ? headerPath(absolutePath, include) : null) ?? firstDir(dirs, include);
-    if (!path) return;
-    absorb(facts, factsOfHeader(path, seen, left, dirs), true);
-  };
-  for (const inc of text.matchAll(/^\s*#\s*include\s+"([^"]+)"/gm)) take(inc[1]!, true);
-  for (const inc of text.matchAll(/^\s*#\s*include\s+<([^>]+)>/gm)) take(inc[1]!, false);
+  const walk: Walk = { dirs: (includeDirs ?? []).filter((d) => d && !d.includes("\0")), seen: new Set(), left: MAX_HEADERS, reads: reads ?? new Set() };
+  for (const inc of includesIn(text)) {
+    const path = (inc.quoted ? headerPath(absolutePath, inc.name) : null) ?? firstDir(walk.dirs, inc.name);
+    if (path) absorb(facts, factsOfHeader(path, walk), true);
+  }
   return facts;
 }
 

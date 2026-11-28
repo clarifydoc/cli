@@ -27,7 +27,7 @@ import { markLocalCalls, recordPatternCalls, type LocalBinding, type PatternCall
 import { SPECIFIER_KEYWORDS } from "../../../parsers/antlr/c/CKeywords.js";
 import { callStep, nameCall, type CalleeStep } from "../shared/callee-names.js";
 import { blankAsm } from "./rewrites.js";
-import { defineFacts, exclusiveFormats, includeFacts, mergeFacts, pastedFunctionName, rewriteDefineShapes, withUnstated, type DefineFacts } from "./define-shapes.js";
+import { defineFacts, exclusiveFormats, includeFacts, includesIn, mergeFacts, pastedFunctionName, rewriteDefineShapes, withUnstated, type DefineFacts } from "./define-shapes.js";
 import { readWithBranches } from "../shared/preprocessor-branches.js";
 import { defineCalls, leftOutCalls, tokenCalls, type TokenKinds } from "../shared/token-calls.js";
 
@@ -65,8 +65,14 @@ const C_TOKENS: TokenKinds = {
  * inside a function, whose calls the function makes where it uses the macro.
  */
 export function readC(source: string, macros?: BuildMacros, _variant?: string, absolutePath?: string, includeDirs?: readonly string[]): ParsedStructure {
+  const headers: Headers = { absolutePath, includeDirs, reads: new Set(), byIncludes: new Map() };
+  const parsed = readCWith(source, macros, headers);
+  return headers.reads.size > 0 ? { ...parsed, reads: [...headers.reads].sort() } : parsed;
+}
+
+function readCWith(source: string, macros: BuildMacros | undefined, headers: Headers): ParsedStructure {
   const text = normalizeSource(source);
-  const readHere = (body: string, also?: string) => read(body, also, absolutePath, includeDirs);
+  const readHere = (body: string, also?: string) => read(body, also, headers);
   const parsed = readWithBranches(text, false, readHere, macros);
   if (parsed.syntaxErrors === 0) return parsed;
   // A file the grammar refuses is read again without what no grammar of C reads and the analysis does not need.
@@ -74,7 +80,7 @@ export function readC(source: string, macros?: BuildMacros, _variant?: string, a
   const asmParsed = rewritten === text ? parsed : readWithBranches(rewritten, false, readHere, macros);
   if (asmParsed.syntaxErrors === 0) return asmParsed;
   // Then with the file's own `#define`s standing in for the brace, cast or body the grammar cannot see.
-  const facts = factsFor(rewritten, absolutePath, includeDirs);
+  const facts = factsFor(rewritten, headers);
   const shaped = rewriteDefineShapes(rewritten, facts);
   if (shaped !== rewritten) {
     const shapedParsed = readWithBranches(shaped, false, readHere, macros);
@@ -94,11 +100,28 @@ export function readC(source: string, macros?: BuildMacros, _variant?: string, a
   return parsed;
 }
 
+/**
+ * Where one `readC` call finds headers: the file's path and its build's include directories, every header it opened
+ * (`ParsedStructure.reads`), and the header facts per include list, so the attempts of one reading read each once.
+ */
+interface Headers {
+  absolutePath: string | undefined;
+  includeDirs: readonly string[] | undefined;
+  reads: Set<string>;
+  byIncludes: Map<string, DefineFacts>;
+}
+
 /** The file's shapes, plus headers beside it or in `includeDirs` when a path was given. */
-function factsFor(text: string, absolutePath: string | undefined, includeDirs?: readonly string[]): DefineFacts {
+function factsFor(text: string, headers: Headers): DefineFacts {
   const own = defineFacts(text);
-  if (!absolutePath || !text.includes("#include")) return own;
-  return mergeFacts(own, includeFacts(text, absolutePath, includeDirs));
+  if (!headers.absolutePath || !text.includes("#include")) return own;
+  const key = JSON.stringify(includesIn(text));
+  let found = headers.byIncludes.get(key);
+  if (!found) {
+    found = includeFacts(text, headers.absolutePath, headers.includeDirs, headers.reads);
+    headers.byIncludes.set(key, found);
+  }
+  return mergeFacts(own, found);
 }
 
 /** A function the walk found: its span, the calls it makes so far, and the lines its definition covers. */
@@ -110,7 +133,7 @@ interface Found {
 }
 
 /** Reads `text`; `also` is code the reading leaves out, lines in place, whose calls go to the function around them. */
-function read(text: string, also?: string, absolutePath?: string, includeDirs?: readonly string[]): ParsedStructure {
+function read(text: string, also?: string, headers?: Headers): ParsedStructure {
   let stream: Token[] = [];
   let reader: CParser | undefined;
   const { tree, errors } = parseWithAntlr(
@@ -137,14 +160,14 @@ function read(text: string, also?: string, absolutePath?: string, includeDirs?: 
   for (const f of found) markLocalCalls(f.calls, bindings.get(f.calls) ?? []);
   const functions = found.map(({ span, calls }) => ({ ...span, calls: recordPatternCalls(calls) }));
   functions.sort((a, b) => a.line - b.line);
-  if (errors === 0) renamePasted(functions, text, absolutePath, includeDirs);
+  if (errors === 0 && headers) renamePasted(functions, text, headers);
   return { functions, topLevelCalls: tables, syntaxErrors: errors };
 }
 
 /** A function a paste macro names (`CLUB_JOIN(club_, kick)`) takes the name the macro builds. */
-function renamePasted(functions: ParsedFunctionSpan[], text: string, absolutePath: string | undefined, includeDirs?: readonly string[]): void {
+function renamePasted(functions: ParsedFunctionSpan[], text: string, headers: Headers): void {
   if (!functions.some((f) => /[A-Z][A-Z0-9_]*[A-Z]/.test(f.name))) return;
-  const facts = factsFor(text, absolutePath, includeDirs);
+  const facts = factsFor(text, headers);
   if (facts.shapes.size === 0) return;
   for (const fn of functions) {
     const built = pastedFunctionName(text, fn.line, fn.name, facts);

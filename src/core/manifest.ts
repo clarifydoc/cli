@@ -16,7 +16,7 @@ import type { PreprocessContext } from "../types/language-plugin.js";
  * stored in the manifest and this constant invalidates the whole cache so a
  * fixed extractor never leaves stale JSON behind.
  */
-export const EXTRACTOR_VERSION = "1.785.0";
+export const EXTRACTOR_VERSION = "1.786.0";
 
 /**
  * What a cache written by this run is stamped with: `EXTRACTOR_VERSION`, and
@@ -75,6 +75,11 @@ export interface ManifestEntry {
    * while it is unchanged. Absent when no such configuration applies.
    */
   resolver?: string;
+  /**
+   * The other files the analysis read (a parser front end's `ParsedStructure.reads`: headers a C file's macros come
+   * from), project-relative POSIX path → SHA-256. The cached analysis is reused only while each still has that hash.
+   */
+  reads?: Record<string, string>;
 }
 
 /**

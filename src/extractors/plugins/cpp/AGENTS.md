@@ -27,7 +27,7 @@ Reads C++ (`.h`, `.hpp`, `.hxx`, `.hh`, `.cpp`, `.cc`, `.cxx`, CUDA `.cu`/`.cuh`
 
 - `antlr.ts` also names `p->m()` like `x.m()` (after what no name spells, `list[i]->m()`, it stays `m`) and seeds a positional initializer (`static struct club_ops ops = { "club", 0, club_scout, club_release };`) into value flow.
 - `qt-slots.ts` marks `SLOT(name(…))` calls passed and adds a `&Owner::slot` argument as `Owner.slot`.
-- A file that does not parse is read again through `readWithBranches(text, cplusplus, read)` with each conditional's first branch; the left-out branches' calls are counted and a second-branch reading's definitions added. A refused file that mentions C++26 reflection (`^^`, `std::meta`, `[[=`, or the `__cpp_*_reflection` / `GLZ_REFLECTION26` / `FMT_USE_REFLECTION` feature tests) is read once more with those feature tests left undefined or 0, unless the build already stated them: the reader has no reflection grammar, and a build that did not enable it is the common case.
+- A file that does not parse is read again through `readWithBranches(text, cplusplus, read)` with each conditional's first branch; the left-out branches' calls are counted and a second-branch reading's definitions added. Refused reflection-gated files are retried with the feature tests off (`antlr.ts`).
 
 ## Macros
 

@@ -950,6 +950,36 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // one reuses what it wrote instead of reading every file again; only `--incremental` reads one.
   const keepsManifest = options.incremental === true || !dryRun;
   // What the run is made from besides the files; OSV answers change on their own, so never "up to date" with it.
+  // Other files a reading opened (`FileResult.reads`): hashed once per run, however many files read them.
+  const readHashes = new Map<string, Promise<string | null>>();
+  const hashOf = (abs: string): Promise<string | null> => {
+    let hash = readHashes.get(abs);
+    if (!hash) {
+      hash = readFile(abs).then((bytes) => createHash("sha256").update(bytes).digest("hex"), () => null);
+      readHashes.set(abs, hash);
+    }
+    return hash;
+  };
+  /** `reads` as the manifest keeps them: project-relative POSIX path → SHA-256, files outside the project left out. */
+  const hashReads = async (reads: readonly string[]): Promise<Record<string, string> | undefined> => {
+    const out: Record<string, string> = {};
+    for (const abs of reads) {
+      const rel = relative(projectRoot, abs).split(sep).join("/");
+      if (!rel || rel.startsWith("../") || rel === ".." || !insideRoot(projectRoot, rel)) continue;
+      const hash = await hashOf(abs);
+      if (hash) out[rel] = hash;
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+  };
+  /** Whether every file a cached analysis read still has the bytes it had. */
+  const readsUnchanged = async (reads: Record<string, string> | undefined): Promise<boolean> => {
+    if (!reads) return true;
+    for (const [rel, hash] of Object.entries(reads)) {
+      const abs = insideRoot(projectRoot, rel);
+      if (!abs || (await hashOf(abs)) !== hash) return false;
+    }
+    return true;
+  };
   const fingerprints = keepsManifest && !dryRun && !options.osv
     ? await runFingerprints(projectRoot, {
         options: {
@@ -975,7 +1005,8 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
     // Every file the last run kept is unchanged (the fingerprint covers the file list and git's view of the rest).
     const kept = files.filter((f) => normalizeManifestKey(f.relativePath) in prevManifest.entries);
     const states = await Promise.all(kept.map((f) => classifyFileForCache(f.absolutePath, prevManifest.entries[normalizeManifestKey(f.relativePath)]).then((c) => c.state).catch(() => "changed")));
-    if (kept.length === Object.keys(prevManifest.entries).length && states.every((st) => st === "unchanged")) {
+    const readsSame = async () => (await Promise.all(kept.map((f) => readsUnchanged(prevManifest.entries[normalizeManifestKey(f.relativePath)]?.reads)))).every(Boolean);
+    if (kept.length === Object.keys(prevManifest.entries).length && states.every((st) => st === "unchanged") && (await readsSame())) {
       if (sameRun) {
         progress.detail("  Up to date: no file, option, config or git state changed since the last run");
         return upToDateResult(outputDir, outputOpts);
@@ -1111,10 +1142,11 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
           const classification = await classifyFileForCache(file.absolutePath, prev);
           newManifestEntries[manifestKey] = stamped({ mtime: classification.mtime, sha256: classification.sha256 });
           if (classification.state !== "unchanged") changedSinceLastRun.push(manifestKey);
-          if (classification.state === "unchanged" && prev?.resolver === resolver) {
+          if (classification.state === "unchanged" && prev?.resolver === resolver && (await readsUnchanged(prev.reads))) {
             const cached = await loadCachedFileResult(file, outputDir);
             if (cached) {
               unchangedCount++;
+              if (prev.reads) newManifestEntries[manifestKey] = { ...newManifestEntries[manifestKey]!, reads: prev.reads };
               return cached;
             }
             // Cache file missing — fall through to fresh parse.
@@ -1162,6 +1194,12 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
         } else if (options.incremental && prevManifest && !newManifestEntries[manifestKey]) {
           const classification = await classifyFileForCache(file.absolutePath, undefined);
           newManifestEntries[manifestKey] = stamped({ mtime: classification.mtime, sha256: classification.sha256 });
+        }
+        const reads = result.reads ? await hashReads(result.reads) : undefined;
+        delete result.reads;
+        if (newManifestEntries[manifestKey]) {
+          const { reads: _stale, ...entry } = newManifestEntries[manifestKey]!;
+          newManifestEntries[manifestKey] = reads ? { ...entry, reads } : entry;
         }
         reparsedCount++;
         return result;

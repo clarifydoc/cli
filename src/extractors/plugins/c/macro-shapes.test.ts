@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { readC } from "./antlr.js";
+import { includeFacts, includesIn } from "./define-shapes.js";
 
 const shape = (source: string) => {
   const parsed = readC(source);
@@ -777,5 +778,50 @@ lost:
 }
 `;
     expect(shape(source)).toEqual({ errors: 0, functions: [["club_lock", ["fail"]]] });
+  });
+});
+
+describe("headers a C reading opens", () => {
+  const headerProject = () => {
+    const dir = mkdtempSync(join(tmpdir(), "club-"));
+    for (let i = 1; i <= 8; i++) writeFileSync(join(dir, `squad${i}.h`), i === 8 ? `#include "kit.h"\n` : `#define SQUAD${i} 1\n`);
+    writeFileSync(join(dir, "kit.h"), "#define CLUB_OPEN {\n");
+    return dir;
+  };
+
+  it("gives a file the same headers whatever was read before it", () => {
+    const dir = headerProject();
+    const one = `#include "squad8.h"\n`;
+    const eight = Array.from({ length: 8 }, (_, i) => `#include "squad${i + 1}.h"`).join("\n") + "\n";
+    // eight headers first: the walk's budget is spent before `kit.h`, which must not shorten the next file's walk
+    expect(includeFacts(eight, join(dir, "eight.c")).shapes.has("CLUB_OPEN")).toBe(false);
+    expect(includeFacts(one, join(dir, "one.c")).shapes.has("CLUB_OPEN")).toBe(true);
+  });
+
+  it("sees a header edited between two readings", () => {
+    const dir = mkdtempSync(join(tmpdir(), "club-"));
+    writeFileSync(join(dir, "names.h"), "#define CLUB_JOIN(a, b) a##b\n");
+    const source = `#include "names.h"\nclub_result_t\nCLUB_JOIN(club_, kick)\n  (int n) {\n  return tally(n);\n}\n`;
+    const file = join(dir, "play.c");
+    expect(readC(source, undefined, undefined, file).functions.map((f) => f.name)).toEqual(["club_kick"]);
+    writeFileSync(join(dir, "names.h"), "#define CLUB_JOIN(a, b) b##a\n");
+    expect(readC(source, undefined, undefined, file).functions.map((f) => f.name)).toEqual(["kickclub_"]);
+  });
+
+  it("names the headers it opened, also when the file stays refused", () => {
+    const dir = headerProject();
+    const refused = `#include "squad8.h"\nint kick(void) {\n  CLUB_MISSING\n  return 1;\n  }\n}\n`;
+    const parsed = readC(refused, undefined, undefined, join(dir, "refused.c"));
+    expect(parsed.syntaxErrors).toBeGreaterThan(0);
+    expect(parsed.reads).toEqual([join(dir, "kit.h"), join(dir, "squad8.h")]);
+    // no path, no headers read
+    expect(readC(refused).reads).toBeUndefined();
+  });
+
+  it("reads the include lines of a file with a long blank run once", () => {
+    const text = `#include "kit.h"\n${"\n".repeat(160_000)}#include <squad.h>\n`;
+    const started = Date.now();
+    expect(includesIn(text)).toEqual([{ name: "kit.h", quoted: true }, { name: "squad.h", quoted: false }]);
+    expect(Date.now() - started).toBeLessThan(200);
   });
 });
