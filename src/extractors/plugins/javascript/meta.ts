@@ -27,7 +27,7 @@ import { cdkRouteResolver } from "./routes/cdk.js";
 import { nextMiddlewareGuards } from "./routes/next-middleware.js";
 import { renderModeResolver } from "./routes/render-mode.js";
 import { astroMiddlewareGuards } from "./routes/astro-middleware.js";
-import { nestGlobalGuards, nestGlobalInterceptors, nestInheritedGuards } from "./routes/nestjs.js";
+import { nestGlobalGuards, nestGlobalInterceptors, nestInheritedGuards, nestInheritedRoutes } from "./routes/nestjs.js";
 import { koaAppMiddleware } from "./routes/koa-middleware.js";
 import { pathHelperResolver } from "./routes/path-helpers.js";
 import { trpcRouterResolver } from "./routes/trpc.js";
@@ -343,7 +343,7 @@ const projectPasses: readonly ProjectPass[] = [
   { label: "file-based routes", run: (analyses, ctx) => detectFileBasedRoutes(analyses, ctx.projectRoot, [...ctx.subProjectRoots]) },
   { label: "angular external templates", run: (analyses, ctx) => resolveAngularExternalTemplates(analyses, ctx.projectRoot) },
 ];
-const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, convexBuilderResolver, cdkRouteResolver, nestInheritedGuards, nestGlobalGuards, nestGlobalInterceptors, koaAppMiddleware, nextMiddlewareGuards, renderModeResolver, astroMiddlewareGuards, screenTableResolver, pathHelperResolver];
+const routeResolvers = [angularRouterResolver, reactRouterResolver, trpcRouterResolver, convexBuilderResolver, cdkRouteResolver, nestInheritedRoutes, nestInheritedGuards, nestGlobalGuards, nestGlobalInterceptors, koaAppMiddleware, nextMiddlewareGuards, renderModeResolver, astroMiddlewareGuards, screenTableResolver, pathHelperResolver];
 
 export const typescriptMeta: LanguagePluginMeta = {
   ...typescriptManifest,

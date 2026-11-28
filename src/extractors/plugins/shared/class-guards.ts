@@ -24,6 +24,27 @@ interface ClassRoutesFact {
   lines: number[];
 }
 
+/** Finds, for a line, the innermost of `classes` whose lines hold it (sorted once, smallest span first). */
+export function innermostClassAt<C extends { node: Node }>(classes: readonly C[]): (line: number) => C | undefined {
+  const span = (n: Node) => [n.startPosition.row + 1, n.endPosition.row + 1] as const;
+  const inner = [...classes].sort((a, b) => span(a.node)[1] - span(a.node)[0] - (span(b.node)[1] - span(b.node)[0]));
+  return (line) => inner.find((c) => line >= span(c.node)[0] && line <= span(c.node)[1]);
+}
+
+/** The classes `ref` extends, nearest first: at most 8, ending at a superclass the index cannot resolve or a cycle. */
+export function extendsChain(ctx: ProjectContext, ref: ClassRef): ClassRef[] {
+  const chain: ClassRef[] = [];
+  const seen = new Set<ClassRef>([ref]);
+  for (let cur = ref, depth = 0; depth < 8; depth++) {
+    const st = ctx.classes.supertypes(cur).find((s) => s.written === cur.cls.extends);
+    if (!st?.ref || seen.has(st.ref)) break;
+    seen.add(st.ref);
+    chain.push(st.ref);
+    cur = st.ref;
+  }
+  return chain;
+}
+
 /**
  * The facts for one file: `classes` are its class declarations with their own
  * class-level guards; a route belongs to the innermost class whose lines hold it,
@@ -34,12 +55,11 @@ export function collectClassGuardFacts(
   routes: readonly RouteInfo[],
   facts: RouteFact[],
 ): void {
-  const span = (n: Node) => [n.startPosition.row + 1, n.endPosition.row + 1] as const;
-  const inner = [...classes].sort((a, b) => span(a.node)[1] - span(a.node)[0] - (span(b.node)[1] - span(b.node)[0]));
+  const ownerAt = innermostClassAt(classes);
   const lines = new Map<string, number[]>();
   for (const r of routes) {
     if (r.kind !== "api") continue;
-    const owner = inner.find((c) => r.line >= span(c.node)[0] && r.line <= span(c.node)[1]);
+    const owner = ownerAt(r.line);
     if (owner && owner.guards.length === 0 && owner.derived) (lines.get(owner.name) ?? lines.set(owner.name, []).get(owner.name)!).push(r.line);
   }
   for (const c of classes) {
@@ -69,21 +89,10 @@ export function inheritedClassGuards(id: string, languages: readonly Language[])
       }
       if (guarded.size === 0 || pending.length === 0) return;
       for (const { analysis, ref, lines } of pending) {
-        let guards: GuardAttr[] | undefined;
-        let guardFile: string | undefined;
-        const seen = new Set<ClassRef>([ref]);
-        for (let cur = ref, depth = 0; depth < 8 && !guards; depth++) {
-          const st = ctx.classes.supertypes(cur).find((s) => s.written === cur.cls.extends);
-          if (!st?.ref || seen.has(st.ref)) break;
-          seen.add(st.ref);
-          const g = guarded.get(st.ref);
-          if (g) {
-            guards = g;
-            guardFile = st.ref.filePath;
-          }
-          cur = st.ref;
-        }
-        if (!guards) continue;
+        const nearest = extendsChain(ctx, ref).find((c) => guarded.has(c));
+        if (!nearest) continue;
+        const guards = guarded.get(nearest)!;
+        const guardFile = nearest.filePath;
         const calls = guardMiddlewareCalls(guards);
         const at = new Set(lines);
         analysis.routes = analysis.routes.map((r) => {

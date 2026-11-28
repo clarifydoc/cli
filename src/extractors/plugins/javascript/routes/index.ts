@@ -11,6 +11,7 @@ import {
   collectNestAppGuards,
   collectNestAppInterceptors,
   collectNestClassGuards,
+  collectNestInheritedRoutes,
   collectNestGlobalGuards,
   collectNestGlobalInterceptors,
   visitNestjsRoute,
@@ -111,6 +112,7 @@ export const javascriptRouteExtractor: RouteExtractor = {
     // A NestJS controller's guard on a base class in another file (shared/class-guards.ts).
     if (facts && /\bextends\b|@UseGuards\b/.test(sourceText) && (nestjs.length > 0 || /@(?:UseGuards|Roles|Public)\b/.test(sourceText))) collectNestClassGuards(tree.rootNode, nestjs, facts);
     // App-wide Nest guards: bootstrap `useGlobalGuards` or `@Module` `APP_GUARD` providers (nest-global-guards resolver).
+    if (facts && (nestjs.length > 0 || (sourceText.includes("@Controller") && /\bextends\b/.test(sourceText)))) collectNestInheritedRoutes(tree.rootNode, nestjs, facts);
     if (facts && /\buseGlobalGuards\b/.test(sourceText)) collectNestGlobalGuards(tree.rootNode, sourceText, facts);
     if (facts && /\bAPP_GUARD\b/.test(sourceText)) collectNestAppGuards(tree.rootNode, sourceText, facts);
     if (facts && /\buseGlobalInterceptors\b/.test(sourceText)) collectNestGlobalInterceptors(tree.rootNode, sourceText, facts);

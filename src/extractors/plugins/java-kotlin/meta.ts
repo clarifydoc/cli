@@ -50,7 +50,10 @@ import { JVM_SECURITY_RULES, jvmSecurityPostScan } from "./security-rules.js";
 import { jvmGrpcStub, jvmGrpcService } from "../shared/grpc-stubs.js";
 import { firstService, firstStub, jvmThriftStub, thriftServiceOf } from "../shared/thrift-stubs.js";
 import { inheritedClassGuards } from "../shared/class-guards.js";
+import { inheritedControllerRoutes } from "../shared/inherited-routes.js";
 
+/** Spring: handlers a controller inherits from a base class, served under its own `@RequestMapping`. */
+const springInheritedRoutes = inheritedControllerRoutes("spring-inherited-routes", ["java", "kotlin"], { overrideKeepsRoute: true });
 /** Spring / JAX-RS / Micronaut: a class-level guard a controller inherits from its base class. */
 const springInheritedGuards = inheritedClassGuards("jvm-inherited-guards", ["java", "kotlin"]);
 
@@ -113,7 +116,7 @@ function jvmMeta(language: Language, opts: {
     ...(opts.preprocess ? { preprocess: opts.preprocess } : {}),
     routes: javaKotlinRouteExtractor,
     // Spring Security's authorizeHttpRequests rules, on the routes they match.
-    routeResolvers: [springInheritedGuards, jaxrsSubResourceResolver, springSecurityResolver, cxfServiceBeanResolver, cxfAddressResolver, ktorRouteFnResolver, androidScreenClasses, androidNavGraphResolver, haloGvkResolver],
+    routeResolvers: [springInheritedRoutes, springInheritedGuards, jaxrsSubResourceResolver, springSecurityResolver, cxfServiceBeanResolver, cxfAddressResolver, ktorRouteFnResolver, androidScreenClasses, androidNavGraphResolver, haloGvkResolver],
     // Components an AndroidManifest.xml starts by name, and the Spring AOP advice a pointcut matches onto its join points.
     dispatchResolvers: [androidManifestComponents, aopAdvice],
     functionsClasses: jvmFunctionsClasses,

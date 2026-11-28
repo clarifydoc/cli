@@ -2,7 +2,7 @@ import { extractAndroidNavigation } from "./android-nav.js";
 import type { Tree } from "web-tree-sitter";
 import type { RouteFact, RouteInfo } from "../../../../types/analysis.js";
 import type { RouteExtractor } from "../../../routes/base.js";
-import { FUNCTIONAL_ROUTER_GATE_RE, extractSpringRoutes, extractSpringRoutesRegex } from "./spring.js";
+import { FUNCTIONAL_ROUTER_GATE_RE, classRequestMappingTemplate, declarationHasAnnotation, extractClassRequestMappingPath, extractSpringRoutes, extractSpringRoutesRegex } from "./spring.js";
 import { extractJaxrsMicronautRoutes } from "./jaxrs.js";
 import { extractKotlinRouterDsl } from "./functional-routes.js";
 import { extractKtorRoutes } from "./ktor.js";
@@ -15,6 +15,7 @@ import { collectServiceBeans } from "./service-beans.js";
 import { extractComposeDestinations } from "./compose-nav.js";
 import { guardsOn } from "./meta-annotations.js";
 import { collectClassGuardFacts } from "../../shared/class-guards.js";
+import { collectInheritedRouteFacts } from "../../shared/inherited-routes.js";
 
 /**
  * Java / Kotlin route extraction — Spring (@GetMapping/@RequestMapping),
@@ -94,6 +95,31 @@ export const javaKotlinRouteExtractor: RouteExtractor = {
         return name ? [{ node, name, guards: guardsOn(node), derived }] : [];
       });
       collectClassGuardFacts(classes, routes, facts);
+    }
+
+    // Handlers a controller inherits from a base class, served under its own `@RequestMapping` (shared/inherited-routes.ts).
+    if (facts && sourceText.includes("org.springframework") && (routes.some((r) => r.kind === "api") || /@(?:Rest)?Controller\b/.test(sourceText))) {
+      const classes = tree.rootNode.descendantsOfType("class_declaration").flatMap((node) => {
+        const name = node.childForFieldName("name")?.text ?? node.namedChildren.find((c) => c.type === "type_identifier")?.text;
+        if (!name) return [];
+        const derived = !!node.childForFieldName("superclass") || node.namedChildren.some((c) => c.type === "delegation_specifier" || c.type === "delegation_specifiers");
+        const prefix = extractClassRequestMappingPath(node);
+        const template = prefix ? null : classRequestMappingTemplate(node);
+        return [{
+          node,
+          name,
+          controller: ["RestController", "Controller", "RequestMapping"].some((a) => declarationHasAnnotation(node, a)),
+          abstract: node.children.some((c) => c.type === "modifiers" && /\babstract\b/.test(c.text.replace(/@\w+(?:\([^)]*\))?/g, ""))),
+          // A class of functional routes (`RouterFunctions.route()`) holds rows no annotation explains: only an abstract base or a copied one drops its own.
+          decorated: true,
+          prefix: prefix ?? "",
+          ...(template !== null ? { prefixIsRef: true } : {}),
+          guards: guardsOn(node),
+          versions: [],
+          derived,
+        }];
+      });
+      collectInheritedRouteFacts(classes, routes, facts);
     }
 
     // `@GetMapping("${service.prefix}public/user-types")`: the property's value is a prefix

@@ -19,6 +19,7 @@ import type { RouteResolver } from "../../../route-resolvers/base.js";
 import { stripQuotes } from "../../../shared/node-helpers.js";
 import { applyRouteMeta, boundParam, guardMiddlewareCalls, inferredParam, withInheritedGuards, type GuardAttr } from "../../../shared/route-metadata.js";
 import { collectClassGuardFacts, inheritedClassGuards } from "../../shared/class-guards.js";
+import { collectInheritedRouteFacts, inheritedControllerRoutes } from "../../shared/inherited-routes.js";
 import { CONSTANT_REF } from "./path-helpers.js";
 import { joinRootedPath } from "../../../shared/route-paths.js";
 
@@ -346,6 +347,38 @@ export function collectNestClassGuards(root: Node, routes: readonly RouteInfo[],
   });
   collectClassGuardFacts(classes, routes, facts);
 }
+
+/**
+ * Each class's prefix and routes, for `nest-inherited-routes` (shared/inherited-routes.ts): Nest mounts a
+ * `@Controller` class's handlers, inherited ones included, under that class's own prefix.
+ */
+export function collectNestInheritedRoutes(root: Node, routes: readonly RouteInfo[], facts: RouteFact[]): void {
+  const classes = root.descendantsOfType(["class_declaration", "abstract_class_declaration"]).flatMap((node) => {
+    const name = node.childForFieldName("name")?.text;
+    const body = node.childForFieldName("body");
+    if (!name || !body) return [];
+    const decorators = classDecorators(body);
+    const scope = controllerScope(body);
+    const controller = decorators.some((d) => decoratorCall(d)?.name === "Controller");
+    const derived = node.namedChildren.some((c) => c.type === "class_heritage" && /\bextends\b/.test(c.text));
+    return [{
+      node,
+      name,
+      controller,
+      abstract: node.type === "abstract_class_declaration",
+      decorated: decorators.length > 0,
+      prefix: scope.prefix,
+      ...(scope.prefixRef ? { prefixIsRef: true } : {}),
+      guards: scope.guards,
+      versions: scope.versions,
+      derived,
+    }];
+  });
+  collectInheritedRouteFacts(classes, routes, facts);
+}
+
+/** NestJS: handlers a controller inherits from a base class, served under its own prefix. */
+export const nestInheritedRoutes = inheritedControllerRoutes("nest-inherited-routes", ["typescript", "javascript"], { overrideKeepsRoute: false });
 
 /** NestJS: a class-level guard a controller inherits from its base class. */
 export const nestInheritedGuards = inheritedClassGuards("nest-inherited-guards", ["typescript", "javascript"]);

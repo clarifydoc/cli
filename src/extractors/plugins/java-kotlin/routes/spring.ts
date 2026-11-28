@@ -491,7 +491,7 @@ function nestCallerOf(method: Node): Node | null {
  * Extract the path from a class-level @RequestMapping annotation.
  * Looks through class modifiers for @RequestMapping("/api/users") etc.
  */
-function extractClassRequestMappingPath(classNode: Node): string | null {
+export function extractClassRequestMappingPath(classNode: Node): string | null {
   for (const child of classNode.children) {
     // Direct annotation on the class
     const path = extractRequestMappingPath(child);
@@ -532,7 +532,7 @@ function constantPathTemplate(args: Node): string | null {
 }
 
 /** The class's `@RequestMapping` path when it is another class's constant, as a template. */
-function classRequestMappingTemplate(classNode: Node): string | null {
+export function classRequestMappingTemplate(classNode: Node): string | null {
   const anns = [...classNode.children, ...classNode.children.filter((c) => c.type === "modifiers").flatMap((m) => m.children)];
   for (const ann of anns) {
     if (!isAnnotationNode(ann) || annotationSimpleName(ann) !== "RequestMapping") continue;
