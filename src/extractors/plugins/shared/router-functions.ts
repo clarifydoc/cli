@@ -13,8 +13,11 @@ import { buildAuth, type GuardAttr } from "../../shared/route-metadata.js";
  * pass serves every function's routes at each prefix a call reaches it by,
  * composed through relaying functions, with the guards along the way. Which
  * function a callee names is the plugin's rule (`target`): a package for Go,
- * a name for Kotlin. A callee that could be two functions joins neither; a
- * function no call reaches keeps its paths.
+ * a name for Kotlin. A callee that could be two functions joins neither. A
+ * function no call reaches keeps its paths, unless the plugin says its caller
+ * would be visible here (`uncalledIsDead`): then nothing serves those routes,
+ * they are dropped, and so is a function only such a function hands its router
+ * to (a dead `registerOld(g)` mounts nothing at a guessed path).
  */
 
 export const ROUTER_CALL = "router-call";
@@ -43,6 +46,13 @@ export interface RouterFunctionRules {
    * the symbol linker joins what they read to the route's flows. Absent: a mount's guards name no calls.
    */
   guardCalls?(guards: readonly string[]): string[];
+  /**
+   * True when a function that nothing in the scan calls (no router-call reaches it and no call anywhere names it)
+   * cannot have a caller outside it either — Go's unexported function, or an exported one in a package the scan
+   * imports. False keeps its routes: a library's exported register function is called from another repository.
+   * Absent: every uncalled function keeps its routes.
+   */
+  uncalledIsDead?(unit: string, fn: string, analyses: readonly FileAnalysis[]): boolean;
 }
 
 export const joinRoutePrefix = (prefix: string, path: string): string => "/" + (prefix + "/" + path).split("/").filter(Boolean).join("/");
@@ -72,6 +82,20 @@ export function resolveRouterFunctions(analyses: FileAnalysis[], rules: RouterFu
     }
   }
   if (owners.size === 0) return;
+  const leafOf = (fn: string) => fn.slice(fn.lastIndexOf(".") + 1);
+  // The bare names any call in the scan names (`registerOld`, `users.Register` → `Register`, `h.Mount` → `Mount`).
+  let called: Set<string> | null = null;
+  const isCalled = (fn: string): boolean => {
+    if (!called) {
+      called = new Set<string>();
+      for (const a of analyses) {
+        for (const f of [...a.functions, ...a.classes.flatMap((c) => c.methods ?? [])]) {
+          for (const c of f.calls ?? []) called.add(leafOf(c.name));
+        }
+      }
+    }
+    return called.has(leafOf(fn));
+  };
   // A function that only hands its own router on is a router function too.
   for (const a of analyses) {
     for (const f of a.routeFacts ?? []) {
@@ -91,7 +115,19 @@ export function resolveRouterFunctions(analyses: FileAnalysis[], rules: RouterFu
       (incoming.get(target) ?? incoming.set(target, []).get(target)!).push({ from, file: a.filePath, prefix: call.prefix, guards: call.guards });
     }
   }
-  if (incoming.size === 0) return;
+  if (incoming.size === 0 && !rules.uncalledIsDead) return;
+
+  const deadMemo = new Map<string, boolean>();
+  /** No call reaches the function, nothing names it, and the plugin sees every place that could. */
+  const isDead = (key: string): boolean => {
+    if (incoming.has(key) || !rules.uncalledIsDead) return false;
+    const known = deadMemo.get(key);
+    if (known !== undefined) return known;
+    const fn = key.slice(key.indexOf("#") + 1);
+    const dead = !isCalled(fn) && rules.uncalledIsDead(key.slice(0, key.indexOf("#")), fn, analyses);
+    deadMemo.set(key, dead);
+    return dead;
+  };
 
   const memo = new Map<string, Mount[]>();
   const onStack = new Set<string>();
@@ -103,6 +139,7 @@ export function resolveRouterFunctions(analyses: FileAnalysis[], rules: RouterFu
     onStack.add(key);
     const out: Mount[] = [];
     for (const e of edges) {
+      if (e.from && isDead(e.from)) continue;
       for (const b of e.from ? mounts(e.from) : [{ prefix: "", guards: [], files: [] }]) {
         out.push({ prefix: joinRoutePrefix(b.prefix, e.prefix), guards: [...b.guards, ...e.guards], files: [...b.files, ...e.guards.map(() => e.file)] });
       }
@@ -115,8 +152,11 @@ export function resolveRouterFunctions(analyses: FileAnalysis[], rules: RouterFu
   };
 
   for (const [key, files] of owners) {
-    if (!incoming.has(key)) continue;
     const owner = `fn:${key.slice(key.indexOf("#") + 1)}`;
+    if (!incoming.has(key)) {
+      if (isDead(key)) for (const a of files) a.routes = a.routes.filter((r) => r.owner !== owner);
+      continue;
+    }
     const at = mounts(key);
     for (const a of files) {
       a.routes = a.routes.flatMap((r): RouteInfo[] => (r.owner === owner ? at.map((m) => withMount(r, m, rules)) : [r]));

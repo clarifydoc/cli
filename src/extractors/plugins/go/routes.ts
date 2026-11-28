@@ -177,6 +177,31 @@ const VERBS_FIRST_RE = /(\w+)\.\s*Methods\s*\(\s*["'`]/;
 const GORILLA_CHAIN_RE = /(\w+)\.\s*(?:Methods|Path)\s*\(/;
 /** A `router-var` fact: a package-level router variable a function sets (`APIv1 = router.Group("/api/v1")`). */
 export const ROUTER_VAR = "router-var";
+
+/** A file's function values: names it hands on or stores without calling (`registerDocs = api.GetDocs`). */
+export const FUNC_REF = "func-ref";
+
+const VALUE_POSITION = /(?:[=,({:]|\breturn|^)[ \t]*&?((?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*)[ \t]*(?=[,)}\]]|$)/g;
+
+/**
+ * The last names of the identifiers a file uses as whole values — a right-hand side, an argument, a list element —
+ * which is how a register function is reached when it is stored and called through a variable or a table. The
+ * router-function pass counts them as callers; `code` has comments blanked.
+ */
+export function goFunctionValueNames(code: readonly string[]): string[] {
+  const names = new Set<string>();
+  for (const line of code) {
+    if (line.length > 400) continue;
+    for (const m of line.matchAll(VALUE_POSITION)) {
+      const name = m[1]!.slice(m[1]!.lastIndexOf(".") + 1);
+      if (!NEVER_REGISTERS.has(name)) names.add(name);
+    }
+  }
+  return [...names];
+}
+
+/** Values that are never a register function: Go's predeclared values and the locals nearly every file hands on. */
+const NEVER_REGISTERS = new Set(["nil", "true", "false", "iota", "_", "err", "ctx", "c", "w", "r", "req", "res", "ok", "i", "id", "s"]);
 export interface RouterVar {
   name: string;
   prefix: string;

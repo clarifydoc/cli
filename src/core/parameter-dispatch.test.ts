@@ -122,6 +122,11 @@ func registerAPIRoutes(a *echo.Group) {
 	}
 	a.PUT("/players", playerHandler.CreateWeb)
 }
+
+// Register is the package's entry: the server mounts the API group through it.
+func Register(e *echo.Echo) {
+	registerAPIRoutes(e.Group(""))
+}
 `,
 };
 

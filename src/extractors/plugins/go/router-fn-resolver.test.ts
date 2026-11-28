@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractGoRoutes } from "./routes.js";
+import { extractGoRoutes, FUNC_REF, goFunctionValueNames } from "./routes.js";
 import { ROUTER_CALL } from "../shared/router-functions.js";
 import { goRouterFnResolver } from "./router-fn-resolver.js";
 import { createEmptyAnalysis, type FileAnalysis, type RouteFact } from "../../../types/analysis.js";
@@ -175,6 +175,7 @@ func (c *ClubImporter) RegisterRoutes(g *echo.Group) {
 func (h *FileImporter) RegisterRoutes(g *echo.Group) {
 \tg.GET("/"+h.Name()+"/status", h.Status)
 }`);
+    routes.functions.push({ name: "setup", calls: [{ name: "registerMigrations" }] } as never);
     goRouterFnResolver.resolve([routes, csv, generic], {} as ProjectContext);
     expect(csv.routes.map((r) => `${r.httpMethod} ${r.path}`)).toEqual(["GET /migration/csv/status"]);
   });
@@ -215,6 +216,7 @@ func registerRoutes(router *gin.Engine, conf *config.Config) {
 func GetClubs(router *gin.RouterGroup) {
 \trouter.GET("/clubs", listClubs)
 }`);
+    start.functions.push({ name: "newRouter", calls: [{ name: "registerRoutes" }] } as never);
     const analyses = [consts, start, routes, clubs];
     const importIndex = buildImportIndex(analyses);
     goRouterFnResolver.resolve(analyses, { importIndex, moduleValue: buildModuleValueLookup(analyses, importIndex) } as unknown as ProjectContext);
@@ -275,5 +277,54 @@ func Register(r *gin.RouterGroup) {
     const row = (a: FileAnalysis) => a.routes.map((r) => `${r.path} [${r.middleware.join(", ")}] calls=${(r.middlewareCalls ?? []).join(",")} inherited=${(r.inheritedMiddleware ?? []).map((m) => `${m.file}:${m.calls.join(",")}`).join(";")}`);
     expect(row(clubs)).toEqual(["/api/clubs [auth.Required(), gin.Logger()] calls= inherited=main.go:auth.Required,gin.Logger"]);
     expect(row(garages)).toEqual(["/open/garages [] calls= inherited="]);
+  });
+});
+
+describe("a register function nothing calls", () => {
+  const caller = (name: string, calls: string[]): FileAnalysis => ({ ...createEmptyAnalysis("main.go", "go"), functions: [{ name, calls: calls.map((c) => ({ name: c })) } as never] });
+  const routes = () => file("league/routes.go", `package league
+
+func registerClubs(g *gin.RouterGroup) { g.GET("/clubs", listClubs) }
+func registerOld(g *gin.RouterGroup) { g.GET("/legacy", listClubs) }
+func registerRelay(g *gin.RouterGroup) {
+\tregisterDeep(g.Group("/deep"))
+}
+func registerDeep(g *gin.RouterGroup) { g.GET("/cars", listCars) }
+func Export(g *gin.RouterGroup) { g.GET("/library", list) }`);
+  const paths = (a: FileAnalysis) => a.routes.map((r) => `${r.httpMethod} ${r.path}`);
+
+  it("drops its routes and the routes of functions only it hands a router to", () => {
+    const main = file("league/main.go", `package league
+
+func main() {
+\tr := gin.Default()
+\tregisterClubs(r.Group("/api/v2"))
+}`);
+    main.functions.push({ name: "main", calls: [{ name: "registerClubs" }] } as never);
+    const r = routes();
+    goRouterFnResolver.resolve([main, r], {} as ProjectContext);
+    // Export is exported in a package no scanned file imports: a library's entry point keeps its path.
+    expect(paths(r)).toEqual(["GET /api/v2/clubs", "GET /library"]);
+  });
+
+  it("keeps a function stored or handed on as a value (real-repo FP: a docs registrar assigned to a variable)", () => {
+    const wire = file("league/wire.go", "package league");
+    wire.routeFacts!.push({ kind: FUNC_REF, line: 0, data: { names: goFunctionValueNames(["var registerDocs = league.registerOld", "var table = []func(*gin.RouterGroup){", "\tregisterRelay,", "}"]) } });
+    const r = routes();
+    goRouterFnResolver.resolve([wire, r], {} as ProjectContext);
+    expect(paths(r)).toEqual(["GET /legacy", "GET /deep/cars", "GET /library"]);
+    expect(goFunctionValueNames(["x := register(a.b, coach, err, nil)", "var f = pkg.Mount", "\treturn &Handler"])).toEqual(["b", "coach", "Mount", "Handler"]);
+  });
+
+  it("keeps a function a call anywhere names, and an exported one in an imported package is dead when nobody calls it", () => {
+    const r = routes();
+    goRouterFnResolver.resolve([caller("boot", ["registerOld", "registerRelay"]), r], {} as ProjectContext);
+    expect(paths(r)).toEqual(["GET /legacy", "GET /deep/cars", "GET /library"]);
+    const lib = file("garage/cars.go", `package garage
+
+func Mount(g *gin.RouterGroup) { g.GET("/cars", list) }`);
+    const user = { ...createEmptyAnalysis("main.go", "go"), imports: [{ source: "example.com/league/garage", specifiers: ["garage"], isDefault: false, isNamespace: false, isType: false, line: 1 }] };
+    goRouterFnResolver.resolve([user, lib], {} as ProjectContext);
+    expect(paths(lib)).toEqual([]);
   });
 });

@@ -81,6 +81,12 @@ func echoSetup(e *echo.Echo, db *gorm.DB) {
 \tg.GET("", handlers.ListCars)
 \te.GET("/garage", handlers.ListGarages)
 }
+
+func main() {
+\tvar db *gorm.DB
+\tsetup(gin.Default(), db)
+\techoSetup(echo.New(), db)
+}
 `;
 
 describe("Go middleware reach (gin Group / Use, Echo Group)", () => {

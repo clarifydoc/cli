@@ -10,7 +10,7 @@ import type { FunctionInfo, ParamInfo, RouteInfo } from "../../../types/analysis
 import { extractCallsFromBody, type RegexLangSpec } from "../shared/regex-base.js";
 import { stripTypeModifiers } from "../../shared/type-parser.js";
 import { addRegexMethodValues } from "./method-values-regex.js";
-import { extractGoRoutes, type ClosureCalls } from "./routes.js";
+import { extractGoRoutes, goFunctionValueNames, FUNC_REF, type ClosureCalls } from "./routes.js";
 import { extractHumaRoutes } from "./huma.js";
 import { extractGoDataSources } from "./data-sources.js";
 import { extractGoHttpClientRegistrations } from "./http-clients.js";
@@ -224,6 +224,10 @@ export const goSpec: RegexLangSpec = {
     const closureCalls: ClosureCalls = (start, end, inline) => extractCallsFromBody(callLines, start, end, ["//"], goSpec.callPatterns, inline);
     const routes = [...extractGoRoutes(code, facts, closureCalls), ...extractHumaRoutes(code, facts, closureCalls)];
     if (facts) facts.push(...thriftHandlerFacts(code.join("\n"), "go"));
+    if (facts) {
+      const valueNames = goFunctionValueNames(code);
+      if (valueNames.length > 0) facts.push({ kind: FUNC_REF, line: 0, data: { names: valueNames } });
+    }
     const members = [...(fns ?? []), ...classes.flatMap((c) => c.methods)];
     // The ANTLR front end reads method values handed on itself; the regex reading does it here — also for a file
     // that front end gave up on (syntax errors), whose functions the patterns read.

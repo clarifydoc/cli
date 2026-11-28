@@ -2,7 +2,7 @@ import type { FileAnalysis } from "../../../types/analysis.js";
 import type { RouteResolver } from "../../route-resolvers/base.js";
 import type { ProjectContext } from "../../../types/project.js";
 import { ROUTER_CALL, joinRoutePrefix, resolveRouterFunctions, type RouterCall } from "../shared/router-functions.js";
-import { ROUTER_VAR, middlewareCallees, type RouterVar } from "./routes.js";
+import { FUNC_REF, ROUTER_VAR, middlewareCallees, type RouterVar } from "./routes.js";
 
 /**
  * Go routes registered by a function on the router it is handed.
@@ -89,6 +89,36 @@ function nearestPackage(keys: string[], from: string): string | null {
   return best > 0 && depth.filter((d) => d === best).length === 1 ? keys[depth.indexOf(best)]! : null;
 }
 
+/**
+ * A register function nothing calls is dead when no other repository could call it: an unexported one (only its own
+ * package can), or an exported one in a package some scanned file imports (its callers would be among them). An exported
+ * function in a package nobody scanned imports is a library's entry point and keeps its routes.
+ */
+function deadRule(handed: ReadonlySet<string>, ctx: ProjectContext): (unit: string, fn: string, analyses: readonly FileAnalysis[]) => boolean {
+  // The package directories some scanned file imports, through the import index (a namesake directory is not one); without
+  // an index, an import whose path ends in the directory.
+  let imported: Set<string> | null = null;
+  const isImported = (unit: string, analyses: readonly FileAnalysis[]): boolean => {
+    if (!ctx.importIndex?.fileForSource) return analyses.some((a) => a.imports.some((i) => i.source === unit || i.source.endsWith(`/${unit}`)));
+    if (!imported) {
+      imported = new Set<string>();
+      for (const a of analyses) {
+        for (const i of a.imports) {
+          const file = ctx.importIndex.fileForSource(a.filePath, i.source);
+          if (file) imported.add(dirOf(file));
+        }
+      }
+    }
+    return imported.has(unit);
+  };
+  return (unit, fn, analyses) => {
+    const leaf = fn.slice(fn.lastIndexOf(".") + 1);
+    if (handed.has(leaf)) return false;
+    if (!/^[A-Z]/.test(leaf)) return true;
+    return unit !== "" && isImported(unit, analyses);
+  };
+}
+
 const HOLE = /\$\{([^{}]*)\}/g;
 
 /**
@@ -156,7 +186,16 @@ export const goRouterFnResolver: RouteResolver = {
       if (!a.routes.some((r) => r.path.includes("${"))) continue;
       a.routes = a.routes.map((r) => (r.path.includes("${") ? { ...r, path: fillHoles(r.path, a.filePath, ctx) } : r));
     }
+    // A call handing on a package router no one sets is dropped below, but it is still a call: its callee is not dead.
+    const handed = new Set<string>();
+    // A function stored or handed on as a value (`registerDocs = api.GetDocs`, a table of them) is called where it lands.
+    for (const a of analyses) {
+      for (const f of a.routeFacts ?? []) {
+        if (f.kind === ROUTER_CALL) { const c = (f.data as RouterCall).callee; handed.add(c.slice(c.lastIndexOf(".") + 1)); }
+        else if (f.kind === FUNC_REF) for (const n of (f.data as { names: string[] }).names) handed.add(n);
+      }
+    }
     applyPackageRouters(analyses);
-    resolveRouterFunctions(analyses, { unitOf: dirOf, target: targetOf, guardCalls: middlewareCallees });
+    resolveRouterFunctions(analyses, { unitOf: dirOf, target: targetOf, guardCalls: middlewareCallees, uncalledIsDead: deadRule(handed, ctx) });
   },
 };
