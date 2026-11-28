@@ -88,19 +88,19 @@ const CPP_TOKENS: TokenKinds = {
  * `new Club(` as `Club`, a method on a call's result as the chain from its first call; a statement macro by its name,
  * its arguments read off the tokens, as are a `#define` inside a function's.
  */
-export function readCpp(source: string, macros?: BuildMacros, variant?: string, absolutePath?: string): ParsedStructure {
+export function readCpp(source: string, macros?: BuildMacros, variant?: string, absolutePath?: string, includeDirs?: readonly string[]): ParsedStructure {
   // A header of a project with C sources and no C++ ones (`cppReadingVariant`): C's grammar first, which is also
   // the quicker one, and C++'s when C refuses it, so nothing that parsed as C++ stops parsing. C refusing it is
   // final: the default's second try as C would only repeat that reading.
   if (variant === "c-first") {
-    const asC = readC(source, macros, undefined, absolutePath);
+    const asC = readC(source, macros, undefined, absolutePath, includeDirs);
     return asC.syntaxErrors === 0 ? asC : readWithBranches(blankRawStrings(normalizeSource(source)), true, read, macros);
   }
   const parsed = readWithBranches(blankRawStrings(normalizeSource(source)), true, read, macros);
   if (parsed.syntaxErrors === 0 || CPP_ONLY.test(withoutCppGuards(codeOnly(blankAsm(source))).replace(/^[ \t]*#.*$/gm, ""))) return parsed;
   // A header is this plugin's whatever language includes it: one of a C project may be C that no C++ compiler takes
   // (`char *restrict p`, `tre_ctype_t class;`, `typedef void *(fn)(void *)`), and C's grammar reads it.
-  const asC = readC(source, macros, undefined, absolutePath);
+  const asC = readC(source, macros, undefined, absolutePath, includeDirs);
   return asC.syntaxErrors === 0 ? asC : parsed;
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { readC } from "./antlr.js";
@@ -665,6 +665,41 @@ void kick(void) {
     expect(readC(source, [{ name: "IEEE_BIG", value: "1" }, { name: "IEEE_LITTLE", undefined: true }]).functions.map((f) => f.calls.map((c) => c.name))).toEqual([["big_boot"]]);
   });
 
+  it("reads a format whose later arm is defined only when an unstated macro is absent (real-repo shape)", () => {
+    // The wide arm is defined inside the chosen format, and only when a macro the build never
+    // mentions is absent. Both arms at once are not a program; the build's own format is kept.
+    const source = `#if defined(IEEE_LITTLE) + defined(IEEE_BIG) != 1
+#error pick one
+#endif
+#undef CLUB_WIDE
+#ifdef IEEE_LITTLE
+#define CLUB_FORMAT
+#endif
+#ifdef CLUB_FORMAT
+#ifndef CLUB_NARROW
+#define CLUB_WIDE
+#endif
+#endif
+int little_boot(void) {
+  return
+#ifdef CLUB_WIDE
+    kick()
+#else
+    punt()
+#endif
+  ;
+}
+#ifdef IEEE_BIG
+int big_boot(void) { return punt( ; }
+#endif
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["little_boot", ["kick"]]] });
+    const narrow = readC(source, [{ name: "IEEE_LITTLE", value: "1" }, { name: "CLUB_NARROW", value: "1" }]);
+    expect(narrow.syntaxErrors).toBe(0);
+    expect(narrow.functions.map((f) => [f.name, f.calls.map((c) => c.name)])).toEqual([["little_boot", ["punt"]]]);
+    expect(readC(source, [{ name: "IEEE_BIG", value: "1" }, { name: "IEEE_LITTLE", undefined: true }]).syntaxErrors).toBeGreaterThan(0);
+  });
+
   it("reads a brace a quoted header's macro supplies (real-repo shape)", () => {
     const dir = mkdtempSync(join(tmpdir(), "club-"));
     writeFileSync(join(dir, "check.h"), "#define CLUB_TEST_BEGIN do { if (setup()) goto club_abort; } {\n");
@@ -683,6 +718,54 @@ club_abort:
     // a file that parses does not change because a header exists
     const plain = `#include "check.h"\nint test_kick(void) { return score(1); }\n`;
     expect(readC(plain, undefined, undefined, join(dir, "plain.c")).functions.map((f) => [f.name, f.calls.map((c) => c.name)])).toEqual([["test_kick", ["score"]]]);
+  });
+
+  it("reads a header found only through an include directory", () => {
+    const dir = mkdtempSync(join(tmpdir(), "club-"));
+    const inc = join(dir, "include");
+    mkdirSync(inc);
+    writeFileSync(join(inc, "check.h"), "#define CLUB_TEST_BEGIN do { if (setup()) goto club_abort; } {\n");
+    const source = `#include "check.h"
+int test_kick(void) {
+  CLUB_TEST_BEGIN
+  kick();
+  }
+club_abort:
+  return stop();
+}
+`;
+    const file = join(dir, "test.c");
+    expect(readC(source, undefined, undefined, file).syntaxErrors).toBeGreaterThan(0);
+    const parsed = readC(source, undefined, undefined, file, [inc]);
+    expect(parsed.syntaxErrors).toBe(0);
+    expect(parsed.functions.map((f) => [f.name, f.calls.map((c) => c.name)])).toEqual([["test_kick", ["kick", "stop"]]]);
+    const angled = source.replace(`"check.h"`, "<check.h>");
+    expect(readC(angled, undefined, undefined, file, [inc]).functions.map((f) => f.name)).toEqual(["test_kick"]);
+    // a climb out of the include directory, and an absolute path, are not read
+    const climb = `#include "../check.h"\n${source.slice(source.indexOf("int "))}`;
+    expect(readC(climb, undefined, undefined, join(inc, "nested.c"), [inc]).syntaxErrors).toBeGreaterThan(0);
+    const absolute = `#include "${join(inc, "check.h")}"\n${source.slice(source.indexOf("int "))}`;
+    expect(readC(absolute, undefined, undefined, file, [inc]).syntaxErrors).toBeGreaterThan(0);
+  });
+
+  it("names a pasted function from a header in an include directory", () => {
+    const dir = mkdtempSync(join(tmpdir(), "club-"));
+    const inc = join(dir, "include");
+    mkdirSync(inc);
+    writeFileSync(join(inc, "names.h"), `#define CLUB_VERSION kick
+#define CLUB_JOIN2(a, b) a##b
+#define CLUB_JOIN(a, b) CLUB_JOIN2(a, b)
+`);
+    const source = `#include "names.h"
+club_result_t
+CLUB_JOIN(club_, CLUB_VERSION)
+  (int n) {
+  return tally(n);
+}
+`;
+    const file = join(dir, "play.c");
+    expect(readC(source, undefined, undefined, file).functions.map((f) => f.name)).toEqual(["CLUB_JOIN"]);
+    expect(readC(source, undefined, undefined, file, [inc]).functions.map((f) => f.name)).toEqual(["club_kick"]);
   });
 
   it("reads an asm statement whose template names a label", () => {

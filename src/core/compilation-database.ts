@@ -95,6 +95,21 @@ export function macrosOf(units: readonly BuildUnit[] | undefined): BuildMacros |
   return out;
 }
 
+/**
+ * The header directories every translation unit of a file agrees on, `-iquote` then `-I` and `-isystem`, in that
+ * order. Undefined when the file has no unit, the units search different directories, or none.
+ */
+export function includesOf(units: readonly BuildUnit[] | undefined): string[] | undefined {
+  if (!units || units.length === 0) return undefined;
+  const list = (u: BuildUnit) => [...u.quote, ...u.angle];
+  const first = list(units[0]!);
+  if (!units.every((u) => {
+    const dirs = list(u);
+    return dirs.length === first.length && dirs.every((d, i) => d === first[i]);
+  })) return undefined;
+  return first.length > 0 ? first : undefined;
+}
+
 /** A stable text of a file's macros, for the incremental cache's stamp. */
 export function macrosStamp(units: readonly BuildUnit[] | undefined): string | undefined {
   const macros = macrosOf(units);

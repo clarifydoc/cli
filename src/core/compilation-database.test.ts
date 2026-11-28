@@ -3,7 +3,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseCompileCommands, splitCommand } from "../extractors/plugins/shared/compile-commands.js";
-import { loadCompilationDatabase, macrosOf, placeIncludes } from "./compilation-database.js";
+import { includesOf, loadCompilationDatabase, macrosOf, placeIncludes } from "./compilation-database.js";
 import type { FileAnalysis, SubProject } from "../types/analysis.js";
 import "../extractors/registry.js";
 
@@ -67,6 +67,17 @@ describe("macrosOf", () => {
     const u = (macros: Array<{ name: string; value?: string; undefined?: boolean }>) => ({ quote: [], angle: [], macros });
     expect(macrosOf([u([{ name: "A", value: "1" }, { name: "B", value: "2" }]), u([{ name: "A", value: "1" }, { name: "B", value: "3" }])])).toEqual([{ name: "A", value: "1" }]);
     expect(macrosOf(undefined)).toBeUndefined();
+  });
+});
+
+describe("includesOf", () => {
+  const u = (quote: string[], angle: string[]) => ({ quote, angle, macros: [] });
+
+  it("keeps the directories every unit searches, quote directories first", () => {
+    expect(includesOf([u(["q"], ["inc"]), u(["q"], ["inc"])])).toEqual(["q", "inc"]);
+    expect(includesOf([u(["q"], ["inc"]), u(["q"], ["other"])])).toBeUndefined();
+    expect(includesOf([u([], [])])).toBeUndefined();
+    expect(includesOf(undefined)).toBeUndefined();
   });
 });
 

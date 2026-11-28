@@ -5,10 +5,13 @@
  * only where that shape can stand, so a file that parsed is unchanged.
  *
  * A quoted `#include` of a relative path (no `..`) is read the same way when the caller passes the file's path:
- * the header's shapes fill in names the file itself does not define. `-I` directories are not searched.
+ * the header's shapes fill in names the file itself does not define. Directories the caller passes (a build's
+ * `-iquote` and `-I`) are searched after the including file's own directory; a path that climbs (`..`), is absolute
+ * or leaves the directory is not read.
  */
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { dirname, join, normalize, sep } from "path";
+import type { BuildMacros } from "../../../types/language-plugin.js";
 import { conditionalBlocks } from "../shared/preprocessor-branches.js";
 import { codeMask } from "../shared/code-mask.js";
 
@@ -139,20 +142,45 @@ export function defineFacts(text: string): DefineFacts {
   return facts;
 }
 
-function headerPath(fromFile: string, include: string): string | null {
-  if (!include || include.startsWith("/") || include.includes("\\") || include.split("/").includes("..")) return null;
-  const dir = dirname(fromFile);
+function headerIn(dir: string, include: string): string | null {
+  if (!dir || !include || include.startsWith("/") || include.includes("\\") || include.includes("\0") || include.split("/").includes("..")) return null;
   const full = normalize(join(dir, include));
-  if (full !== dir && !full.startsWith(dir.endsWith(sep) ? dir : dir + sep)) return null;
-  return full;
+  const root = dir.endsWith(sep) ? dir : dir + sep;
+  if (full !== dir && !full.startsWith(root)) return null;
+  return existsSync(full) ? full : null;
+}
+
+function headerPath(fromFile: string, include: string): string | null {
+  return headerIn(dirname(fromFile), include);
+}
+
+function firstDir(dirs: readonly string[], include: string): string | null {
+  for (const dir of dirs) {
+    const found = headerIn(dir, include);
+    if (found) return found;
+  }
+  return null;
 }
 
 const headerCache = new Map<string, DefineFacts>();
 const MAX_HEADERS = 8;
 const MAX_HEADER_CHARS = 256 * 1024;
 
-function factsOfHeader(path: string, seen: Set<string>, left: { n: number }): DefineFacts {
-  const cached = headerCache.get(path);
+function absorb(into: DefineFacts, inner: DefineFacts, overwrite: boolean): void {
+  for (const [name, shape] of inner.shapes) {
+    if (into.blocked.has(name)) continue;
+    if (overwrite || !into.shapes.has(name)) into.shapes.set(name, shape);
+  }
+  for (const [name, value] of inner.values) if (overwrite || !into.values.has(name)) into.values.set(name, value);
+  for (const name of inner.blocked) {
+    into.blocked.add(name);
+    into.shapes.delete(name);
+  }
+}
+
+function factsOfHeader(path: string, seen: Set<string>, left: { n: number }, dirs: readonly string[]): DefineFacts {
+  const key = `${path}\0${dirs.join("\0")}`;
+  const cached = headerCache.get(key);
   if (cached) return cached;
   if (seen.has(path) || left.n <= 0) return emptyFacts();
   seen.add(path);
@@ -161,43 +189,40 @@ function factsOfHeader(path: string, seen: Set<string>, left: { n: number }): De
   try {
     text = readFileSync(path, "utf8");
   } catch {
-    headerCache.set(path, emptyFacts());
+    headerCache.set(key, emptyFacts());
     return emptyFacts();
   }
   if (text.length > MAX_HEADER_CHARS) text = text.slice(0, MAX_HEADER_CHARS);
   const facts = defineFacts(text);
-  for (const inc of text.matchAll(/^\s*#\s*include\s+"([^"]+)"/gm)) {
-    const next = headerPath(path, inc[1]!);
-    if (!next) continue;
-    const inner = factsOfHeader(next, seen, left);
-    for (const [name, shape] of inner.shapes) if (!facts.shapes.has(name) && !facts.blocked.has(name)) facts.shapes.set(name, shape);
-    for (const [name, value] of inner.values) if (!facts.values.has(name)) facts.values.set(name, value);
-    for (const name of inner.blocked) facts.blocked.add(name);
-  }
-  headerCache.set(path, facts);
+  const take = (include: string, quoted: boolean) => {
+    const next = (quoted ? headerPath(path, include) : null) ?? firstDir(dirs, include);
+    if (!next) return;
+    absorb(facts, factsOfHeader(next, seen, left, dirs), false);
+  };
+  for (const inc of text.matchAll(/^\s*#\s*include\s+"([^"]+)"/gm)) take(inc[1]!, true);
+  for (const inc of text.matchAll(/^\s*#\s*include\s+<([^>]+)>/gm)) take(inc[1]!, false);
+  headerCache.set(key, facts);
   return facts;
 }
 
 /**
- * Shapes from the quoted headers `text` includes, relative to `absolutePath`'s directory, one step of their own
- * includes too. Names the file itself defines are not here.
+ * Shapes from the headers `text` includes. A quoted include is the file's own directory, then `includeDirs`; an
+ * angle include searches `includeDirs` only, and so do the headers those include, up to eight. Names the file itself
+ * defines are not here.
  */
-export function includeFacts(text: string, absolutePath: string): DefineFacts {
+export function includeFacts(text: string, absolutePath: string, includeDirs?: readonly string[]): DefineFacts {
   const facts = emptyFacts();
   if (!text.includes("#include") || !absolutePath) return facts;
+  const dirs = (includeDirs ?? []).filter((d) => d && !d.includes("\0"));
   const seen = new Set<string>();
   const left = { n: MAX_HEADERS };
-  for (const inc of text.matchAll(/^\s*#\s*include\s+"([^"]+)"/gm)) {
-    const path = headerPath(absolutePath, inc[1]!);
-    if (!path) continue;
-    const inner = factsOfHeader(path, seen, left);
-    for (const [name, shape] of inner.shapes) if (!facts.blocked.has(name)) facts.shapes.set(name, shape);
-    for (const [name, value] of inner.values) facts.values.set(name, value);
-    for (const name of inner.blocked) {
-      facts.blocked.add(name);
-      facts.shapes.delete(name);
-    }
-  }
+  const take = (include: string, quoted: boolean) => {
+    const path = (quoted ? headerPath(absolutePath, include) : null) ?? firstDir(dirs, include);
+    if (!path) return;
+    absorb(facts, factsOfHeader(path, seen, left, dirs), true);
+  };
+  for (const inc of text.matchAll(/^\s*#\s*include\s+"([^"]+)"/gm)) take(inc[1]!, true);
+  for (const inc of text.matchAll(/^\s*#\s*include\s+<([^>]+)>/gm)) take(inc[1]!, false);
   return facts;
 }
 
@@ -328,4 +353,25 @@ export function exclusiveFormats(text: string): string[] | null {
   if (!m || !/#\s*error\b/.test(text.slice(m.index, m.index + 400))) return null;
   const names = [...m[1]!.matchAll(/defined\s*\(\s*([A-Za-z_]\w*)\s*\)/g)].map((x) => x[1]!);
   return names.length >= 2 ? names : null;
+}
+
+const CONDITION_NAME = /(?:#\s*(?:ifdef|ifndef|elifdef|elifndef)\s+|defined\s*\(\s*)([A-Za-z_]\w*)/g;
+
+/**
+ * `macros` plus `chosen` defined, and every other condition name the file mentions left undefined, so a `#define`
+ * the file makes inside `#ifndef` of a macro nobody set becomes certain. A name `macros` already states is kept.
+ * The chosen name is last, so it wins over an earlier undefined entry.
+ */
+export function withUnstated(text: string, macros: BuildMacros | undefined, chosen: string): BuildMacros {
+  const out: Array<{ name: string; value?: string; undefined?: boolean }> = [...(macros ?? [])];
+  const stated = new Set(out.map((m) => m.name));
+  if (!stated.has(chosen) || out.find((m) => m.name === chosen)?.undefined) out.push({ name: chosen, value: "1" });
+  stated.add(chosen);
+  for (const m of text.matchAll(CONDITION_NAME)) {
+    const name = m[1]!;
+    if (stated.has(name)) continue;
+    stated.add(name);
+    out.push({ name, undefined: true });
+  }
+  return out;
 }

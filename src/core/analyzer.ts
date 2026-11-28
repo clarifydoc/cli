@@ -170,7 +170,7 @@ import { attachWebhookRoutes } from "./webhook-routes.js";
 import { dropProductionToTestLinks, resolveProjectDispatch } from "../extractors/dispatch/index.js";
 import { applyAutoImports } from "../extractors/imports-exports/auto-imports.js";
 import { applyModuleSearchPaths } from "./module-search-paths.js";
-import { loadCompilationDatabase, macrosOf, macrosStamp, placeIncludes } from "./compilation-database.js";
+import { includesOf, loadCompilationDatabase, macrosOf, macrosStamp, placeIncludes } from "./compilation-database.js";
 import { reconcileProjectRoutes } from "../extractors/route-resolvers/index.js";
 import { resolveProjectApiCalls } from "../extractors/data-sources/index.js";
 import { buildClassIndex } from "./class-index.js";
@@ -1081,12 +1081,19 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
         const manifestKey = normalizeManifestKey(file.relativePath);
 
         // The import-rewrite configuration the cached analysis was made with.
-        const buildMacros = macrosOf(compilationDb.get(file.relativePath));
-        const macroStamp = macrosStamp(compilationDb.get(file.relativePath));
+        const units = compilationDb.get(file.relativePath);
+        const buildMacros = macrosOf(units);
+        const macroStamp = macrosStamp(units);
+        const includeRel = includesOf(units);
+        const includeDirs = includeRel?.flatMap((rel) => {
+          const abs = insideRoot(projectRoot, rel);
+          return abs ? [abs] : [];
+        });
+        const buildStamp = [macroStamp, includeRel && includeRel.length > 0 ? JSON.stringify(includeRel) : undefined].filter((s) => s).join("\n");
         const reading = readingOf(file, projectId);
         const rewriteStamp = keepsManifest ? importRewriteStamp(file, projectRoot, tsconfigAliases) : undefined;
         const resolver = keepsManifest
-          ? withReading(macroStamp ? `${rewriteStamp ?? ""}|${createHash("sha256").update(macroStamp).digest("hex").slice(0, 12)}` : rewriteStamp, reading)
+          ? withReading(buildStamp ? `${rewriteStamp ?? ""}|${createHash("sha256").update(buildStamp).digest("hex").slice(0, 12)}` : rewriteStamp, reading)
           : undefined;
         const stamped = (entry: { mtime: number; sha256: string }): ManifestEntry => (resolver ? { ...entry, resolver } : entry);
 
@@ -1118,6 +1125,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
           file, frameworkIds, projectId, outputOpts, verbose: !!verbose,
           projectRoot, tsconfigAliases, routeScope: routeScopeOf(file.relativePath, projectId),
           ...(buildMacros ? { buildMacros } : {}),
+          ...(includeDirs && includeDirs.length > 0 ? { includeDirs } : {}),
           ...(keepsManifest ? { reportSkips: true as const } : {}),
           ...(reading ? { reading } : {}),
           ...(pool ? { deferWrite: true as const } : {}),
