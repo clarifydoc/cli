@@ -56,6 +56,12 @@ export const cargoPackageManager: PackageManagerSpec = {
     },
     // `[package] name = "x"` — not a workspace-only manifest's `[workspace.package]`.
     selfName: (text) => tomlSectionValue(text, ["package"], "name"),
+    // `[lib] name = "league_lib"`: what an importer writes when the crate's name differs from its package's
+    // (`use league_lib::kickoff`); it names the manifest's own directory.
+    localPackages: (text) => {
+      const lib = tomlSectionValue(text, ["lib"], "name");
+      return lib ? [{ name: lib, path: "." }] : [];
+    },
   }],
   // `serde_json::Value` → `serde-json`: a crate is imported with `_` for its `-`.
   importKey(s) {

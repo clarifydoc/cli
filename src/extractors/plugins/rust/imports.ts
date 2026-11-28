@@ -10,7 +10,8 @@ import { splitTopLevel as splitTopLevelWith } from "../../shared/split-top-level
  * of its parent path naming the leaf (or its `as` alias, with the leaf in
  * `aliases`): `{ source: "league_db_schema::source::site", specifiers: ["Site"] }`; a glob
  * (`traits::*`) imports the module itself with no specifier. Imports of one
- * declaration sharing a parent path are grouped. A `mod x;` declaration is an
+ * declaration sharing a parent path are grouped; `use a::b::{self, C}` also imports `b` from `a`, as `use a::b;` does.
+ * A `mod x;` declaration is an
  * import of `x` from `self`.
  */
 export function extractRustImports(lines: string[]): ImportInfo[] {
@@ -50,7 +51,6 @@ export function extractRustImports(lines: string[]): ImportInfo[] {
       // `use serde;` / `use self::x` alone: the path is the import.
       const source = cut < 0 ? path : path.slice(0, cut);
       const list = bySource.get(source) ?? bySource.set(source, []).get(source)!;
-      if (name === "self") continue;
       if (cut >= 0 && !list.includes(name)) list.push(name);
       // `Car as Motor`: the file names the module's `Car` as `Motor`.
       const original = path.slice(cut + 2);
@@ -84,7 +84,8 @@ function expand(body: string): string[] {
   const out: string[] = [];
   for (const part of splitTop(body.slice(open + 1, close))) {
     if (!part) continue;
-    for (const leaf of expand(part)) out.push(leaf === "self" ? prefix.replace(/::$/, "") + "::self" : prefix + leaf);
+    // A bare `{self}` is the list's own path (`use a::b;`); `{self as sq}` keeps its `a::b::self` leaf, bound as `sq`.
+    for (const leaf of expand(part)) out.push(leaf === "self" ? prefix.replace(/::$/, "") : prefix + leaf);
   }
   return out;
 }

@@ -22,6 +22,7 @@ pub(crate) use super::helpers::{self, fmt};
       "2 league_db_schema::traits {Reportable}",
       "9 crate::utils {}",
       "10 std::collections {Map}",
+      "11 super {helpers}",
       "11 super::helpers {fmt}",
     ]);
   });
@@ -36,6 +37,22 @@ use std::collections::HashMap as Map;
       // An anonymous import (a trait brought into scope) binds no name.
       ["crate::fleet", ["_"], undefined],
       ["std::collections", ["Map"], { Map: "HashMap" }],
+    ]);
+  });
+
+  it("binds the list's own module under its last segment for {self} and a lone {self}, and leaves {self as x} aliasing self", () => {
+    const imports = extractRustImports(`use crate::squad::{self, Coach};
+use crate::scoring::{self as sc};
+use league_core::cup::{self};
+use std::io::{self, Write};
+`.split("\n"));
+    expect(imports.map((i) => [i.source, i.specifiers, i.aliases])).toEqual([
+      ["crate", ["squad"], undefined],
+      ["crate::squad", ["Coach"], undefined],
+      ["crate::scoring", ["sc"], { sc: "self" }],
+      ["league_core", ["cup"], undefined],
+      ["std", ["io"], undefined],
+      ["std::io", ["Write"], undefined],
     ]);
   });
 });
