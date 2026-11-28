@@ -143,6 +143,15 @@ function deadBranches(lines: readonly string[], cplusplus: boolean, buildMacros:
     frame.allFalse = frame.allFalse && cond === false;
   };
   const top = { certain: true, dead: false };
+  /** The directive's rest with continuation lines (`\` at the end) joined, so a multi-line `#if` is one condition. */
+  const restOf = (start: number, first: string): string => {
+    let rest = first.replace(/\\$/, "");
+    for (let j = start; lines[j]!.trimEnd().endsWith("\\") && j + 1 < lines.length; ) {
+      j++;
+      rest += ` ${lines[j]!.replace(/\\$/, "").trim()}`;
+    }
+    return rest;
+  };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     if (!line.includes("#")) continue;
@@ -153,13 +162,13 @@ function deadBranches(lines: readonly string[], cplusplus: boolean, buildMacros:
         const frame = { row: [] as boolean[], allFalse: true, ran: false, certain: false, dead: false };
         out.push(frame.row);
         stack.push(frame);
-        branch(frame, condition(kind, m[2]!), stack.length > 1 ? stack.at(-2)! : top);
+        branch(frame, condition(kind, restOf(i, m[2]!)), stack.length > 1 ? stack.at(-2)! : top);
       } else if (kind === "endif") {
         stack.pop();
       } else if (stack.length > 0) {
-        branch(stack.at(-1)!, kind === "else" ? true : condition(kind, m[2]!), stack.length > 1 ? stack.at(-2)! : top);
+        branch(stack.at(-1)!, kind === "else" ? true : condition(kind, restOf(i, m[2]!)), stack.length > 1 ? stack.at(-2)! : top);
       }
-      while (lines[i]!.endsWith("\\") && i + 1 < lines.length) i++;
+      while (lines[i]!.trimEnd().endsWith("\\") && i + 1 < lines.length) i++;
       continue;
     }
     if (!judge) continue;

@@ -90,3 +90,44 @@ int club_run(int a) { return jog(a); }
     expect(parsed.functions.map((f) => f.name)).toEqual(["club_run"]);
   });
 });
+
+describe("C++26 reflection feature tests left out when the build does not enable them", () => {
+  it("blanks a continued #if of reflection feature macros and reads the rest (real-repo shape)", () => {
+    const source = `#if defined(__cpp_impl_reflection) && defined(__cpp_lib_reflection) && \\
+    defined(__cpp_lib_define_static)
+enum class [[=club::as_names]] colour { red, green, blue };
+void paint_meta(void) { reflect(colour::red); }
+#endif
+int paint(int n) { return coat(n); }
+`;
+    const parsed = readCpp(source);
+    expect(parsed.syntaxErrors).toBe(0);
+    expect(parsed.functions.map((f) => [f.name, f.calls.map((c) => c.name)])).toEqual([["paint", ["coat"]]]);
+  });
+
+  it("reads a file that gates reflection on a project macro derived from the feature tests (real-repo shape)", () => {
+    const source = `#if defined(__cpp_lib_reflection) || defined(__cpp_impl_reflection)
+#define CLUB_REFLECT26 1
+#else
+#define CLUB_REFLECT26 0
+#endif
+#if CLUB_REFLECT26
+auto members = std::meta::nonstatic_data_members_of(^^Club, ctx());
+void meta_kick(void) { use(members); }
+#endif
+int club_kick(int n) { return strike(n); }
+`;
+    const parsed = readCpp(source);
+    expect(parsed.syntaxErrors).toBe(0);
+    expect(parsed.functions.map((f) => f.name)).toEqual(["club_kick"]);
+    // A build that enables the feature tests keeps the reflection arm (the grammar refuses it).
+    expect(readCpp(source, [{ name: "__cpp_impl_reflection", value: "1" }, { name: "__cpp_lib_reflection", value: "1" }]).syntaxErrors).toBeGreaterThan(0);
+  });
+
+  it("leaves a file that already parses unchanged when reflection macros are mentioned only in a comment", () => {
+    const source = `// std::meta and ^^T stay documentation here
+int club_kick(int n) { return strike(n); }
+`;
+    expect(readCpp(source).functions.map((f) => f.name)).toEqual(["club_kick"]);
+  });
+});
