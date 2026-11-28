@@ -2397,7 +2397,7 @@ export interface ParserFrontEnd {
   /** The grammar's name, as the feature names it (`antlr:go`, `tree-sitter:swift`). */
   grammar: string;
   /** Loaded on first use: the parsers are large and most runs never need them. */
-  load(): Promise<(source: string, macros?: BuildMacros, variant?: string) => ParsedStructure>;
+  load(): Promise<(source: string, macros?: BuildMacros, variant?: string, absolutePath?: string) => ParsedStructure>;
   /**
    * The extensions the grammar reads, when the language claims files it does not (Play's `conf/routes` is Scala's):
    * any other file keeps the regex reading without a parse. Absent: every file of the language.

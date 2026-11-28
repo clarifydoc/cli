@@ -11728,13 +11728,13 @@ function macroDefinition(ctx: LinkContext, analysis: FileAnalysis, sourceFile: s
 }
 
 /** How many macros deep a macro's body is followed (`#define A(x) B(x)`). */
-const MACRO_DEPTH = 4;
+const MACRO_DEPTH = 8;
 
 /**
  * A call that landed on a function-like macro's `#define` makes the calls the macro's body makes, as the function
  * around it makes them: the expansion happens at the use, so the body's names resolve in the caller's scope. Each is
  * INFERRED and carries `viaMacro` — its line is the use, which does not spell the name. A macro the body uses is
- * followed in turn, to `MACRO_DEPTH`, never through one already on the way. A macro name in a body is looked up from
+ * followed in turn, eight deep (`MACRO_DEPTH`), never through one already on the way. A macro name in a body is looked up from
  * the caller too (the preprocessor rescans the expansion at the use). The symbol dedupe keeps one row per target, so
  * `viaMacro` names one of the macros that reach it.
  */

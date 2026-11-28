@@ -36,6 +36,20 @@ describe("macros a build states pick the live arm of a conditional", () => {
     expect(calls(text("N == 3 && A"), macros)).toEqual(["yes"]);
   });
 
+  it("adds defined() counts, so exactly one format macro selects its arm", () => {
+    const text = `#if defined(IEEE_LITTLE) + defined(IEEE_BIG) == 1 && defined(IEEE_LITTLE)
+int kick(void) { return little(); }
+#elif defined(IEEE_BIG)
+int kick(void) { return big(); }
+#else
+int kick(void) { return neither(); }
+#endif
+`;
+    expect(calls(text, [{ name: "IEEE_LITTLE", value: "1" }, { name: "IEEE_BIG", undefined: true }])).toEqual(["little"]);
+    expect(calls(text, [{ name: "IEEE_BIG", value: "1" }, { name: "IEEE_LITTLE", undefined: true }])).toEqual(["big"]);
+    expect(calls(text)).toEqual(["little", "big", "neither"]);
+  });
+
   it("follows #elif and #ifndef", () => {
     const text = "#ifndef A\nvoid f(void) { first(); }\n#elif defined(B)\nvoid f(void) { second(); }\n#else\nvoid f(void) { third(); }\n#endif\n";
     expect(calls(text, [{ name: "A", value: "1" }, { name: "B", value: "1" }])).toEqual(["second"]);

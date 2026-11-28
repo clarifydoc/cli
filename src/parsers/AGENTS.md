@@ -93,7 +93,8 @@ the `*-settle.test.ts` of its grammar; read the corpus's full-context fall-backs
 gives equal trees.
 
 - C is read in two passes without `gcc -E`: the names a file uses as types, read off its tokens, then the parse, whose
-  predicates take them for typedef names. The tree walks and macro-body links are in the plugins:
+  predicates take them for typedef names. A file that still does not parse is read with its `#define` shapes standing in
+  for a brace, a cast or a body ([plugins/c/define-shapes.ts](../extractors/plugins/c/define-shapes.ts)). The tree walks and macro-body links are in the plugins:
   [plugins/c/antlr.ts](../extractors/plugins/c/antlr.ts), [plugins/cpp/antlr.ts](../extractors/plugins/cpp/antlr.ts).
 - C and C++ share the `#if` handling ([plugins/shared/preprocessor-branches.ts](../extractors/plugins/shared/preprocessor-branches.ts))
   and the token-level call scan ([plugins/shared/token-calls.ts](../extractors/plugins/shared/token-calls.ts)); how

@@ -91,4 +91,18 @@ describe("function-like #define symbols", () => {
     const same = buildSymbolLinks([{ ...h, projectId: "app" }, c]).filter((l) => l.callName === "for_each_club");
     expect(same.map((l) => l.targetFile)).toEqual(["other/club.h"]);
   });
+
+  it("follows a macro body more than four macros deep", () => {
+    const src = `#define A(x) B(x)
+#define B(x) C(x)
+#define C(x) D(x)
+#define D(x) E(x)
+#define E(x) F(x)
+#define F(x) kick(x)
+int kick(int n) { return n; }
+int play(void) { return A(1); }
+`;
+    const links = buildSymbolLinks([readAs(src, "src/play.c")]);
+    expect(links.some((l) => l.sourceSymbol === "play" && l.targetSymbol === "kick" && l.viaMacro)).toBe(true);
+  });
 });

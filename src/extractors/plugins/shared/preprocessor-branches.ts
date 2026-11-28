@@ -54,11 +54,20 @@ function evaluate(cond: string, macros: MacroState): boolean | undefined {
     bad = true;
     return undefined;
   };
-  const compare = (): number | undefined => {
+  const add = (): number | undefined => {
     let left = primary();
-    while (tokens[at] && /^(==|!=|<=|>=|<|>)$/.test(tokens[at]!)) {
+    while (tokens[at] === "+" || tokens[at] === "-") {
       const op = tokens[at++]!;
       const right = primary();
+      left = left === undefined || right === undefined ? undefined : op === "+" ? left + right : left - right;
+    }
+    return left;
+  };
+  const compare = (): number | undefined => {
+    let left = add();
+    while (tokens[at] && /^(==|!=|<=|>=|<|>)$/.test(tokens[at]!)) {
+      const op = tokens[at++]!;
+      const right = add();
       if (left === undefined || right === undefined) left = undefined;
       else left = (op === "==" ? left === right : op === "!=" ? left !== right : op === "<" ? left < right : op === ">" ? left > right : op === "<=" ? left <= right : left >= right) ? 1 : 0;
     }

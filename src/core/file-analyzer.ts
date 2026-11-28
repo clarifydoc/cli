@@ -147,6 +147,7 @@ export async function readWithParser(
   generated = false,
   buildMacros?: BuildMacros,
   variant?: string,
+  absolutePath?: string,
 ): Promise<{ parsed?: ParsedStructure; frontEnd: NonNullable<FileAnalysis["frontEnd"]> } | null> {
   const plugin = pluginFor(language);
   const choice = plugin?.antlr && featureEnabled(`antlr:${plugin.antlr.grammar}`)
@@ -162,7 +163,7 @@ export async function readWithParser(
   if (source.length > FRONT_END_MAX_CHARS) return { frontEnd: { parser, grammar, fallback: "too-large" } };
   try {
     const read = await frontEnd.load();
-    const parsed = read(source, buildMacros, variant);
+    const parsed = read(source, buildMacros, variant, absolutePath);
     const named = variant ? { variant } : {};
     if (parsed.syntaxErrors > 0) return { frontEnd: { parser, grammar, fallback: "syntax-errors", syntaxErrors: parsed.syntaxErrors, ...named } };
     return { parsed, frontEnd: { parser, grammar, ...named } };
@@ -454,7 +455,7 @@ export async function analyzeFileOutcome(task: FileTask): Promise<FileResult | S
       const { extractWithRegex } = await import("./regex-extractor.js");
       const regexLines = splitLines(regexSource);
       const regexLanguage = pre?.language ?? file.language;
-      const read = await readWithParser(regexLanguage, regexSource, file.relativePath, generated, task.buildMacros, pre?.language ? undefined : task.reading);
+      const read = await readWithParser(regexLanguage, regexSource, file.relativePath, generated, task.buildMacros, pre?.language ? undefined : task.reading, file.absolutePath);
       const analysis = extractWithRegex(regexSource, file.relativePath, regexLanguage, regexLines, read?.parsed);
       if (read) analysis.frontEnd = read.frontEnd;
       const caseInsensitive = pluginFor(analysis.language)?.caseInsensitiveNames === true;

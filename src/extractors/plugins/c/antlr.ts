@@ -27,6 +27,7 @@ import { markLocalCalls, recordPatternCalls, type LocalBinding, type PatternCall
 import { SPECIFIER_KEYWORDS } from "../../../parsers/antlr/c/CKeywords.js";
 import { callStep, nameCall, type CalleeStep } from "../shared/callee-names.js";
 import { blankAsm } from "./rewrites.js";
+import { defineFacts, exclusiveFormats, includeFacts, mergeFacts, pastedFunctionName, rewriteDefineShapes, type DefineFacts } from "./define-shapes.js";
 import { readWithBranches } from "../shared/preprocessor-branches.js";
 import { defineCalls, leftOutCalls, tokenCalls, type TokenKinds } from "../shared/token-calls.js";
 
@@ -63,15 +64,39 @@ const C_TOKENS: TokenKinds = {
  * its tokens the same way (`tokenCalls`): a macro's arguments (`expect_cond("x", cmp(a, b) > 0)`) and a `#define`
  * inside a function, whose calls the function makes where it uses the macro.
  */
-export function readC(source: string, macros?: BuildMacros): ParsedStructure {
+export function readC(source: string, macros?: BuildMacros, _variant?: string, absolutePath?: string): ParsedStructure {
   const text = normalizeSource(source);
-  const parsed = readWithBranches(text, false, read, macros);
+  const readHere = (body: string, also?: string) => read(body, also, absolutePath);
+  const parsed = readWithBranches(text, false, readHere, macros);
   if (parsed.syntaxErrors === 0) return parsed;
   // A file the grammar refuses is read again without what no grammar of C reads and the analysis does not need.
   const rewritten = blankAsm(text);
-  if (rewritten === text) return parsed;
-  const again = readWithBranches(rewritten, false, read, macros);
-  return again.syntaxErrors === 0 ? again : parsed;
+  const asmParsed = rewritten === text ? parsed : readWithBranches(rewritten, false, readHere, macros);
+  if (asmParsed.syntaxErrors === 0) return asmParsed;
+  // Then with the file's own `#define`s standing in for the brace, cast or body the grammar cannot see.
+  const facts = factsFor(rewritten, absolutePath);
+  const shaped = rewriteDefineShapes(rewritten, facts);
+  if (shaped !== rewritten) {
+    const shapedParsed = readWithBranches(shaped, false, readHere, macros);
+    if (shapedParsed.syntaxErrors === 0) return shapedParsed;
+  }
+  // A file that says exactly one of a set of format macros must be defined, and the build named none.
+  const chosen = new Set((macros ?? []).filter((m) => !m.undefined).map((m) => m.name));
+  const formats = exclusiveFormats(rewritten);
+  if (formats && !formats.some((name) => chosen.has(name))) {
+    for (const name of formats) {
+      const attempt = readWithBranches(shaped, false, readHere, [...(macros ?? []), { name, value: "1" }]);
+      if (attempt.syntaxErrors === 0) return attempt;
+    }
+  }
+  return parsed;
+}
+
+/** The file's shapes, plus quoted headers beside it when a path was given. */
+function factsFor(text: string, absolutePath: string | undefined): DefineFacts {
+  const own = defineFacts(text);
+  if (!absolutePath || !text.includes("#include")) return own;
+  return mergeFacts(own, includeFacts(text, absolutePath));
 }
 
 /** A function the walk found: its span, the calls it makes so far, and the lines its definition covers. */
@@ -83,7 +108,7 @@ interface Found {
 }
 
 /** Reads `text`; `also` is code the reading leaves out, lines in place, whose calls go to the function around them. */
-function read(text: string, also?: string): ParsedStructure {
+function read(text: string, also?: string, absolutePath?: string): ParsedStructure {
   let stream: Token[] = [];
   let reader: CParser | undefined;
   const { tree, errors } = parseWithAntlr(
@@ -110,7 +135,19 @@ function read(text: string, also?: string): ParsedStructure {
   for (const f of found) markLocalCalls(f.calls, bindings.get(f.calls) ?? []);
   const functions = found.map(({ span, calls }) => ({ ...span, calls: recordPatternCalls(calls) }));
   functions.sort((a, b) => a.line - b.line);
+  if (errors === 0) renamePasted(functions, text, absolutePath);
   return { functions, topLevelCalls: tables, syntaxErrors: errors };
+}
+
+/** A function a paste macro names (`CLUB_JOIN(club_, kick)`) takes the name the macro builds. */
+function renamePasted(functions: ParsedFunctionSpan[], text: string, absolutePath: string | undefined): void {
+  if (!functions.some((f) => /[A-Z][A-Z0-9_]*[A-Z]/.test(f.name))) return;
+  const facts = factsFor(text, absolutePath);
+  if (facts.shapes.size === 0) return;
+  for (const fn of functions) {
+    const built = pastedFunctionName(text, fn.line, fn.name, facts);
+    if (built) fn.name = built;
+  }
 }
 
 /**

@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { readC } from "./antlr.js";
 
 const shape = (source: string) => {
@@ -564,5 +567,132 @@ club_calloc(size_t n) { return grab(n); }
 }
 `;
     expect(shape(decoy)).toEqual({ errors: 0, functions: [["club_scale", ["CLUB_ATTR", "CLUB_SIZE"]]] });
+  });
+
+  it("reads a block a macro's definition opens and the one it closes (real-repo shape)", () => {
+    const source = `#define FOR_EACH_HOOK_BEGIN(h) for ((h) = (h)->next; (h) != 0; (h) = (h)->next) {
+#define FOR_EACH_HOOK_END }
+
+void run(struct club *hook) {
+  FOR_EACH_HOOK_BEGIN(hook)
+    train(hook);
+  FOR_EACH_HOOK_END
+  finish(hook);
+}
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["run", ["FOR_EACH_HOOK_BEGIN", "train", "finish"]]] });
+    // a call the file already parses stays a call: its body is not a brace
+    const decoy = `#define FOR_EACH_PLAYER(c) trace(c)
+void run(struct club *c) {
+  FOR_EACH_PLAYER(c);
+  train(c);
+}
+`;
+    expect(shape(decoy)).toEqual({ errors: 0, functions: [["run", ["FOR_EACH_PLAYER", "train"]]] });
+  });
+
+  it("reads a function whose body is the macro after its declarator (real-repo shape)", () => {
+    const source = `#define CLUB_NOT_REACHED { abort(); }
+
+void club_boot(int n) CLUB_NOT_REACHED
+
+void club_next(int n) { step(n); }
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["club_boot", ["abort"]], ["club_next", ["step"]]] });
+  });
+
+  it("reads a compound literal whose type is a macro (real-repo shape)", () => {
+    const source = `#define CLUB_BOX (club_t)
+
+club_t make(int n) {
+  return CLUB_BOX{ .n = n };
+}
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["make", []]] });
+    // the same macro called is a call, not a cast
+    const decoy = `#define CLUB_BOX (club_t)
+int scale(int x) { return CLUB_BOX(x) + bonus(x); }
+`;
+    expect(shape(decoy)).toEqual({ errors: 0, functions: [["scale", ["CLUB_BOX", "bonus"]]] });
+  });
+
+  it("names a function by the tokens a paste macro builds, and not when the paste is direct (real-repo shape)", () => {
+    const source = `#define CLUB_VERSION kick
+#define CLUB_JOIN2(a, b) a##b
+#define CLUB_JOIN(a, b) CLUB_JOIN2(a, b)
+
+club_result_t
+CLUB_JOIN(club_, CLUB_VERSION)
+  (int n) {
+  return tally(n);
+}
+`;
+    expect(shape(source).errors).toBe(0);
+    expect(shape(source).functions.map((f) => f[0])).toEqual(["club_kick"]);
+    // a direct paste does not expand its arguments
+    const direct = `#define CLUB_VERSION kick
+#define CLUB_JOIN2(a, b) a##b
+club_result_t CLUB_JOIN2(club_, CLUB_VERSION)(int n) { return tally(n); }
+`;
+    expect(shape(direct).functions.map((f) => f[0])).toEqual(["club_CLUB_VERSION"]);
+    // a macro that does not paste keeps its own name
+    const decoy = `#define CLUB_JOIN(a, b) wrap(a, b)
+club_result_t CLUB_JOIN(club_, kick)(int n) { return tally(n); }
+`;
+    expect(shape(decoy).functions.map((f) => f[0])).toEqual(["CLUB_JOIN"]);
+    // two different bodies: the name is not guessed
+    const twice = `#define CLUB_JOIN(a, b) a##b
+#define CLUB_JOIN(a, b) b##a
+club_result_t CLUB_JOIN(club_, kick)(int n) { return tally(n); }
+`;
+    expect(shape(twice).functions.map((f) => f[0])).toEqual(["CLUB_JOIN"]);
+  });
+
+  it("reads the first format a file says exactly one of, when the build names none (real-repo shape)", () => {
+    const source = `#if defined(IEEE_LITTLE) + defined(IEEE_BIG) != 1
+#error pick one
+#endif
+void kick(void) {
+#ifdef IEEE_LITTLE
+  little_boot();
+}
+#else
+  big_boot();
+}
+#endif
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["kick", ["little_boot"]]] });
+    expect(readC(source, [{ name: "IEEE_BIG", value: "1" }, { name: "IEEE_LITTLE", undefined: true }]).functions.map((f) => f.calls.map((c) => c.name))).toEqual([["big_boot"]]);
+  });
+
+  it("reads a brace a quoted header's macro supplies (real-repo shape)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "club-"));
+    writeFileSync(join(dir, "check.h"), "#define CLUB_TEST_BEGIN do { if (setup()) goto club_abort; } {\n");
+    const source = `#include "check.h"
+int test_kick(void) {
+  CLUB_TEST_BEGIN
+  kick();
+  }
+club_abort:
+  return stop();
+}
+`;
+    const parsed = readC(source, undefined, undefined, join(dir, "test.c"));
+    expect(parsed.syntaxErrors).toBe(0);
+    expect(parsed.functions.map((f) => [f.name, f.calls.map((c) => c.name)])).toEqual([["test_kick", ["kick", "stop"]]]);
+    // a file that parses does not change because a header exists
+    const plain = `#include "check.h"\nint test_kick(void) { return score(1); }\n`;
+    expect(readC(plain, undefined, undefined, join(dir, "plain.c")).functions.map((f) => [f.name, f.calls.map((c) => c.name)])).toEqual([["test_kick", ["score"]]]);
+  });
+
+  it("reads an asm statement whose template names a label", () => {
+    const source = `void club_lock(int *p) {
+  __asm__ __volatile__ goto ("lock; cmpxchgl %1, %0" : "+m"(*p) : "r"(1) : "memory" : lost);
+  return;
+lost:
+  fail(p);
+}
+`;
+    expect(shape(source)).toEqual({ errors: 0, functions: [["club_lock", ["fail"]]] });
   });
 });
