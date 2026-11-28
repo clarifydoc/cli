@@ -7150,7 +7150,9 @@ function forwardedDefinitionUncached(
     if (!e.source) {
       // `import { fitPads } from "./pads"; export { fitPads };` — the name is the import's.
       if (e.name === "*") continue;
-      hit = importedDefinition(ctx, file, inner, depth + 1, seen);
+      // `export { Club as Squad }`: the module's own declaration, not the export row that renames it.
+      const own = e.sourceName ? symbolIn(ctx, file, inner) : undefined;
+      hit = own && own.name === inner && !own.reexport ? { file, def: own } : importedDefinition(ctx, file, inner, depth + 1, seen);
     } else {
       const target = resolveTarget(e.source, file, ctx.filePathMap);
       if (!target || target === file) continue;
@@ -7903,14 +7905,18 @@ function resolveThroughDeclaredType(
     const imported = typeName ? importedTypeRef(ctx, typeName, sourceFile, analysis.projectId) : undefined;
     if (typeName) typeName = imported?.typeName ?? dealias(ctx, typeName, sourceFile);
     // `MatchEvent::HashScore(…)` inside `MatchLog`, which nests `MatchLog::MatchEvent`.
-    const nested = !imported && typeName ? nestedTypeRef(ctx, consumer, typeName, sourceFile, false) : null;
+    // A class a barrel or an export alias passes on under the name the call states (`export { Club as Squad }`).
+    const reexported = !imported && typeName ? reexportedType(ctx, typeName, sourceFile) : null;
+    if (reexported) typeName = reexported.typeName;
+    const nested = !imported && !reexported && typeName ? nestedTypeRef(ctx, consumer, typeName, sourceFile, false) : null;
     if (nested) typeName = nested.typeName;
+    const direct = imported ?? reexported ?? nested;
     const written = call.receiverType?.trim().replace(/^::/, "");
     // A type written through its namespace (`league::Table`) is the declaration in that namespace, whichever
     // namesake (`rally::Table`) the bare name could also reach; a path no declaration bears out falls back to the name.
-    const throughNamespace = !imported && !nested && typeName && written && written !== typeName && /^[A-Za-z_]\w*(?:::[A-Za-z_]\w*)+$/.test(written)
+    const throughNamespace = !direct && typeName && written && written !== typeName && /^[A-Za-z_]\w*(?:::[A-Za-z_]\w*)+$/.test(written)
       ? namespacedTypeRef(ctx, written, sourceFile, undefined) : undefined;
-    let typeFile = imported ? imported.typeFile : nested?.typeFile ?? (throughNamespace ? throughNamespace.typeFile : typeName ? typeFileFor(ctx, typeName, sourceFile, analysis.projectId) : null);
+    let typeFile = direct ? direct.typeFile : (throughNamespace ? throughNamespace.typeFile : typeName ? typeFileFor(ctx, typeName, sourceFile, analysis.projectId) : null);
     if (throughNamespace === null) return null;
     // A language that names a class by its qualified path (`Billing::InvoiceService`)
     // declares it under that name, which the bare name does not find.
@@ -10141,11 +10147,17 @@ function forwardedClass(ctx: LinkContext, file: string, name: string, depth: num
   seen.add(file);
   let found: { typeName: string; typeFile: string } | null = null;
   for (const e of ctx.analysisByFile!.get(file)?.exports ?? []) {
-    if (e.kind !== "re-export" || !e.source || (e.name !== name && e.name !== "*")) continue;
-    const inner = e.name === "*" ? name : e.sourceName ?? name;
-    const target = resolveTarget(e.source, file, ctx.filePathMap);
-    if (!target || target === file) continue;
-    const hit = ctx.classAt.has(memberKey(target, inner)) ? { typeName: inner, typeFile: target } : forwardedClass(ctx, target, inner, depth + 1, seen);
+    let hit: { typeName: string; typeFile: string } | null;
+    if (!e.source && e.sourceName && e.name === name && (e.kind === "re-export" || e.kind === "default")) {
+      // A name the module exports under another name for its own class (`export { Club as Squad }`, `export default Club`).
+      hit = ctx.classAt.has(memberKey(file, e.sourceName)) ? { typeName: e.sourceName, typeFile: file } : null;
+    } else {
+      if (e.kind !== "re-export" || !e.source || (e.name !== name && e.name !== "*")) continue;
+      const inner = e.name === "*" ? name : e.sourceName ?? name;
+      const target = resolveTarget(e.source, file, ctx.filePathMap);
+      if (!target || target === file) continue;
+      hit = ctx.classAt.has(memberKey(target, inner)) ? { typeName: inner, typeFile: target } : forwardedClass(ctx, target, inner, depth + 1, seen);
+    }
     if (!hit) continue;
     if (found && (found.typeFile !== hit.typeFile || found.typeName !== hit.typeName)) return null;
     found = hit;
