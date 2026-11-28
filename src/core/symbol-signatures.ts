@@ -11,6 +11,7 @@ import type {
 import type { ImportIndex } from "../types/project.js";
 import { parseTypeRefs } from "../extractors/shared/type-parser.js";
 import { keyOf } from "./symbol-graph.js";
+import type { RowLines } from "./owner-paths.js";
 
 /**
  * The declared signature of every function the Call Traces view can select —
@@ -28,17 +29,24 @@ export function buildSymbolSignatures(
   dataAccess: SymbolDataAccess[],
   classGraph: ClassGraph,
   importIndex: ImportIndex,
+  rowLines?: RowLines,
 ): SymbolSignature[] {
-  // file::symbol → the line links land on (picks among overloads).
-  const wanted = new Map<string, number | undefined>();
+  // file::symbol → the lines links land on (they pick among overloads and among same-named nested members), and whether a row
+  // names it without a line (a link's source, a function touching data with no line): the first declaration then answers.
+  const wanted = new Map<string, { lines: Set<number> }>();
+  const want = (k: string, line: number | undefined): void => {
+    let w = wanted.get(k);
+    if (!w) wanted.set(k, (w = { lines: new Set() }));
+    if (line !== undefined) w.lines.add(line);
+  };
   for (const l of symbolLinks) {
-    wanted.set(keyOf(l.targetFile, l.targetSymbol), l.targetLine);
+    want(keyOf(l.targetFile, l.targetSymbol), l.targetLine);
     const src = keyOf(l.sourceFile, l.sourceSymbol);
-    if (!wanted.has(src)) wanted.set(src, undefined);
+    if (!wanted.has(src)) want(src, undefined);
   }
   for (const d of dataAccess) {
     const k = keyOf(d.file, d.symbol);
-    if (wanted.get(k) === undefined) wanted.set(k, d.symbolLine);
+    if (!wanted.has(k) || wanted.get(k)!.lines.size === 0) want(k, d.symbolLine);
   }
   if (wanted.size === 0) return [];
 
@@ -74,18 +82,24 @@ export function buildSymbolSignatures(
   const done = new Set<string>();
   const consider = (a: FileAnalysis, fn: FunctionInfo, symbol: string) => {
     const k = keyOf(a.filePath, symbol);
-    if (!wanted.has(k) || done.has(k)) return;
-    const line = wanted.get(k);
-    // An overload other than the one the links land on waits for that one.
-    if (line !== undefined && fn.line !== line && overloadAt(a, symbol, line)) return;
+    const w = wanted.get(k);
+    if (!w) return;
+    // Each declaration the links land on has its row; an overload no link lands on waits for the ones that are landed on.
+    const landed = w.lines.has(fn.line);
+    if (!landed && w.lines.size > 0 && [...w.lines].some((line) => overloadAt(a, symbol, line))) return;
+    const once = landed ? `${k}|${fn.line}` : k;
+    if (done.has(once)) return;
     if (fn.params.length === 0 && !fn.returnType) return;
-    done.add(k);
-    out.push({
+    done.add(once);
+    const row: SymbolSignature = {
       file: a.filePath,
       symbol,
       params: fn.params.map((p) => typed(p.type, a, p.name)),
       ...(fn.returnType ? { returns: typed(fn.returnType, a) } : {}),
-    });
+    };
+    // `qualifyNestedSymbols` spells the symbol as the link ending here does, by the line the function starts on.
+    rowLines?.set(row, fn.line);
+    out.push(row);
   };
   for (const a of analyses) {
     for (const fn of a.functions) consider(a, fn, fn.name);

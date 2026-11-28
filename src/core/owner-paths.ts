@@ -311,6 +311,14 @@ export function symbolAnswersTo(symbol: string, typed: string): boolean {
   return hit(s) || (!want.includes("(") && hit(bareSymbol(s)));
 }
 
+/**
+ * One run's side table of the declaration line a summary row names by its label alone — a member-effect row's class
+ * (`FieldWriteRow.class`), a symbol signature's function: kept off the row, so the summary does not grow. The analyzer
+ * makes one per run and hands it to the passes that build those rows and to `qualifyNestedSymbols`, which reads it to
+ * tell two nested namesakes apart.
+ */
+export type RowLines = WeakMap<object, number>;
+
 /** What `qualifyNestedSymbols` changed, by section. */
 export interface QualifyCounts {
   symbolLinks: number;
@@ -331,7 +339,7 @@ export interface QualifyCounts {
  * (`Builder.build` in both `Left` and `Right`) is told apart by the line the section states. A `symbolReach`
  * row states no line, so a name that stands for two declarations stays as written.
  */
-export function qualifyNestedSymbols(project: ProjectAnalysis, analyses: readonly FileAnalysis[]): QualifyCounts {
+export function qualifyNestedSymbols(project: ProjectAnalysis, analyses: readonly FileAnalysis[], rowLines?: RowLines): QualifyCounts {
   const counts: QualifyCounts = { symbolLinks: 0, complexity: 0, symbolDataAccess: 0, symbolReach: 0 };
   const indexes = new Map<string, OwnerIndex>();
   for (const a of analyses) {
@@ -385,6 +393,37 @@ export function qualifyNestedSymbols(project: ProjectAnalysis, analyses: readonl
       const q = h.line !== undefined ? ix.functionContaining(h.symbol, h.line) : ix.symbolNamed(h.symbol);
       if (q !== undefined && q !== h.symbol) { h.symbol = q; counts.dataFlows = (counts.dataFlows ?? 0) + 1; }
     }
+  }
+  // Field writes, reads and thrown types name the function that performs them by the line the row states (inside it) and
+  // the class a field belongs to by the line that class is declared on (`rowLines`; no row states the label's line).
+  for (const rows of [project.fieldWrites, project.fieldReads, project.thrownTypes]) {
+    for (const r of (rows ?? []) as Array<{ function: string; file: string; line: number; class?: string; classFile?: string }>) {
+      const q = indexes.get(r.file)?.functionContaining(r.function, r.line);
+      if (q !== undefined) r.function = q;
+      const cl = rowLines?.get(r);
+      if (r.class !== undefined && r.classFile !== undefined && cl !== undefined) {
+        const qc = indexes.get(r.classFile)?.classSymbol(r.class, cl);
+        if (qc !== undefined) r.class = qc;
+      }
+    }
+  }
+  // A signature is drawn beside the symbol a link ends at, so it carries that link's id; a profile's most concern-heavy functions
+  // state the line they start on.
+  for (const g of project.symbolSignatures ?? []) {
+    const line = rowLines?.get(g);
+    const q = line === undefined ? undefined : indexes.get(g.file)?.functionSymbol(g.symbol, line);
+    if (q !== undefined) g.symbol = q;
+  }
+  const top = (file: string, rows: Array<{ symbol: string; line: number }>): void => {
+    const ix = indexes.get(file);
+    if (!ix) return;
+    for (const t of rows) t.symbol = ix.functionSymbol(t.symbol, t.line);
+  };
+  const seenTop = new Set<object>();
+  for (const r of project.responsibilityProfiles ?? []) if (r.topSymbols && !seenTop.has(r.topSymbols)) { seenTop.add(r.topSymbols); top(r.filePath, r.topSymbols); }
+  for (const r of project.refactorPressure ?? []) {
+    const rows = r.concentration?.topSymbols;
+    if (rows && !seenTop.has(rows)) { seenTop.add(rows); top(r.filePath, rows); }
   }
   return counts;
 }

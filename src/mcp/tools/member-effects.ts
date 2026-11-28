@@ -1,13 +1,29 @@
 import type { ProjectAnalysis } from "../../types/analysis.js";
 import { bulletList, loc, plural } from "../format.js";
 import { noResults } from "../empty.js";
+import { symbolAnswersTo } from "../../core/owner-paths.js";
+
+/**
+ * The rows of `Class.member` a person typed: a class id that ends in the typed class path (`Left.Builder` answers
+ * `Builder` and `Left.Builder`), else, for a path with a namespace in front (`League.Match.score`), the class's last
+ * segment. A summary written earlier holds plain labels, which the second rule reads.
+ */
+function inClass<T extends { class: string }>(rows: readonly T[], cls: string): T[] {
+  const want = cls.toLowerCase();
+  const path = rows.filter((r) => symbolAnswersTo(r.class, want));
+  if (path.length > 0) return path;
+  const last = cls.slice(cls.lastIndexOf(".") + 1);
+  return rows.filter((r) => r.class === last);
+}
 
 /**
  * What a function writes, reads and throws (`ProjectAnalysis.fieldWrites` / `fieldReads` / `thrownTypes`), as lines for `clarifydoc_explain`.
  * Null when it states neither. `file` narrows to one definition when the name is declared in several files.
  */
 export function functionEffectsText(summary: ProjectAnalysis, symbol: string, file?: string): string | null {
-  const here = (r: { function: string; file: string }): boolean => (r.function === symbol || r.function.endsWith(`.${symbol}`)) && (!file || r.file === file);
+  // A typed overload id (`Squad.Pick(int)`) answers to one overload; the name finds every overload.
+  const want = symbol.toLowerCase();
+  const here = (r: { function: string; file: string }): boolean => symbolAnswersTo(r.function, want) && (!file || r.file === file);
   const writes = (summary.fieldWrites ?? []).filter(here);
   const throws = (summary.thrownTypes ?? []).filter(here);
   const reads = (summary.fieldReads ?? []).filter(here);
@@ -51,7 +67,7 @@ export function writersText(summary: ProjectAnalysis, symbol: string, limit: num
   const dot = symbol.lastIndexOf(".");
   const cls = dot > 0 ? symbol.slice(0, dot) : "";
   const member = dot > 0 ? symbol.slice(dot + 1) : "";
-  const writes = dot > 0 ? (summary.fieldWrites ?? []).filter((w) => w.class === cls.slice(cls.lastIndexOf(".") + 1) && w.member === member && (!file || w.classFile === file)) : [];
+  const writes = dot > 0 ? inClass((summary.fieldWrites ?? []).filter((w) => w.member === member && (!file || w.classFile === file)), cls) : [];
   const thrown = (summary.thrownTypes ?? []).filter((t) => (t.type === symbol || t.type.endsWith(`.${symbol}`)) && (!file || t.classFile === file));
   if (writes.length === 0 && thrown.length === 0) {
     const members = [...new Set((summary.fieldWrites ?? []).map((w) => `${w.class}.${w.member}`))].sort();
@@ -85,7 +101,7 @@ export function readersText(summary: ProjectAnalysis, symbol: string, limit: num
   const dot = symbol.lastIndexOf(".");
   const cls = dot > 0 ? symbol.slice(0, dot) : "";
   const member = dot > 0 ? symbol.slice(dot + 1) : "";
-  const reads = dot > 0 ? (summary.fieldReads ?? []).filter((r) => r.class === cls.slice(cls.lastIndexOf(".") + 1) && r.member === member && (!file || r.classFile === file)) : [];
+  const reads = dot > 0 ? inClass((summary.fieldReads ?? []).filter((r) => r.member === member && (!file || r.classFile === file)), cls) : [];
   if (reads.length === 0) {
     const all = summary.fieldReads ?? [];
     const members = [...new Set(all.map((r) => `${r.class}.${r.member}`))].sort();

@@ -189,7 +189,7 @@ import { buildImportDirectoryResolver } from "./import-directories.js";
 import { applyAttributeRequests } from "./attribute-requests.js";
 import { demoteProjectCallDataSources } from "./project-call-data-sources.js";
 import { denormalizeFileAnalysis, denormalizeProject } from "./element-registry.js";
-import { qualifyNestedSymbols } from "./owner-paths.js";
+import { qualifyNestedSymbols, type RowLines } from "./owner-paths.js";
 import { collectMockedModules, collectTestFunctions, collectTestSuites, collectTestTargets } from "./test-functions.js";
 import {
   UNUSED_IMPORTS_LIMIT,
@@ -1876,7 +1876,9 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // Field assignments and thrown exception types, resolved to the classes they name.
   // A test file by its language's own rule too (Go `_test.go`), never only the generic folder names.
   const effectLanguages = new Map(allAnalyses.map((a) => [a.filePath, a.language as Language]));
-  const memberEffects = joinMemberEffects(allAnalyses, (f) => !isUnauthored(f) && !isTestFile(f, effectLanguages.get(f)));
+  // The declaration line of rows that name a class or function by label alone, for `qualifyNestedSymbols` (one run's table).
+  const rowLines: RowLines = new WeakMap();
+  const memberEffects = joinMemberEffects(allAnalyses, (f) => !isUnauthored(f) && !isTestFile(f, effectLanguages.get(f)), rowLines);
 
   // Non-code files the code opens by a literal path.
   const configFiles = await joinConfigFiles(allAnalyses, subProjects, (f) => !isUnauthored(f), (f, l) => isTestFile(f, l), diskFileExists(projectRoot));
@@ -2141,7 +2143,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   // declare (a repository typed by an entity from a dependency).
   reconcileProjectEntities(allAnalyses);
   // An attribute assignment no setter serves is a write of the column the entity pass just joined onto the class.
-  const attributeWrites = joinAttributeWrites(attributeWriteSites, allAnalyses, (f) => !isUnauthored(f) && !isTestFile(f, effectLanguages.get(f)));
+  const attributeWrites = joinAttributeWrites(attributeWriteSites, allAnalyses, (f) => !isUnauthored(f) && !isTestFile(f, effectLanguages.get(f)), rowLines);
   if (attributeWrites.length > 0) {
     const have = new Set(memberEffects.fieldWrites.map((w) => `${w.file}\0${w.function}\0${w.line}\0${w.member}`));
     for (const w of attributeWrites) if (!have.has(`${w.file}\0${w.function}\0${w.line}\0${w.member}`)) memberEffects.fieldWrites.push(w);
@@ -2260,7 +2262,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
     progress.detail(`  MQ publish→consume trace links: ${queueSymbolLinks.length}`);
   }
   // What goes into and comes out of each traced function, for the trace diagram.
-  const symbolSignatures = buildSymbolSignatures(allAnalyses, symbolLinks, symbolDataAccess, classGraph, importIndex);
+  const symbolSignatures = buildSymbolSignatures(allAnalyses, symbolLinks, symbolDataAccess, classGraph, importIndex, rowLines);
 
   // Project level: which sub-project calls or messages which, made of the
   // HTTP and broker links above, with the deployment edge that agrees.
@@ -2777,7 +2779,7 @@ async function runPipeline(options: AnalyzeOptions): Promise<AnalyzeResult> {
   }
   // Last: every pass above matched a symbol to its declaration by name. From here a nested or function-local
   // declaration is spelled by its owner path (`Left.Builder.build`), which is what the output and the report hold.
-  qualifyNestedSymbols(summary, allAnalyses);
+  qualifyNestedSymbols(summary, allAnalyses, rowLines);
   // Build the report payload from the in-memory (denormalized) summary BEFORE
   // writeProjectSummary, which normalizes for on-disk storage. Written so the
   // report viewer (SPA / server) can fetch it directly.

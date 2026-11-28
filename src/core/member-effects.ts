@@ -3,6 +3,7 @@ import { receiverTypeName } from "../extractors/shared/type-parser.js";
 import { manifestFor } from "../extractors/registry.js";
 import { importResolveContext } from "./import-index.js";
 import { declaresEvidenceName, evidenceFullName } from "./class-evidence.js";
+import type { RowLines } from "./owner-paths.js";
 import { escapeRegex } from "../extractors/plugins/shared/path-utils.js";
 
 /**
@@ -46,6 +47,7 @@ type LanguageName = Parameters<typeof manifestFor>[0];
 export function joinMemberEffects(
   analyses: readonly FileAnalysis[],
   include: (file: string) => boolean = () => true,
+  rowLines?: RowLines,
 ): { fieldWrites: FieldWriteRow[]; thrownTypes: ThrownTypeRow[]; fieldReads: FieldReadRow[] } {
   const byName = new Map<string, ClassRef[]>();
   for (const a of analyses) {
@@ -305,7 +307,9 @@ export function joinMemberEffects(
         target = typed ? declaring(typed)(w.member)?.ref ?? null : null;
       }
       if (!target) continue;
-      fieldWrites.push({ class: target.cls.name, classFile: target.file, member: w.member, function: symbol, file: a.filePath, line: w.line, via });
+      const row: FieldWriteRow = { class: target.cls.name, classFile: target.file, member: w.member, function: symbol, file: a.filePath, line: w.line, via };
+      rowLines?.set(row, target.cls.line);
+      fieldWrites.push(row);
     }
     for (const r of fn.fieldReads ?? []) {
       // A read names a property its class DECLARES (an own or inherited one): never the owner by default, a method or an undeclared name.
@@ -324,7 +328,11 @@ export function joinMemberEffects(
         const typed = type ? locate(type, a.filePath, project, r.line) : null;
         target = typed ? declaring(typed)(r.member)?.ref ?? null : null;
       }
-      if (target) fieldReads.push({ class: target.cls.name, classFile: target.file, member: r.member, function: symbol, file: a.filePath, line: r.line, via });
+      if (target) {
+        const row: FieldReadRow = { class: target.cls.name, classFile: target.file, member: r.member, function: symbol, file: a.filePath, line: r.line, via };
+        rowLines?.set(row, target.cls.line);
+        fieldReads.push(row);
+      }
     }
     for (const t of fn.throws ?? []) {
       const known = locate(t.type, a.filePath, project, t.line);

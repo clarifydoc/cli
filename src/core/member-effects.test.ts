@@ -635,14 +635,15 @@ describe("member effects, Ruby", () => {
 
   it("lists instance-variable, class-variable and writer-method writes in the class that declares them", () => {
     expect(rows()).toEqual([
-      "Base.status <- Club.win:13 this app/models/base.rb",
-      "Club.@@count <- Club.initialize:7 this app/models/club.rb",
-      "Club.budget <- Club.win:15 this app/models/club.rb",
-      "Club.id <- Club.win:14 this app/models/club.rb",
-      "Club.items <- Club.win:11 this app/models/club.rb",
-      "Club.name <- Club.win:12 this app/models/club.rb",
-      "Club.name <- Garage.tidy:10 typed app/models/club.rb",
-      "Club.points <- Club.win:10 this app/models/club.rb",
+      // `Club` is declared inside `module League`: its id is the owner path, as the links spell it.
+      "Base.status <- League.Club.win:13 this app/models/base.rb",
+      "League.Club.@@count <- League.Club.initialize:7 this app/models/club.rb",
+      "League.Club.budget <- League.Club.win:15 this app/models/club.rb",
+      "League.Club.id <- League.Club.win:14 this app/models/club.rb",
+      "League.Club.items <- League.Club.win:11 this app/models/club.rb",
+      "League.Club.name <- Garage.tidy:10 typed app/models/club.rb",
+      "League.Club.name <- League.Club.win:12 this app/models/club.rb",
+      "League.Club.points <- League.Club.win:10 this app/models/club.rb",
       "Notes.real <- Notes.run:8 this app/models/notes.rb",
       "Other.name <- Other.win:30 this app/models/club.rb",
     ]);

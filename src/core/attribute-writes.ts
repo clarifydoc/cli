@@ -1,4 +1,5 @@
 import type { ClassInfo, FieldWriteRow, FileAnalysis } from "../types/analysis.js";
+import type { RowLines } from "./owner-paths.js";
 import type { AttributeWriteSite } from "./symbol-linker.js";
 
 /**
@@ -12,6 +13,7 @@ export function joinAttributeWrites(
   sites: readonly AttributeWriteSite[],
   analyses: readonly FileAnalysis[],
   include: (file: string) => boolean = () => true,
+  rowLines?: RowLines,
 ): FieldWriteRow[] {
   if (sites.length === 0) return [];
   const byFile = new Map(analyses.map((a) => [a.filePath, a]));
@@ -35,7 +37,9 @@ export function joinAttributeWrites(
         const key = `${site.file}\0${site.function}\0${site.line}\0${site.member}`;
         if (!seen.has(key)) {
           seen.add(key);
-          rows.push({ class: at.cls.name, classFile: at.file, member: site.member, function: site.function, file: site.file, line: site.line, via: "typed" });
+          const row: FieldWriteRow = { class: at.cls.name, classFile: at.file, member: site.member, function: site.function, file: site.file, line: site.line, via: "typed" };
+          rowLines?.set(row, at.cls.line);
+          rows.push(row);
         }
         break;
       }
