@@ -2,6 +2,9 @@ import type { Node, Tree } from "web-tree-sitter";
 import type { NameAliasInfo, TypeAliasInfo } from "../../../types/analysis.js";
 
 const NAMED_TYPES = new Set(["type_identifier", "nested_type_identifier", "generic_type"]);
+/** Generic wrappers that keep the members of their first argument (`Readonly<{ read(): number }>`). */
+export const MEMBER_PRESERVING_WRAPPERS: ReadonlySet<string> = new Set(["Readonly", "Partial", "Required"]);
+
 const EMPTY_TYPES = new Set(["null", "undefined"]);
 
 /**

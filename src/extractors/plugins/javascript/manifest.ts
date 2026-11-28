@@ -45,6 +45,19 @@ const JS_BUILTIN_MEMBERS = [...new Set([
 ])];
 
 /**
+ * DOM element and event-target members (`el.getAttribute`, `node.closest`, `btn.addEventListener`). A plain
+ * receiver the project cannot type is a DOM node far more often than the one project type that declares the
+ * name: an object type alias mirroring the DOM (`type Assignable = { getAttribute: (n: string) => string }`)
+ * took every page's `el.getAttribute(...)` by name (real-repo FP). A receiver typed by such a type still links.
+ */
+const JS_DOM_MEMBERS = [
+  "getAttribute", "setAttribute", "removeAttribute", "hasAttribute", "toggleAttribute",
+  "querySelector", "querySelectorAll", "closest", "matches", "getBoundingClientRect",
+  "appendChild", "removeChild", "insertBefore", "replaceWith", "replaceChildren", "cloneNode",
+  "addEventListener", "removeEventListener", "dispatchEvent", "scrollIntoView",
+];
+
+/**
  * JS/TS test files beyond the generic `*.test.*` / `*.spec.*` / `__tests__/`
  * conventions: `_spec.js`/`-spec.ts` (Cypress integration specs), `.cy.ts`
  * (Cypress component tests), and `_test.js`. Extension class covers
@@ -203,6 +216,7 @@ export const typescriptManifest: LanguagePluginManifest = {
   folderRoleRoots: JS_FOLDER_ROLE_ROOTS,
   testSubjectAffixes: { suffixes: [".cy", "_spec", "-spec", "_test", "-test"] },
   builtinMembers: JS_BUILTIN_MEMBERS,
+  untypedReceiverMembers: JS_DOM_MEMBERS,
   frameworkImportHints: NPM_FRAMEWORK_HINTS,
   // Family plugin: npm-ecosystem framework rules ride on the typescript
   // manifest only, so the registry sees each rule exactly once.
@@ -265,5 +279,6 @@ export const javascriptManifest: LanguagePluginManifest = {
   folderRoleRoots: JS_FOLDER_ROLE_ROOTS,
   testSubjectAffixes: { suffixes: [".cy", "_spec", "-spec", "_test", "-test"] },
   builtinMembers: JS_BUILTIN_MEMBERS,
+  untypedReceiverMembers: JS_DOM_MEMBERS,
   frameworkImportHints: NPM_FRAMEWORK_HINTS,
 };

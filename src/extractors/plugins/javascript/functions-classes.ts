@@ -55,6 +55,7 @@ import { ELEMENT_CALLBACKS, KEEPS_ELEMENTS, collectionElement } from "./element-
 import { destructuredParamTypes, objectTypesOf, paramNameSet, type ObjectTypes } from "./destructured-params.js";
 import { awaitedCall } from "./node-utils.js";
 import { callbackTarget } from "./call-hooks.js";
+import { MEMBER_PRESERVING_WRAPPERS } from "./type-aliases.js";
 
 /** A local variable whose type the body states (see `FunctionInfo.localTypes`). */
 type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
@@ -2093,6 +2094,32 @@ function withoutPrototypeMembers(functions: FunctionInfo[], classes: readonly Pr
   });
 }
 
+/** The function type a property signature is typed by (`kick: (p: string) => void`, parentheses allowed). */
+function functionTypeOf(member: Node): Node | null {
+  let t = member.childForFieldName("type")?.namedChild(0) ?? null;
+  while (t?.type === "parenthesized_type") t = t.namedChild(0);
+  return t?.type === "function_type" ? t : null;
+}
+
+/**
+ * An interface-like ClassInfo. An interface has no runtime base: the first `extends` keeps the shape other
+ * consumers expect, and the rest ride along in `implements` so the impl map can match on either.
+ */
+function interfaceInfo(name: string, bases: string[], methods: FunctionInfo[], properties: PropertyInfo[], isExported: boolean, node: Node): ClassInfo {
+  return {
+    name,
+    extends: bases[0] ?? null,
+    implements: bases.slice(1),
+    decorators: [],
+    methods,
+    properties,
+    isExported,
+    line: node.startPosition.row + 1,
+    endLine: node.endPosition.row + 1,
+    kind: "interface",
+  };
+}
+
 export class JavaScriptExtractor extends FunctionClassExtractor {
   readonly languages: Language[] = ["typescript", "javascript"];
 
@@ -3322,6 +3349,9 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       classes.push(this.parseJsClass(node, isExported));
     } else if (node.type === "interface_declaration") {
       classes.push(this.parseTsInterface(node, isExported));
+    } else if (node.type === "type_alias_declaration") {
+      const alias = this.parseTsTypeAlias(node, isExported);
+      if (alias) classes.push(alias);
     } else if (node.type === "enum_declaration") {
       classes.push(parseTsEnum(node, isExported));
     } else if (node.type === "lexical_declaration" || node.type === "variable_declaration") {
@@ -3358,51 +3388,127 @@ export class JavaScriptExtractor extends FunctionClassExtractor {
       }
     }
 
-    const methods: FunctionInfo[] = [];
-    const properties: PropertyInfo[] = [];
-    const body = node.childForFieldName("body");
-    if (body) {
-      for (const member of body.namedChildren) {
-        if (member.type === "method_signature") {
-          methods.push({
-            name: member.childForFieldName("name")?.text ?? "anonymous",
-            params: this.extractJsParams(member.childForFieldName("parameters")),
-            returnType: member.childForFieldName("return_type")?.text?.replace(/^:\s*/, "") ?? null,
-            isAsync: false,
-            isExported: false,
-            decorators: [],
-            calls: [],
-            line: member.startPosition.row + 1,
-            endLine: member.endPosition.row + 1,
-          });
-        } else if (member.type === "property_signature") {
-          properties.push({
-            name: member.childForFieldName("name")?.text ?? "unknown",
-            type: member.childForFieldName("type")?.text?.replace(/^:\s*/, "") ?? null,
-            visibility: null,
-            isStatic: false,
-            isReadonly: member.text.includes("readonly "),
-            isRequired: !hasOptionalMarker(member),
-          });
-        }
-      }
-    }
+    const { methods, properties } = this.tsSignatureMembers(node.childForFieldName("body"), false);
 
+    return interfaceInfo(name, extendsList, methods, properties, isExported, node);
+  }
+
+  /** A bodiless function, as an interface or an object type alias states one. */
+  private signatureFn(name: string, params: Node | null, returnType: string | null, at: Node): FunctionInfo {
     return {
       name,
-      // An interface has no runtime base; the first `extends` keeps the shape
-      // other consumers expect, and the rest ride along in `implements` so the
-      // impl map can match on either (it inspects both).
-      extends: extendsList[0] ?? null,
-      implements: extendsList.slice(1),
+      params: this.extractJsParams(params),
+      returnType,
+      isAsync: false,
+      isExported: false,
       decorators: [],
-      methods,
-      properties,
-      isExported,
-      line: node.startPosition.row + 1,
-      endLine: node.endPosition.row + 1,
-      kind: "interface",
+      calls: [],
+      line: at.startPosition.row + 1,
+      endLine: at.endPosition.row + 1,
     };
+  }
+
+  /**
+   * The members an object type states (an interface body or the `{ … }` of a type alias): a method signature is a
+   * method; with `fnProperties` (a type alias) a property typed by a function type (`kick: (p: string) => void`) is
+   * a method and a property both. An interface keeps it a property only: stating it a method linked an untyped
+   * `ctx.onPurge` by name to an interface's callback property, and a React props interface's callbacks
+   * (`onClick: () => void`) would all become bodiless method targets.
+   */
+  private tsSignatureMembers(body: Node | null, fnProperties: boolean): { methods: FunctionInfo[]; properties: PropertyInfo[] } {
+    const methods: FunctionInfo[] = [];
+    const properties: PropertyInfo[] = [];
+    for (const member of body?.namedChildren ?? []) {
+      if (member.type === "method_signature") {
+        methods.push(this.signatureFn(
+          member.childForFieldName("name")?.text ?? "anonymous",
+          member.childForFieldName("parameters"),
+          member.childForFieldName("return_type")?.text?.replace(/^:\s*/, "") ?? null,
+          member,
+        ));
+      } else if (member.type === "property_signature") {
+        const name = member.childForFieldName("name")?.text ?? "unknown";
+        properties.push({
+          name,
+          type: member.childForFieldName("type")?.text?.replace(/^:\s*/, "") ?? null,
+          visibility: null,
+          isStatic: false,
+          isReadonly: member.text.includes("readonly "),
+          isRequired: !hasOptionalMarker(member),
+        });
+        const fn = fnProperties ? functionTypeOf(member) : null;
+        if (fn) methods.push(this.signatureFn(name, fn.childForFieldName("parameters"), fn.childForFieldName("return_type")?.text?.replace(/^=>\s*/, "") ?? null, member));
+      }
+    }
+    return { methods, properties };
+  }
+
+  /**
+   * `type ClubApi = { sign(p: string): void }` as a structural interface-like ClassInfo, so a call on a value of the
+   * alias reaches its member as it does for an interface. The members come from the object type, through a
+   * `Readonly`/`Partial`/`Required` wrapper, and from each object part of an intersection; a named part
+   * (`A & { … }`) is a base, as an interface `extends`. Anything else (a union, a function type, a bare name) is no
+   * object. The wrapper is the library's unless this FILE declares a type of that name or the alias has a type
+   * parameter of it (a declaration in another file is not seen).
+   *
+   * An alias without a method states nothing. That works around core's unique-name fallback crossing languages: a
+   * data-only TS `Event` row took a match from an Elixir module of the same name. It also keeps the hot path cheap:
+   * the shape and a method are checked before any row is built.
+   */
+  private parseTsTypeAlias(node: Node, isExported: boolean): ClassInfo | null {
+    const name = node.childForFieldName("name")?.text;
+    const value = node.childForFieldName("value");
+    if (!name || !value) return null;
+    let shadowed: Set<string> | undefined;
+    const isShadowed = (wrapper: string): boolean => {
+      if (!shadowed) {
+        shadowed = new Set<string>();
+        for (const tp of node.childForFieldName("type_parameters")?.namedChildren ?? []) {
+          const n = tp.childForFieldName("name")?.text;
+          if (n) shadowed.add(n);
+        }
+        const scope = node.parent?.type === "export_statement" ? node.parent.parent : node.parent;
+        for (const sib of scope?.namedChildren ?? []) {
+          const d = sib.type === "export_statement" ? sib.childForFieldName("declaration") : sib;
+          if (d && (d.type === "type_alias_declaration" || d.type === "interface_declaration")) {
+            const n = d.childForFieldName("name")?.text;
+            if (n) shadowed.add(n);
+          }
+        }
+      }
+      return shadowed.has(wrapper);
+    };
+    const unwrap = (t: Node): Node => {
+      while (t.type === "parenthesized_type") t = t.namedChild(0) ?? t;
+      if (t.type !== "generic_type") return t;
+      const wrapper = t.childForFieldName("name")?.text;
+      const arg = t.childForFieldName("type_arguments")?.namedChildren[0];
+      return wrapper && MEMBER_PRESERVING_WRAPPERS.has(wrapper) && arg && !isShadowed(wrapper) ? unwrap(arg) : t;
+    };
+    const top = unwrap(value);
+    if (top.type !== "object_type" && top.type !== "intersection_type") return null;
+    const parts: Node[] = [];
+    const bases: string[] = [];
+    const collect = (t: Node): boolean => {
+      t = unwrap(t);
+      if (t.type === "object_type") parts.push(t);
+      else if (t.type === "intersection_type") return t.namedChildren.every(collect);
+      else if (t.type === "type_identifier" || t.type === "generic_type") {
+        const bare = bareTypeName(t.text);
+        if (!bare) return false;
+        bases.push(bare);
+      } else return false;
+      return true;
+    };
+    if (!collect(top) || !parts.some((part) => part.namedChildren.some((m) => m.type === "method_signature" || (m.type === "property_signature" && functionTypeOf(m))))) return null;
+    const methods: FunctionInfo[] = [];
+    const properties: PropertyInfo[] = [];
+    for (const part of parts) {
+      const m = this.tsSignatureMembers(part, true);
+      methods.push(...m.methods);
+      properties.push(...m.properties);
+    }
+    return { ...interfaceInfo(name, bases, methods, properties, isExported, node), structural: true };
   }
 
   private parseJsClass(node: Node, isExported: boolean, boundName?: string): ClassInfo {

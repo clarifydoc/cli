@@ -4,6 +4,7 @@
 import type { Node } from "web-tree-sitter";
 import type { FunctionInfo, ParamInfo } from "../../functions-classes/base.js";
 import { escapeRegex } from "../shared/path-utils.js";
+import { MEMBER_PRESERVING_WRAPPERS } from "./type-aliases.js";
 
 type LocalType = NonNullable<FunctionInfo["localTypes"]>[number];
 
@@ -207,7 +208,7 @@ export function objectTypesOf(root: Node): Map<string, Map<string, string>> {
 /** A type name that is most likely a generic parameter (`T`, `TProps`), never a class a project declares. */
 const GENERIC_PARAMETER = /^[A-Z]$|^T[A-Z]\w*$/;
 
-const TRANSPARENT_WRAPPERS = new Set(["Readonly", "Required", "Partial", "NonNullable", "Pick", "Omit"]);
+const TRANSPARENT_WRAPPERS = new Set([...MEMBER_PRESERVING_WRAPPERS, "NonNullable", "Pick", "Omit"]);
 
 /**
  * The type a wrapped annotation stands for: `Readonly<Props>`, `Pick<Props, "table">` and the like keep the members
