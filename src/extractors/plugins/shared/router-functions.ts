@@ -1,4 +1,4 @@
-import type { FileAnalysis, RouteInfo } from "../../../types/analysis.js";
+import type { FileAnalysis, RouteFact, RouteInfo } from "../../../types/analysis.js";
 import { buildAuth, type GuardAttr } from "../../shared/route-metadata.js";
 
 /**
@@ -18,6 +18,11 @@ import { buildAuth, type GuardAttr } from "../../shared/route-metadata.js";
  * would be visible here (`uncalledIsDead`): then nothing serves those routes,
  * they are dropped, and so is a function only such a function hands its router
  * to (a dead `registerOld(g)` mounts nothing at a guessed path).
+ *
+ * The `fn:` marker lives only during the pass: at its end every row it collected loses `owner` (served, kept
+ * uncalled, or dropped-dead's neighbours), since the symbol linker reads `owner` as a class name.
+ * `skipPlain` leaves a function whose every call hands on the bare root as written; `served` tells the plugin which
+ * calls reached a function this pass composed.
  */
 
 export const ROUTER_CALL = "router-call";
@@ -53,6 +58,13 @@ export interface RouterFunctionRules {
    * Absent: every uncalled function keeps its routes.
    */
   uncalledIsDead?(unit: string, fn: string, analyses: readonly FileAnalysis[]): boolean;
+  /**
+   * True: a function every call of which hands on the application root (prefix "", no guards, not relative) is left
+   * as written — composing would only respell its paths.
+   */
+  skipPlain?: boolean;
+  /** Called once per call that reaches a function this pass serves (not a skipped one), with the file the call is in. */
+  served?(call: RouteFact, caller: FileAnalysis): void;
 }
 
 export const joinRoutePrefix = (prefix: string, path: string): string => "/" + (prefix + "/" + path).split("/").filter(Boolean).join("/");
@@ -66,6 +78,14 @@ interface Mount {
 
 export function resolveRouterFunctions(analyses: FileAnalysis[], rules: RouterFunctionRules): void {
   const owners = new Map<string, FileAnalysis[]>();
+  composeOwned(analyses, rules, owners);
+  // The marker lives only during the pass: no reader after it takes `fn:` for anything.
+  for (const files of owners.values()) {
+    for (const a of files) for (const r of a.routes) if (r.owner?.startsWith("fn:")) delete r.owner;
+  }
+}
+
+function composeOwned(analyses: FileAnalysis[], rules: RouterFunctionRules, owners: Map<string, FileAnalysis[]>): void {
   const byName = new Map<string, Set<string>>();
   // A method (`Handler.Register`) answers to its own name too: a call on a value names only that.
   const add = (fn: string, key: string) => {
@@ -104,7 +124,7 @@ export function resolveRouterFunctions(analyses: FileAnalysis[], rules: RouterFu
   }
   const keysNamed = (fn: string) => [...(byName.get(fn) ?? [])];
 
-  const incoming = new Map<string, Array<{ from: string | null; file: string; prefix: string; guards: GuardAttr[] }>>();
+  const incoming = new Map<string, Array<{ from: string | null; file: string; prefix: string; guards: GuardAttr[]; fact: RouteFact; caller: FileAnalysis }>>();
   for (const a of analyses) {
     for (const f of a.routeFacts ?? []) {
       if (f.kind !== ROUTER_CALL) continue;
@@ -112,15 +132,24 @@ export function resolveRouterFunctions(analyses: FileAnalysis[], rules: RouterFu
       const target = rules.target(call.callee, a, keysNamed);
       if (!target) continue;
       const from = call.relative && f.owner ? `${rules.unitOf(a.filePath)}#${f.owner}` : null;
-      (incoming.get(target) ?? incoming.set(target, []).get(target)!).push({ from, file: a.filePath, prefix: call.prefix, guards: call.guards });
+      (incoming.get(target) ?? incoming.set(target, []).get(target)!).push({ from, file: a.filePath, prefix: call.prefix, guards: call.guards, fact: f, caller: a });
     }
   }
+  // Functions left as written: every call hands on the root.
+  const plain = new Set<string>();
+  if (rules.skipPlain) {
+    for (const [key, edges] of incoming) {
+      if (edges.every((e) => e.from === null && e.prefix === "" && e.guards.length === 0)) plain.add(key);
+    }
+    for (const key of plain) incoming.delete(key);
+  }
+  for (const edges of incoming.values()) for (const e of edges) rules.served?.(e.fact, e.caller);
   if (incoming.size === 0 && !rules.uncalledIsDead) return;
 
   const deadMemo = new Map<string, boolean>();
   /** No call reaches the function, nothing names it, and the plugin sees every place that could. */
   const isDead = (key: string): boolean => {
-    if (incoming.has(key) || !rules.uncalledIsDead) return false;
+    if (incoming.has(key) || plain.has(key) || !rules.uncalledIsDead) return false;
     const known = deadMemo.get(key);
     if (known !== undefined) return known;
     const fn = key.slice(key.indexOf("#") + 1);

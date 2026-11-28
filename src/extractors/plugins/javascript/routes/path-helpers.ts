@@ -35,19 +35,24 @@ export interface PathHelperCall {
 export const CONSTANT_REF = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*){0,3}$/;
 
 /** `const router = express.Router()`, `app = express()`, `new Hono()`, `new Router()`, `fastify()`: a receiver made a router. */
-const ROUTER_FACTORY = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:new\s+)?(?:require\(\s*['"][\w@/.-]+['"]\s*\)\s*\.\s*)?(?:express\s*\.\s*)?(?:express|Router|Hono|Koa|KoaRouter|fastify|polka)\s*\(/gi;
+const ROUTER_FACTORY = /\b([A-Za-z_$][\w$]*)\s*=\s*(?:new\s+)?(?:require\(\s*['"][\w@/.-]+['"]\s*\)\s*\.\s*)?(?:express\s*\.\s*)?(express|Router|Hono|Koa|KoaRouter|fastify|polka)\s*\(/gi;
 
 /** The names a router factory makes in this file, lowercased. */
 export function routerFactoryNames(sourceText: string): Set<string> {
   return new Set([...sourceText.matchAll(ROUTER_FACTORY)].map((m) => m[1]!.toLowerCase()));
 }
 
+/** The names a factory made an application (`express()`, `new Koa()`, `fastify()`), not a router (`Router()`), as written. */
+export function appFactoryNames(sourceText: string): Set<string> {
+  return new Set([...sourceText.matchAll(ROUTER_FACTORY)].filter((m) => !/^(?:Router|KoaRouter)$/i.test(m[2]!)).map((m) => m[1]!));
+}
+
 /** Names a call hands a router by: `app`, `router`, `server`, `api`, and what a router factory made in this file. */
-const ROUTER_ARG = /^(?:app|router|server|api|routes?|r)$/i;
+export const ROUTER_ARG = /^(?:app|router|server|api|routes?|r)$/i;
 /** A conventional router name passed as an argument — the gate before walking the file's calls. */
-const ROUTER_ARG_PASSED = /[(,]\s*(?:app|router|server|api|routes?|r)\s*[,)]/i;
+export const ROUTER_ARG_PASSED = /[(,]\s*(?:app|router|server|api|routes?|r)\s*[,)]/i;
 /** Calls that take a path but never register a route. */
-const NOT_HELPERS = new Set(["fetch", "require", "import", "get", "post", "put", "patch", "delete", "use", "all", "route", "listen", "join", "resolve", "redirect", "render", "sendFile"]);
+export const NOT_HELPERS = new Set(["fetch", "require", "import", "get", "post", "put", "patch", "delete", "use", "all", "route", "listen", "join", "resolve", "redirect", "render", "sendFile"]);
 
 /** Every call in the file handing on a router and a literal path (`mountProgress(app, "/api/x")`). */
 export function collectPathHelperCalls(root: Node, sourceText: string, facts: RouteFact[]): void {

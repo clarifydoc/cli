@@ -1,5 +1,6 @@
 import type { Node } from "web-tree-sitter";
 import type { RouteInfo, RouteFact, CallInfo, ParamInfo, RouteParamInfo, RouteResponseInfo } from "../../../../types/analysis.js";
+import { collectRouterCalls } from "./express-router-functions.js";
 import { CONSTANT_REF, enclosingFunction, PATH_PARAM_ROUTE, routerFactoryNames, type PathParamRoute } from "./path-helpers.js";
 import { responsesOf } from "../responses.js";
 import { stripQuotes } from "../../../shared/node-helpers.js";
@@ -515,6 +516,12 @@ export function visitExpressRoute(node: Node, routes: RouteInfo[]): void {
                 ...(responses ? { responses } : {}),
               };
               if (method === "use") route.mount = true;
+              // Registered on the router this function is handed (`function mountClubs(router) { router.get(…) }`):
+              // its path is the part the function knows; the calls handing it a router state the rest (express-router-functions.ts).
+              else if (receiverNode?.type === "identifier") {
+                const encl = enclosingFunction(node);
+                if (encl && encl.params.includes(receiverNode.text)) route.owner = `fn:${encl.name}`;
+              }
               const names = middlewareCalleeNames(middlewareArgNodes);
               if (names.length > 0) route.middlewareCalls = names;
               if (mountModule !== null) route.mountModule = mountModule;
@@ -547,6 +554,7 @@ export function applyRouterLevelGuards(root: Node, routes: RouteInfo[], sourceTe
   if (sourceText === undefined || sourceText.includes("prefix")) applyRouterPrefixes(root, routes);
   if (sourceText === undefined || sourceText.includes("basePath(")) applyHonoBasePaths(root, routes);
   composeLocalMounts(routes);
+  if (facts && (sourceText === undefined || sourceText.includes("("))) collectRouterCalls(root, routes, sourceText ?? root.text, facts, (r) => routeMeta.get(r)?.guards ?? []);
   // A path holding names (`${ROUTES.CARS}`, `/${SEASON}/clubs`), with this file's prefixes composed: the template
   // the project pass fills from the modules stating them. A mount keeps its prefix as written.
   for (const r of routes) if (!r.mount && !r.pathTemplate && r.path.includes("${") && NAME_HOLES.test(r.path)) r.pathTemplate = r.path;
