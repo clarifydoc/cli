@@ -62,6 +62,20 @@ const JS_TEST_PATTERNS: readonly RegExp[] = [
   STORY_FILE,
 ];
 
+/**
+ * Where a file-system router's own names begin: below `pages/` (Next, Nuxt, Astro), Next's `app/`
+ * for its router files, SvelteKit's `routes/` for its `+` files, Nuxt's `server/api` and
+ * `server/routes`, a directory is a URL segment (`pages/test/index.tsx` is the page `/test`), never a test folder.
+ * The routing roots per framework are also listed, gated by framework, in `reachability.ts`: a new router goes in both.
+ */
+const JS_FOLDER_ROLE_ROOTS: readonly RegExp[] = [
+  /(?:^|\/)pages\//,
+  /(?:^|\/)app\/(?=(?:[^/]+\/)*(?:page|layout|route|loading|error|global-error|not-found|template|default)\.[cm]?[jt]sx?$)/,
+  /(?:^|\/)routes\/(?=(?:[^/]+\/)*\+[^/]+$)/,
+  /(?:^|\/)app\/routes\//,
+  /(?:^|\/)server\/(?:api|routes)\//,
+];
+
 /** npm import source → framework id (shared by the ts and js manifests). */
 const NPM_FRAMEWORK_HINTS: Readonly<Record<string, string>> = {
   "react": "react",
@@ -186,6 +200,7 @@ export const typescriptManifest: LanguagePluginManifest = {
       filePath.endsWith(".tsx") || filePath.endsWith(".jsx") ? "tsx" : "typescript",
   },
   testFilePatterns: JS_TEST_PATTERNS,
+  folderRoleRoots: JS_FOLDER_ROLE_ROOTS,
   testSubjectAffixes: { suffixes: [".cy", "_spec", "-spec", "_test", "-test"] },
   builtinMembers: JS_BUILTIN_MEMBERS,
   frameworkImportHints: NPM_FRAMEWORK_HINTS,
@@ -247,6 +262,7 @@ export const javascriptManifest: LanguagePluginManifest = {
   platformSuffixes: JS_PLATFORM_SUFFIXES,
   grammar: { variants: { javascript: { pkg: "tree-sitter-javascript", wasm: "tree-sitter-javascript.wasm" } } },
   testFilePatterns: JS_TEST_PATTERNS,
+  folderRoleRoots: JS_FOLDER_ROLE_ROOTS,
   testSubjectAffixes: { suffixes: [".cy", "_spec", "-spec", "_test", "-test"] },
   builtinMembers: JS_BUILTIN_MEMBERS,
   frameworkImportHints: NPM_FRAMEWORK_HINTS,

@@ -1177,6 +1177,16 @@ const TEST_FILE_PATTERNS_BY_LANGUAGE: ReadonlyMap<Language, readonly RegExp[]> =
   return map;
 })();
 
+// A package root (`src/main/java/`) is a folder-role root too: below it every directory is a package segment.
+const FOLDER_ROLE_ROOTS_BY_LANGUAGE: ReadonlyMap<Language, readonly RegExp[]> = new Map(
+  ALL_MANIFESTS.map((m) => [m.language, [...(m.packageRoots ?? []), ...(m.folderRoleRoots ?? [])]] as const).filter(([, roots]) => roots.length > 0),
+);
+
+/** The language's `packageRoots` and `folderRoleRoots`: where the part of a path that holds folder roles ends. */
+export function folderRoleRootsFor(language: Language): readonly RegExp[] {
+  return FOLDER_ROLE_ROOTS_BY_LANGUAGE.get(language) ?? [];
+}
+
 export function testFilePatternsFor(language: Language): readonly RegExp[] {
   return TEST_FILE_PATTERNS_BY_LANGUAGE.get(language) ?? [];
 }

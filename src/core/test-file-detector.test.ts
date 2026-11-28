@@ -124,3 +124,29 @@ describe("testSubjectStem", () => {
     expect(testSubjectStem("src/club.ts", "typescript")).toBeNull();
   });
 });
+
+describe("isTestFile — a folder role holds for a folder, not a route segment or a package", () => {
+  it("reads a `test` segment below a file-system routing root as a URL segment", () => {
+    for (const p of ["app/test/page.tsx", "web/pages/test/index.tsx", "src/pages/tests.tsx", "src/routes/test/+page.svelte", "server/api/spec/list.ts", "src/routes/test/+page.ts"]) {
+      expect(isTestFile(p, "typescript"), p).toBe(false);
+      expect(isTestFile(p), p).toBe(false);
+    }
+    expect(isTestFile("pages/test/index.vue", "typescript")).toBe(false);
+  });
+
+  it("keeps the explicit test conventions below a routing root and a test folder above it", () => {
+    for (const p of ["app/__tests__/page.test.tsx", "pages/test/club.test.tsx", "src/routes/test/+page.test.ts", "pages/__tests__/helper.ts", "test/pages/club.tsx", "tests/app/club/page.tsx"]) {
+      expect(isTestFile(p, "typescript"), p).toBe(true);
+    }
+    // `app/` is a routing root only for the router's own files; a co-located folder is a folder.
+    expect(isTestFile("src/app/test/club.component.ts", "typescript")).toBe(true);
+  });
+
+  it("reads a package path below a source root as a package, a test source set as a test", () => {
+    expect(isTestFile("src/main/java/com/example/demo/Kick.java", "java")).toBe(false);
+    expect(isTestFile("src/main/kotlin/com/example/test/Kick.kt", "kotlin")).toBe(false);
+    expect(isTestFile("src/test/java/com/league/KickTest.java", "java")).toBe(true);
+    expect(isTestFile("src/test/java/com/league/Kick.java", "java")).toBe(true);
+    expect(isTestFile("modules/test/src/main/java/com/league/Kick.java", "java")).toBe(true);
+  });
+});

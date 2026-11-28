@@ -290,6 +290,18 @@ describe("analyzeReachability", () => {
     expect(r.judgedFiles).toBe(3);
   });
 
+  it("reads a sample folder of the repository, not a route segment below a routing root", () => {
+    const r = run(
+      [
+        file({ filePath: "main.ts" }),
+        file({ filePath: "web/pages/demo/stale.ts" }),
+        file({ filePath: "examples/demo-app/pages/stale.ts" }),
+      ],
+      stubModel(["main.ts"]),
+    );
+    expect(r.files.map((f) => f.filePath)).toEqual(["web/pages/demo/stale.ts"]);
+  });
+
   it("anchors per language: one language's entry points do not judge another's files", () => {
     const py = { ...stubModel(["app.py"]), judgeExports: false };
     const r = run(

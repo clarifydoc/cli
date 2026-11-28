@@ -47,10 +47,22 @@ export const javaKotlinReachability = conventionReachability({
       if (!PROGUARD_FILE.test(rel)) continue;
       keeps.push(...proguardKeeps((await kit.readText(rel)) ?? ""));
     }
-    if (keeps.length === 0) return {};
-    return withPassive(base, (analysis) => (qualifiedNames(analysis).some((name) => keeps.some((k) => k.test(name))) ? "kept by a ProGuard rule" : null));
+    return withPassive(base, (analysis) =>
+      springDataFragmentImpl(analysis)
+        ?? (keeps.length > 0 && qualifiedNames(analysis).some((name) => keeps.some((k) => k.test(name))) ? "kept by a ProGuard rule" : null));
   },
 });
+
+/**
+ * Spring Data finds a repository fragment's implementation by its name: the class `ClubRepositoryExtrasImpl`
+ * implementing `ClubRepositoryExtras` is loaded without a mention of it. Only in a file that uses Spring or JPA:
+ * elsewhere a `FooImpl` implementing `Foo` is an ordinary class that dead code judges.
+ */
+function springDataFragmentImpl(analysis: FileAnalysis): string | null {
+  if (!analysis.imports.some((i) => /^(?:org\.springframework|jakarta\.persistence|javax\.persistence)\b/.test(i.source))) return null;
+  const named = analysis.classes.some((c) => c.name.endsWith("Impl") && c.implements.some((i) => `${typeLeaf(i)}Impl` === c.name));
+  return named ? "a Spring Data fragment implementation, found by its Impl name" : null;
+}
 
 /** ProGuard/R8 configuration: `proguard-rules.pro`, `consumer-rules.pro`, `proguard.cfg`, `r8-rules.pro`. */
 const PROGUARD_FILE = /(?:^|\/)(?:[^/]*proguard[^/]*\.(?:pro|cfg|txt)|consumer-rules\.pro|[^/]*r8[^/]*\.pro)$/i;

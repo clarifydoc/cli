@@ -5,8 +5,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
-const analysis = (filePath: string, cls: Record<string, unknown>): FileAnalysis =>
-  ({ filePath, classes: [{ extends: null, implements: [], decorators: [], methods: [], ...cls }], functions: [], routes: [] }) as unknown as FileAnalysis;
+const analysis = (filePath: string, cls: Record<string, unknown>, imports: string[] = []): FileAnalysis =>
+  ({ filePath, classes: [{ extends: null, implements: [], decorators: [], methods: [], ...cls }], functions: [], routes: [], imports: imports.map((source) => ({ source, specifiers: [] })) }) as unknown as FileAnalysis;
 const none = new Set<string>();
 
 describe("Java/Kotlin reachability — what a container or a code generator loads", () => {
@@ -17,6 +17,19 @@ describe("Java/Kotlin reachability — what a container or a code generator load
     expect(passive(analysis("Dispatcher.java", { name: "Dispatcher", extends: "AbstractAnnotationConfigDispatcherServletInitializer" }))).toMatch(/Initializer/);
     expect(passive(analysis("MyGlide.java", { name: "MyGlide", extends: "AppGlideModule", decorators: ["GlideModule"] }))).not.toBeNull();
     expect(passive(analysis("Orphan.java", { name: "Orphan" }))).toBeNull();
+  });
+});
+
+describe("Java/Kotlin reachability — a repository fragment found by its name", () => {
+  it("keeps `<Interface>Impl` alive, and only that", async () => {
+    const m = await javaKotlinReachability.load({ projectRoot: "/nonexistent", roots: [], files: new Set<string>() });
+    const passive = (a: FileAnalysis) => m.passiveReason!(a, a.filePath, none);
+    const jpa = ["jakarta.persistence.EntityManager"];
+    expect(passive(analysis("ClubRepositoryExtrasImpl.java", { name: "ClubRepositoryExtrasImpl", implements: ["ClubRepositoryExtras"] }, jpa))).toMatch(/Impl name/);
+    expect(passive(analysis("ClubServiceImpl.java", { name: "ClubServiceImpl", implements: ["MatchService"] }, jpa))).toBeNull();
+    expect(passive(analysis("Stray.java", { name: "Stray", implements: ["Stray"] }, jpa))).toBeNull();
+    // Outside Spring and JPA a `FooImpl` implementing `Foo` is an ordinary class (an Android binding, a plain service).
+    expect(passive(analysis("GarageImpl.kt", { name: "GarageImpl", implements: ["Garage"] }))).toBeNull();
   });
 });
 

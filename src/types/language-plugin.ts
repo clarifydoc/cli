@@ -2041,6 +2041,18 @@ export interface LanguagePluginManifest {
    */
   testFilePatterns?: readonly RegExp[];
   /**
+   * Where the folders of the repository end and the names the language or its router gives begin:
+   * each pattern matches the path up to and including the root below which a directory is a
+   * package segment (Java's `src/main/java/`: `com/example/demo/` is the package
+   * `com.example.demo`) or a URL segment (a file-system router's `pages/`: `pages/test/index.tsx`
+   * is the page `/test`). Core matches the folder-role words (test, spec, fixture, example,
+   * sample, demo, bench) only against the part before the root's end; the earliest end wins.
+   * A pattern that holds for some files only (Next's `app/`, for its router files) states that
+   * in a lookahead. File name conventions (`*.test.tsx`, `FooTest.java`) and `__tests__/` are
+   * not folder roles and read the whole path.
+   */
+  folderRoleRoots?: readonly RegExp[];
+  /**
    * How a test file's name says which file it tests: the affixes the language's runners put on the
    * subject's stem — Go `_test` (`club_test.go` → `club`), Python `test_` / `_test`, JUnit `Test` /
    * `Tests` / `IT`, RSpec `_spec`. Stripped once each, longest first, from the stem (the name

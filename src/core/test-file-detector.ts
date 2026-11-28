@@ -1,5 +1,6 @@
 import type { Language } from "../types/analysis.js";
-import { testFilePatternsFor, testSubjectAffixesFor } from "../extractors/registry.js";
+import { folderRoleRootsFor, testFilePatternsFor, testSubjectAffixesFor } from "../extractors/registry.js";
+import { getLanguageForFile } from "../parsers/language-map.js";
 
 /**
  * Detects test files — unit, integration, and e2e specs — from their path.
@@ -15,20 +16,47 @@ import { testFilePatternsFor, testSubjectAffixesFor } from "../extractors/regist
  * or a Jest `request(app).get('/x')` must not surface as an inbound endpoint.
  */
 
-/** Cross-language test conventions, matched against `/`- or `\`-separated paths. */
+/**
+ * Cross-language test conventions that name a file or a harness, matched against the whole
+ * `/`- or `\`-separated path.
+ */
 const GENERIC_TEST_PATTERNS: readonly RegExp[] = [
   // Jest layout: __tests__/ and __mocks__/ directories.
   /(^|[\\/])__tests__[\\/]/,
   /(^|[\\/])__mocks__[\\/]/,
-  // A `test/`, `tests/`, `spec/`, or `specs/` directory segment.
-  /(^|[\\/])tests?[\\/]/i,
-  /(^|[\\/])specs?[\\/]/i,
   // Browser/e2e test harness directories.
   /(^|[\\/])cypress[\\/]/i,
   /(^|[\\/])e2e[\\/]/i,
   // `foo.test.ts`, `foo.spec.js` — the near-universal suffix convention.
   /\.(test|spec)\.[^.\\/]+$/i,
 ];
+
+/**
+ * The folder roles: a `test/`, `tests/`, `spec/` or `specs/` directory of the repository. Matched
+ * only against `folderRolePrefix` — below a package root or a routing root the directory is a
+ * package or URL segment, not a role.
+ */
+const FOLDER_TEST_PATTERN = /(^|[\\/])(?:tests?|specs?)[\\/]/i;
+
+/**
+ * The part of a path that holds folders of the repository: up to and including the language's
+ * package root or routing root (`folderRoleRoots`, earliest end), the whole path when it has none.
+ * Core never names a root; the plugin of the file's language does. Without a `language` the
+ * file's extension says it.
+ */
+export function folderRolePrefix(filePath: string, language?: Language): string {
+  const lang = language ?? getLanguageForFile(filePath) ?? undefined;
+  if (!lang) return filePath;
+  const roots = folderRoleRootsFor(lang);
+  if (roots.length === 0) return filePath;
+  const path = filePath.includes("\\") ? filePath.replace(/\\/g, "/") : filePath;
+  let end = -1;
+  for (const re of roots) {
+    const m = re.exec(path);
+    if (m && (end < 0 || m.index + m[0].length < end)) end = m.index + m[0].length;
+  }
+  return end < 0 ? filePath : path.slice(0, end);
+}
 
 /** Per-language combined pattern lists, cached (generic ++ plugin-contributed). */
 const combinedCache = new Map<Language | "<none>", readonly RegExp[]>();
@@ -54,7 +82,8 @@ export function isTestFile(filePath: string, language?: Language): boolean {
   for (const re of patternsFor(language)) {
     if (re.test(filePath)) return true;
   }
-  return false;
+  // A folder role inside the prefix is one inside the whole path: only a path naming one pays for the roots.
+  return FOLDER_TEST_PATTERN.test(filePath) && FOLDER_TEST_PATTERN.test(folderRolePrefix(filePath, language));
 }
 
 /**

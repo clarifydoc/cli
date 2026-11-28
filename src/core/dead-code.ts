@@ -16,6 +16,7 @@ import type {
 import type { ReachabilityModel } from "../types/language-plugin.js";
 import { byOrdinal } from "./ordinal.js";
 import { escapeRegex } from "../extractors/plugins/shared/path-utils.js";
+import { folderRolePrefix } from "./test-file-detector.js";
 
 /**
  * Detect generated/library "barrel" roots and the unused files within them.
@@ -377,7 +378,7 @@ export function analyzeReachability(input: ReachabilityInput): DeadCodeReport | 
       passive.push(a.filePath);
       continue;
     }
-    if (test || FIXTURE_DIR_RE.test(a.filePath) || model.isAmbient?.(a.filePath) || input.isUnauthored(a.filePath)) {
+    if (test || (FIXTURE_DIR_RE.test(a.filePath) && FIXTURE_DIR_RE.test(folderRolePrefix(a.filePath, a.language))) || model.isAmbient?.(a.filePath) || input.isUnauthored(a.filePath)) {
       passive.push(a.filePath);
       continue;
     }
